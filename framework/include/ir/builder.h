@@ -299,13 +299,13 @@ public:
      *
      * Convenience method that creates an assignment and emits it.
      *
-     * \param var Variable to assign to
+     * \param targets Result variables (empty to discard the result)
      * \param value Expression value
      * \param span Source location for assignment
      * \return The created assignment statement
      * \throws RuntimeError if not inside a valid context
      */
-    AssignStmtPtr Assign(const VarPtr& var, const ExprPtr& value, const Span& span);
+    AssignStmtPtr Assign(const std::vector<VarPtr>& targets, const ExprPtr& value, const Span& span);
 
     /**
      * \brief Create a variable (does not emit)

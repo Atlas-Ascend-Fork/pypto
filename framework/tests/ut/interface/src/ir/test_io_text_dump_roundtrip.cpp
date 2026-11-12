@@ -247,7 +247,8 @@ TEST_F(IoTextDumpRoundTripTest, TestStmtRoundTrip)
     std::string error;
     // AssignStmt: int32_t %x = 42;
     auto x = Var_("x");
-    auto assign = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(42, DataType::INT32, Sp()), Sp());
+    auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                               std::make_shared<ConstInt>(42, DataType::INT32, Sp()), Sp());
     std::string dumped = TextDump(assign);
     EXPECT_NE(dumped.find("int32_t %x = 42;"), std::string::npos);
 
@@ -288,7 +289,7 @@ TEST_F(IoTextDumpRoundTripTest, TestForLoopRoundTrip)
     auto zero = std::make_shared<ConstInt>(0, DataType::INT32, Sp());
     auto ten = std::make_shared<ConstInt>(10, DataType::INT32, Sp());
     auto one = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
-    auto body = std::make_shared<AssignStmt>(Var_("x"), one, Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{Var_("x")}, one, Sp());
     auto forStmt = std::make_shared<ForStmt>(i, zero, ten, one, std::vector<IterArgPtr>{}, body, std::vector<VarPtr>{},
                                              Sp());
     std::string dumped = TextDump(forStmt);

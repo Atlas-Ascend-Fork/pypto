@@ -2414,7 +2414,7 @@ REGISTER_BACKEND_OP(BackendCCE, "block.scatter")
 
 // struct.create: Expression op that materializes a named tuple
 // into a C++ struct instance. When this Call appears as the RHS of an
-// AssignStmt(var, struct.create(v0, v1, ..., name=Name, fields=[f0, f1, ...]))
+// AssignStmt([var], struct.create(v0, v1, ..., name=Name, fields=[f0, f1, ...]))
 // the CCE codegen emits `Name var = {.f0=v0, .f1=v1, ...};`. The struct type
 // definition itself is emitted after body traversal from CCECodegen's definition registry.
 REGISTER_BACKEND_OP(BackendCCE, "struct.create")

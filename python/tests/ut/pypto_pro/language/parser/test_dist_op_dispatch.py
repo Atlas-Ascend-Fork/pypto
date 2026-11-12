@@ -37,7 +37,7 @@ def _op_calls(func, op_name):
     """Every IR call to *op_name* in the parsed function body, in program order."""
     calls = []
     for stmt in func.body.stmts:
-        value = getattr(stmt, "value", None) if isinstance(stmt, ir.AssignStmt) else getattr(stmt, "expr", None)
+        value = stmt.value if isinstance(stmt, ir.AssignStmt) else None
         if value is not None and isinstance(value, ir.Call) and value.name == op_name:
             calls.append(value)
     return calls
@@ -242,7 +242,11 @@ def test_get_remote_ptr_accepts_an_interior_pointer():
     func = _parse(kernel)
     remote = _op_calls(func, "dist.get_remote_ptr")[0]
     addptr = _op_calls(func, "ptr.addptr")[0]
-    assigned_to = {id(stmt.value): stmt.var.name for stmt in func.body.stmts if isinstance(stmt, ir.AssignStmt)}
+    assigned_to = {
+        id(stmt.value): stmt.targets[0].name
+        for stmt in func.body.stmts
+        if isinstance(stmt, ir.AssignStmt) and stmt.targets
+    }
     # The interior-pointer expression is hoisted to a temp and passed as the ptr operand.
     assert isinstance(remote.args[1], ir.Var)
     assert remote.args[1].name == assigned_to[id(addptr)]

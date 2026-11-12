@@ -177,7 +177,7 @@ TEST(BackendCceOpsTest, GetBlockIdx)
     auto result = MakeVar("idx", int_type);
     auto call = std::make_shared<const ir::Call>("get_block_idx", std::vector<ir::ExprPtr>{}, int_type,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Cube);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -207,7 +207,7 @@ TEST(BackendCceOpsTest, GetBlockNum)
     auto result = MakeVar("num", int_type);
     auto call = std::make_shared<const ir::Call>("get_block_num", std::vector<ir::ExprPtr>{}, int_type,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -232,7 +232,7 @@ TEST(BackendCceOpsTest, GetCycle)
     auto result = MakeVar("cycle", int_type);
     auto call = std::make_shared<const ir::Call>("get_cycle", std::vector<ir::ExprPtr>{}, int_type,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -247,7 +247,7 @@ TEST(BackendCceOpsTest, ICachePreloadUsesAscendC)
 {
     auto call = std::make_shared<const ir::Call>("system.icache_preload", std::vector<ir::ExprPtr>{MakeConstInt(2)},
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -258,7 +258,7 @@ TEST(BackendCceOpsTest, ICachePreloadRejectsUnsupportedArch)
 {
     auto call = std::make_shared<const ir::Call>("system.icache_preload", std::vector<ir::ExprPtr>{MakeConstInt(2)},
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     try {
@@ -275,7 +275,7 @@ TEST(BackendCceOpsTest, GetSubBlockIdx)
     auto result = MakeVar("sub", int_type);
     auto call = std::make_shared<const ir::Call>("get_subblock_idx", std::vector<ir::ExprPtr>{}, int_type,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -305,20 +305,20 @@ TEST(BackendCceOpsTest, DebugTrap)
     ASSERT_NE(info, nullptr);
     EXPECT_EQ(info->pipe, ir::PipeType::S);
 
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("trap();"), std::string::npos);
 }
 
 // ============================================================================
-// Barrier ops (tested via EvalStmt)
+// Barrier ops (tested via DiscardResultAssignStmt)
 // ============================================================================
 
 TEST(BackendCceOpsTest, BarM)
 {
     auto call = std::make_shared<const ir::Call>("system.bar_m", std::vector<ir::ExprPtr>{}, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -349,7 +349,7 @@ TEST(BackendCceOpsTest, AdditionalPipelineBarriers)
 TEST(BackendCceOpsTest, BarAll)
 {
     auto call = std::make_shared<const ir::Call>("system.bar_all", std::vector<ir::ExprPtr>{}, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -357,14 +357,14 @@ TEST(BackendCceOpsTest, BarAll)
 }
 
 // ============================================================================
-// Mask ops (tested via EvalStmt)
+// Mask ops (tested via DiscardResultAssignStmt)
 // ============================================================================
 
 TEST(BackendCceOpsTest, SetMaskCount)
 {
     auto call = std::make_shared<const ir::Call>("system.set_mask_count", std::vector<ir::ExprPtr>{},
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -375,7 +375,7 @@ TEST(BackendCceOpsTest, SetMaskNorm)
 {
     auto call = std::make_shared<const ir::Call>("system.set_mask_norm", std::vector<ir::ExprPtr>{},
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -385,7 +385,7 @@ TEST(BackendCceOpsTest, SetMaskNorm)
 TEST(BackendCceOpsTest, ResetMask)
 {
     auto call = std::make_shared<const ir::Call>("system.reset_mask", std::vector<ir::ExprPtr>{}, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -397,7 +397,7 @@ TEST(BackendCceOpsTest, SetVecMask)
 {
     auto call = std::make_shared<const ir::Call>(
         "system.set_vec_mask", std::vector<ir::ExprPtr>{MakeConstInt(255), MakeConstInt(128)}, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -405,7 +405,7 @@ TEST(BackendCceOpsTest, SetVecMask)
 }
 
 // ============================================================================
-// Sync ops with kwargs (tested via EvalStmt)
+// Sync ops with kwargs (tested via DiscardResultAssignStmt)
 // ============================================================================
 
 TEST(BackendCceOpsTest, SyncSrc)
@@ -413,7 +413,7 @@ TEST(BackendCceOpsTest, SyncSrc)
     Kwargs kwargs = {{"set_pipe", 4}, {"wait_pipe", 5}};
     auto call = std::make_shared<const ir::Call>("system.sync_src_dyn", std::vector<ir::ExprPtr>{MakeConstInt(3)},
                                                  kwargs, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -425,7 +425,7 @@ TEST(BackendCceOpsTest, SyncDst)
     Kwargs kwargs = {{"set_pipe", 4}, {"wait_pipe", 5}};
     auto call = std::make_shared<const ir::Call>("system.sync_dst_dyn", std::vector<ir::ExprPtr>{MakeConstInt(3)},
                                                  kwargs, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -450,7 +450,7 @@ TEST(BackendCceOpsTest, SyncSupportsEveryPipeKind)
 }
 
 // ============================================================================
-// Dynamic sync ops with args + kwargs (tested via EvalStmt)
+// Dynamic sync ops with args + kwargs (tested via DiscardResultAssignStmt)
 // ============================================================================
 
 TEST(BackendCceOpsTest, SyncSrcDyn)
@@ -459,7 +459,7 @@ TEST(BackendCceOpsTest, SyncSrcDyn)
     auto event_id = MakeVar("event_id", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
     auto call = std::make_shared<const ir::Call>("system.sync_src_dyn", std::vector<ir::ExprPtr>{event_id}, kwargs,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {event_id}), npu::tile_fwk::NPUArch::DAV_3510);
@@ -472,7 +472,7 @@ TEST(BackendCceOpsTest, SyncDstDyn)
     auto event_id = MakeVar("event_id", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
     auto call = std::make_shared<const ir::Call>("system.sync_dst_dyn", std::vector<ir::ExprPtr>{event_id}, kwargs,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {event_id}), npu::tile_fwk::NPUArch::DAV_3510);
@@ -488,7 +488,7 @@ TEST(BackendCceOpsTest, SetCrossCoreDyn3510InterBlock)
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 0}};
     auto call = std::make_shared<const ir::Call>("system.set_cross_core_dyn", std::vector<ir::ExprPtr>{MakeConstInt(7)},
                                                  kwargs, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -500,7 +500,7 @@ TEST(BackendCceOpsTest, WaitCrossCoreDyn3510InterBlock)
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 0}};
     auto call = std::make_shared<const ir::Call>(
         "system.wait_cross_core_dyn", std::vector<ir::ExprPtr>{MakeConstInt(7)}, kwargs, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -512,7 +512,7 @@ TEST(BackendCceOpsTest, SetCrossCore3510InterBlock)
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 0}, {"event_id", 2}};
     auto call = std::make_shared<const ir::Call>("system.set_cross_core", std::vector<ir::ExprPtr>{}, kwargs,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -524,7 +524,7 @@ TEST(BackendCceOpsTest, WaitCrossCore3510InterBlock)
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 0}, {"event_id", 2}};
     auto call = std::make_shared<const ir::Call>("system.wait_cross_core", std::vector<ir::ExprPtr>{}, kwargs,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -540,7 +540,7 @@ TEST(BackendCceOpsTest, SetCrossCore3510IntraBlock)
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 2}, {"event_id", 3}};
     auto call = std::make_shared<const ir::Call>("system.set_cross_core", std::vector<ir::ExprPtr>{}, kwargs,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -552,7 +552,7 @@ TEST(BackendCceOpsTest, WaitCrossCore3510IntraBlock)
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 2}, {"event_id", 3}};
     auto call = std::make_shared<const ir::Call>("system.wait_cross_core", std::vector<ir::ExprPtr>{}, kwargs,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -564,7 +564,7 @@ TEST(BackendCceOpsTest, SetCrossCoreDyn3510IntraBlock)
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 2}};
     auto call = std::make_shared<const ir::Call>("system.set_cross_core_dyn", std::vector<ir::ExprPtr>{MakeConstInt(8)},
                                                  kwargs, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -576,7 +576,7 @@ TEST(BackendCceOpsTest, WaitCrossCoreDyn3510IntraBlock)
     Kwargs kwargs = {{"pipe", 4}, {"sync_mode", 2}};
     auto call = std::make_shared<const ir::Call>(
         "system.wait_cross_core_dyn", std::vector<ir::ExprPtr>{MakeConstInt(8)}, kwargs, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -591,8 +591,9 @@ TEST(BackendCceOpsTest, CubeCrossCore3510IntraBlockSignalsBothVectorSubcores)
     auto wait_call = std::make_shared<const ir::Call>("system.wait_cross_core", std::vector<ir::ExprPtr>{},
                                                       static_kwargs, ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(set_call, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(wait_call, ir::Span::Unknown())},
+        std::vector<ir::StmtPtr>{
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, set_call, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, wait_call, ir::Span::Unknown())},
         ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Cube);
@@ -612,8 +613,9 @@ TEST(BackendCceOpsTest, CubeCrossCoreDynamic3510IntraBlockSignalsBothVectorSubco
     auto wait_call = std::make_shared<const ir::Call>("system.wait_cross_core_dyn", std::vector<ir::ExprPtr>{event_id},
                                                       kwargs, ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(set_call, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(wait_call, ir::Span::Unknown())},
+        std::vector<ir::StmtPtr>{
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, set_call, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, wait_call, ir::Span::Unknown())},
         ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Cube);
@@ -625,13 +627,13 @@ TEST(BackendCceOpsTest, CubeCrossCoreDynamic3510IntraBlockSignalsBothVectorSubco
 }
 
 // ============================================================================
-// Mutex ops (tested via EvalStmt)
+// Mutex ops (tested via DiscardResultAssignStmt)
 // ============================================================================
 
 TEST(BackendCceOpsTest, MutexLock)
 {
     auto call = MakeManualMutexCall("system.mutex_lock_dyn", MakeConstInt(1), ir::PipeType::S);
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -641,7 +643,7 @@ TEST(BackendCceOpsTest, MutexLock)
 TEST(BackendCceOpsTest, MutexUnlock)
 {
     auto call = MakeManualMutexCall("system.mutex_unlock_dyn", MakeConstInt(1), ir::PipeType::S);
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -651,7 +653,7 @@ TEST(BackendCceOpsTest, MutexUnlock)
 TEST(BackendCceOpsTest, MutexLockDyn)
 {
     auto call = MakeManualMutexCall("system.mutex_lock_dyn", MakeConstInt(2), ir::PipeType::S);
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -661,7 +663,7 @@ TEST(BackendCceOpsTest, MutexLockDyn)
 TEST(BackendCceOpsTest, MutexUnlockDyn)
 {
     auto call = MakeManualMutexCall("system.mutex_unlock_dyn", MakeConstInt(2), ir::PipeType::S);
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -673,8 +675,9 @@ TEST(BackendCceOpsTest, VMutexWithoutCandidateIdsIsNotSkipped)
     auto lock = MakeManualMutexCall("system.mutex_lock_dyn", MakeConstInt(6), ir::PipeType::V);
     auto unlock = MakeManualMutexCall("system.mutex_unlock_dyn", MakeConstInt(7), ir::PipeType::V);
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(lock, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(unlock, ir::Span::Unknown())},
+        std::vector<ir::StmtPtr>{
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, lock, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, unlock, ir::Span::Unknown())},
         ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
@@ -691,8 +694,9 @@ TEST(BackendCceOpsTest, DynamicVMutexIsAlwaysEmitted)
     auto lock = MakeManualMutexCall("system.mutex_lock_dyn", id, ir::PipeType::V);
     auto unlock = MakeManualMutexCall("system.mutex_unlock_dyn", id, ir::PipeType::V);
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(lock, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(unlock, ir::Span::Unknown())},
+        std::vector<ir::StmtPtr>{
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, lock, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, unlock, ir::Span::Unknown())},
         ir::Span::Unknown());
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {id}), npu::tile_fwk::NPUArch::DAV_3510);
@@ -710,7 +714,7 @@ TEST(BackendCceOpsTest, SetMmLayoutTransformEnabled)
     Kwargs kwargs = {{"enabled", 1}};
     auto call = std::make_shared<const ir::Call>("system.set_mm_layout_transform", std::vector<ir::ExprPtr>{}, kwargs,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -722,7 +726,7 @@ TEST(BackendCceOpsTest, SetMmLayoutTransformDisabled)
     Kwargs kwargs = {{"enabled", 0}};
     auto call = std::make_shared<const ir::Call>("system.set_mm_layout_transform", std::vector<ir::ExprPtr>{}, kwargs,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -740,7 +744,7 @@ TEST(BackendCceOpsTest, PtrAddPtr)
     auto result = MakeVar("offset_ptr", ptr_type);
     auto call = std::make_shared<const ir::Call>("ptr.addptr", std::vector<ir::ExprPtr>{ptr_var, MakeConstInt(10)},
                                                  ptr_type, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {ptr_var}), npu::tile_fwk::NPUArch::DAV_3510);
@@ -754,7 +758,7 @@ TEST(BackendCceOpsTest, PtrMakePtr)
     auto result = MakeVar("cast", ptr_type);
     auto call = std::make_shared<const ir::Call>("ptr.make_ptr", std::vector<ir::ExprPtr>{ptr_var}, ptr_type,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {ptr_var}), npu::tile_fwk::NPUArch::DAV_3510);
@@ -819,11 +823,12 @@ TEST(BackendCceOpsTest, BlockMakeTileAndSetValTile)
     auto tile = MakeVar("tile", tile_type);
     auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
-    auto tile_assign = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
+    auto tile_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tile}, make_tile,
+                                                              ir::Span::Unknown());
 
     auto setval = std::make_shared<const ir::Call>(
         "block.setval", std::vector<ir::ExprPtr>{tile, MakeConstInt(5), MakeConstInt(42)}, ir::Span::Unknown());
-    auto setval_stmt = std::make_shared<const ir::EvalStmt>(setval, ir::Span::Unknown());
+    auto setval_stmt = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, setval, ir::Span::Unknown());
 
     auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{tile_assign, setval_stmt},
                                                      ir::Span::Unknown());
@@ -839,13 +844,15 @@ TEST(BackendCceOpsTest, BlockGetValTile)
     auto tile = MakeVar("tile", tile_type);
     auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
-    auto tile_assign = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
+    auto tile_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tile}, make_tile,
+                                                              ir::Span::Unknown());
 
     auto int_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
     auto result = MakeVar("val", int_type);
     auto getval = std::make_shared<const ir::Call>("block.getval", std::vector<ir::ExprPtr>{tile, MakeConstInt(3)},
                                                    int_type, ir::Span::Unknown());
-    auto getval_assign = std::make_shared<const ir::AssignStmt>(result, getval, ir::Span::Unknown());
+    auto getval_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, getval,
+                                                                ir::Span::Unknown());
 
     auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{tile_assign, getval_assign},
                                                      ir::Span::Unknown());
@@ -866,7 +873,7 @@ TEST(BackendCceOpsTest, BlockGetValTensor)
     auto result = MakeVar("val", scalar_type);
     auto call = std::make_shared<const ir::Call>("block.getval", std::vector<ir::ExprPtr>{tensor, MakeConstInt(5)},
                                                  scalar_type, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_3510);
@@ -881,7 +888,7 @@ TEST(BackendCceOpsTest, BlockGetValTensorInt32CastsResult)
     auto result = MakeVar("val", int64_type);
     auto call = std::make_shared<const ir::Call>("block.getval", std::vector<ir::ExprPtr>{tensor, MakeConstInt(5)},
                                                  int64_type, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_3510);
@@ -895,7 +902,7 @@ TEST(BackendCceOpsTest, BlockGetValTensorUint64DoesNotCastResult)
     auto result = MakeVar("val", uint64_type);
     auto call = std::make_shared<const ir::Call>("block.getval", std::vector<ir::ExprPtr>{tensor, MakeConstInt(5)},
                                                  uint64_type, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::AssignStmt>(result, call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_3510);
@@ -908,7 +915,7 @@ TEST(BackendCceOpsTest, BlockSetValTensor)
     auto tensor = MakeTensorVar("data", {64}, ir::DataType::FP32);
     auto call = std::make_shared<const ir::Call>(
         "block.setval", std::vector<ir::ExprPtr>{tensor, MakeConstInt(5), MakeConstInt(42)}, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_3510);
@@ -1079,7 +1086,7 @@ TEST(BackendCceOpsTest, SyncAllHardMix)
     Kwargs kwargs = {};
     auto call = std::make_shared<const ir::Call>("system.sync_all", std::vector<ir::ExprPtr>{}, kwargs,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -1091,7 +1098,7 @@ TEST(BackendCceOpsTest, SyncAllHardAIVOnly)
     Kwargs kwargs = {{"core_type", 0}};
     auto call = std::make_shared<const ir::Call>("system.sync_all", std::vector<ir::ExprPtr>{}, kwargs,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -1106,7 +1113,7 @@ TEST(BackendCceOpsTest, DcciTensorDefaultKwargs)
 {
     auto tensor = MakeTensorVar("data", {64}, ir::DataType::FP32);
     auto call = std::make_shared<const ir::Call>("system.dcci", std::vector<ir::ExprPtr>{tensor}, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_3510);
@@ -1121,7 +1128,7 @@ TEST(BackendCceOpsTest, DcciTensorWithOffsetAndKwargs)
     Kwargs kwargs = {{"cache_line", 0}, {"dst", 2}};
     auto call = std::make_shared<const ir::Call>("system.dcci", std::vector<ir::ExprPtr>{tensor, MakeConstInt(16)},
                                                  kwargs, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body, {tensor}), npu::tile_fwk::NPUArch::DAV_3510);
@@ -1152,10 +1159,11 @@ TEST(BackendCceOpsTest, DcciTileDefaultKwargs)
     auto tile = MakeVar("tile", tile_type);
     auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
-    auto tile_assign = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
+    auto tile_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tile}, make_tile,
+                                                              ir::Span::Unknown());
 
     auto dcci = std::make_shared<const ir::Call>("system.dcci", std::vector<ir::ExprPtr>{tile}, ir::Span::Unknown());
-    auto dcci_stmt = std::make_shared<const ir::EvalStmt>(dcci, ir::Span::Unknown());
+    auto dcci_stmt = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, dcci, ir::Span::Unknown());
 
     auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{tile_assign, dcci_stmt},
                                                      ir::Span::Unknown());
@@ -1501,7 +1509,7 @@ TEST(BackendCceOpsTest, DebugPrintf)
     Kwargs kwargs = {{"format", std::string("value=%d\n")}};
     auto call = std::make_shared<const ir::Call>("debug.printf", std::vector<ir::ExprPtr>{MakeConstInt(42)}, kwargs,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -1513,7 +1521,7 @@ TEST(BackendCceOpsTest, DebugAssert)
     Kwargs kwargs = {{"condition_text", std::string("x > 0")}, {"format", std::string("")}, {"show_location", true}};
     auto call = std::make_shared<const ir::Call>("debug.assert", std::vector<ir::ExprPtr>{MakeConstInt(1)}, kwargs,
                                                  ir::Span("kernel.py", 12, 3));
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -1527,7 +1535,7 @@ TEST(BackendCceOpsTest, DebugAssertWithFormatAndArgs)
     Kwargs kwargs = {{"condition_text", std::string("x > 0")}, {"format", std::string("x=%d\n")}};
     auto call = std::make_shared<const ir::Call>(
         "debug.assert", std::vector<ir::ExprPtr>{MakeConstInt(1), MakeConstInt(99)}, kwargs, ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
@@ -1540,7 +1548,7 @@ TEST(BackendCceOpsTest, DebugAssertWithTextOnlyFormat)
     Kwargs kwargs = {{"condition_text", std::string("flag")}, {"format", std::string("flag is false\n")}};
     auto call = std::make_shared<const ir::Call>("debug.assert", std::vector<ir::ExprPtr>{MakeConstInt(1)}, kwargs,
                                                  ir::Span::Unknown());
-    auto body = std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);

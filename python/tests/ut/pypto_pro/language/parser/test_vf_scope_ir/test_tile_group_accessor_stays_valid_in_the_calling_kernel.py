@@ -58,8 +58,11 @@ def test_tile_group_accessor_stays_valid_in_the_calling_kernel():
     program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     func = program.get_function(kernel.__name__)
     calls = [
-        stmt.expr for stmt in func.body.stmts
-        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == "simd.call"
+        stmt.value
+        for stmt in func.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "simd.call"
     ]
     assert len(calls) == 1
     assert calls[0].kwargs["callee"] == "use"

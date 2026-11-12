@@ -108,6 +108,6 @@ def test_compact_propagated_by_parser(compact, expected):
         func = func_program.get_function(func.__name__)
 
     stmt = func.body.stmts[0] if hasattr(func.body, "stmts") else func.body
-    tile_type = stmt.var.type
+    tile_type = stmt.targets[0].type
     assert isinstance(tile_type.hardware_info, _ir.HardwareInfo)
     assert tile_type.hardware_info.compact == expected

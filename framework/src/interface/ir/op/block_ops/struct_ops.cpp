@@ -90,11 +90,12 @@ REGISTER_OP("struct.create")
 
 REGISTER_OP("struct.set")
     .set_op_category("StructOp")
-    .set_description("Statement side-effect call: write one struct field. args are (base, value) for a scalar "
-                     "field or (base, index, value) for an array field element; kwarg `field` is the C++ field "
-                     "name (same naming convention as struct.create's `fields`). Lowered by the CCE backend to "
-                     "`base.field = value;` or `base.field[index] = value;`. Must be used inside an EvalStmt, "
-                     "not as an RHS value.")
+    .set_description(
+        "Statement side-effect call: write one struct field. args are (base, value) for a scalar "
+        "field or (base, index, value) for an array field element; kwarg `field` is the C++ field "
+        "name (same naming convention as struct.create's `fields`). Lowered by the CCE backend to "
+        "`base.field = value;` or `base.field[index] = value;`. Must be used inside an AssignStmt with no targets, "
+        "not as an RHS value.")
     .add_argument("base", "Struct instance (struct-classified TupleType)")
     .add_argument("value", "New field value expression (or index for array field writes)")
     .set_attr<std::string>("field")

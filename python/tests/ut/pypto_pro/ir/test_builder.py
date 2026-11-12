@@ -34,7 +34,7 @@ def test_simple_function_with_auto_span():
         # Build body
         result = ib.var("result", ir.ScalarType(DataType.INT64))
         add_expr = ir.Add(x, y, DataType.INT64, ir.Span.unknown())
-        ib.assign(result, add_expr)
+        ib.assign([result], add_expr)
 
     func = f.get_result()
 
@@ -75,10 +75,10 @@ def test_function_with_multiple_statements():
         a = ib.var("a", ir.ScalarType(DataType.INT64))
         b = ib.var("b", ir.ScalarType(DataType.INT64))
 
-        ib.assign(a, x)
+        ib.assign([a], x)
         const_one = ir.ConstInt(1, DataType.INT64, ir.Span.unknown())
         add_expr = ir.Add(a, const_one, DataType.INT64, ir.Span.unknown())
-        ib.assign(b, add_expr)
+        ib.assign([b], add_expr)
 
     func = f.get_result()
 

@@ -51,11 +51,11 @@ def _walk_statements(stmt):
 def _mutex_calls(program, function_name):
     function = program.get_function(function_name)
     return [
-        stmt.expr
+        stmt.value
         for stmt in _walk_statements(function.body)
-        if isinstance(stmt, ir.EvalStmt)
-        and isinstance(stmt.expr, ir.Call)
-        and stmt.expr.name in ("system.mutex_lock_dyn", "system.mutex_unlock_dyn")
+        if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name in ("system.mutex_lock_dyn", "system.mutex_unlock_dyn")
     ]
 
 
@@ -63,8 +63,10 @@ def _bound_ids(program, function_name):
     return [
         int(stmt.value.args[2].elements[0].value)
         for stmt in _walk_statements(program.get_function(function_name).body)
-        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call)
-        and stmt.value.name == "block.make_mutex_tile" and stmt.value.args[2].elements
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.make_mutex_tile"
+        and stmt.value.args[2].elements
     ]
 
 

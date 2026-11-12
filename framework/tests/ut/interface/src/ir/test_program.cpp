@@ -36,7 +36,7 @@ namespace ir {
 static FunctionPtr MakeSimpleFunction(const std::string& name)
 {
     auto bodyVal = std::make_shared<ConstInt>(0, DataType::INT32, Span::Unknown());
-    auto body = std::make_shared<EvalStmt>(bodyVal, Span::Unknown());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, bodyVal, Span::Unknown());
     std::vector<VarPtr> params;
     std::vector<TypePtr> returnTypes;
     return std::make_shared<Function>(name, params, returnTypes, body, Span::Unknown());

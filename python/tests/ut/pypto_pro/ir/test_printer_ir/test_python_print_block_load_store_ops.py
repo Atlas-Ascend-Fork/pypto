@@ -28,7 +28,7 @@ def test_python_print_block_load_store_ops():
 
     load = ir.Call(ir.Op("block.load"), [tile, tensor, ir.MakeTuple([zero], span)], span)
     store = ir.Call(ir.Op("block.store"), [tensor, tile, ir.MakeTuple([zero], span)], span)
-    body = ir.SeqStmts([ir.EvalStmt(load, span), ir.EvalStmt(store, span)], span)
+    body = ir.SeqStmts([ir.AssignStmt([], load, span), ir.AssignStmt([], store, span)], span)
 
     result = str(body)
 

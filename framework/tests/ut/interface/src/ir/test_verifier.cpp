@@ -133,8 +133,8 @@ TEST_F(VerifierApiTest, DisableRule_SkipsVerification)
     // Build a program with SSA violation — should not be reported since rule is disabled
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
     auto val = std::make_shared<ConstInt>(int64_t(1), DataType::INT32, Sp());
-    auto a1 = std::make_shared<AssignStmt>(x, val, Sp());
-    auto a2 = std::make_shared<AssignStmt>(x, val, Sp());
+    auto a1 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val, Sp());
+    auto a2 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val, Sp());
     auto body = std::make_shared<SeqStmts>(std::vector<StmtPtr>{a1, a2}, Sp());
     auto program = MakeProgram("f", body);
     auto diags = v.Verify(program);
@@ -157,8 +157,8 @@ TEST_F(VerifierApiTest, VerifyOrThrow_ThrowsOnError)
 
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
     auto val = std::make_shared<ConstInt>(int64_t(1), DataType::INT32, Sp());
-    auto a1 = std::make_shared<AssignStmt>(x, val, Sp());
-    auto a2 = std::make_shared<AssignStmt>(x, val, Sp());
+    auto a1 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val, Sp());
+    auto a2 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val, Sp());
     auto body = std::make_shared<SeqStmts>(std::vector<StmtPtr>{a1, a2}, Sp());
     auto program = MakeProgram("f", body);
     EXPECT_THROW(v.VerifyOrThrow(program), VerificationError);
@@ -172,7 +172,7 @@ TEST_F(VerifierApiTest, VerifyOrThrow_NoThrowOnClean)
 
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
     auto val = std::make_shared<ConstInt>(int64_t(42), DataType::INT32, Sp());
-    auto body = std::make_shared<AssignStmt>(x, val, Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val, Sp());
     auto program = MakeProgram("f", body);
     EXPECT_NO_THROW(v.VerifyOrThrow(program));
 }
@@ -196,8 +196,8 @@ TEST_F(VerifierSSATest, MultipleAssignment_ReportsError)
 
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
     auto val = std::make_shared<ConstInt>(int64_t(1), DataType::INT32, Sp());
-    auto a1 = std::make_shared<AssignStmt>(x, val, Sp());
-    auto a2 = std::make_shared<AssignStmt>(x, val, Sp());
+    auto a1 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val, Sp());
+    auto a2 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val, Sp());
     auto body = std::make_shared<SeqStmts>(std::vector<StmtPtr>{a1, a2}, Sp());
     auto program = MakeProgram("f", body);
     auto diags = v.Verify(program);
@@ -231,7 +231,8 @@ TEST_F(VerifierSSATest, ForStmt_MissingYield_ReportsError)
     auto ret_var = std::make_shared<Var>("sum_out", Scalar(DataType::INT32), Sp());
 
     // Body without YieldStmt
-    auto noop = std::make_shared<AssignStmt>(std::make_shared<Var>("tmp", Scalar(DataType::INT32), Sp()), zero, Sp());
+    auto noop = std::make_shared<AssignStmt>(
+        std::vector<VarPtr>{std::make_shared<Var>("tmp", Scalar(DataType::INT32), Sp())}, zero, Sp());
 
     auto for_stmt = std::make_shared<ForStmt>(i, zero, ten, one, std::vector<IterArgPtr>{iter_arg}, noop,
                                               std::vector<VarPtr>{ret_var}, Sp());
@@ -251,8 +252,8 @@ TEST_F(VerifierSSATest, IfStmt_MissingElseYield_ReportsError)
 
     auto then_yield = std::make_shared<YieldStmt>(std::vector<ExprPtr>{val}, Sp());
     // else body without yield
-    auto else_noop = std::make_shared<AssignStmt>(std::make_shared<Var>("tmp", Scalar(DataType::INT32), Sp()), val,
-                                                  Sp());
+    auto else_noop = std::make_shared<AssignStmt>(
+        std::vector<VarPtr>{std::make_shared<Var>("tmp", Scalar(DataType::INT32), Sp())}, val, Sp());
 
     auto if_stmt = std::make_shared<IfStmt>(cond, then_yield, else_noop, std::vector<VarPtr>{ret_var}, Sp());
     auto program = MakeProgram("f", if_stmt);
@@ -270,7 +271,8 @@ TEST_F(VerifierSSATest, WhileStmt_MissingYield_ReportsError)
     auto iter_arg = std::make_shared<IterArg>("cnt", Scalar(DataType::INT32), zero, Sp());
     auto ret_var = std::make_shared<Var>("cnt_out", Scalar(DataType::INT32), Sp());
 
-    auto noop = std::make_shared<AssignStmt>(std::make_shared<Var>("tmp", Scalar(DataType::INT32), Sp()), zero, Sp());
+    auto noop = std::make_shared<AssignStmt>(
+        std::vector<VarPtr>{std::make_shared<Var>("tmp", Scalar(DataType::INT32), Sp())}, zero, Sp());
 
     auto while_stmt = std::make_shared<WhileStmt>(cond, std::vector<IterArgPtr>{iter_arg}, noop,
                                                   std::vector<VarPtr>{ret_var}, Sp());
@@ -553,7 +555,7 @@ TEST_F(VerifierNoNestedCallTest, CallInCallArgs_ReportsError)
 
     auto inner_call = std::make_shared<Call>("inner_op", std::vector<ExprPtr>{}, Sp());
     auto outer_call = std::make_shared<Call>("outer_op", std::vector<ExprPtr>{inner_call}, Sp());
-    auto eval = std::make_shared<EvalStmt>(outer_call, Sp());
+    auto eval = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, outer_call, Sp());
     auto program = MakeProgram("f", eval);
     auto diags = v.Verify(program);
     EXPECT_GE(diags.size(), 1u);
@@ -615,7 +617,7 @@ TEST_F(VerifierNoNestedCallTest, CallInBinaryExpr_ReportsError)
 
     auto verify_binary = [&](const ExprPtr& expr) {
         auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-        auto assign = std::make_shared<AssignStmt>(x, expr, Sp());
+        auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, expr, Sp());
         auto diags = VerifyWithNoNestedCall(assign);
         EXPECT_FALSE(diags.empty());
     };
@@ -651,7 +653,7 @@ TEST_F(VerifierNoNestedCallTest, CallInUnaryExpr_ReportsError)
 
     auto verify_unary = [&](const ExprPtr& expr) {
         auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-        auto assign = std::make_shared<AssignStmt>(x, expr, Sp());
+        auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, expr, Sp());
         auto diags = VerifyWithNoNestedCall(assign);
         EXPECT_FALSE(diags.empty());
     };
@@ -670,7 +672,7 @@ TEST_F(VerifierNoNestedCallTest, NoNesting_Clean)
 
     auto val = std::make_shared<ConstInt>(int64_t(42), DataType::INT32, Sp());
     auto call = std::make_shared<Call>("op", std::vector<ExprPtr>{val}, Sp());
-    auto eval = std::make_shared<EvalStmt>(call, Sp());
+    auto eval = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, Sp());
     auto program = MakeProgram("f", eval);
     auto diags = v.Verify(program);
     EXPECT_TRUE(diags.empty());
@@ -683,7 +685,7 @@ TEST_F(VerifierNoNestedCallTest, BitCastAsNestedCall_NoError)
 
     auto bit_cast_call = std::make_shared<Call>("vf.bit_cast", std::vector<ExprPtr>{}, Sp());
     auto outer_call = std::make_shared<Call>("vf.xor", std::vector<ExprPtr>{bit_cast_call}, Sp());
-    auto eval = std::make_shared<EvalStmt>(outer_call, Sp());
+    auto eval = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, outer_call, Sp());
     auto program = MakeProgram("f", eval);
     auto diags = v.Verify(program);
     EXPECT_TRUE(diags.empty());

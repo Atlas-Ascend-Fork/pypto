@@ -36,11 +36,17 @@ def _parse_select(kernel, op_name):
     kernel_def = kernel.to_kernel_def()
     program, _ = kernel_def.parse_target_program(ir.SectionKind.Vector)
     stmts = program.get_function(kernel_def.func_name).body.stmts
-    tiles = [stmt.var for stmt in stmts if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.var.type, ir.TileType)]
-    calls = [
-        stmt.expr
+    tiles = [
+        stmt.targets[0]
         for stmt in stmts
-        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == op_name
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and isinstance(stmt.targets[0].type, ir.TileType)
+    ]
+    calls = [
+        stmt.value
+        for stmt in stmts
+        if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == op_name
     ]
     assert len(calls) == 1
     return tiles, calls[0]

@@ -795,13 +795,18 @@ void IRPrinter::VisitExpr_(const BitNotPtr& op)
 // Statement visitors with proper Python syntax
 void IRPrinter::VisitStmt_(const AssignStmtPtr& op)
 {
-    // Print with type annotation: var: type = value
-    // In concise mode, omit the type annotation: var = value
-    VisitExpr(op->var_);
-    if (!concise_ && !As<TileType>(op->var_->GetType())) {
-        stream_ << ": " << Print(op->var_->GetType());
+    for (size_t i = 0; i < op->targets_.size(); ++i) {
+        if (i != 0) {
+            stream_ << ", ";
+        }
+        VisitExpr(op->targets_[i]);
+        if (op->targets_.size() == 1 && !concise_ && !As<TileType>(op->targets_[i]->GetType())) {
+            stream_ << ": " << Print(op->targets_[i]->GetType());
+        }
     }
-    stream_ << " = ";
+    if (!op->targets_.empty()) {
+        stream_ << " = ";
+    }
     VisitExpr(op->value_);
 }
 
@@ -897,14 +902,6 @@ void IRPrinter::PrintStmtBlock(const StmtPtr& stmt)
         stream_ << GetIndent();
         VisitStmt(stmt);
     }
-}
-
-void IRPrinter::VisitStmt_(const EvalStmtPtr& op)
-{
-    // Print expression statement: expr
-    stream_ << prefix_ << ".eval(";
-    VisitExpr(op->expr_);
-    stream_ << ")";
 }
 
 void IRPrinter::VisitStmt_(const BreakStmtPtr& op)

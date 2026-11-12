@@ -218,7 +218,7 @@ def test_matmul_mx_builds_registered_call_with_bias():
 
     params = [t[name] for name in ("dst", "lhs", "rhs", "scale_a", "scale_b", "bias")]
     span = ir.Span.unknown()
-    body = ir.SeqStmts([ir.EvalStmt(call, span), ir.ReturnStmt(span)], span)
+    body = ir.SeqStmts([ir.AssignStmt([], call, span), ir.ReturnStmt(span)], span)
     function = ir.Function("matmul_mx_bias", params, [], body, span)
     printed = str(function)
     golden = Path(__file__).with_suffix(".pypto").read_text(encoding="utf-8")

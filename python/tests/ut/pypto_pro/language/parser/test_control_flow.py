@@ -73,7 +73,9 @@ def test_target_section_jump_is_dispatched_by_enclosing_loop_body():
 
     assert sum(isinstance(stmt, ir.BreakStmt) for stmt in for_stmt.body.stmts) == 1
     assert all(
-        not (isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("unreachable"))
+        not (
+            (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("unreachable")
+        )
         for stmt in for_stmt.body.stmts
     )
 
@@ -94,7 +96,7 @@ def test_loop_carried_constant_is_not_folded_in_body():
     observed_assignment = next(
         stmt
         for stmt in body
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("observed")
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("observed")
     )
     assert isinstance(observed_assignment.value, ir.Var)
 
@@ -116,15 +118,15 @@ def test_for_target_is_rebound_each_iteration_and_merged_after_loop():
     assert len(for_stmt.return_vars) == 1
 
     bind_target = for_stmt.body.stmts[0]
-    assert isinstance(bind_target, ir.AssignStmt)
+    assert isinstance(bind_target, ir.AssignStmt) and bool(bind_target.targets)
     assert ir.structural_equal(bind_target.value, for_stmt.loop_var, enable_auto_mapping=False)
 
     update_target = next(
         stmt
         for stmt in for_stmt.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Add)
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and isinstance(stmt.value, ir.Add)
     )
-    assert ir.structural_equal(update_target.value.left, bind_target.var, enable_auto_mapping=False)
+    assert ir.structural_equal(update_target.value.left, bind_target.targets[0], enable_auto_mapping=False)
     assert not ir.structural_equal(
         update_target.value.left,
         for_stmt.iter_args[0].iterVar,
@@ -133,12 +135,12 @@ def test_for_target_is_rebound_each_iteration_and_merged_after_loop():
 
     continue_stmt = for_stmt.body.stmts[-1]
     assert isinstance(continue_stmt, ir.ContinueStmt)
-    assert ir.structural_equal(continue_stmt.value[0], update_target.var, enable_auto_mapping=False)
+    assert ir.structural_equal(continue_stmt.value[0], update_target.targets[0], enable_auto_mapping=False)
 
     result_assignment = next(
         stmt
         for stmt in func_ir.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("_test_result")
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("_test_result")
     )
     assert isinstance(result_assignment.value, ir.Add)
     assert ir.structural_equal(
@@ -160,7 +162,7 @@ def test_for_target_without_preexisting_binding_is_not_carried():
     assert not for_stmt.iter_args
     assert not for_stmt.return_vars
     bind_target = for_stmt.body.stmts[0]
-    assert isinstance(bind_target, ir.AssignStmt)
+    assert isinstance(bind_target, ir.AssignStmt) and bool(bind_target.targets)
     assert ir.structural_equal(bind_target.value, for_stmt.loop_var, enable_auto_mapping=False)
 
 
@@ -353,7 +355,7 @@ def test_astype_reconciles_dynamic_if_scalar_types():
     assert isinstance(merged_type, ir.ScalarType)
     assert merged_type.dtype == ir.DataType.INT32
     assert any(
-        isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Cast)
+        (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and isinstance(stmt.value, ir.Cast)
         for stmt in if_stmt.else_body.stmts
     )
 
@@ -368,9 +370,9 @@ def test_ssa_names_avoid_user_suffix_collisions():
     func_program, _ = func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     func = func_program.get_function(func.__name__)
     names = [
-        stmt.var.name
+        stmt.targets[0].name
         for stmt in func.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("x")
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("x")
     ]
     assert names == ["x_0", "x_1_0", "x_1"]
 
@@ -478,7 +480,7 @@ def test_if_both_branches_jump_stops_enclosing_statement_list():
     assert isinstance(for_stmt.body.stmts[branch_index + 1], ir.ContinueStmt)
     assert sum(isinstance(stmt, ir.ContinueStmt) for stmt in for_stmt.body.stmts) == 1
     assert all(
-        not (isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("invalid"))
+        not ((isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("invalid"))
         for stmt in for_stmt.body.stmts
     )
 
@@ -587,7 +589,7 @@ def test_statement_list_stops_after_direct_break():
     for_stmt = _find_for_stmt(func)
 
     assert len(for_stmt.body.stmts) == 2
-    assert isinstance(for_stmt.body.stmts[0], ir.AssignStmt)
+    assert isinstance(for_stmt.body.stmts[0], ir.AssignStmt) and bool(for_stmt.body.stmts[0].targets)
     assert isinstance(for_stmt.body.stmts[1], ir.BreakStmt)
 
 
@@ -637,7 +639,7 @@ def test_tuple_is_one_if_merge_value_and_one_constant():
     first = next(
         stmt
         for stmt in func_ir.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("first")
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("first")
     )
     assert isinstance(first.value, ir.ConstInt)
     assert first.value.value == 1
@@ -659,8 +661,8 @@ def test_if_merges_named_tuples_with_the_same_fields():
 
     assert isinstance(if_stmt.return_vars[0].type, ir.TupleType)
     assert any(
-        isinstance(stmt, ir.AssignStmt)
-        and stmt.var.name.startswith("observed")
+        (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+        and stmt.targets[0].name.startswith("observed")
         and isinstance(stmt.value, ir.GetItemExpr)
         for stmt in func_ir.body.stmts
     )
@@ -818,7 +820,7 @@ def test_dynamic_ifexp_returns_constant_when_phi_is_constant():
     selected = next(
         stmt
         for stmt in func_ir.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("selected")
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("selected")
     )
     then_yield = if_stmt.then_body.stmts[-1]
     else_yield = if_stmt.else_body.stmts[-1]
@@ -878,7 +880,7 @@ def _assert_materialized_stop(func: ir.Function, expr_type) -> None:
     assignment = next(
         stmt
         for stmt in func.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name == for_stmt.stop.name
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name == for_stmt.stop.name
     )
     assert isinstance(assignment.value, expr_type)
 
@@ -890,7 +892,7 @@ def _assert_lowered_while_guard(while_stmt: ir.WhileStmt, expr_type) -> None:
         index for index, stmt in enumerate(while_stmt.body.stmts) if isinstance(stmt, ir.IfStmt)
     )
     assert any(
-        isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, expr_type)
+        (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and isinstance(stmt.value, expr_type)
         for stmt in while_stmt.body.stmts[:guard_index]
     )
     guard = while_stmt.body.stmts[guard_index]
@@ -1063,7 +1065,7 @@ def test_while_true_with_only_top_level_break_is_flattened():
 
     assert not any(isinstance(stmt, ir.WhileStmt) for stmt in func.body.stmts)
     assert any(
-        isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("_test_result")
+        (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("_test_result")
         for stmt in func.body.stmts
     )
 
@@ -1552,7 +1554,7 @@ def test_boolop_condition_keeps_and_lowering_path():
         condition = next(
             stmt.value
             for stmt in body
-            if isinstance(stmt, ir.AssignStmt) and stmt.var.name == condition.name
+            if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name == condition.name
         )
     assert isinstance(condition, ir.And), "condition must stay on the C++ && lowering path"
 

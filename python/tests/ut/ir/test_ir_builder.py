@@ -85,7 +85,7 @@ def test_builder_function_with_params_and_returns():
     x = b.func_arg("x", st, sp)
     _y = b.func_arg("y", st, sp)
     b.return_type(st)
-    b.assign(x, ir.ConstInt(42, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(42, ir.INT32, sp), sp)
     func = b.end_function(sp)
 
     assert func.name == "add_func"
@@ -104,11 +104,11 @@ def test_builder_function_str():
     b.begin_function("test_func", sp)
     x = b.func_arg("x", st, sp)
     b.return_type(st)
-    b.assign(x, ir.ConstInt(42, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(42, ir.INT32, sp), sp)
     built_func = b.end_function(sp)
 
     manual_x = ir.Var("x", st, sp)
-    manual_assign = ir.AssignStmt(manual_x, ir.ConstInt(42, ir.INT32, sp), sp)
+    manual_assign = ir.AssignStmt([manual_x], ir.ConstInt(42, ir.INT32, sp), sp)
     manual_func = ir.Function("test_func", [manual_x], [st], manual_assign, sp)
 
     assert str(built_func) == str(manual_func)
@@ -134,10 +134,10 @@ def test_builder_assign():
 
     b.begin_function("f", sp)
     x = b.func_arg("x", st, sp)
-    stmt = b.assign(x, ir.ConstInt(42, ir.INT32, sp), sp)
+    stmt = b.assign([x], ir.ConstInt(42, ir.INT32, sp), sp)
     b.end_function(sp)
 
-    assert isinstance(stmt, ir.AssignStmt)
+    assert isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)
     assert str(stmt) == "int32_t %x = 42;"
 
 
@@ -167,10 +167,10 @@ def test_builder_emit():
     b.begin_function("f", sp)
     b.func_arg("x", st, sp)
     call = ir.Call("some_op", [ir.ConstInt(42, ir.INT32, sp)], sp)
-    b.emit(ir.EvalStmt(call, sp))
+    b.emit(ir.AssignStmt([], call, sp))
     func = b.end_function(sp)
 
-    assert isinstance(func.body[0], ir.EvalStmt)
+    assert isinstance(func.body[0], ir.AssignStmt) and not func.body[0].targets
 
 
 def test_builder_emit_struct_ops():
@@ -192,12 +192,12 @@ def test_builder_emit_struct_ops():
 
     b.begin_function("f", sp)
     for call in [struct_create, struct_set]:
-        b.emit(ir.EvalStmt(call, sp))
+        b.emit(ir.AssignStmt([], call, sp))
     func = b.end_function(sp)
 
-    assert [func.body[i].expr.name for i in range(2)] == ["struct.create", "struct.set"]
-    assert isinstance(func.body[0].expr.type, ir.TupleType)
-    assert isinstance(func.body[1].expr.type, ir.TupleType)
+    assert [func.body[i].value.name for i in range(2)] == ["struct.create", "struct.set"]
+    assert isinstance(func.body[0].value.type, ir.TupleType)
+    assert isinstance(func.body[1].value.type, ir.TupleType)
 
 
 def test_builder_emit_block_ops():
@@ -215,13 +215,13 @@ def test_builder_emit_block_ops():
 
     b.begin_function("f", sp)
     for call in [block_store, block_move]:
-        b.emit(ir.EvalStmt(call, sp))
+        b.emit(ir.AssignStmt([], call, sp))
     func = b.end_function(sp)
 
-    assert [func.body[i].expr.name for i in range(2)] == ["block.store", "block.move"]
-    assert isinstance(func.body[0].expr.type, ir.TensorType)
-    assert func.body[0].expr.kwargs["phase"] == 0
-    assert isinstance(func.body[1].expr.type, ir.NoneType)
+    assert [func.body[i].value.name for i in range(2)] == ["block.store", "block.move"]
+    assert isinstance(func.body[0].value.type, ir.TensorType)
+    assert func.body[0].value.kwargs["phase"] == 0
+    assert isinstance(func.body[1].value.type, ir.NoneType)
 
 
 def test_builder_emit_vf_op():
@@ -237,11 +237,11 @@ def test_builder_emit_vf_op():
     vf_add = pypto_impl.ir.create_op_call("vf.add", [dst_reg, src0, src1, mask], sp)
 
     b.begin_function("f", sp)
-    b.emit(ir.EvalStmt(vf_add, sp))
+    b.emit(ir.AssignStmt([], vf_add, sp))
     func = b.end_function(sp)
 
-    assert func.body[0].expr.name == "vf.add"
-    assert func.body[0].expr.type.dtype == ir.FP32
+    assert func.body[0].value.name == "vf.add"
+    assert func.body[0].value.type.dtype == ir.FP32
 
 
 # ---------- For loop building ----------
@@ -263,7 +263,7 @@ def test_builder_for_loop():
         ir.ConstInt(1, ir.INT32, sp),
         sp,
     )
-    b.assign(x, ir.ConstInt(1, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(1, ir.INT32, sp), sp)
     for_stmt = b.end_for_loop(sp)
 
     assert isinstance(for_stmt, ir.ForStmt)
@@ -357,7 +357,7 @@ def test_builder_while_loop():
     x = b.func_arg("x", st, sp)
 
     b.begin_while_loop(ir.ConstBool(True, sp), sp)
-    b.assign(x, ir.ConstInt(1, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(1, ir.INT32, sp), sp)
     while_stmt = b.end_while_loop(sp)
 
     assert isinstance(while_stmt, ir.WhileStmt)
@@ -381,7 +381,7 @@ def test_builder_while_loop_with_iter_args():
     ret_var = b.var("sum_out", st, sp)
     b.add_while_return_var(ret_var)
 
-    b.assign(x, ir.ConstInt(1, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(1, ir.INT32, sp), sp)
     while_stmt = b.end_while_loop(sp)
 
     assert isinstance(while_stmt, ir.WhileStmt)
@@ -414,7 +414,7 @@ def test_builder_while_loop_set_condition():
     ret_var = b.var("cnt_out", st, sp)
     b.add_while_return_var(ret_var)
 
-    b.assign(x, ir.ConstInt(1, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(1, ir.INT32, sp), sp)
     while_stmt = b.end_while_loop(sp)
 
     assert isinstance(while_stmt, ir.WhileStmt)
@@ -435,7 +435,7 @@ def test_builder_if():
     x = b.func_arg("x", st, sp)
 
     b.begin_if(ir.ConstBool(True, sp), sp)
-    b.assign(x, ir.ConstInt(42, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(42, ir.INT32, sp), sp)
     if_stmt = b.end_if(sp)
 
     assert isinstance(if_stmt, ir.IfStmt)
@@ -452,9 +452,9 @@ def test_builder_if_else():
     x = b.func_arg("x", st, sp)
 
     b.begin_if(ir.ConstBool(True, sp), sp)
-    b.assign(x, ir.ConstInt(42, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(42, ir.INT32, sp), sp)
     b.begin_else(sp)
-    b.assign(x, ir.ConstInt(0, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(0, ir.INT32, sp), sp)
     if_stmt = b.end_if(sp)
 
     assert isinstance(if_stmt, ir.IfStmt)
@@ -473,7 +473,7 @@ def test_builder_if_with_return_vars():
 
     b.begin_if(ir.ConstBool(True, sp), sp)
     b.add_if_return_var(ret_var)
-    b.assign(x, ir.ConstInt(42, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(42, ir.INT32, sp), sp)
     if_stmt = b.end_if(sp)
 
     assert isinstance(if_stmt, ir.IfStmt)
@@ -490,14 +490,14 @@ def test_builder_if_with_runtime_op():
     b.begin_function("f", sp)
     b.begin_if(ir.ConstBool(True, sp), sp)
     sync = pypto_impl.ir.create_op_call("system.sync_all", [], {"core_type": 2}, sp)
-    b.emit(ir.EvalStmt(sync, sp))
+    b.emit(ir.AssignStmt([], sync, sp))
     if_stmt = b.end_if(sp)
     func = b.end_function(sp)
 
     assert isinstance(func.body[0], ir.IfStmt)
-    assert isinstance(if_stmt.then_body[0], ir.EvalStmt)
-    assert if_stmt.then_body[0].expr.name == "system.sync_all"
-    assert isinstance(if_stmt.then_body[0].expr.type, ir.UnknownType)
+    assert isinstance(if_stmt.then_body[0], ir.AssignStmt) and not if_stmt.then_body[0].targets
+    assert if_stmt.then_body[0].value.name == "system.sync_all"
+    assert isinstance(if_stmt.then_body[0].value.type, ir.UnknownType)
 
 
 def test_builder_if_else_str():
@@ -512,15 +512,15 @@ def test_builder_if_else_str():
     val0 = ir.ConstInt(0, ir.INT32, sp)
 
     b.begin_if(ir.ConstBool(True, sp), sp)
-    b.assign(x, val42, sp)
+    b.assign([x], val42, sp)
     b.begin_else(sp)
-    b.assign(x, val0, sp)
+    b.assign([x], val0, sp)
     built_if = b.end_if(sp)
     b.end_function(sp)
 
     manual_x = ir.Var("x", st, sp)
-    manual_then = ir.AssignStmt(manual_x, val42, sp)
-    manual_else = ir.AssignStmt(manual_x, val0, sp)
+    manual_then = ir.AssignStmt([manual_x], val42, sp)
+    manual_else = ir.AssignStmt([manual_x], val0, sp)
     manual_if = ir.IfStmt(ir.ConstBool(True, sp), manual_then, manual_else, [], sp)
 
     assert str(built_if) == str(manual_if)
@@ -539,7 +539,7 @@ def test_builder_section():
     b.begin_function("f", sp)
     x = b.func_arg("x", st, sp)
     b.begin_section(pypto_impl.ir.SectionKind.Vector, sp)
-    b.assign(x, ir.ConstInt(1, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(1, ir.INT32, sp), sp)
     section = b.end_section(sp)
     func = b.end_function(sp)
 
@@ -559,13 +559,13 @@ def test_builder_program():
     b.begin_function("func_a", sp)
     x = b.func_arg("x", st, sp)
     b.return_type(st)
-    b.assign(x, ir.ConstInt(1, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(1, ir.INT32, sp), sp)
     func_a = b.end_function(sp)
 
     b.begin_function("func_b", sp)
     y = b.func_arg("y", st, sp)
     b.return_type(st)
-    b.assign(y, ir.ConstInt(2, ir.INT32, sp), sp)
+    b.assign([y], ir.ConstInt(2, ir.INT32, sp), sp)
     func_b = b.end_function(sp)
 
     b.begin_program("test_prog", sp)
@@ -588,12 +588,12 @@ def test_builder_program_functions_sorted():
 
     b.begin_function("zebra", sp)
     z = b.func_arg("z", st, sp)
-    b.assign(z, ir.ConstInt(0, ir.INT32, sp), sp)
+    b.assign([z], ir.ConstInt(0, ir.INT32, sp), sp)
     func_z = b.end_function(sp)
 
     b.begin_function("alpha", sp)
     a = b.func_arg("a", st, sp)
-    b.assign(a, ir.ConstInt(1, ir.INT32, sp), sp)
+    b.assign([a], ir.ConstInt(1, ir.INT32, sp), sp)
     func_a = b.end_function(sp)
 
     b.begin_program("prog", sp)
@@ -658,7 +658,7 @@ def test_builder_nested_for_loops():
         ir.ConstInt(1, ir.INT32, sp),
         sp,
     )
-    b.assign(x, ir.ConstInt(1, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(1, ir.INT32, sp), sp)
     inner = b.end_for_loop(sp)
     outer = b.end_for_loop(sp)
 
@@ -689,7 +689,7 @@ def test_builder_for_with_if():
         sp,
     )
     b.begin_if(ir.ConstBool(True, sp), sp)
-    b.assign(x, ir.ConstInt(1, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(1, ir.INT32, sp), sp)
     b.end_if(sp)
     b.end_for_loop(sp)
 
@@ -716,7 +716,7 @@ def test_builder_if_with_nested_for():
         ir.ConstInt(1, ir.INT32, sp),
         sp,
     )
-    b.assign(x, ir.ConstInt(1, ir.INT32, sp), sp)
+    b.assign([x], ir.ConstInt(1, ir.INT32, sp), sp)
     b.end_for_loop(sp)
     b.end_if(sp)
 
@@ -756,9 +756,9 @@ def test_builder_complex_program():
     )
     cond = ir.Lt(i, ir.ConstInt(5, ir.INT32, sp), ir.INT32, sp)
     b.begin_if(cond, sp)
-    b.assign(x, ir.Add(x, ir.ConstInt(1, ir.INT32, sp), ir.INT32, sp), sp)
+    b.assign([x], ir.Add(x, ir.ConstInt(1, ir.INT32, sp), ir.INT32, sp), sp)
     b.begin_else(sp)
-    b.assign(x, ir.Sub(x, ir.ConstInt(1, ir.INT32, sp), ir.INT32, sp), sp)
+    b.assign([x], ir.Sub(x, ir.ConstInt(1, ir.INT32, sp), ir.INT32, sp), sp)
     b.end_if(sp)
     b.end_for_loop(sp)
 
@@ -863,8 +863,8 @@ def test_builder_create_seq_stmts():
     sp = _span()
     st = ir.ScalarType(ir.INT32)
     x = ir.Var("x", st, sp)
-    stmt1 = ir.AssignStmt(x, ir.ConstInt(1, ir.INT32, sp), sp)
-    stmt2 = ir.AssignStmt(x, ir.ConstInt(2, ir.INT32, sp), sp)
+    stmt1 = ir.AssignStmt([x], ir.ConstInt(1, ir.INT32, sp), sp)
+    stmt2 = ir.AssignStmt([x], ir.ConstInt(2, ir.INT32, sp), sp)
 
     seq = b.create_seq_stmts([stmt1, stmt2], sp)
     assert isinstance(seq, ir.SeqStmts)
@@ -895,9 +895,9 @@ def test_builder_create_if_stmt():
     st = ir.ScalarType(ir.INT32)
     x = ir.Var("x", st, sp)
     ret_var = ir.Var("out", st, sp)
-    then_body = ir.AssignStmt(x, ir.ConstInt(1, ir.INT32, sp), sp)
+    then_body = ir.AssignStmt([x], ir.ConstInt(1, ir.INT32, sp), sp)
     cond = ir.ConstBool(True, sp)
-    else_body = ir.AssignStmt(x, ir.ConstInt(0, ir.INT32, sp), sp)
+    else_body = ir.AssignStmt([x], ir.ConstInt(0, ir.INT32, sp), sp)
 
     stmt = b.create_if_stmt(cond, then_body, else_body, [ret_var], sp)
     assert isinstance(stmt, ir.IfStmt)
@@ -984,10 +984,10 @@ def test_builder_create_function():
     st = ir.ScalarType(ir.INT32)
 
     x = ir.Var("x", st, sp)
-    func_a = b.create_function("func_a", [x], [st], ir.AssignStmt(x, ir.ConstInt(1, ir.INT32, sp), sp), sp)
+    func_a = b.create_function("func_a", [x], [st], ir.AssignStmt([x], ir.ConstInt(1, ir.INT32, sp), sp), sp)
 
     y = ir.Var("y", st, sp)
-    func_b = b.create_function("func_b", [y], [st], ir.AssignStmt(y, ir.ConstInt(2, ir.INT32, sp), sp), sp)
+    func_b = b.create_function("func_b", [y], [st], ir.AssignStmt([y], ir.ConstInt(2, ir.INT32, sp), sp), sp)
 
     prog = b.create_program([func_a, func_b], "multi_prog", sp)
     assert isinstance(prog, ir.Program)

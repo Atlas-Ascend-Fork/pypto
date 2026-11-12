@@ -4898,7 +4898,7 @@ def _build_set_validshape(self, tile: Expr, shape: Expr, *, span: Span) -> Expr:
         for i in range(n_tiles):
             tile_ir = _ir_core.GetItemExpr(tiles, ConstInt(i, DataType.INT64, span), span)
             vs_call = _ir_set_validshape(tile_ir, shape, span=span)
-            self.builder.emit(_ir_core.EvalStmt(vs_call, span))
+            self.builder.emit(_ir_core.AssignStmt([], vs_call, span))
 
         return ConstInt(0, DataType.INT64, span)
 

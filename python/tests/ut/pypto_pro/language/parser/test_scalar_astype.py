@@ -63,7 +63,11 @@ def test_astype_preserves_supported_destination_dtype(dtype):
         _test_result = pl.astype(value, dtype)
 
     program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    assignments = [stmt for stmt in program.get_function("kernel").body.stmts if isinstance(stmt, ir.AssignStmt)]
+    assignments = [
+        stmt
+        for stmt in program.get_function("kernel").body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+    ]
     assert assignments
     assert assignments[-1].value.type.dtype == dtype
 

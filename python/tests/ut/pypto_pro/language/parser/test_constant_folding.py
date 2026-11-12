@@ -22,9 +22,9 @@ from pypto.pypto_impl import ir
 
 def _assignments(func: ir.Function) -> dict[str, ir.Expr]:
     return {
-        stmt.var.name.removesuffix("_0"): stmt.value
+        stmt.targets[0].name.removesuffix("_0"): stmt.value
         for stmt in func.body.stmts
-        if isinstance(stmt, ir.AssignStmt)
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
     }
 
 

@@ -70,7 +70,7 @@ iter_args               ::= 'iter' '{' { var_def '=' expr ';' } '}';
 
 ```ebnf
 stmt                    ::= seq_stmts | yield_stmt | break_stmt | continue_stmt | return_stmt
-                         |  section_stmt | eval_stmt | assign_stmt | if_stmt | for_stmt
+                         |  section_stmt | assign_stmt | if_stmt | for_stmt
                          |  while_stmt | scalar_op_stmt | tensor_op_stmt;
 seq_stmts               ::= '{' { stmt } '}';
 yield_stmt              ::= 'yield' [ expr_list ] ';';
@@ -78,7 +78,6 @@ break_stmt              ::= 'break' [ expr_list ] ';';
 continue_stmt           ::= 'continue' [ expr_list ] ';';
 return_stmt             ::= 'return' [ expr_list ] ';';
 section_stmt            ::= 'section' ident body;
-eval_stmt               ::= expr ';';  // deprecated: exists in current code, to be removed
 assign_stmt             ::= [ var_def_list '=' ] expr ';';
 if_stmt                 ::= [ var_def_list '=' ] 'if' expr 'then' body 'else' body;
 for_stmt                ::= [ var_def_list '=' ] 'for' var_ref 'inrange' expr ',' expr ',' expr

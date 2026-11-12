@@ -71,7 +71,6 @@ class IRVisitor;
     PYPTO_IR_PRINTER_VISIT_STMT(ForStmtPtr)         \
     PYPTO_IR_PRINTER_VISIT_STMT(WhileStmtPtr)       \
     PYPTO_IR_PRINTER_VISIT_STMT(SeqStmtsPtr)        \
-    PYPTO_IR_PRINTER_VISIT_STMT(EvalStmtPtr)        \
     PYPTO_IR_PRINTER_VISIT_STMT(BreakStmtPtr)       \
     PYPTO_IR_PRINTER_VISIT_STMT(ContinueStmtPtr)    \
     PYPTO_IR_PRINTER_VISIT_STMT(StmtPtr)            \

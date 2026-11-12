@@ -163,7 +163,7 @@ class ExpressionParserMixin:
         return ir.ConstBool(found != is_not_in, span)
 
     def parse_evaluation_statement(self, stmt: ast.Expr) -> None:
-        """Parse evaluation statement (EvalStmt).
+        """Parse an expression statement as an assignment with no targets.
 
         Evaluation statements represent operations executed for their side effects,
         with the return value discarded (e.g., synchronization barriers).
@@ -187,8 +187,8 @@ class ExpressionParserMixin:
         if expr is None or not isinstance(expr, ir.Expr):
             return
 
-        # Emit EvalStmt using builder method
-        self.builder.eval_stmt(expr, span)
+        # Emit an assignment that discards the expression result
+        self.builder.assign([], expr, span)
 
     def parse_expression(self, expr: ast.expr, *, nested: bool = True) -> Any:
         """Parse expression and return IR Expr.
@@ -198,7 +198,7 @@ class ExpressionParserMixin:
             nested: True (default) when this expression should materialize a
                 ir.Call result through a let-binding so the outer expression
                 only references the temporary Var. Direct AssignStmt RHS
-                (``var = expr``) and EvalStmt positions should pass
+                (``var = expr``) and expression-statement positions should pass
                 ``nested=False`` to avoid redundant ``_expr_tmp_N`` indirection.
                 Field and subscript assignments lower to calls whose RHS is
                 an argument, so they keep the default nested materialization.

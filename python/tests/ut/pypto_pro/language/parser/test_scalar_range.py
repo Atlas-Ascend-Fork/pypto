@@ -166,9 +166,7 @@ def _assert_scalar_operand(program, op_name, value, index=1):
     for func in program.functions.values():
         for stmt in _walk_stmts(func.body):
             expr = None
-            if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call):
-                expr = stmt.expr
-            elif isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call):
+            if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call):
                 expr = stmt.value
             if expr is not None and expr.name == op_name:
                 calls.append(expr)
@@ -368,10 +366,10 @@ def test_pl_const_accepts_a_boundary_value():
     assignments = [
         stmt
         for stmt in _walk_stmts(program.get_function("kernel").body)
-        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.ConstInt)
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and isinstance(stmt.value, ir.ConstInt)
     ]
     assert len(assignments) == 1
-    assert assignments[0].var.type.dtype == ir.DataType.INT8
+    assert assignments[0].targets[0].type.dtype == ir.DataType.INT8
     assert assignments[0].value.value == 127
 
 

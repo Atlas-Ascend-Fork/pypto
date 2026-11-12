@@ -31,9 +31,9 @@ def test_struct_array_field_lowers_to_nested_tuple():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    struct_assign = next(stmt for stmt in assignments if stmt.var.name == "s_0")
-    struct_type = struct_assign.var.type
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    struct_assign = next(stmt for stmt in assignments if stmt.targets[0].name == "s_0")
+    struct_type = struct_assign.targets[0].type
     assert isinstance(struct_type, ir.TupleType)
     assert len(struct_type.types) == 2
     assert isinstance(struct_type.types[0], ir.ScalarType)
@@ -54,8 +54,8 @@ def test_struct_array_field_read_produces_nested_getitem():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    result = next(stmt for stmt in assignments if stmt.var.name == "val_0")
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    result = next(stmt for stmt in assignments if stmt.targets[0].name == "val_0")
     assert isinstance(result.value, ir.GetItemExpr)
 
 
@@ -72,9 +72,9 @@ def test_struct_mixed_scalar_and_array_fields():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    struct_assign = next(stmt for stmt in assignments if stmt.var.name == "s_0")
-    struct_type = struct_assign.var.type
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    struct_assign = next(stmt for stmt in assignments if stmt.targets[0].name == "s_0")
+    struct_type = struct_assign.targets[0].type
     assert len(struct_type.types) == 3
     assert isinstance(struct_type.types[0], ir.ScalarType)
     assert isinstance(struct_type.types[1], ir.TupleType)
@@ -95,9 +95,9 @@ def test_struct_multiple_array_fields():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    struct_assign = next(stmt for stmt in assignments if stmt.var.name == "s_0")
-    struct_type = struct_assign.var.type
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    struct_assign = next(stmt for stmt in assignments if stmt.targets[0].name == "s_0")
+    struct_type = struct_assign.targets[0].type
     assert len(struct_type.types) == 3
     assert isinstance(struct_type.types[0], ir.TupleType)
     assert len(struct_type.types[0].types) == 2
@@ -118,8 +118,8 @@ def test_struct_array_with_array_field():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    slot0 = next(stmt for stmt in assignments if stmt.var.name == "arr_0_0")
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    slot0 = next(stmt for stmt in assignments if stmt.targets[0].name == "arr_0_0")
     assert isinstance(slot0.value, ir.Call)
     assert slot0.value.name == "struct.create"
 
@@ -137,8 +137,8 @@ def test_struct_array_array_field_read():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    result = next(stmt for stmt in assignments if stmt.var.name == "val_0")
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    result = next(stmt for stmt in assignments if stmt.targets[0].name == "val_0")
     assert isinstance(result.value, ir.GetItemExpr)
 
 
@@ -155,8 +155,8 @@ def test_struct_array_attribute_on_subscript_read():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    result = next(stmt for stmt in assignments if stmt.var.name == "val_0")
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    result = next(stmt for stmt in assignments if stmt.targets[0].name == "val_0")
     assert isinstance(result.value, ir.GetItemExpr)
 
 
@@ -207,9 +207,9 @@ def test_struct_float_array_field():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    struct_assign = next(stmt for stmt in assignments if stmt.var.name == "s_0")
-    arr_type = struct_assign.var.type.types[1]
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    struct_assign = next(stmt for stmt in assignments if stmt.targets[0].name == "s_0")
+    arr_type = struct_assign.targets[0].type.types[1]
     assert isinstance(arr_type, ir.TupleType)
     assert all(t.dtype == DataType.FP32 for t in arr_type.types)
 
@@ -227,9 +227,9 @@ def test_struct_bool_array_field():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    struct_assign = next(stmt for stmt in assignments if stmt.var.name == "s_0")
-    arr_type = struct_assign.var.type.types[1]
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    struct_assign = next(stmt for stmt in assignments if stmt.targets[0].name == "s_0")
+    arr_type = struct_assign.targets[0].type.types[1]
     assert isinstance(arr_type, ir.TupleType)
     assert all(t.dtype == DataType.BOOL for t in arr_type.types)
 
@@ -249,9 +249,9 @@ def test_struct_mixed_dtype_array_fields():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    struct_assign = next(stmt for stmt in assignments if stmt.var.name == "s_0")
-    types = struct_assign.var.type.types
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    struct_assign = next(stmt for stmt in assignments if stmt.targets[0].name == "s_0")
+    types = struct_assign.targets[0].type.types
     assert all(t.dtype == DataType.INT64 for t in types[0].types)
     assert all(t.dtype == DataType.FP32 for t in types[1].types)
     assert all(t.dtype == DataType.BOOL for t in types[2].types)
@@ -270,9 +270,9 @@ def test_struct_array_field_length_1():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    struct_assign = next(stmt for stmt in assignments if stmt.var.name == "s_0")
-    arr_type = struct_assign.var.type.types[1]
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    struct_assign = next(stmt for stmt in assignments if stmt.targets[0].name == "s_0")
+    arr_type = struct_assign.targets[0].type.types[1]
     assert isinstance(arr_type, ir.TupleType)
     assert len(arr_type.types) == 1
 
@@ -290,9 +290,9 @@ def test_struct_array_field_length_8():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    struct_assign = next(stmt for stmt in assignments if stmt.var.name == "s_0")
-    arr_type = struct_assign.var.type.types[0]
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    struct_assign = next(stmt for stmt in assignments if stmt.targets[0].name == "s_0")
+    arr_type = struct_assign.targets[0].type.types[0]
     assert isinstance(arr_type, ir.TupleType)
     assert len(arr_type.types) == 8
 
@@ -310,6 +310,6 @@ def test_struct_array_field_read_last_index():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    result = next(stmt for stmt in assignments if stmt.var.name == "val_0")
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    result = next(stmt for stmt in assignments if stmt.targets[0].name == "val_0")
     assert isinstance(result.value, ir.GetItemExpr)

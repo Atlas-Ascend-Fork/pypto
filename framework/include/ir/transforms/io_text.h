@@ -508,7 +508,6 @@ protected:
     void VisitStmt_(const ForStmtPtr& op) override;
     void VisitStmt_(const WhileStmtPtr& op) override;
     void VisitStmt_(const SectionStmtPtr& op) override;
-    void VisitStmt_(const EvalStmtPtr& op) override;
     void VisitStmt_(const BreakStmtPtr& op) override;
     void VisitStmt_(const ContinueStmtPtr& op) override;
     void VisitStmt_(const ScalarOpStmtPtr& op) override;

@@ -43,9 +43,7 @@ def statements(stmt):
 def calls(program, name):
     for function in program.functions.values():
         for stmt in statements(function.body):
-            value = (
-                stmt.value if isinstance(stmt, ir.AssignStmt) else stmt.expr if isinstance(stmt, ir.EvalStmt) else None
-            )
+            value = stmt.value if isinstance(stmt, ir.AssignStmt) else None
             if isinstance(value, ir.Call) and value.name == name:
                 yield value
 
@@ -118,9 +116,7 @@ def test_struct_field_tile_read_is_materialized_and_synchronized(field_write):
     sequence = []
     for function in synced(kernel).functions.values():
         for stmt in statements(function.body):
-            value = (
-                stmt.value if isinstance(stmt, ir.AssignStmt) else stmt.expr if isinstance(stmt, ir.EvalStmt) else None
-            )
+            value = stmt.value if isinstance(stmt, ir.AssignStmt) else None
             if isinstance(value, ir.Call) and value.name in (
                 "system.mutex_lock_dyn", "block.getval", "system.mutex_unlock_dyn", "struct.set"
             ):
@@ -498,7 +494,7 @@ def test_tile_names_do_not_determine_the_runtime_representation():
 
 
 def _validate_expression(expr):
-    function = ir.Function("validate", [], [], ir.EvalStmt(expr, expr.span), expr.span)
+    function = ir.Function("validate", [], [], ir.AssignStmt([], expr, expr.span), expr.span)
     return ir.Pass.insert_sync()(ir.Program([function], "validate", expr.span))
 
 
@@ -545,8 +541,13 @@ def test_reinterpret_skips_storage_checks_for_runtime_branch_selection():
     view = _ir_reinterpret(selected, shape=[2, 32])
     output = ir.Var("view", view.type, span)
     body = ir.SeqStmts(
-        [ir.AssignStmt(first_var, first, span), ir.AssignStmt(second_var, second, span),
-         branch, ir.AssignStmt(output, view, span)], span,
+        [
+            ir.AssignStmt([first_var], first, span),
+            ir.AssignStmt([second_var], second, span),
+            branch,
+            ir.AssignStmt([output], view, span),
+        ],
+        span,
     )
     function = ir.Function("validate", [flag], [], body, span)
     program = ir.Pass.insert_sync()(ir.Program([function], "validate", span, ir.IRDebugInfo()))

@@ -106,7 +106,18 @@ private:
         }
     }
 
-    void VisitStmt_(const AssignStmtPtr& op) override { AddSite({op->var_.get()}, CollectVarUses(op->value_)); }
+    void VisitStmt_(const AssignStmtPtr& op) override
+    {
+        if (op->targets_.empty()) {
+            IRVisitor::VisitStmt_(op);
+            return;
+        }
+        std::vector<const Var*> defs;
+        for (const auto& target : op->targets_) {
+            defs.push_back(target.get());
+        }
+        AddSite(std::move(defs), CollectVarUses(op->value_));
+    }
 
     void VisitStmt_(const TensorOpStmtPtr& op) override
     {

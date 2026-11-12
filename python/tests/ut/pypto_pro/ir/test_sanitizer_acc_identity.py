@@ -14,8 +14,8 @@ def _calls(stmt):
             yield from _calls(child)
     elif isinstance(stmt, ir.SectionStmt):
         yield from _calls(stmt.body)
-    elif isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call):
-        yield stmt.expr
+    elif isinstance(stmt, ir.AssignStmt) and not stmt.targets and isinstance(stmt.value, ir.Call):
+        yield stmt.value
 
 
 def _phase_fields(log):
@@ -58,9 +58,9 @@ def test_acc_phase_records_addresses_and_runtime_valid_shapes(op_name, kind):
              for spec, definition in zip(specs, definitions, strict=True)]
     operation = ir.create_op_call("block." + op_name, tiles, {"phase": 1}, span)
     body = ir.SeqStmts(
-        [ir.AssignStmt(tile, definition, span)
+        [ir.AssignStmt([tile], definition, span)
          for tile, definition in zip(tiles, definitions, strict=True)]
-        + [ir.EvalStmt(operation, span)], span,
+        + [ir.AssignStmt([], operation, span)], span,
     )
     program = ir.Program([ir.Function("kernel", [], [], body, span)], "identity", span)
     instrumented = ir.Pass.sanitizer()(program)

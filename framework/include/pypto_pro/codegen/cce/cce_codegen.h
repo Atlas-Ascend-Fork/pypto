@@ -309,7 +309,6 @@ public:
 protected:
     // Override visitor methods for code generation - Statements
     void VisitStmt_(const ir::AssignStmtPtr& op) override;
-    void VisitStmt_(const ir::EvalStmtPtr& op) override;
     void VisitStmt_(const ir::ReturnStmtPtr& op) override;
     void VisitStmt_(const ir::ForStmtPtr& op) override;
     void VisitStmt_(const ir::WhileStmtPtr& op) override;

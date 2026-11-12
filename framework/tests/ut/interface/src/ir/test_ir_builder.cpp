@@ -109,7 +109,7 @@ TEST_F(IRBuilderTest, TestFunctionWithParamsAndReturns)
     auto x = b.FuncArg("x", st, sp);
     auto y = b.FuncArg("y", st, sp);
     b.ReturnType(st);
-    b.Assign(x, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
     auto func = b.EndFunction(sp);
 
     ASSERT_EQ(func->name_, "add_func");
@@ -128,11 +128,12 @@ TEST_F(IRBuilderTest, TestFunctionStrMatchesManual)
     b.BeginFunction("test_func", sp);
     auto x = b.FuncArg("x", st, sp);
     b.ReturnType(st);
-    b.Assign(x, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
     auto builtFunc = b.EndFunction(sp);
 
     auto manualX = std::make_shared<Var>("x", st, sp);
-    auto manualAssign = std::make_shared<AssignStmt>(manualX, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    auto manualAssign = std::make_shared<AssignStmt>(std::vector<VarPtr>{manualX},
+                                                     std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
     auto manualFunc = std::make_shared<Function>("test_func", std::vector<VarPtr>{manualX}, std::vector<TypePtr>{st},
                                                  manualAssign, sp);
 
@@ -163,7 +164,7 @@ TEST_F(IRBuilderTest, TestAssign)
 
     b.BeginFunction("f", sp);
     auto x = b.FuncArg("x", st, sp);
-    auto stmt = b.Assign(x, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    auto stmt = b.Assign({x}, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
     b.EndFunction(sp);
 
     ASSERT_NE(stmt, nullptr);
@@ -203,10 +204,10 @@ TEST_F(IRBuilderTest, TestEmit)
     b.FuncArg("x", st, sp);
     auto call = std::make_shared<Call>("some_op",
                                        std::vector<ExprPtr>{std::make_shared<ConstInt>(42, DataType::INT32, sp)}, sp);
-    b.Emit(std::make_shared<EvalStmt>(call, sp));
+    b.Emit(std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, sp));
     auto func = b.EndFunction(sp);
 
-    auto evalStmt = std::dynamic_pointer_cast<const EvalStmt>(func->body_->stmts_[0]);
+    auto evalStmt = std::dynamic_pointer_cast<const AssignStmt>(func->body_->stmts_[0]);
     ASSERT_NE(evalStmt, nullptr);
 }
 
@@ -227,7 +228,7 @@ TEST_F(IRBuilderTest, TestForLoop)
     b.BeginForLoop(i, std::make_shared<ConstInt>(0, DataType::INT32, sp),
                    std::make_shared<ConstInt>(10, DataType::INT32, sp),
                    std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
-    b.Assign(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     auto forStmtBase = b.EndForLoop(sp);
 
     ASSERT_NE(forStmtBase, nullptr);
@@ -316,7 +317,7 @@ TEST_F(IRBuilderTest, TestWhileLoop)
     auto x = b.FuncArg("x", st, sp);
 
     b.BeginWhileLoop(std::make_shared<ConstBool>(true, sp), sp);
-    b.Assign(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     auto whileStmtBase = b.EndWhileLoop(sp);
 
     ASSERT_EQ(whileStmtBase->GetKind(), ObjectKind::WhileStmt);
@@ -341,7 +342,7 @@ TEST_F(IRBuilderTest, TestWhileLoopWithIterArgs)
     auto retVar = b.Var("sum_out", st, sp);
     b.AddWhileReturnVar(retVar);
 
-    b.Assign(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     auto whileStmtBase = b.EndWhileLoop(sp);
 
     ASSERT_EQ(whileStmtBase->GetKind(), ObjectKind::WhileStmt);
@@ -372,7 +373,7 @@ TEST_F(IRBuilderTest, TestWhileLoopSetCondition)
     auto retVar = b.Var("cnt_out", st, sp);
     b.AddWhileReturnVar(retVar);
 
-    b.Assign(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     auto whileStmtBase = b.EndWhileLoop(sp);
 
     ASSERT_EQ(whileStmtBase->GetKind(), ObjectKind::WhileStmt);
@@ -396,7 +397,7 @@ TEST_F(IRBuilderTest, TestIf)
     auto x = b.FuncArg("x", st, sp);
 
     b.BeginIf(std::make_shared<ConstBool>(true, sp), sp);
-    b.Assign(x, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
     auto ifStmtBase = b.EndIf(sp);
 
     ASSERT_EQ(ifStmtBase->GetKind(), ObjectKind::IfStmt);
@@ -415,9 +416,9 @@ TEST_F(IRBuilderTest, TestIfElse)
     auto x = b.FuncArg("x", st, sp);
 
     b.BeginIf(std::make_shared<ConstBool>(true, sp), sp);
-    b.Assign(x, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
     b.BeginElse(sp);
-    b.Assign(x, std::make_shared<ConstInt>(0, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(0, DataType::INT32, sp), sp);
     auto ifStmtBase = b.EndIf(sp);
 
     ASSERT_EQ(ifStmtBase->GetKind(), ObjectKind::IfStmt);
@@ -438,7 +439,7 @@ TEST_F(IRBuilderTest, TestIfWithReturnVars)
 
     b.BeginIf(std::make_shared<ConstBool>(true, sp), sp);
     b.AddIfReturnVar(retVar);
-    b.Assign(x, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
     auto ifStmtBase = b.EndIf(sp);
 
     ASSERT_EQ(ifStmtBase->GetKind(), ObjectKind::IfStmt);
@@ -459,15 +460,15 @@ TEST_F(IRBuilderTest, TestIfElseStrMatchesManual)
     auto val0 = std::make_shared<ConstInt>(0, DataType::INT32, sp);
 
     b.BeginIf(std::make_shared<ConstBool>(true, sp), sp);
-    b.Assign(x, val42, sp);
+    b.Assign({x}, val42, sp);
     b.BeginElse(sp);
-    b.Assign(x, val0, sp);
+    b.Assign({x}, val0, sp);
     auto builtIf = b.EndIf(sp);
     b.EndFunction(sp);
 
     auto manualX = std::make_shared<Var>("x", st, sp);
-    auto manualThen = std::make_shared<AssignStmt>(manualX, val42, sp);
-    auto manualElse = std::make_shared<AssignStmt>(manualX, val0, sp);
+    auto manualThen = std::make_shared<AssignStmt>(std::vector<VarPtr>{manualX}, val42, sp);
+    auto manualElse = std::make_shared<AssignStmt>(std::vector<VarPtr>{manualX}, val0, sp);
     auto manualIf = std::make_shared<IfStmt>(std::make_shared<ConstBool>(true, sp), manualThen, manualElse,
                                              std::vector<VarPtr>{}, sp);
 
@@ -488,13 +489,13 @@ TEST_F(IRBuilderTest, TestProgram)
     b.BeginFunction("func_a", sp);
     auto x = b.FuncArg("x", st, sp);
     b.ReturnType(st);
-    b.Assign(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     auto funcA = b.EndFunction(sp);
 
     b.BeginFunction("func_b", sp);
     auto y = b.FuncArg("y", st, sp);
     b.ReturnType(st);
-    b.Assign(y, std::make_shared<ConstInt>(2, DataType::INT32, sp), sp);
+    b.Assign({y}, std::make_shared<ConstInt>(2, DataType::INT32, sp), sp);
     auto funcB = b.EndFunction(sp);
 
     b.BeginProgram("test_prog", sp);
@@ -517,12 +518,12 @@ TEST_F(IRBuilderTest, TestProgramFunctionsInsertionOrder)
 
     b.BeginFunction("zebra", sp);
     auto z = b.FuncArg("z", st, sp);
-    b.Assign(z, std::make_shared<ConstInt>(0, DataType::INT32, sp), sp);
+    b.Assign({z}, std::make_shared<ConstInt>(0, DataType::INT32, sp), sp);
     auto funcZ = b.EndFunction(sp);
 
     b.BeginFunction("alpha", sp);
     auto a = b.FuncArg("a", st, sp);
-    b.Assign(a, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
+    b.Assign({a}, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     auto funcA = b.EndFunction(sp);
 
     b.BeginProgram("prog", sp);
@@ -577,7 +578,7 @@ TEST_F(IRBuilderTest, TestNestedForLoops)
     b.BeginForLoop(j, std::make_shared<ConstInt>(0, DataType::INT32, sp),
                    std::make_shared<ConstInt>(5, DataType::INT32, sp),
                    std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
-    b.Assign(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     auto innerBase = b.EndForLoop(sp);
     auto outerBase = b.EndForLoop(sp);
 
@@ -609,7 +610,7 @@ TEST_F(IRBuilderTest, TestForWithIf)
                    std::make_shared<ConstInt>(10, DataType::INT32, sp),
                    std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     b.BeginIf(std::make_shared<ConstBool>(true, sp), sp);
-    b.Assign(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     b.EndIf(sp);
     b.EndForLoop(sp);
 
@@ -634,7 +635,7 @@ TEST_F(IRBuilderTest, TestIfWithNestedFor)
     b.BeginForLoop(i, std::make_shared<ConstInt>(0, DataType::INT32, sp),
                    std::make_shared<ConstInt>(5, DataType::INT32, sp),
                    std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
-    b.Assign(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     b.EndForLoop(sp);
     b.EndIf(sp);
 
@@ -673,9 +674,11 @@ TEST_F(IRBuilderTest, TestComplexProgram)
 
     auto cond = std::make_shared<Lt>(i, std::make_shared<ConstInt>(5, DataType::INT32, sp), DataType::INT32, sp);
     b.BeginIf(cond, sp);
-    b.Assign(x, std::make_shared<Add>(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<Add>(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), DataType::INT32, sp),
+             sp);
     b.BeginElse(sp);
-    b.Assign(x, std::make_shared<Sub>(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<Sub>(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), DataType::INT32, sp),
+             sp);
     b.EndIf(sp);
     b.EndForLoop(sp);
 
@@ -725,7 +728,7 @@ TEST_F(IRBuilderTest, TestSectionVector)
     auto x = b.FuncArg("x", st, sp);
 
     b.BeginSection(SectionKind::Vector, sp);
-    b.Assign(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     auto sectionStmtBase = b.EndSection(sp);
 
     ASSERT_NE(sectionStmtBase, nullptr);
@@ -745,7 +748,7 @@ TEST_F(IRBuilderTest, TestSectionCube)
     auto x = b.FuncArg("x", st, sp);
 
     b.BeginSection(SectionKind::Cube, sp);
-    b.Assign(x, std::make_shared<ConstInt>(2, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(2, DataType::INT32, sp), sp);
     auto sectionStmtBase = b.EndSection(sp);
 
     ASSERT_NE(sectionStmtBase, nullptr);
@@ -784,8 +787,8 @@ TEST_F(IRBuilderTest, TestSectionMultipleStmts)
     auto y = b.Var("y", st, sp);
 
     b.BeginSection(SectionKind::Vector, sp);
-    b.Assign(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
-    b.Assign(y, std::make_shared<ConstInt>(2, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
+    b.Assign({y}, std::make_shared<ConstInt>(2, DataType::INT32, sp), sp);
     auto sectionStmtBase = b.EndSection(sp);
 
     ASSERT_NE(sectionStmtBase, nullptr);
@@ -810,7 +813,7 @@ TEST_F(IRBuilderTest, TestSectionNestedInFor)
                    std::make_shared<ConstInt>(10, DataType::INT32, sp),
                    std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     b.BeginSection(SectionKind::Cube, sp);
-    b.Assign(x, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
+    b.Assign({x}, std::make_shared<ConstInt>(1, DataType::INT32, sp), sp);
     b.EndSection(sp);
     b.EndForLoop(sp);
 

@@ -1024,19 +1024,6 @@ StmtPtr IRTextParser::ParseStmtSection(const VarDefList&)
     return std::make_shared<SectionStmt>(kind, body, Span::Unknown());
 }
 
-StmtPtr IRTextParser::ParseStmtEval(const VarDefList& defVarList)
-{
-    const auto start = cur_;
-    MUST_VALID(expr, ParseExpr());
-    // A result-less tensor op is distinguished from an eval call by token(...).
-    if (tokens_[start].kind == IRTextLexerTokenKind::TokIdent && CheckToken(IRTextLexerTokenKind::KwToken)) {
-        cur_ = start;
-        return ParseStmtTensorOrScalarOp(defVarList);
-    }
-    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunSemi));
-    return std::make_shared<EvalStmt>(expr, Span::Unknown());
-}
-
 StmtPtr IRTextParser::ParseStmtBreak(const VarDefList&)
 {
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwBreak));
@@ -1136,9 +1123,15 @@ StmtPtr IRTextParser::ParseStmtV0TensorOp(const VarDefList& defVarList)
 // Assignment: type %result = expr;
 StmtPtr IRTextParser::ParseStmtAssign(const VarDefList& defVarList)
 {
+    const auto start = cur_;
     MUST_VALID(value, ParseExpr());
+    // A result-less tensor op is distinguished from an expression call by token(...).
+    if (tokens_[start].kind == IRTextLexerTokenKind::TokIdent && CheckToken(IRTextLexerTokenKind::KwToken)) {
+        cur_ = start;
+        return ParseStmtTensorOrScalarOp(defVarList);
+    }
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunSemi));
-    return std::make_shared<AssignStmt>(defVarList.valueList.front(), value, Span::Unknown());
+    return std::make_shared<AssignStmt>(defVarList.valueList, value, Span::Unknown());
 }
 
 StmtPtr IRTextParser::ParseStmtVarDef()
@@ -1205,12 +1198,12 @@ StmtPtr IRTextParser::ParseStmt()
         {IRTextLexerTokenKind::KwWhile, &IRTextParser::ParseStmtWhile},
 
         {IRTextLexerTokenKind::TokV0OpMagic, &IRTextParser::ParseStmtV0TensorOp},
-        {IRTextLexerTokenKind::PunLParen, &IRTextParser::ParseStmtEval},
-        {IRTextLexerTokenKind::KwTrue, &IRTextParser::ParseStmtEval},
-        {IRTextLexerTokenKind::KwFalse, &IRTextParser::ParseStmtEval},
-        {IRTextLexerTokenKind::TokInt, &IRTextParser::ParseStmtEval},
-        {IRTextLexerTokenKind::TokFloat, &IRTextParser::ParseStmtEval},
-        {IRTextLexerTokenKind::TokIdent, &IRTextParser::ParseStmtEval},
+        {IRTextLexerTokenKind::PunLParen, &IRTextParser::ParseStmtAssign},
+        {IRTextLexerTokenKind::KwTrue, &IRTextParser::ParseStmtAssign},
+        {IRTextLexerTokenKind::KwFalse, &IRTextParser::ParseStmtAssign},
+        {IRTextLexerTokenKind::TokInt, &IRTextParser::ParseStmtAssign},
+        {IRTextLexerTokenKind::TokFloat, &IRTextParser::ParseStmtAssign},
+        {IRTextLexerTokenKind::TokIdent, &IRTextParser::ParseStmtAssign},
     };
     const IRTextLexerToken& tok = Peek();
     auto it = dispatch.find(tok.kind);

@@ -267,11 +267,11 @@ void BindIRBuilder(py::module_& m)
              "Raises:\n"
              "    RuntimeError: If not inside a valid context")
 
-        .def("assign", &IRBuilder::Assign, py::arg("var"), py::arg("value"), py::arg("span"),
+        .def("assign", &IRBuilder::Assign, py::arg("targets"), py::arg("value"), py::arg("span"),
              "Create an assignment statement and emit it.\n\n"
              "Convenience method that creates and emits an assignment.\n\n"
              "Args:\n"
-             "    var: Variable to assign to\n"
+             "    targets: Result variables (empty to discard the result)\n"
              "    value: Expression value\n"
              "    span: Source location for assignment\n\n"
              "Returns:\n"
@@ -437,10 +437,10 @@ void BindIRBuilder(py::module_& m)
             "Returns:\n"
             "    TensorOpStmt: The created tensor operation statement")
 
-        .def("create_assign_stmt", &IRBuilder::CreateAssignStmt, py::arg("var"), py::arg("value"), py::arg("span"),
+        .def("create_assign_stmt", &IRBuilder::CreateAssignStmt, py::arg("targets"), py::arg("value"), py::arg("span"),
              "Create an assignment statement.\n\n"
              "Args:\n"
-             "    var: Variable of the assignment\n"
+             "    targets: Result variables (empty to discard the result)\n"
              "    value: Right-hand side of the assignment\n"
              "    span: Span of the assignment\n\n"
              "Returns:\n"

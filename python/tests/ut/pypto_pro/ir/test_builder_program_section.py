@@ -150,7 +150,7 @@ def test_simple_section_vector():
         with ib.section(ir.SectionKind.Vector):
             result = ib.var("result", ir.ScalarType(DataType.INT64))
             add_expr = ir.Add(x, x, DataType.INT64, ir.Span.unknown())
-            ib.assign(result, add_expr)
+            ib.assign([result], add_expr)
 
     func = f.get_result()
 
@@ -173,10 +173,10 @@ def test_section_vector_with_multiple_statements():
             b = ib.var("b", ir.ScalarType(DataType.INT64))
 
             add_expr = ir.Add(x, x, DataType.INT64, ir.Span.unknown())
-            ib.assign(a, add_expr)
+            ib.assign([a], add_expr)
 
             mul_expr = ir.Mul(a, a, DataType.INT64, ir.Span.unknown())
-            ib.assign(b, mul_expr)
+            ib.assign([b], mul_expr)
 
     func = f.get_result()
 
@@ -198,7 +198,7 @@ def test_simple_section_cube():
         with ib.section(ir.SectionKind.Cube):
             result = ib.var("result", ir.ScalarType(DataType.INT64))
             mul_expr = ir.Mul(x, x, DataType.INT64, ir.Span.unknown())
-            ib.assign(result, mul_expr)
+            ib.assign([result], mul_expr)
 
     func = f.get_result()
 
@@ -221,10 +221,10 @@ def test_section_cube_with_multiple_statements():
             b = ib.var("b", ir.ScalarType(DataType.INT64))
 
             add_expr = ir.Add(x, x, DataType.INT64, ir.Span.unknown())
-            ib.assign(a, add_expr)
+            ib.assign([a], add_expr)
 
             mul_expr = ir.Mul(a, a, DataType.INT64, ir.Span.unknown())
-            ib.assign(b, mul_expr)
+            ib.assign([b], mul_expr)
 
     func = f.get_result()
 

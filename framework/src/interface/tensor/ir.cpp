@@ -118,12 +118,12 @@ Pass pass::AggressiveDCE()
                     return true;
                 }
                 if (auto assignOp = std::dynamic_pointer_cast<const AssignStmt>(stmt)) {
-                    return true;
+                    return !assignOp->targets_.empty();
                 }
                 if (auto scalarOp = std::dynamic_pointer_cast<const ScalarOpStmt>(stmt)) {
                     return true;
                 }
-                // Everything else (ReturnStmt, YieldStmt, control flow, EvalStmt): not removable
+                // Everything else (ReturnStmt, YieldStmt, control flow): not removable
                 return false;
             };
 

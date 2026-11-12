@@ -175,10 +175,15 @@ private:
     ir::StmtPtr VisitStmt_(const ir::AssignStmtPtr& op) override
     {
         auto newValue = VisitExpr(op->value_);
-        auto targetVar = op->var_;
-        auto newVar = RenameVar(targetVar);
-        if (newVar.get() != targetVar.get() || newValue.get() != op->value_.get()) {
-            return std::make_shared<const ir::AssignStmt>(std::move(newVar), std::move(newValue), op->span_);
+        std::vector<ir::VarPtr> targets;
+        bool changed = newValue.get() != op->value_.get();
+        for (const auto& target : op->targets_) {
+            auto renamed = RenameVar(target);
+            changed |= renamed.get() != target.get();
+            targets.push_back(std::move(renamed));
+        }
+        if (changed) {
+            return std::make_shared<const ir::AssignStmt>(std::move(targets), std::move(newValue), op->span_);
         }
         return op;
     }
@@ -305,7 +310,8 @@ public:
             // VisitExpr_(GetItemExprPtr)) instead of emitting an undeclared identifier that
             // only fails later inside the CCE compiler.
             return std::make_shared<const ir::AssignStmt>(
-                target_, std::make_shared<const ir::MakeTuple>(std::vector<ir::ExprPtr>{}, op->span_), op->span_);
+                std::vector<ir::VarPtr>{target_},
+                std::make_shared<const ir::MakeTuple>(std::vector<ir::ExprPtr>{}, op->span_), op->span_);
         }
         if (!target_ || op->value_.empty()) {
             // Void call — replace return with empty SeqStmts
@@ -313,7 +319,7 @@ public:
         }
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->value_.size() == 1)
             << "helper return must carry a single value (tuple returns are a single MakeTuple)";
-        return std::make_shared<const ir::AssignStmt>(target_, op->value_[0], op->span_);
+        return std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{target_}, op->value_[0], op->span_);
     }
 
 private:
@@ -321,7 +327,7 @@ private:
 };
 
 /// Build the inlined body for a helper call. Replaces ReturnStmt with an
-/// assignment to `target` (null for void/EvalStmt calls).
+/// assignment to `target` (null for result-discarding calls).
 ir::StmtPtr BuildInlinedBody(const ir::FunctionPtr& helper, const std::vector<ir::ExprPtr>& callArgs,
                              const std::string& prefix, const ir::VarPtr& target,
                              const std::unordered_map<const ir::Expr*, ir::ExprPtr>& parentRemap = {},
@@ -361,7 +367,9 @@ public:
         if (!IsHelperCall(call, helpers_)) {
             return IRMutator::VisitStmt_(op);
         }
-        auto targetVar = op->var_;
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, op->targets_.size() <= 1)
+            << "CCE codegen does not support AssignStmt with multiple targets";
+        auto targetVar = op->targets_.empty() ? nullptr : op->targets_.front();
         std::string prefix = "_inl" + std::to_string(counter_++) + "_";
         const auto& helper = helpers_.at(call->name_);
 
@@ -375,27 +383,6 @@ public:
         std::unordered_map<const ir::Expr*, ir::ExprPtr> childRemap;
         auto inlined = BuildInlinedBody(helper, args, prefix, targetVar, ambientRemap_, &childRemap);
         auto result = VisitInlinedWithAmbient(inlined, std::move(childRemap)); // recurse for nested helper calls
-        return UnwrapIfNestedVF(result);
-    }
-
-    ir::StmtPtr VisitStmt_(const ir::EvalStmtPtr& op) override
-    {
-        auto call = ir::As<ir::Call>(op->expr_);
-        if (!IsHelperCall(call, helpers_)) {
-            return IRMutator::VisitStmt_(op);
-        }
-        std::string prefix = "_inl" + std::to_string(counter_++) + "_";
-        const auto& helper = helpers_.at(call->name_);
-
-        std::vector<ir::ExprPtr> args;
-        args.reserve(call->args_.size());
-        for (const auto& a : call->args_) {
-            args.push_back(VisitExpr(a));
-        }
-
-        std::unordered_map<const ir::Expr*, ir::ExprPtr> childRemap;
-        auto inlined = BuildInlinedBody(helper, args, prefix, /*target=*/nullptr, ambientRemap_, &childRemap);
-        auto result = VisitInlinedWithAmbient(inlined, std::move(childRemap));
         return UnwrapIfNestedVF(result);
     }
 
@@ -966,12 +953,32 @@ void CCECodegen::VisitStmt_(const ir::AssignStmtPtr& op)
 {
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr)
         << "Internal error: null AssignStmt";
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op->var_ != nullptr)
-        << "Internal error: AssignStmt has null var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op->value_ != nullptr)
         << "Internal error: AssignStmt has null value";
 
-    auto targetVar = op->var_;
+    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, op->targets_.size() <= 1)
+        << "CCE codegen does not support AssignStmt with multiple targets";
+    if (op->targets_.empty()) {
+        currentTargetVar_ = "";
+        currentTuple_ = nullptr;
+        // Backend side-effect ops emit their statements while visiting the expression. A direct
+        // VF callee/VF function call instead returns its call text, which must be emitted here.
+        // Results from all other evaluation expressions are intentionally discarded.
+        auto call = ir::As<ir::Call>(op->value_);
+        bool isVfCall = call != nullptr && FindCallableCallee(call->name_) != nullptr;
+        currentExprValue_ = "";
+        VisitExpr(op->value_);
+        if (isVfCall && !currentExprValue_.empty()) {
+            emitter_.EmitLine(currentExprValue_ + ";");
+        }
+        currentExprValue_ = "";
+        currentTuple_ = nullptr;
+        return;
+    }
+
+    auto targetVar = op->targets_.front();
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, targetVar != nullptr)
+        << "Internal error: AssignStmt has null target";
     std::string varName = context_.SanitizeName(targetVar);
     context_.RegisterVar(targetVar, varName);
 
@@ -1013,7 +1020,7 @@ void CCECodegen::VisitStmt_(const ir::AssignStmtPtr& op)
         auto makeTuple = currentTuple_;
         auto tt = ir::As<ir::TupleType>(targetVar->GetType());
         if (IsArrayTuple(tt) && tupleBackingArr_.count(makeTuple.get()) == 0) {
-            auto elemNames = CollectTupleElemNames(op->var_);
+            auto elemNames = CollectTupleElemNames(targetVar);
             PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, !elemNames.empty())
                 << "Array tuple assignment to '" << varName << "' has elements without a C++ name at "
                 << op->span_.ToString();
@@ -1025,26 +1032,6 @@ void CCECodegen::VisitStmt_(const ir::AssignStmtPtr& op)
     currentTuple_ = nullptr;
     currentExprValue_ = "";
     currentTargetVar_ = "";
-}
-
-void CCECodegen::VisitStmt_(const ir::EvalStmtPtr& op)
-{
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr)
-        << "Internal error: null EvalStmt";
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op->expr_ != nullptr)
-        << "Internal error: EvalStmt has null expression";
-
-    // Backend side-effect ops emit their statements while visiting the expression. A direct
-    // VF callee/VF function call instead returns its call text, which must be emitted here.
-    // Results from all other evaluation expressions are intentionally discarded.
-    auto call = ir::As<ir::Call>(op->expr_);
-    bool isVfCall = call != nullptr && FindCallableCallee(call->name_) != nullptr;
-    currentExprValue_ = "";
-    VisitExpr(op->expr_);
-    if (isVfCall && !currentExprValue_.empty()) {
-        emitter_.EmitLine(currentExprValue_ + ";");
-    }
-    currentExprValue_ = "";
 }
 
 void CCECodegen::VisitStmt_(const ir::ReturnStmtPtr& op)
@@ -2425,8 +2412,9 @@ public:
         // Keep aliases distinct for SSA/body codegen, but attribute their accesses to the
         // underlying parameter or view whose GlobalTensor declaration owns the base pointer.
         auto source = ir::As<ir::Var>(op->value_);
-        if (ir::As<ir::TensorType>(op->var_->GetType()) && source && ir::As<ir::TensorType>(source->GetType())) {
-            tensorAliases_[op->var_.get()] = ResolveTensorAlias(source);
+        if (op->targets_.size() == 1 && ir::As<ir::TensorType>(op->targets_.front()->GetType()) && source &&
+            ir::As<ir::TensorType>(source->GetType())) {
+            tensorAliases_[op->targets_.front().get()] = ResolveTensorAlias(source);
         }
         ir::IRVisitor::VisitStmt_(op);
     }

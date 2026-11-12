@@ -500,9 +500,9 @@ void IRBuilder::Emit(const StmtPtr& stmt)
     ctx->AddStmt(stmt);
 }
 
-AssignStmtPtr IRBuilder::Assign(const VarPtr& var, const ExprPtr& value, const Span& span)
+AssignStmtPtr IRBuilder::Assign(const std::vector<VarPtr>& targets, const ExprPtr& value, const Span& span)
 {
-    auto assign = std::make_shared<AssignStmt>(var, value, span);
+    auto assign = std::make_shared<AssignStmt>(targets, value, span);
     Emit(assign);
     return assign;
 }

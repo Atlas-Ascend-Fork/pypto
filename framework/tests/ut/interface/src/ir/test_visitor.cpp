@@ -167,7 +167,7 @@ TEST_F(IRVisitorTest, TestVisitAssignStmt)
     TestVisitor v;
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
     auto val = std::make_shared<ConstInt>(42, DataType::INT32, Sp());
-    v.VisitStmt(std::make_shared<AssignStmt>(x, val, Sp()));
+    v.VisitStmt(std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val, Sp()));
     ASSERT_FALSE(v.visited.empty());
 }
 
@@ -176,8 +176,10 @@ TEST_F(IRVisitorTest, TestVisitIfStmt)
     TestVisitor v;
     auto cond = std::make_shared<ConstBool>(true, Sp());
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-    auto thenBody = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
-    auto elseBody = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(2, DataType::INT32, Sp()), Sp());
+    auto thenBody = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                                 std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
+    auto elseBody = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                                 std::make_shared<ConstInt>(2, DataType::INT32, Sp()), Sp());
     v.VisitStmt(std::make_shared<IfStmt>(cond, thenBody, elseBody, std::vector<VarPtr>{}, Sp()));
     ASSERT_FALSE(v.visited.empty());
 }
@@ -204,7 +206,8 @@ TEST_F(IRVisitorTest, TestVisitWhileStmt)
     TestVisitor v;
     auto cond = std::make_shared<ConstBool>(true, Sp());
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-    auto body = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                             std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
     v.VisitStmt(std::make_shared<WhileStmt>(cond, std::vector<IterArgPtr>{}, body, std::vector<VarPtr>{}, Sp()));
     ASSERT_FALSE(v.visited.empty());
 }
@@ -213,8 +216,10 @@ TEST_F(IRVisitorTest, TestVisitSeqStmts)
 {
     TestVisitor v;
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-    auto a1 = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
-    auto a2 = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(2, DataType::INT32, Sp()), Sp());
+    auto a1 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, std::make_shared<ConstInt>(1, DataType::INT32, Sp()),
+                                           Sp());
+    auto a2 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, std::make_shared<ConstInt>(2, DataType::INT32, Sp()),
+                                           Sp());
     v.VisitStmt(std::make_shared<SeqStmts>(std::vector<StmtPtr>{a1, a2}, Sp()));
     ASSERT_FALSE(v.visited.empty());
 }
@@ -235,12 +240,12 @@ TEST_F(IRVisitorTest, TestVisitReturnStmt)
     ASSERT_FALSE(v.visited.empty());
 }
 
-TEST_F(IRVisitorTest, TestVisitEvalStmt)
+TEST_F(IRVisitorTest, TestVisitAssignStmtWithoutTargets)
 {
     TestVisitor v;
     auto arg = std::make_shared<ConstInt>(42, DataType::INT32, Sp());
     auto call = std::make_shared<Call>("op", std::vector<ExprPtr>{arg}, Sp());
-    v.VisitStmt(std::make_shared<EvalStmt>(call, Sp()));
+    v.VisitStmt(std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, Sp()));
     ASSERT_FALSE(v.visited.empty());
 }
 
@@ -290,7 +295,8 @@ TEST_F(IRVisitorTest, TestVisitFunction)
 {
     TestVisitor v;
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-    auto body = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(42, DataType::INT32, Sp()), Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                             std::make_shared<ConstInt>(42, DataType::INT32, Sp()), Sp());
     auto func = std::make_shared<Function>("f", std::vector<VarPtr>{x}, std::vector<TypePtr>{Scalar(DataType::INT32)},
                                            body, Sp());
     v.VisitFunction(func);
@@ -301,12 +307,25 @@ TEST_F(IRVisitorTest, TestVisitProgram)
 {
     TestVisitor v;
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-    auto body = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                             std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
     auto f1 = std::make_shared<Function>("f1", std::vector<VarPtr>{x}, std::vector<TypePtr>{}, body, Sp());
     auto f2 = std::make_shared<Function>("f2", std::vector<VarPtr>{x}, std::vector<TypePtr>{}, body, Sp());
     auto prog = std::make_shared<Program>(std::vector<FunctionPtr>{f1, f2}, "prog", Sp());
     v.VisitProgram(prog);
     ASSERT_FALSE(v.visited.empty());
+}
+
+TEST_F(IRVisitorTest, TestVisitAllAssignmentTargets)
+{
+    auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
+    auto y = std::make_shared<Var>("y", Scalar(DataType::INT32), Sp());
+    auto value = std::make_shared<MakeTuple>(std::vector<ExprPtr>{std::make_shared<ConstInt>(1, DataType::INT32, Sp()),
+                                                                  std::make_shared<ConstInt>(2, DataType::INT32, Sp())},
+                                             Sp());
+    TestVisitor visitor;
+    visitor.VisitStmt(std::make_shared<AssignStmt>(std::vector<VarPtr>{x, y}, value, Sp()));
+    EXPECT_EQ(visitor.visited, (std::vector<std::string>{"Var", "Var", "ConstInt", "ConstInt"}));
 }
 
 } // namespace ir

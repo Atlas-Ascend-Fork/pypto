@@ -93,23 +93,23 @@ using StmtPtr = std::shared_ptr<const Stmt>;
 /**
  * \brief Assignment statement
  *
- * Represents an assignment operation: var = value
- * where var is a variable and value is an expression.
+ * Represents an expression evaluated once with zero or more result variables.
+ * An empty target list executes the expression and discards its result.
  */
 class AssignStmt : public Stmt {
 public:
-    VarPtr var_;    // Variable
-    ExprPtr value_; // Expression
+    std::vector<VarPtr> targets_; // Result variables
+    ExprPtr value_;               // Expression
 
     /**
      * \brief Create an assignment statement
      *
-     * \param var Variable
+     * \param targets Result variables (empty to discard the result)
      * \param value Expression
      * \param span Source location
      */
-    AssignStmt(VarPtr var, ExprPtr value, Span span)
-        : Stmt(std::move(span)), var_(std::move(var)), value_(std::move(value))
+    AssignStmt(std::vector<VarPtr> targets, ExprPtr value, Span span)
+        : Stmt(std::move(span)), targets_(std::move(targets)), value_(std::move(value))
     {}
 
     [[nodiscard]] ObjectKind GetKind() const override { return ObjectKind::AssignStmt; }
@@ -118,12 +118,12 @@ public:
     /**
      * \brief Get field descriptors for reflection-based visitation
      *
-     * \return Tuple of field descriptors (var and value as DEF and USUAL fields)
+     * \return Tuple of field descriptors (targets and value as DEF and USUAL fields)
      */
     static constexpr auto GetFieldDescriptors()
     {
         return std::tuple_cat(Stmt::GetFieldDescriptors(),
-                              std::make_tuple(reflection::DefField(&AssignStmt::var_, "var"),
+                              std::make_tuple(reflection::DefField(&AssignStmt::targets_, "targets"),
                                               reflection::UsualField(&AssignStmt::value_, "value")));
     }
 };
@@ -559,44 +559,6 @@ public:
 };
 
 using SectionStmtPtr = std::shared_ptr<const SectionStmt>;
-
-/**
- * \brief Evaluation statement
- *
- * Represents an expression executed as a statement: expr
- * where expr is an expression (typically a Call).
- * This is used for expressions that have side effects but no return value
- * (or return value is ignored).
- */
-class EvalStmt : public Stmt {
-public:
-    /**
-     * \brief Create an evaluation statement
-     *
-     * \param expr Expression to execute
-     * \param span Source location
-     */
-    EvalStmt(ExprPtr expr, Span span) : Stmt(std::move(span)), expr_(std::move(expr)) {}
-
-    [[nodiscard]] ObjectKind GetKind() const override { return ObjectKind::EvalStmt; }
-    [[nodiscard]] std::string TypeName() const override { return "EvalStmt"; }
-
-    /**
-     * \brief Get field descriptors for reflection-based visitation
-     *
-     * \return Tuple of field descriptors (expr as USUAL field)
-     */
-    static constexpr auto GetFieldDescriptors()
-    {
-        return std::tuple_cat(Stmt::GetFieldDescriptors(),
-                              std::make_tuple(reflection::UsualField(&EvalStmt::expr_, "expr")));
-    }
-
-public:
-    ExprPtr expr_; // Expression
-};
-
-using EvalStmtPtr = std::shared_ptr<const EvalStmt>;
 
 /**
  * \brief Break statement

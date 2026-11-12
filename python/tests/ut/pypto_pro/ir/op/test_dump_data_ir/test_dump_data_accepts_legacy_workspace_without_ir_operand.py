@@ -28,7 +28,7 @@ def test_dump_data_accepts_legacy_workspace_without_ir_operand(monkeypatch):
 
     program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
     func = program.get_function(main.__name__)
-    calls = [stmt.expr for stmt in func.body.stmts if isinstance(stmt, ir.EvalStmt)]
+    calls = [stmt.value for stmt in func.body.stmts if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)]
     assert len(calls) == 1
     assert calls[0].name == "debug.dump_tile"
     assert len(calls[0].args) == 1

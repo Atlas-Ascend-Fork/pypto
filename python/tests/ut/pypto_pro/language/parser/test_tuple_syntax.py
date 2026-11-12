@@ -111,8 +111,9 @@ def test_static_subscript_of_let_bound_tuple_is_folded():
     func = func_program.get_function(func.__name__)
 
     selected = next(
-        stmt for stmt in func.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name == "selected_0"
+        stmt
+        for stmt in func.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name == "selected_0"
     )
     assert isinstance(selected.value, ir.ConstInt)
 
@@ -129,8 +130,9 @@ def test_struct_array_static_subscript_remains_getitem():
     func = func_program.get_function(func.__name__)
 
     slot = next(
-        stmt for stmt in func.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name == "slot_0"
+        stmt
+        for stmt in func.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name == "slot_0"
     )
     assert isinstance(slot.value, ir.GetItemExpr)
     assert isinstance(slot.value.value, ir.Var)
@@ -210,9 +212,11 @@ def test_variable_index_generates_get_item_expr():
     # Find AssignStmts whose RHS is a GetItemExpr with a dynamic (non-ConstInt) slice
     dyn_gi = []
     for s in body_stmts:
-        if (isinstance(s, ir.AssignStmt)
-                and isinstance(s.value, ir.GetItemExpr)
-                and not isinstance(s.value.slice, ir.ConstInt)):
+        if (
+            (isinstance(s, ir.AssignStmt) and bool(s.targets))
+            and isinstance(s.value, ir.GetItemExpr)
+            and not isinstance(s.value.slice, ir.ConstInt)
+        ):
             dyn_gi.append(s.value)
     assert len(dyn_gi) >= 1, "Expected at least one GetItemExpr with dynamic slice"
 
@@ -228,15 +232,18 @@ def test_constant_tuple_dynamic_index_uses_folded_make_tuple_base():
 
     body_stmts = func.body.stmts
     tuple_assignments = [
-        stmt for stmt in body_stmts
-        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.MakeTuple)
+        stmt
+        for stmt in body_stmts
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and isinstance(stmt.value, ir.MakeTuple)
     ]
     assert len(tuple_assignments) == 1
     dynamic_reads = []
     for stmt in body_stmts:
-        if (isinstance(stmt, ir.AssignStmt)
-                and isinstance(stmt.value, ir.GetItemExpr)
-                and not isinstance(stmt.value.slice, ir.ConstInt)):
+        if (
+            (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+            and isinstance(stmt.value, ir.GetItemExpr)
+            and not isinstance(stmt.value.slice, ir.ConstInt)
+        ):
             dynamic_reads.append(stmt.value)
     assert len(dynamic_reads) == 1
     assert isinstance(dynamic_reads[0].value, ir.MakeTuple)
@@ -257,9 +264,11 @@ def test_dynamic_index_keeps_folded_tuple_through_base_expression():
 
     dynamic_read = None
     for stmt in func.body.stmts:
-        if (isinstance(stmt, ir.AssignStmt)
-                and stmt.var.name == "selected_0"
-                and isinstance(stmt.value, ir.GetItemExpr)):
+        if (
+            (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+            and stmt.targets[0].name == "selected_0"
+            and isinstance(stmt.value, ir.GetItemExpr)
+        ):
             dynamic_read = stmt.value
             break
     assert isinstance(dynamic_read.value, ir.MakeTuple)
@@ -273,12 +282,12 @@ def test_nested_tuple_has_anchor_but_remains_make_tuple_expression():
     func_program, _ = func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     func = func_program.get_function(func.__name__)
 
-    assignments = [stmt for stmt in func.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    outer = next(stmt for stmt in assignments if stmt.var.name == "outer_0")
+    assignments = [stmt for stmt in func.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    outer = next(stmt for stmt in assignments if stmt.targets[0].name == "outer_0")
     assert isinstance(outer.value, ir.MakeTuple)
     nested = outer.value.elements[1]
     assert isinstance(nested, ir.MakeTuple)
-    anchors = [stmt for stmt in assignments if stmt.var.name.startswith("_tuple_anchor_")]
+    anchors = [stmt for stmt in assignments if stmt.targets[0].name.startswith("_tuple_anchor_")]
     assert len(anchors) == 1
     assert anchors[0].value is nested
 
@@ -292,7 +301,7 @@ def test_constant_tuple_index_is_direct_element():
     func_program, _ = func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     func = func_program.get_function(func.__name__)
 
-    assignments = [stmt for stmt in func.body.stmts if isinstance(stmt, ir.AssignStmt)]
+    assignments = [stmt for stmt in func.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
     assert isinstance(assignments[-1].value, ir.ConstInt)
     assert assignments[-1].value.value == 7
 
@@ -338,12 +347,12 @@ def test_tile_factories_accept_propagated_constant_kwargs():
     tile_assignments = [
         stmt
         for stmt in func.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.var.type, ir.TileType)
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and isinstance(stmt.targets[0].type, ir.TileType)
     ]
     # One explicit tile plus the two slots created for the tile group.
     assert len(tile_assignments) == 3
     for tile_assignment in tile_assignments:
-        tile_type = tile_assignment.var.type
+        tile_type = tile_assignment.targets[0].type
         assert tile_type.dtype == pl.DT_FP16
         assert all(isinstance(element, ir.ConstInt) for element in tile_type.shape)
         assert [element.value for element in tile_type.shape] == [64, 64]

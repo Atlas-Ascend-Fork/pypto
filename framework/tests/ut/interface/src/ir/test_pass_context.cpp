@@ -48,7 +48,7 @@ protected:
     ProgramPtr MakeSimpleProgram()
     {
         auto value = std::make_shared<ConstInt>(7, DataType::INT32, Sp());
-        auto body = std::make_shared<EvalStmt>(value, Sp());
+        auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, value, Sp());
         auto func = std::make_shared<Function>("ctx_func", std::vector<VarPtr>{}, std::vector<TypePtr>{}, body, Sp());
         return std::make_shared<Program>(std::vector<FunctionPtr>{func}, "ctx_prog", Sp());
     }

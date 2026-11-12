@@ -185,7 +185,6 @@ public:
 
 private:
     // -- Layer 1: traversal hooks -------------------------------------------
-    StmtPtr VisitStmt_(const EvalStmtPtr& op) override;
     StmtPtr VisitStmt_(const AssignStmtPtr& op) override;
     // ------------------------------------------------------------------------
 
@@ -245,7 +244,7 @@ private:
     ExprPtr logParam_;
     ExprPtr capacityParam_;
     // Type of the current AssignStmt target (set by the hook, read by the
-    // make_tile builder; empty while visiting EvalStmts).
+    // make_tile builder; empty for result-discarding assignments).
     TypePtr targetType_;
     // Frontend let/SSA bindings needed to resolve TileGroup tuple fields while
     // building sanitizer-only address expressions.
@@ -257,25 +256,13 @@ StmtPtr SanitizerInstrumenter::RecordForCall(const CallPtr& call)
     return (it == opRecords_.end()) ? nullptr : it->second(call);
 }
 
-StmtPtr SanitizerInstrumenter::VisitStmt_(const EvalStmtPtr& op)
-{
-    auto newStmt = IRMutator::VisitStmt_(op);
-    auto call = As<Call>(op->expr_);
-    if (call == nullptr)
-        return newStmt;
-    auto record = RecordForCall(call);
-    if (record == nullptr)
-        return newStmt;
-    return SeqStmts::Flatten({record, newStmt}, op->span_);
-}
-
-// AssignStmt runs the same op dispatch as EvalStmt: value-producing ops
+// AssignStmt dispatches both result-discarding and value-producing ops:
 // (getval...) and the declaration builders (make_tile / make_tensor) are
 // all table entries; the hook knows nothing about names.
 StmtPtr SanitizerInstrumenter::VisitStmt_(const AssignStmtPtr& op)
 {
     auto newStmt = IRMutator::VisitStmt_(op);
-    targetType_ = op->var_->GetType();
+    targetType_ = op->targets_.size() == 1 ? op->targets_.front()->GetType() : nullptr;
     auto call = As<Call>(op->value_);
     if (call != nullptr) {
         auto record = RecordForCall(call);
@@ -348,7 +335,7 @@ StmtPtr SanitizerInstrumenter::MakeLogStmt(uint32_t detId, std::vector<ExprPtr> 
     // side, which knows the kernel's source path.
     args.push_back(Int64Const(static_cast<int64_t>(span.BeginLine())));
     auto call = std::make_shared<Call>("block.sanitizer_log", std::move(args), Span::Unknown());
-    return std::make_shared<EvalStmt>(call, Span::Unknown());
+    return std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, Span::Unknown());
 }
 
 // getval/setval: args = [container, index]. A Tensor container becomes a

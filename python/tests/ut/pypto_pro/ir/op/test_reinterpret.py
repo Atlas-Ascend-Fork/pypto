@@ -42,7 +42,7 @@ def _codegen_expression(expr, params=()):
         args = [materialize(arg) for arg in value.args]
         call = ir.Call(value.name, args, value.kwargs, value.type, value.span)
         var = ir.Var(f"tile_{len(statements)}", value.type, value.span)
-        statements.append(ir.AssignStmt(var, call, value.span))
+        statements.append(ir.AssignStmt([var], call, value.span))
         return var
 
     materialize(expr)
@@ -533,8 +533,10 @@ def test_reinterpret_none_dtype_and_layout_keep_the_source_metadata():
     program = _parse_kernel(kernel)
     function = program.get_function("kernel")
     tiles = [
-        stmt.value for stmt in function.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call)
+        stmt.value
+        for stmt in function.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+        and isinstance(stmt.value, ir.Call)
         and stmt.value.name in ("block.make_mutex_tile", "block.reinterpret")
     ]
     assert [tile.name for tile in tiles] == ["block.make_mutex_tile", "block.reinterpret"]

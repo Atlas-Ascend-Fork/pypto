@@ -475,7 +475,7 @@ void IRTextDumper::PrintBody(const StmtPtr& body)
 
 void IRTextDumper::VisitStmt_(const AssignStmtPtr& op)
 {
-    PrintVarDefList({op->var_});
+    PrintVarDefList(op->targets_);
     VisitExpr(op->value_);
     stream_ << IR_PUN_SEMI;
 }
@@ -563,12 +563,6 @@ void IRTextDumper::VisitStmt_(const SectionStmtPtr& op)
     PrintBody(op->body_);
 }
 
-void IRTextDumper::VisitStmt_(const EvalStmtPtr& op)
-{
-    VisitExpr(op->expr_);
-    stream_ << IR_PUN_SEMI;
-}
-
 void IRTextDumper::VisitStmt_(const BreakStmtPtr& op)
 {
     stream_ << IR_KW_BREAK;
@@ -643,23 +637,16 @@ void IRTextDumper::VisitStmt_(const StmtPtr& op)
 // ---------------------------------------------------------------------------
 namespace {
 
-/// pypto_pro assignments always hold a Call; tensor's bare statement calls do not.
+/// Detect Pro calls while preserving tensor's bare statement calls.
 class ProDialectDetector : public IRVisitor {
 public:
     bool found = false;
 
     void VisitStmt_(const AssignStmtPtr& op) override
     {
-        found = found || As<Call>(op->value_) != nullptr;
-        if (!found) {
-            IRVisitor::VisitStmt_(op);
-        }
-    }
-
-    void VisitStmt_(const EvalStmtPtr& op) override
-    {
-        if (auto call = As<Call>(op->expr_)) {
-            found = found || call->name_.find('.') != std::string::npos || !call->kwargs_.empty();
+        if (auto call = As<Call>(op->value_)) {
+            found = found || !op->targets_.empty() || call->name_.find('.') != std::string::npos ||
+                    !call->kwargs_.empty();
         }
         if (!found) {
             IRVisitor::VisitStmt_(op);

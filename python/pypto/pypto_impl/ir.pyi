@@ -1360,19 +1360,19 @@ class Stmt(IRNode):
 
 
 class AssignStmt(Stmt):
-    """Assignment statement: var = value."""
+    """Assignment statement: targets = value."""
 
-    var: Final[Var]
-    """Variable."""
+    targets: Final[list[Var]]
+    """Result variables; empty to discard the result."""
 
     value: Final[Expr]
     """Expression."""
 
-    def __init__(self, var: Var, value: Expr, span: Span) -> None:
+    def __init__(self, targets: list[Var], value: Expr, span: Span) -> None:
         """Create an assignment statement.
 
         Args:
-            var: Variable
+            targets: Result variables (empty to discard the result)
             value: Expression
             span: Source location
         """
@@ -1613,21 +1613,6 @@ class SeqStmts(Stmt):
 
         Raises:
             IndexError: If index is out of range
-        """
-
-
-class EvalStmt(Stmt):
-    """Evaluation statement: expr."""
-
-    expr: Final[Expr]
-    """Expression."""
-
-    def __init__(self, expr: Expr, span: Span) -> None:
-        """Create an evaluation statement.
-
-        Args:
-            expr: Expression to execute
-            span: Source location
         """
 
 
@@ -2138,11 +2123,11 @@ class IRBuilder:
             stmt: Statement to emit
         """
 
-    def assign(self, var: Var, value: Expr, span: Span) -> AssignStmt:
+    def assign(self, targets: list[Var], value: Expr, span: Span) -> AssignStmt:
         """Create an assignment statement and emit it.
 
         Args:
-            var: Variable to assign to
+            targets: Result variables (empty to discard the result)
             value: Expression value
             span: Source location for assignment
 
@@ -2278,11 +2263,11 @@ class IRBuilder:
             The created constant integer scalar
         """
 
-    def create_assign_stmt(self, var: Var, value: Expr, span: Span) -> AssignStmt:
+    def create_assign_stmt(self, targets: list[Var], value: Expr, span: Span) -> AssignStmt:
         """Create an assignment statement.
 
         Args:
-            var: Variable to assign to
+            targets: Result variables (empty to discard the result)
             value: Right-hand side expression
             span: Source location
 

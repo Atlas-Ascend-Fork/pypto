@@ -1252,7 +1252,9 @@ def test_atomic_add_accepts_loaded_elements(dtype, use_tile):
     loads = [
         stmt.value
         for stmt in function.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call) and stmt.value.name == "block.getval"
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.getval"
     ]
     assert len(loads) == 2
     assert all(load.type.dtype == dtype for load in loads)
@@ -1329,9 +1331,9 @@ def test_atomic_coordinates_use_subscript_linearization():
         if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call)
     ]
     atomic = next(call for call in calls if call.name == "simt.atomic_add")
-    store = next(stmt.expr for stmt in function.body.stmts
-                 if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call)
-                 and stmt.expr.name == "block.setval")
+    store = next(stmt.value for stmt in function.body.stmts
+                 if (isinstance(stmt, ir.AssignStmt) and not stmt.targets) and isinstance(stmt.value, ir.Call)
+                 and stmt.value.name == "block.setval")
     assert ir.structural_equal(atomic.args[1], store.args[1])
     assert all(call.name != "block.getval" for call in calls)
 
@@ -1412,9 +1414,9 @@ def test_atomic_uint64_literal_preserves_unsigned_value():
 
     program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     function = program.get_function("uint64_literal")
-    call = next(stmt.expr for stmt in function.body.stmts
-                if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call)
-                and stmt.expr.name == "simt.atomic_exch")
+    call = next(stmt.value for stmt in function.body.stmts
+                if (isinstance(stmt, ir.AssignStmt) and not stmt.targets) and isinstance(stmt.value, ir.Call)
+                and stmt.value.name == "simt.atomic_exch")
     assert call.args[2].type.dtype == ir.DataType.UINT64
     assert call.args[2].value == -1
 

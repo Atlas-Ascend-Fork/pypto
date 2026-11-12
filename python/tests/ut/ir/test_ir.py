@@ -325,12 +325,12 @@ def test_basic_stmt():
     val10 = ir.ConstInt(10, ir.INT32, span)
 
     # AssignStmt
-    assign = ir.AssignStmt(x, val42, span)
+    assign = ir.AssignStmt([x], val42, span)
     assert str(assign) == "int32_t %x = 42;"
 
     # SeqStmts
-    assign_x = ir.AssignStmt(x, val42, span)
-    assign_y = ir.AssignStmt(y, val0, span)
+    assign_x = ir.AssignStmt([x], val42, span)
+    assign_y = ir.AssignStmt([y], val0, span)
     seq = ir.SeqStmts([assign_x, assign_y], span)
     assert str(seq) == "\n".join(["{", "    int32_t %x = 42;", "    int32_t %y = 0;", "}"])
 
@@ -393,9 +393,9 @@ def test_basic_stmt():
     continue_with_value = ir.ContinueStmt([val1], span)
     assert str(continue_with_value) == "continue 1;"
 
-    # EvalStmt
+    # Result-discarding assignment
     call = ir.Call("some_op", [val42], span)
-    eval_stmt = ir.EvalStmt(call, span)
+    eval_stmt = ir.AssignStmt([], call, span)
     assert str(eval_stmt) == "some_op(42);"
 
     # ScalarOpStmt and TensorOpStmt

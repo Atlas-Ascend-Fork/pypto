@@ -51,7 +51,7 @@ class ConversionContext:
     def let(self, name: str, value: Expr) -> Var:
         """Create variable, assign value, emit AssignStmt. Returns the Var."""
         var = Var(name, value.type, self._span)
-        self._stmts.append(AssignStmt(var, value, self._span))
+        self._stmts.append(AssignStmt([var], value, self._span))
         return var
 
     def emit(self, stmt: Stmt) -> None:

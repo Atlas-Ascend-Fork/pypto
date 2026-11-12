@@ -204,8 +204,8 @@ TEST_F(IRStructHashTest, TestHashAssignStmt)
 {
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
     auto v = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
-    auto a1 = std::make_shared<AssignStmt>(x, v, Sp());
-    auto a2 = std::make_shared<AssignStmt>(x, v, Sp());
+    auto a1 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v, Sp());
+    auto a2 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v, Sp());
     EXPECT_EQ(structural_hash(Node(a1)), structural_hash(Node(a2)));
 }
 
@@ -278,7 +278,7 @@ TEST_F(IRStructHashTest, TestHashSectionStmt)
 {
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
     auto v = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
-    auto body = std::make_shared<AssignStmt>(x, v, Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v, Sp());
     auto s1 = std::make_shared<SectionStmt>(SectionKind::Vector, body, Sp());
     auto s2 = std::make_shared<SectionStmt>(SectionKind::Vector, body, Sp());
     auto s3 = std::make_shared<SectionStmt>(SectionKind::Cube, body, Sp());
@@ -290,7 +290,7 @@ TEST_F(IRStructHashTest, TestHashSeqStmts)
 {
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
     auto v = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
-    auto a = std::make_shared<AssignStmt>(x, v, Sp());
+    auto a = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v, Sp());
     auto seq1 = std::make_shared<SeqStmts>(std::vector<StmtPtr>{a}, Sp());
     auto seq2 = std::make_shared<SeqStmts>(std::vector<StmtPtr>{a}, Sp());
     EXPECT_EQ(structural_hash(Node(seq1)), structural_hash(Node(seq2)));
@@ -299,8 +299,8 @@ TEST_F(IRStructHashTest, TestHashSeqStmts)
 TEST_F(IRStructHashTest, TestHashEvalBreakContinue)
 {
     auto call = std::make_shared<Call>("op", std::vector<ExprPtr>{}, Sp());
-    auto e1 = std::make_shared<EvalStmt>(call, Sp());
-    auto e2 = std::make_shared<EvalStmt>(call, Sp());
+    auto e1 = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, Sp());
+    auto e2 = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, Sp());
     EXPECT_EQ(structural_hash(Node(e1)), structural_hash(Node(e2)));
 
     auto b1 = std::make_shared<BreakStmt>(Sp());
@@ -320,7 +320,7 @@ TEST_F(IRStructHashTest, TestHashFunction)
 {
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
     auto v = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
-    auto body = std::make_shared<AssignStmt>(x, v, Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v, Sp());
     auto f1 = std::make_shared<Function>("f", std::vector<VarPtr>{x}, std::vector<TypePtr>{Scalar(DataType::INT32)},
                                          body, Sp());
     auto f2 = std::make_shared<Function>("f", std::vector<VarPtr>{x}, std::vector<TypePtr>{Scalar(DataType::INT32)},
@@ -351,7 +351,8 @@ TEST_F(IRStructHashTest, TestHashFunctionMaxThreads)
 TEST_F(IRStructHashTest, TestHashProgram)
 {
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-    auto body = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                             std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
     auto f = std::make_shared<Function>("f", std::vector<VarPtr>{}, std::vector<TypePtr>{}, body, Sp());
     auto p1 = std::make_shared<Program>(std::vector<FunctionPtr>{f}, "prog", Sp());
     auto p2 = std::make_shared<Program>(std::vector<FunctionPtr>{f}, "prog", Sp());
@@ -511,7 +512,7 @@ TEST_F(IRStructHashTest, TestHashCaching)
 {
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
     auto v = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
-    auto assign = std::make_shared<AssignStmt>(x, v, Sp());
+    auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v, Sp());
     auto seq = std::make_shared<SeqStmts>(std::vector<StmtPtr>{assign, assign}, Sp());
     auto h1 = structural_hash(Node(seq));
     auto h2 = structural_hash(Node(seq));

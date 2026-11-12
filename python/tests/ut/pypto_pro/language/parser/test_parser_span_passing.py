@@ -22,7 +22,7 @@ import pytest
 def _call_spans(func):
     spans = []
     for stmt in func.body.stmts:
-        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call):
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and isinstance(stmt.value, ir.Call):
             spans.append((stmt.value.name, stmt.value.span))
     return spans
 

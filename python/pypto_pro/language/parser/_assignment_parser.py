@@ -188,7 +188,7 @@ class AssignmentParserMixin:
         )
 
     def _parse_struct_field_assignment(self, target: ast.Attribute, stmt: ast.Assign, span: ir.Span) -> None:
-        """Lower ``base.field = rhs`` to ``EvalStmt(struct.set(base, rhs, field=...))``.
+        """Lower ``base.field = rhs`` to ``AssignStmt([], struct.set(base, rhs, field=...))``.
 
         The field name (not an index) is carried on the call, mirroring struct.create's
         ``fields``; codegen emits ``base.field = rhs;``. This keeps the write off the
@@ -230,10 +230,10 @@ class AssignmentParserMixin:
                     "struct.set", [base, idx_const, elem],
                     {"field": field_name}, span,
                 )
-                self.builder.emit(ir.EvalStmt(call, span))
+                self.builder.emit(ir.AssignStmt([], call, span))
             return
         call = ir.create_op_call("struct.set", [base, value_expr], {"field": field_name}, span)
-        self.builder.emit(ir.EvalStmt(call, span))
+        self.builder.emit(ir.AssignStmt([], call, span))
 
     def _parse_subscript_assignment(self, target: ast.Subscript, stmt: ast.Assign, span: ir.Span) -> None:
         value_expr = self.parse_expression(stmt.value)
@@ -293,7 +293,7 @@ class AssignmentParserMixin:
                 call = ir.create_op_call(
                     "struct.set", [base, index_expr, value_expr], {"field": field_name}, span,
                 )
-                self.builder.emit(ir.EvalStmt(call, span))
+                self.builder.emit(ir.AssignStmt([], call, span))
                 return
 
         container_expr = self.parse_expression(target.value)
@@ -307,5 +307,5 @@ class AssignmentParserMixin:
         index_expr = self._parse_scalar_subscript_index(container_expr, target.slice, span)
         from pypto_pro.ir.op.block_ops import _ir_setval
         setval_call = _ir_setval(container_expr, index_expr, value_expr, span=span)
-        self.builder.emit(ir.EvalStmt(setval_call, span))
+        self.builder.emit(ir.AssignStmt([], setval_call, span))
         self._record_op_access("setval", [(0, None, container_expr)], (), span)

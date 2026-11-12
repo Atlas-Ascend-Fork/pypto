@@ -46,12 +46,13 @@ def test_inline_helper_multiple_value_returns_use_one_wrapper():
     return_assigns = [
         stmt
         for stmt in statements
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("__inline_0_return_val")
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+        and stmt.targets[0].name.startswith("__inline_0_return_val")
     ]
 
     assert len(helper_loops) == 1
     assert len(return_assigns) == 2
-    assert len({stmt.var.name for stmt in return_assigns}) == 2
+    assert len({stmt.targets[0].name for stmt in return_assigns}) == 2
     return_iter_arg = next(
         arg for arg in helper_loops[0].iter_args if arg.iterVar.name.startswith("__inline_0_return_val")
     )
@@ -75,11 +76,12 @@ def test_inline_helper_top_level_return_flattens_lowered_wrapper():
     statements = list(_walk_statements(caller_ir.body))
     assert not any(isinstance(stmt, ir.WhileStmt) for stmt in statements)
     assert any(
-        isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("__inline_0_return_val")
+        (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+        and stmt.targets[0].name.startswith("__inline_0_return_val")
         for stmt in statements
     )
     assert any(
-        isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("_test_result")
+        (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("_test_result")
         for stmt in statements
     )
 
@@ -104,7 +106,8 @@ def test_inline_helper_tuple_return_after_nested_loop_flattens_wrapper():
     statements = list(_walk_statements(caller_ir.body))
     assert not any(isinstance(stmt, ir.WhileStmt) for stmt in statements)
     assert any(
-        isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("__inline_0_return_val")
+        (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+        and stmt.targets[0].name.startswith("__inline_0_return_val")
         for stmt in statements
     )
 
@@ -154,9 +157,9 @@ def test_inline_helper_dynamic_loop_return_does_not_merge_initial_empty_value():
     result_assign = next(
         stmt
         for stmt in _walk_statements(caller_ir.body)
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("_test_result")
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("_test_result")
     )
-    assert isinstance(result_assign.var.type, ir.ScalarType)
+    assert isinstance(result_assign.targets[0].type, ir.ScalarType)
 
 
 def test_inline_helper_nested_if_returns_preserve_fallthrough_retval_state():
@@ -184,7 +187,7 @@ def test_inline_helper_nested_if_returns_preserve_fallthrough_retval_state():
     result_assign = next(
         stmt
         for stmt in _walk_statements(caller_ir.body)
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("_test_result")
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("_test_result")
     )
     retval_results = [
         var
@@ -193,7 +196,7 @@ def test_inline_helper_nested_if_returns_preserve_fallthrough_retval_state():
         for var in stmt.return_vars
         if var.name.startswith("__inline_0_return_val")
     ]
-    assert isinstance(result_assign.var.type, ir.ScalarType)
+    assert isinstance(result_assign.targets[0].type, ir.ScalarType)
     assert any(isinstance(var.type, ir.NoneType) for var in retval_results)
     assert all(not isinstance(var.type, ir.UnknownType) for var in retval_results)
 
@@ -215,9 +218,9 @@ def test_inline_helper_dynamic_loop_uses_one_int64_return_type():
     caller_program, _ = caller.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     caller_ir = caller_program.get_function(caller.__name__)
     selected = next(
-        stmt.var
+        stmt.targets[0]
         for stmt in _walk_statements(caller_ir.body)
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("selected")
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("selected")
     )
     assert isinstance(selected.type, ir.ScalarType)
     assert selected.type.dtype == ir.DataType.INT64
@@ -275,10 +278,11 @@ def test_inline_helper_bare_returns_share_return_state():
     return_assigns = [
         stmt
         for stmt in statements
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("__inline_0_return_val")
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+        and stmt.targets[0].name.startswith("__inline_0_return_val")
     ]
     assert len(return_assigns) == 2
-    assert all(isinstance(stmt.var.type, ir.NoneType) for stmt in return_assigns)
+    assert all(isinstance(stmt.targets[0].type, ir.NoneType) for stmt in return_assigns)
 
 
 def test_inline_helper_mixed_bare_and_value_returns_share_return_val():
@@ -298,11 +302,12 @@ def test_inline_helper_mixed_bare_and_value_returns_share_return_val():
     return_assigns = [
         stmt
         for stmt in statements
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("__inline_0_return_val")
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+        and stmt.targets[0].name.startswith("__inline_0_return_val")
     ]
     assert len(return_assigns) == 2
-    assert any(isinstance(stmt.var.type, ir.NoneType) for stmt in return_assigns)
-    assert any(isinstance(stmt.var.type, ir.ScalarType) for stmt in return_assigns)
+    assert any(isinstance(stmt.targets[0].type, ir.NoneType) for stmt in return_assigns)
+    assert any(isinstance(stmt.targets[0].type, ir.ScalarType) for stmt in return_assigns)
 
 
 def test_inline_helper_without_return_uses_default_return_val():
@@ -323,10 +328,11 @@ def test_inline_helper_without_return_uses_default_return_val():
     return_assigns = [
         stmt
         for stmt in statements
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("__inline_0_return_val")
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+        and stmt.targets[0].name.startswith("__inline_0_return_val")
     ]
     assert len(return_assigns) == 1
-    assert isinstance(return_assigns[0].var.type, ir.NoneType)
+    assert isinstance(return_assigns[0].targets[0].type, ir.NoneType)
 
 
 def test_inline_helper_target_section_does_not_finalize_wrapper_loop():
@@ -344,7 +350,8 @@ def test_inline_helper_target_section_does_not_finalize_wrapper_loop():
 
     assert matched
     assert any(
-        isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("__inline_0__updated")
+        (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+        and stmt.targets[0].name.startswith("__inline_0__updated")
         for stmt in _walk_statements(caller_ir.body)
     )
 

@@ -503,14 +503,14 @@ private:
     void VisitStmt_(const AssignStmtPtr& stmt) override
     {
         auto call = As<Call>(stmt->value_);
-        if (!call || call->name_ != "block.make_mutex_tile") {
+        if (stmt->targets_.empty() || !call || call->name_ != "block.make_mutex_tile") {
             IRVisitor::VisitStmt_(stmt);
             return;
         }
         auto ids = As<MakeTuple>(call->args_[2]);
         if (!ids->elements_.empty()) {
             auto rows = std::make_shared<MakeTuple>(std::vector<ExprPtr>{ids}, call->span_);
-            manager_.CollectGroup({stmt->var_}, rows);
+            manager_.CollectGroup({stmt->targets_.front()}, rows);
         }
     }
 };

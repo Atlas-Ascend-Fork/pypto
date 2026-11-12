@@ -67,7 +67,7 @@ def test_make_ptr_result_type_is_ptr_with_changed_dtype():
     # Walk the function body to find the make_ptr AssignStmt and inspect its type.
     found = _find_assign_by_call(body, "ptr.make_ptr")
     assert found is not None, "expected a ptr.make_ptr assignment"
-    ptr_type = found.var.type
+    ptr_type = found.targets[0].type
     assert isinstance(ptr_type, ir.PtrType)
     assert ptr_type.dtype == pl.DT_FP16
 
@@ -76,8 +76,8 @@ def test_make_ptr_identity_keeps_source_dtype():
     prog = _parse_kernel(_make_ptr_identity_kernel)
     found = _find_assign_by_call(prog.get_function(prog_first_name(prog)).body, "ptr.make_ptr")
     assert found is not None
-    assert isinstance(found.var.type, ir.PtrType)
-    assert found.var.type.dtype == pl.DT_FP16
+    assert isinstance(found.targets[0].type, ir.PtrType)
+    assert found.targets[0].type.dtype == pl.DT_FP16
 
 
 def test_make_ptr_then_addptr_ir():
@@ -104,8 +104,8 @@ def test_ptr_plus_offset_result_type_is_ptr():
     prog = _parse_kernel(_ptr_plus_offset_kernel)
     found = _find_assign_by_call(prog.get_function(prog_first_name(prog)).body, "ptr.addptr")
     assert found is not None, "expected `ptr + offset` to emit a ptr.addptr assignment"
-    assert isinstance(found.var.type, ir.PtrType)
-    assert found.var.type.dtype == pl.DT_FP16
+    assert isinstance(found.targets[0].type, ir.PtrType)
+    assert found.targets[0].type.dtype == pl.DT_FP16
 
 
 @pl.jit
@@ -131,7 +131,7 @@ def test_make_tensor_from_tensor_ir_type():
     prog = _parse_kernel(_retensor_shape_kernel)
     found = _find_assign_by_call(prog.get_function(prog_first_name(prog)).body, "ptr.make_tensor")
     assert found is not None
-    t = found.var.type
+    t = found.targets[0].type
     assert isinstance(t, ir.TensorType)
     assert [int(d.value) for d in t.shape] == [128, 64]
     assert t.dtype == pl.DT_FP16
@@ -296,8 +296,8 @@ def test_make_ptr_accepts_tensor_argument():
     prog = _parse_kernel(k)
     found = _find_assign_by_call(prog.get_function(prog_first_name(prog)).body, "ptr.make_ptr")
     assert found is not None
-    assert isinstance(found.var.type, ir.PtrType)
-    assert found.var.type.dtype == pl.DT_FP32
+    assert isinstance(found.targets[0].type, ir.PtrType)
+    assert found.targets[0].type.dtype == pl.DT_FP32
 
 
 @pl.jit
@@ -330,7 +330,7 @@ def test_tensor_view_coordinate_offset_ir():
     found = _find_assign_by_call(prog.get_function(prog_first_name(prog)).body, "ptr.make_tensor")
     assert found is not None, "expected pl.tensor_view to emit ptr.make_tensor"
 
-    view_type = found.var.type
+    view_type = found.targets[0].type
     assert isinstance(view_type, ir.TensorType)
     assert [int(dim.value) for dim in view_type.shape] == [32, 64]
     assert view_type.dtype == pl.DT_FP16
@@ -351,8 +351,8 @@ def test_tensor_view_scalar_offset_ir():
     # The runtime offset expression is added without scaling.
     assert isinstance(addptr_args[1], ir.Var)
     assert isinstance(addptr_args[1].type, ir.ScalarType)
-    assert isinstance(found.var.type, ir.TensorType)
-    assert [int(dim.value) for dim in found.var.type.shape] == [256]
+    assert isinstance(found.targets[0].type, ir.TensorType)
+    assert [int(dim.value) for dim in found.targets[0].type.shape] == [256]
 
 
 def test_tensor_view_inherits_source_stride():
@@ -361,7 +361,7 @@ def test_tensor_view_inherits_source_stride():
     views = []
 
     def collect(stmt):
-        if isinstance(stmt, ir.AssignStmt):
+        if isinstance(stmt, ir.AssignStmt) and bool(stmt.targets):
             value = stmt.value
             if isinstance(value, ir.Call) and value.name == "ptr.make_tensor":
                 views.append(stmt)
@@ -377,7 +377,7 @@ def test_tensor_view_inherits_source_stride():
     collect(body)
     assert len(views) == 2, "expected the pitched view and the sub-view"
     sub_view = views[1]
-    assert [int(stride.value) for stride in sub_view.var.type.tensor_view.stride] == [256, 1]
+    assert [int(stride.value) for stride in sub_view.targets[0].type.tensor_view.stride] == [256, 1]
     addptr_args = _call_args(sub_view.value.args[0], "ptr.addptr")
     assert int(addptr_args[1].value) == 1 * 256 + 2
 
@@ -409,7 +409,7 @@ def prog_first_name(prog):
 
 def _find_assign_by_call(stmt, op_name):
     """Find the first AssignStmt whose value is a Call to ``op_name``."""
-    if isinstance(stmt, ir.AssignStmt):
+    if isinstance(stmt, ir.AssignStmt) and bool(stmt.targets):
         val = stmt.value
         if isinstance(val, ir.Call) and getattr(val, "name", None) == op_name:
             return stmt

@@ -1319,9 +1319,9 @@ void BindStmt(py::module_& ir)
 
     // AssignStmt - const shared_ptr
     auto assignStmtClass = py::class_<AssignStmt, Stmt, std::shared_ptr<AssignStmt>>(
-        ir, "AssignStmt", "Assignment statement: var = value");
-    assignStmtClass.def(py::init<const VarPtr&, const ExprPtr&, const Span&>(), py::arg("var"), py::arg("value"),
-                        py::arg("span"), "Create an assignment statement");
+        ir, "AssignStmt", "Expression with zero or more result variables");
+    assignStmtClass.def(py::init<const std::vector<VarPtr>&, const ExprPtr&, const Span&>(), py::arg("targets"),
+                        py::arg("value"), py::arg("span"), "Create an assignment statement");
     BindFields<AssignStmt>(assignStmtClass);
 
     // IfStmt - const shared_ptr
@@ -1424,13 +1424,6 @@ void BindStmt(py::module_& ir)
         py::keep_alive<0, 1>());
     seqStmtsClass.def("__len__", [](SeqStmtsPtr& self) { return self->stmts_.size(); }, "Number of statements");
     BindFields<SeqStmts>(seqStmtsClass);
-
-    // EvalStmt - const shared_ptr
-    auto evalStmtClass = py::class_<EvalStmt, Stmt, std::shared_ptr<EvalStmt>>(ir, "EvalStmt",
-                                                                               "Evaluation statement: expr");
-    evalStmtClass.def(py::init<const ExprPtr&, const Span&>(), py::arg("expr"), py::arg("span"),
-                      "Create an evaluation statement");
-    BindFields<EvalStmt>(evalStmtClass);
 
     // BreakStmt - const shared_ptr
     auto breakStmtClass = py::class_<BreakStmt, Stmt, std::shared_ptr<BreakStmt>>(ir, "BreakStmt",

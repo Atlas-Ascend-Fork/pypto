@@ -17,7 +17,11 @@ import pytest
 
 def _find_assign(func, name):
     ssa_name = f"{name}_0"
-    return next(stmt for stmt in func.body.stmts if isinstance(stmt, ir.AssignStmt) and stmt.var.name == ssa_name)
+    return next(
+        stmt
+        for stmt in func.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name == ssa_name
+    )
 
 
 # =============================================================================
@@ -218,8 +222,9 @@ def test_chain_parallel_branches():
     kernel = kernel_program.get_function(kernel.__name__)
 
     _expr_tmps = [
-        stmt for stmt in kernel.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("_expr_tmp")
+        stmt
+        for stmt in kernel.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("_expr_tmp")
     ]
     assert len(_expr_tmps) == 0
     assert isinstance(_find_assign(kernel, "val").value, ir.ConstInt)
@@ -285,13 +290,14 @@ def test_chain_tile_group_next():
     kernel = kernel_program.get_function(kernel.__name__)
 
     idx = next(
-        stmt for stmt in kernel.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("_bufidx_")
+        stmt
+        for stmt in kernel.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("_bufidx_")
     )
     assert isinstance(idx.value, ir.FloorMod)
     assert isinstance(_find_assign(kernel, "t").value, ir.GetItemExpr)
     assert all(
-        not (isinstance(stmt, ir.AssignStmt) and stmt.var.name.endswith("__mutexid"))
+        not ((isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.endswith("__mutexid"))
         for stmt in kernel.body.stmts
     )
 
@@ -390,8 +396,9 @@ def test_chain_tile_group_acc_multi_slot():
     kernel = kernel_program.get_function(kernel.__name__)
 
     idx = next(
-        stmt for stmt in kernel.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("_bufidx_")
+        stmt
+        for stmt in kernel.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("_bufidx_")
     )
     assert isinstance(idx.value, ir.FloorMod)
     assert isinstance(_find_assign(kernel, "acc").value, ir.GetItemExpr)

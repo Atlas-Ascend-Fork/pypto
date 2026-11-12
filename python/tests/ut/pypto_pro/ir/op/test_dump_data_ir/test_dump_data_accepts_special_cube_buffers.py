@@ -31,7 +31,7 @@ def test_dump_data_accepts_special_cube_buffers(monkeypatch):
 
     program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
     func = program.get_function(main.__name__)
-    calls = [stmt.expr for stmt in func.body.stmts if isinstance(stmt, ir.EvalStmt)]
+    calls = [stmt.value for stmt in func.body.stmts if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)]
     assert [call.name for call in calls] == ["debug.dump_tile", "debug.dump_tile"]
 
     printed = str(func)

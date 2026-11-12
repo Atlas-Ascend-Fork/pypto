@@ -121,7 +121,7 @@ public:
 
     void VisitStmt_(const AssignStmtPtr& op) override
     {
-        defs.insert(op->var_);
+        defs.insert(op->targets_.begin(), op->targets_.end());
         IRVisitor::VisitStmt_(op);
     }
 };

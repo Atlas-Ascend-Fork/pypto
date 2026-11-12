@@ -77,7 +77,7 @@ namespace {
 ir::ExprPtr LowerExpression(const ir::ExprPtr& expr, ir::FunctionType kind = ir::FunctionType::IN_CORE)
 {
     auto span = ir::Span::Unknown();
-    auto body = std::make_shared<const ir::EvalStmt>(expr, span);
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, expr, span);
     auto function = std::make_shared<const ir::Function>("kernel", std::vector<ir::VarPtr>{},
                                                          std::vector<ir::TypePtr>{}, body, span, kind, true);
     auto metadata = std::make_shared<ir::IRDebugInfo>();
@@ -85,7 +85,7 @@ ir::ExprPtr LowerExpression(const ir::ExprPtr& expr, ir::FunctionType kind = ir:
     auto lowered = LowerScalarExpressionsForCCE()(program);
     EXPECT_EQ(lowered->GetDebugInfo(), metadata.get());
     EXPECT_EQ(LowerScalarExpressionsForCCE()(lowered), lowered);
-    return ir::As<ir::EvalStmt>(lowered->functions_.at("kernel")->body_->stmts_[0])->expr_;
+    return ir::As<ir::AssignStmt>(lowered->functions_.at("kernel")->body_->stmts_[0])->value_;
 }
 
 ir::VarPtr BFloat16Var(const std::string& name)

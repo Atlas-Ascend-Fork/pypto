@@ -97,10 +97,12 @@ def _assert_ir_scalar(kernel, op_name, value, dtype, index):
     """Check the scalar encoding and destination dtype independently of SSA variable names."""
     program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     calls = [
-        stmt.expr
+        stmt.value
         for func in program.functions.values()
         for stmt in _walk_stmts(func.body)
-        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == op_name
+        if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == op_name
     ]
     assert len(calls) == 1
     call = calls[0]

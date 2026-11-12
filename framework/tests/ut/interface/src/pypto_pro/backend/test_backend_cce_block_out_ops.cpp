@@ -193,10 +193,12 @@ std::string RunSsbufCodegen(const std::string& op_name)
                                                        {"fields", std::vector<std::string>{"value"}},
                                                    },
                                                    tuple_type, ir::Span::Unknown());
-    auto create_stmt = std::make_shared<const ir::AssignStmt>(struct_var, create, ir::Span::Unknown());
+    auto create_stmt = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{struct_var}, create,
+                                                              ir::Span::Unknown());
     auto ssbuf = MakeCall(op_name, {struct_var, MakeConstInt(0)});
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{create_stmt, std::make_shared<const ir::EvalStmt>(ssbuf, ir::Span::Unknown())},
+        std::vector<ir::StmtPtr>{
+            create_stmt, std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, ssbuf, ir::Span::Unknown())},
         ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
@@ -208,7 +210,7 @@ ir::StmtPtr MakeTileAssign(const ir::VarPtr& tile)
 {
     auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile->GetType()),
                                                       tile->GetType(), ir::Span::Unknown());
-    return std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
+    return std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tile}, make_tile, ir::Span::Unknown());
 }
 
 // Full codegen over a kernel whose body is *stmts* and whose parameters are *params*.
@@ -228,7 +230,8 @@ std::string GenerateMxLoadKernel(const ir::VarPtr& scale, const ir::VarPtr& tile
                                  std::vector<std::pair<std::string, std::any>> kwargs = {})
 {
     auto load = MakeCallWithKwargs("block.load", {tile, scale, MakeOffsets(offsets)}, std::move(kwargs));
-    return GenerateKernel({MakeTileAssign(tile), std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown())},
+    return GenerateKernel({MakeTileAssign(tile), std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, load,
+                                                                                        ir::Span::Unknown())},
                           {scale}, ir::SectionKind::Cube);
 }
 
@@ -775,13 +778,15 @@ TEST(BackendCCEBlockOutOps, L2CacheModeCodegenThroughFullProgram)
         const auto mode = load_case.first;
         auto load = MakeCallWithKwargs("block.load", {tile, tensor, MakeOffsets(0, 0)},
                                        {{"l2_cache_mode", static_cast<int>(mode)}});
-        vector_stmts.push_back(std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown()));
+        vector_stmts.push_back(
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, load, ir::Span::Unknown()));
     }
     for (const auto& store_case : store_cases) {
         const auto mode = store_case.first;
         auto store = MakeCallWithKwargs("block.store", {tensor, tile, MakeOffsets(0, 0)},
                                         {{"l2_cache_mode", static_cast<int>(mode)}});
-        vector_stmts.push_back(std::make_shared<const ir::EvalStmt>(store, ir::Span::Unknown()));
+        vector_stmts.push_back(
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, store, ir::Span::Unknown()));
     }
     const auto vector_code = GenerateKernel(vector_stmts, {tensor}, ir::SectionKind::Vector);
 
@@ -798,10 +803,11 @@ TEST(BackendCCEBlockOutOps, L2CacheModeCodegenThroughFullProgram)
     auto scaling_store = MakeCallWithKwargs("block.store", {int8_tensor, acc_tile, MakeOffsets(0, 0), scaling_tile},
                                             {{"phase", static_cast<int>(ir::STPhase::Final)},
                                              {"l2_cache_mode", static_cast<int>(ir::TStoreL2Hint::NotAllocClean)}});
-    const auto cube_code = GenerateKernel({MakeTileAssign(acc_tile), MakeTileAssign(scaling_tile),
-                                           std::make_shared<const ir::EvalStmt>(phase_store, ir::Span::Unknown()),
-                                           std::make_shared<const ir::EvalStmt>(scaling_store, ir::Span::Unknown())},
-                                          {fp32_tensor, int8_tensor}, ir::SectionKind::Cube);
+    const auto cube_code = GenerateKernel(
+        {MakeTileAssign(acc_tile), MakeTileAssign(scaling_tile),
+         std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, phase_store, ir::Span::Unknown()),
+         std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, scaling_store, ir::Span::Unknown())},
+        {fp32_tensor, int8_tensor}, ir::SectionKind::Cube);
 
     std::string generated;
     AppendCodegenSection(generated, "vector l2 cache modes", vector_code);
@@ -936,8 +942,9 @@ TEST(BackendCCEBlockOutOps, GeneratesInitOutputDynamicShapeFallback)
                                                               std::optional<ir::TensorView>(view));
     auto tensor = MakeVar("tensor", tensor_type);
     auto init = MakeCall("block.init_output", {tensor, MakeConstInt(0), MakeConstInt(128), MakeConstInt(0)});
-    const auto generated = GenerateKernel({std::make_shared<const ir::EvalStmt>(init, ir::Span::Unknown())}, {tensor},
-                                          ir::SectionKind::Vector);
+    const auto generated = GenerateKernel(
+        {std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, init, ir::Span::Unknown())}, {tensor},
+        ir::SectionKind::Vector);
 
     EXPECT_CONTAINS(generated, "using tensor__io0ShapeDim5 = pto::TileShape2D<float, pto::DYNAMIC, pto::DYNAMIC, "
                                "Layout::ND>;");
@@ -954,8 +961,9 @@ TEST(BackendCCEBlockOutOps, GeneratesDumpTileThroughFullCodegen)
         "tile", MakeTileType({16, 16}, ir::DataType::FP16, std::make_optional(MakeMemRef(ir::MemorySpace::Vec))));
     auto dump = MakeCall("debug.dump_tile", {tile});
     const auto generated = GenerateKernel(
-        {MakeTileAssign(tile), std::make_shared<const ir::EvalStmt>(dump, ir::Span::Unknown())}, {},
-        ir::SectionKind::Vector);
+        {MakeTileAssign(tile),
+         std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, dump, ir::Span::Unknown())},
+        {}, ir::SectionKind::Vector);
 
     EXPECT_CONTAINS(generated, "PYPTO_DUMP_TILE_WINDOW(");
     EXPECT_EQ(generated.find("#include <utils/debug/pto_dump.h>"), std::string::npos);
@@ -976,8 +984,9 @@ TEST(BackendCCEBlockOutOps, MergedLoadPreservesStaticInnerExtent)
                 "block.load", {out, tensor, MakeOffsets({0, 0, 0, 0, 0})},
                 {{"tile_dims", std::vector<int>{1, 3, 4}}, {"nd_inner", inner}, {"is_transpose", transposed}});
             const auto code = GenerateKernel(
-                {MakeTileAssign(out), std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown())}, {tensor},
-                ir::SectionKind::Cube);
+                {MakeTileAssign(out),
+                 std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown())},
+                {tensor}, ir::SectionKind::Cube);
             EXPECT_CONTAINS(code, "auto* __merged_src = tensor_ptr + ");
             EXPECT_CONTAINS(code, "const uint64_t __merged_inner = " + std::to_string(inner) + ";");
             EXPECT_CONTAINS(code, transposed ? "out.tile.GetValidRow()" : "out.tile.GetValidCol()");
@@ -1008,9 +1017,9 @@ TEST(BackendCCEBlockOutOps, MergedLoadKeepsValidWindowBoundForLargeZnTiles)
     auto load = MakeCallWithKwargs(
         "block.load", {out, tensor, MakeOffsets({0, 0, 0, 0, 0})},
         {{"tile_dims", std::vector<int>{1, 3, 4}}, {"nd_inner", 65536}, {"is_transpose", true}});
-    const auto code = GenerateKernel(
-        {MakeTileAssign(out), std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown())}, {tensor},
-        ir::SectionKind::Cube);
+    const auto code = GenerateKernel({MakeTileAssign(out), std::make_shared<const ir::AssignStmt>(
+                                                               std::vector<ir::VarPtr>{}, load, ir::Span::Unknown())},
+                                     {tensor}, ir::SectionKind::Cube);
     EXPECT_CONTAINS(code, "const int32_t __merged_valid = static_cast<int64_t>(out.tile.GetValidCol());");
     EXPECT_CONTAINS(code, "static_cast<int32_t>(__merged_inner < __merged_valid ? "
                           "__merged_inner : __merged_valid)");
@@ -1026,15 +1035,16 @@ TEST(BackendCCEBlockOutOps, MergedLoadsSeparateAxesAndReuseAliases)
     auto out = MakeVar("out", MakeTileType({32, 128}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Mat), nz));
     auto transposed = MakeVar("transposed",
                               MakeTileType({128, 32}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Mat), zn));
-    std::vector<ir::StmtPtr> stmts = {MakeTileAssign(out), MakeTileAssign(transposed),
-                                      std::make_shared<const ir::AssignStmt>(alias, tensor, ir::Span::Unknown())};
+    std::vector<ir::StmtPtr> stmts = {
+        MakeTileAssign(out), MakeTileAssign(transposed),
+        std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{alias}, tensor, ir::Span::Unknown())};
     auto add_load = [&](const ir::VarPtr& dst, std::vector<int> axes, int inner, bool is_transpose = false) {
         std::vector<std::pair<std::string, std::any>> kwargs = {{"tile_dims", axes}, {"is_transpose", is_transpose}};
         if (inner != 0) {
             kwargs.emplace_back("nd_inner", inner);
         }
         auto load = MakeCallWithKwargs("block.load", {dst, alias, MakeOffsets({0, 0, 0, 0, 0})}, kwargs);
-        stmts.push_back(std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown()));
+        stmts.push_back(std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, load, ir::Span::Unknown()));
     };
     add_load(out, {1, 3, 4}, 2);
     add_load(transposed, {1, 3, 4}, 2, true);
@@ -1047,7 +1057,7 @@ TEST(BackendCCEBlockOutOps, MergedLoadsSeparateAxesAndReuseAliases)
     stmts.push_back(MakeTileAssign(result));
     auto store = MakeCallWithKwargs("block.store", {alias, result, MakeOffsets({0, 0, 0, 0, 0})},
                                     {{"tile_dims", std::vector<int>{1, 4}}});
-    stmts.push_back(std::make_shared<const ir::EvalStmt>(store, ir::Span::Unknown()));
+    stmts.push_back(std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, store, ir::Span::Unknown()));
     const auto code = GenerateKernel(stmts, {tensor}, ir::SectionKind::Cube);
     for (const auto& name : {"tensor", "tensor__v1", "tensor__v2", "tensor__v3", "tensor__v4"}) {
         const std::string decl = "using " + std::string(name) + "Type = GlobalTensor<";
@@ -1083,8 +1093,9 @@ TEST(BackendCCEBlockOutOps, MergedSingleColumnLoadKeepsDestinationLayout)
             "block.load", {out, tensor, MakeOffsets({0, 0, 0, 0, 0})},
             {{"tile_dims", std::vector<int>{1, 3, 4}}, {"nd_inner", 2}, {"is_transpose", transposed}});
         const auto code = GenerateKernel(
-            {MakeTileAssign(out), std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown())}, {tensor},
-            ir::SectionKind::Cube);
+            {MakeTileAssign(out),
+             std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, load, ir::Span::Unknown())},
+            {tensor}, ir::SectionKind::Cube);
         EXPECT_CONTAINS(code, "using tensorShapeDim5 = pto::Shape<1, 1, -1, -1, -1>;");
         EXPECT_CONTAINS(code, "using tensorType = GlobalTensor<half, tensorShapeDim5, tensorStrideDim5, Layout::" +
                                   std::string(transposed ? "DN>;" : "ND>;"));
@@ -1124,8 +1135,9 @@ TEST(BackendCCEBlockOutOps, MergedLoadPreservesWideSourceStrides)
         auto call = MakeCallWithKwargs("block.load", {out, tensor, MakeOffsets({0, 1, 0, 0, 0})},
                                        {{"tile_dims", std::vector<int>{1, 3, 4}}, {"nd_inner", 16}});
         const auto code = GenerateKernel(
-            {MakeTileAssign(out), std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown())}, {tensor},
-            ir::SectionKind::Cube);
+            {MakeTileAssign(out),
+             std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown())},
+            {tensor}, ir::SectionKind::Cube);
         EXPECT_CONTAINS(code,
                         "tensorStrideDim5(1, 1, 2147483648, " + std::string(wide_row ? "2147483648" : "64") + ", 1)");
         EXPECT_CONTAINS(code, "static_cast<uint64_t>(1) * (2147483648)");
@@ -1145,9 +1157,9 @@ TEST(BackendCCEBlockOutOps, MergedLoadPromotesDynamicDimensionProducts)
     auto out = MakeVar("out", MakeTileType({32, 64}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Mat), hw));
     auto call = MakeCallWithKwargs("block.load", {out, tensor, MakeOffsets({0, 1, 0, 0, 0})},
                                    {{"tile_dims", std::vector<int>{1, 3, 4}}, {"nd_inner", -1}});
-    const auto code = GenerateKernel(
-        {MakeTileAssign(out), std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown())}, {tensor, dynamic},
-        ir::SectionKind::Cube);
+    const auto code = GenerateKernel({MakeTileAssign(out), std::make_shared<const ir::AssignStmt>(
+                                                               std::vector<ir::VarPtr>{}, call, ir::Span::Unknown())},
+                                     {tensor, dynamic}, ir::SectionKind::Cube);
     EXPECT_CONTAINS(code, "const uint64_t __merged_inner = dim;");
     EXPECT_CONTAINS(code, "tensorStrideDim5(1, 1, uint64_t{1} * dim * dim * dim, uint64_t{1} * dim, 1)");
     EXPECT_CONTAINS(code, "static_cast<uint64_t>(1) * (uint64_t{1} * dim * dim * dim)");
@@ -1164,8 +1176,9 @@ TEST(BackendCCEBlockOutOps, GeneratesHighDimensionalNzLoadAndStore)
     auto store = MakeCall("block.store", {tensor, tile, offsets});
 
     const auto generated = GenerateKernel(
-        {MakeTileAssign(tile), std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown()),
-         std::make_shared<const ir::EvalStmt>(store, ir::Span::Unknown())},
+        {MakeTileAssign(tile),
+         std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, load, ir::Span::Unknown()),
+         std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, store, ir::Span::Unknown())},
         {tensor}, ir::SectionKind::Vector);
 
     EXPECT_CONTAINS(generated, "pto::TileShape2D<half, pto::DYNAMIC, pto::DYNAMIC, Layout::NZ>");
@@ -1188,8 +1201,9 @@ TEST(BackendCCEBlockOutOps, GeneratesFp8NzLoadAndStore)
     auto store = MakeCall("block.store", {tensor, tile, offsets});
 
     const auto generated = GenerateKernel(
-        {MakeTileAssign(tile), std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown()),
-         std::make_shared<const ir::EvalStmt>(store, ir::Span::Unknown())},
+        {MakeTileAssign(tile),
+         std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, load, ir::Span::Unknown()),
+         std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, store, ir::Span::Unknown())},
         {tensor}, ir::SectionKind::Vector);
 
     EXPECT_CONTAINS(generated, "pto::TileShape2D<float8_e4m3_t, pto::DYNAMIC, pto::DYNAMIC, Layout::NZ>");
@@ -1208,8 +1222,9 @@ TEST(BackendCCEBlockOutOps, GeneratesPackedFp4NzLoadAndStore)
     auto store = MakeCall("block.store", {tensor, tile, offsets});
 
     const auto generated = GenerateKernel(
-        {MakeTileAssign(tile), std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown()),
-         std::make_shared<const ir::EvalStmt>(store, ir::Span::Unknown())},
+        {MakeTileAssign(tile),
+         std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, load, ir::Span::Unknown()),
+         std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, store, ir::Span::Unknown())},
         {tensor}, ir::SectionKind::Vector);
 
     EXPECT_CONTAINS(generated, "pto::TileShape2D<float4_e2m1x2_t, pto::DYNAMIC, pto::DYNAMIC, Layout::NZ>");
@@ -1262,7 +1277,8 @@ TEST(BackendCCEBlockOutOps, PadsNonAlignedNzTensorShapeAndRejectsInvalidOffsetRa
     auto generate_load = [&](const std::vector<int64_t>& tensor_shape, const std::vector<int64_t>& offsets) {
         auto tensor = MakeTensorVar("tensor", tensor_shape, ir::DataType::FP16, ir::Layout::NZ);
         auto load = MakeCall("block.load", {tile, tensor, MakeOffsets(offsets)});
-        return GenerateKernel({MakeTileAssign(tile), std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown())},
+        return GenerateKernel({MakeTileAssign(tile), std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{},
+                                                                                            load, ir::Span::Unknown())},
                               {tensor}, ir::SectionKind::Vector);
     };
 
@@ -1393,10 +1409,11 @@ TEST(BackendCCEBlockOutOps, InfersMxLayoutPerLoadForSameTensor)
                                      {{"tile_dims", std::vector<int>{0, 1}}});
     auto b_load = MakeCallWithKwargs("block.load", {out_b, tensor, MakeOffsets({0, 0, 0})},
                                      {{"tile_dims", std::vector<int>{0, 1}}, {"is_transpose", true}});
-    const auto generated = GenerateKernel({MakeTileAssign(out_a), MakeTileAssign(out_b),
-                                           std::make_shared<const ir::EvalStmt>(a_load, ir::Span::Unknown()),
-                                           std::make_shared<const ir::EvalStmt>(b_load, ir::Span::Unknown())},
-                                          {tensor}, ir::SectionKind::Cube);
+    const auto generated = GenerateKernel(
+        {MakeTileAssign(out_a), MakeTileAssign(out_b),
+         std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, a_load, ir::Span::Unknown()),
+         std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, b_load, ir::Span::Unknown())},
+        {tensor}, ir::SectionKind::Cube);
     EXPECT_CONTAINS(generated, "using scaleType = GlobalTensor<float8_e8m0_t, scaleShapeDim5, scaleStrideDim5, "
                                "Layout::MX_A_ND>;");
     EXPECT_CONTAINS(generated, "using scale__v1Type = GlobalTensor<float8_e8m0_t, scale__v1ShapeDim5, "
@@ -1444,15 +1461,17 @@ TEST(BackendCCEBlockOutOps, GeneratesLoadAndStoreThroughFullCodegen)
     auto tile = MakeVar("tile", tile_type);
     auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
-    auto tile_assign = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
+    auto tile_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tile}, make_tile,
+                                                              ir::Span::Unknown());
     auto offsets = MakeOffsets(0, 0);
     auto load = std::make_shared<const ir::Call>("block.load", std::vector<ir::ExprPtr>{tile, tensor, offsets},
                                                  ir::Span::Unknown());
     auto store = std::make_shared<const ir::Call>("block.store", std::vector<ir::ExprPtr>{tensor, tile, offsets},
                                                   ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{tile_assign, std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown()),
-                                 std::make_shared<const ir::EvalStmt>(store, ir::Span::Unknown())},
+        std::vector<ir::StmtPtr>{
+            tile_assign, std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, load, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, store, ir::Span::Unknown())},
         ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
@@ -2154,8 +2173,9 @@ TEST(BackendCCEBlockOutOps, GeneratesStructCreateThroughAssignStmt)
                                                    },
                                                    tuple_type, ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{MakeTileAssign(v0), MakeTileAssign(v1),
-                                 std::make_shared<const ir::AssignStmt>(result, create, ir::Span::Unknown())},
+        std::vector<ir::StmtPtr>{
+            MakeTileAssign(v0), MakeTileAssign(v1),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, create, ir::Span::Unknown())},
         ir::Span::Unknown());
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);

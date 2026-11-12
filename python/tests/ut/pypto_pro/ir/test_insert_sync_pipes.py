@@ -39,16 +39,17 @@ def _insert_sync_pipes(name, memories):
         args.append(ir.ConstFloat(0.0, ir.DataType.FP32, span))
     call = ir.Call(ir.Op(f"block.{name}"), args, span)
     body = ir.SeqStmts(
-        [ir.AssignStmt(tile, definition, span) for tile, definition in zip(tiles, definitions, strict=True)]
-        + [ir.EvalStmt(call, span)],
+        [ir.AssignStmt([tile], definition, span) for tile, definition in zip(tiles, definitions, strict=True)]
+        + [ir.AssignStmt([], call, span)],
         span,
     )
     function = ir.Function("kernel", params, [], body, span)
     program = ir.Pass.insert_sync()(ir.Program([function], "pipes", span))
     sync = [
-        stmt.expr
+        stmt.value
         for stmt in program.get_function("kernel").body.stmts
-        if isinstance(stmt, ir.EvalStmt) and stmt.expr.name in ("system.mutex_lock_dyn", "system.mutex_unlock_dyn")
+        if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)
+        and stmt.value.name in ("system.mutex_lock_dyn", "system.mutex_unlock_dyn")
     ]
     assert len(sync) == 2 * len(tiles)
     return {ir.PipeType(call.kwargs["pipe"]) for call in sync}

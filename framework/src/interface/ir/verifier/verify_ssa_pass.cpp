@@ -321,14 +321,15 @@ void SSAVerifier::VisitStmt_(const TensorOpStmtPtr& op)
 
 void SSAVerifier::VisitStmt_(const AssignStmtPtr& op)
 {
-    // value_ is a use; var_ is a def (defined here, not visited as a use).
+    // Evaluate the RHS uses before defining any result variables.
     if (op->value_) {
         VisitExpr(op->value_);
     }
 
-    // Check for multiple assignments and define the target.
-    CheckVariableAssignment(op->var_);
-    Define(op->var_);
+    for (const auto& target : op->targets_) {
+        CheckVariableAssignment(target);
+        Define(target);
+    }
 }
 
 void SSAVerifier::VisitStmt_(const ForStmtPtr& op)

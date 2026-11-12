@@ -100,11 +100,14 @@ ir::CallPtr RegisteredCall(const std::string& name, const std::vector<ir::ExprPt
     return ir::OpRegistry::GetInstance().Create(name, args, kwargs, Sp());
 }
 
-ir::StmtPtr Eval(const ir::ExprPtr& expr) { return std::make_shared<const ir::EvalStmt>(expr, Sp()); }
+ir::StmtPtr Eval(const ir::ExprPtr& expr)
+{
+    return std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, expr, Sp());
+}
 
 ir::StmtPtr Assign(const ir::VarPtr& var, const ir::ExprPtr& value)
 {
-    return std::make_shared<const ir::AssignStmt>(var, value, Sp());
+    return std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{var}, value, Sp());
 }
 
 ir::StmtPtr Seq(std::vector<ir::StmtPtr> stmts) { return std::make_shared<const ir::SeqStmts>(std::move(stmts), Sp()); }

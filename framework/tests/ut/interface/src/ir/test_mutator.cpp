@@ -105,7 +105,7 @@ TEST_F(IRMutatorTest, TestIdentityAllStmts)
     auto iterArg = std::make_shared<IterArg>("sum", Scalar(DataType::INT32), zero, Sp());
     auto retVar = std::make_shared<Var>("sum_out", Scalar(DataType::INT32), Sp());
 
-    auto assign = std::make_shared<AssignStmt>(x, val, Sp());
+    auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val, Sp());
     EXPECT_EQ(m.VisitStmt(assign).get(), assign.get());
 
     auto ifStmt = std::make_shared<IfStmt>(cond, yield, std::nullopt, std::vector<VarPtr>{}, Sp());
@@ -127,13 +127,14 @@ TEST_F(IRMutatorTest, TestIdentityAllStmts)
     auto whileS = std::make_shared<WhileStmt>(cond, std::vector<IterArgPtr>{}, yield, std::vector<VarPtr>{}, Sp());
     EXPECT_EQ(m.VisitStmt(whileS).get(), whileS.get());
 
-    auto a1 = std::make_shared<AssignStmt>(x, one, Sp());
-    auto a2 = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(2, DataType::INT32, Sp()), Sp());
+    auto a1 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, one, Sp());
+    auto a2 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, std::make_shared<ConstInt>(2, DataType::INT32, Sp()),
+                                           Sp());
     auto seq = std::make_shared<SeqStmts>(std::vector<StmtPtr>{a1, a2}, Sp());
     EXPECT_EQ(m.VisitStmt(seq).get(), seq.get());
 
     auto call = std::make_shared<Call>("op", std::vector<ExprPtr>{}, Sp());
-    auto eval = std::make_shared<EvalStmt>(call, Sp());
+    auto eval = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, Sp());
     EXPECT_EQ(m.VisitStmt(eval).get(), eval.get());
 
     auto brk = std::make_shared<BreakStmt>(Sp());
@@ -163,7 +164,8 @@ TEST_F(IRMutatorTest, TestIdentityFunctionAndProgram)
 {
     IdentityMutator m;
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-    auto body = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(42, DataType::INT32, Sp()), Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                             std::make_shared<ConstInt>(42, DataType::INT32, Sp()), Sp());
     auto func = std::make_shared<Function>("f", std::vector<VarPtr>{x}, std::vector<TypePtr>{Scalar(DataType::INT32)},
                                            body, Sp());
     EXPECT_EQ(m.VisitFunction(func).get(), func.get());
@@ -208,11 +210,11 @@ TEST_F(IRMutatorTest, TestRewriteConstIntAndPropagation)
     EXPECT_NE(m.VisitExpr(add).get(), add.get());
 
     // Propagation through assign stmt
-    auto assign = std::make_shared<AssignStmt>(x, val42, Sp());
+    auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val42, Sp());
     EXPECT_NE(m.VisitStmt(assign).get(), assign.get());
 
     // Propagation through function
-    auto body = std::make_shared<AssignStmt>(x, val42, Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val42, Sp());
     auto func = std::make_shared<Function>("f", std::vector<VarPtr>{x}, std::vector<TypePtr>{Scalar(DataType::INT32)},
                                            body, Sp());
     EXPECT_NE(m.VisitFunction(func).get(), func.get());
@@ -291,6 +293,40 @@ TEST_F(IRMutatorTest, TestRewriteTensorOpStmt)
     EXPECT_NE(mutated, nullptr);
     auto newArg = std::dynamic_pointer_cast<const ConstInt>(mutated->args_[0]);
     EXPECT_EQ(newArg->value_, 99);
+}
+
+TEST_F(IRMutatorTest, TestAssignmentTargetListMutation)
+{
+    auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
+    auto y = std::make_shared<Var>("y", Scalar(DataType::INT32), Sp());
+    auto renamed = std::make_shared<Var>("renamed", Scalar(DataType::INT32), Sp());
+    auto value = std::make_shared<MakeTuple>(std::vector<ExprPtr>{std::make_shared<ConstInt>(1, DataType::INT32, Sp()),
+                                                                  std::make_shared<ConstInt>(2, DataType::INT32, Sp())},
+                                             Sp());
+    auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x, y}, value, Sp());
+    IdentityMutator identity;
+    EXPECT_EQ(identity.VisitStmt(assign), assign);
+
+    class TargetRewriter : public IRMutator {
+    public:
+        using IRMutator::VisitExpr_;
+        VarPtr from;
+        VarPtr to;
+        ExprPtr VisitExpr_(const VarPtr& op) override { return op == from ? to : op; }
+    };
+    TargetRewriter rewriter;
+    rewriter.from = y;
+    rewriter.to = renamed;
+    auto rewritten = std::dynamic_pointer_cast<const AssignStmt>(rewriter.VisitStmt(assign));
+    ASSERT_NE(rewritten, nullptr);
+    EXPECT_EQ(rewritten->targets_, (std::vector<VarPtr>{x, renamed}));
+    EXPECT_EQ(rewritten->value_, value);
+
+    auto discard = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, y, Sp());
+    auto rewrittenDiscard = std::dynamic_pointer_cast<const AssignStmt>(rewriter.VisitStmt(discard));
+    ASSERT_NE(rewrittenDiscard, nullptr);
+    EXPECT_TRUE(rewrittenDiscard->targets_.empty());
+    EXPECT_EQ(rewrittenDiscard->value_, renamed);
 }
 
 } // namespace ir

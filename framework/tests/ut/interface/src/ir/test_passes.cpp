@@ -43,7 +43,8 @@ protected:
                              std::optional<int> max_threads = std::nullopt)
     {
         auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-        auto body = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(value, DataType::INT32, Sp()), Sp());
+        auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                                 std::make_shared<ConstInt>(value, DataType::INT32, Sp()), Sp());
         std::vector<std::pair<std::string, std::any>> attrs;
         if (max_threads.has_value()) {
             attrs.emplace_back(kMaxThreadsAttr, *max_threads);
@@ -80,7 +81,8 @@ TEST_F(PassesTest, TestCreateFunctionPassTransform)
         [](const FunctionPtr& f) {
             auto x = std::make_shared<Var>("x", std::make_shared<ScalarType>(DataType::INT32), Span("test", 1, 1));
             auto body = std::make_shared<AssignStmt>(
-                x, std::make_shared<ConstInt>(99, DataType::INT32, Span("test", 1, 1)), Span("test", 1, 1));
+                std::vector<VarPtr>{x}, std::make_shared<ConstInt>(99, DataType::INT32, Span("test", 1, 1)),
+                Span("test", 1, 1));
             return std::make_shared<Function>(f->name_, f->params_, f->returnTypes_, body, f->span_, f->funcType_);
         },
         "RewriteFunc");
@@ -144,8 +146,9 @@ TEST_F(PassesTest, TestCreateProgramPassTransformAndProperties)
     auto p = pass::CreateProgramPass(
         [](const ProgramPtr& prog) {
             auto x = std::make_shared<Var>("x", std::make_shared<ScalarType>(DataType::INT32), Span("test", 1, 1));
-            auto body = std::make_shared<AssignStmt>(
-                x, std::make_shared<ConstInt>(7, DataType::INT32, Span("test", 1, 1)), Span("test", 1, 1));
+            auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                                     std::make_shared<ConstInt>(7, DataType::INT32, Span("test", 1, 1)),
+                                                     Span("test", 1, 1));
             auto func = std::make_shared<Function>("rewritten", std::vector<VarPtr>{x}, std::vector<TypePtr>{}, body,
                                                    Span("test", 1, 1));
             return std::make_shared<Program>(std::vector<FunctionPtr>{func}, prog->name_, prog->span_);

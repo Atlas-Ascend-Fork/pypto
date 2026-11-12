@@ -90,7 +90,6 @@ enum class ObjectKind {
     WhileStmt,
     SectionStmt,
     SeqStmts,
-    EvalStmt,
     BreakStmt,
     ContinueStmt,
 

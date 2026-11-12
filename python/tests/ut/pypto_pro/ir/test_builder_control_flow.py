@@ -202,7 +202,7 @@ def test_simple_if_stmt():
 
         with ib.if_stmt(condition):
             result = ib.var("result", ir.ScalarType(DataType.INT64))
-            ib.assign(result, x)
+            ib.assign([result], x)
 
     func = f.get_result()
 
@@ -228,11 +228,11 @@ def test_if_else_stmt():
 
         with ib.if_stmt(condition) as if_builder:
             # Then branch
-            ib.assign(result, one)
+            ib.assign([result], one)
 
             # Else branch
             if_builder.else_()
-            ib.assign(result, zero)
+            ib.assign([result], zero)
 
     func = f.get_result()
 

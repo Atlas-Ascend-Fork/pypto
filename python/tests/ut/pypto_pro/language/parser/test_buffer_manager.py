@@ -92,11 +92,11 @@ def _walk_statements(stmt):
 def _mutex_calls(program: ir.Program, function_name: str):
     function = program.get_function(function_name)
     return [
-        stmt.expr
+        stmt.value
         for stmt in _walk_statements(function.body)
-        if isinstance(stmt, ir.EvalStmt)
-        and isinstance(stmt.expr, ir.Call)
-        and stmt.expr.name in ("system.mutex_lock_dyn", "system.mutex_unlock_dyn")
+        if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name in ("system.mutex_lock_dyn", "system.mutex_unlock_dyn")
     ]
 
 
@@ -840,8 +840,11 @@ def test_mutex_candidate_groups_preserve_each_tile_candidates():
     assert ir_str.count("system.mutex_lock_dyn") == 3, ir_str
     assert ir_str.count("system.mutex_unlock_dyn") == 3, ir_str
     # Dynamic lhs may equal either static ID; both overlaps need a guard.
-    guards = [stmt for stmt in _walk_statements(program.get_function(k.__name__).body)
-              if isinstance(stmt, ir.AssignStmt) and stmt.var.name.startswith("__sync_needed")]
+    guards = [
+        stmt
+        for stmt in _walk_statements(program.get_function(k.__name__).body)
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets)) and stmt.targets[0].name.startswith("__sync_needed")
+    ]
     assert len(guards) == 2
     assert all(len(call.args) == 1 for call in _mutex_calls(program, k.__name__))
 

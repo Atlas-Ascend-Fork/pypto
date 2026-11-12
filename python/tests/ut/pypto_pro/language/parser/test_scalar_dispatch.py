@@ -46,14 +46,18 @@ def test_simd_element_reads_keep_scalar_promotion(dtype, expected, use_tile):
     loads = [
         stmt.value
         for stmt in function.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call) and stmt.value.name == "block.getval"
+        if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.getval"
     ]
     assert len(loads) == 2
     assert all(load.type.dtype == expected for load in loads)
     stores = [
-        stmt.expr
+        stmt.value
         for stmt in function.body.stmts
-        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == "block.setval"
+        if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.setval"
     ]
     assert len(stores) == 1
     assert isinstance(stores[0].type, ir.NoneType)
@@ -73,8 +77,11 @@ def test_setval_literal_forms_keep_the_same_ir_dtype_and_codegen():
     program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     function = program.get_function("kernel")
     stores = [
-        stmt.expr for stmt in function.body.stmts
-        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == "block.setval"
+        stmt.value
+        for stmt in function.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.setval"
     ]
     assert len(stores) == 2
     assert all(isinstance(store.args[2], ir.ConstInt) for store in stores)
@@ -103,8 +110,11 @@ def test_expands_literal_forms_keep_the_same_ir_dtype():
     program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     function = program.get_function("kernel")
     expands = [
-        stmt.expr for stmt in function.body.stmts
-        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == "block.expands"
+        stmt.value
+        for stmt in function.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.expands"
     ]
     assert len(expands) == 2
     assert all(isinstance(call.args[1], ir.ConstInt) for call in expands)
@@ -132,7 +142,7 @@ def test_simd_integer_reads_merge_as_int64_across_branches():
     assert len(branch.return_vars) == 1
     assert branch.return_vars[0].type.dtype == pl.DT_INT64
     for body in (branch.then_body, branch.else_body):
-        loads = [stmt.value for stmt in body.stmts if isinstance(stmt, ir.AssignStmt)]
+        loads = [stmt.value for stmt in body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
         load = next(value for value in loads if isinstance(value, ir.Call) and value.name == "block.getval")
         assert load.type.dtype == pl.DT_INT64
 

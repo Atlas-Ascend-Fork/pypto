@@ -81,7 +81,8 @@ ir::ProgramPtr MakeVfProgram(const std::string& vfName, const ir::StmtPtr& vf_bo
         "simd.call", callArgs, std::vector<std::pair<std::string, std::any>>{{"callee", vfName}},
         std::make_shared<const ir::ScalarType>(ir::DataType::INT64), ir::Span::Unknown());
     auto kernelBody = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(callExpr, ir::Span::Unknown())},
+        std::vector<ir::StmtPtr>{
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, callExpr, ir::Span::Unknown())},
         ir::Span::Unknown());
     auto kernel = std::make_shared<const ir::Function>("kernel", kernelParams, std::vector<ir::TypePtr>{}, kernelBody,
                                                        ir::Span::Unknown(), ir::FunctionType::IN_CORE, true);
@@ -336,7 +337,8 @@ TEST(CCECodegenTest, WritesBackLoopCarriedValueBeforeContinue)
     auto iter_arg = std::make_shared<const ir::IterArg>("acc", scalar_type, MakeConstInt(0), ir::Span::Unknown());
     auto return_var = MakeVar("acc_out", scalar_type);
     auto updated = MakeVar("acc_updated", scalar_type);
-    auto update = std::make_shared<const ir::AssignStmt>(updated, MakeConstInt(7), ir::Span::Unknown());
+    auto update = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{updated}, MakeConstInt(7),
+                                                         ir::Span::Unknown());
     auto loop_body = std::make_shared<const ir::SeqStmts>(
         std::vector<ir::StmtPtr>{
             update, std::make_shared<const ir::ContinueStmt>(std::vector<ir::ExprPtr>{updated}, ir::Span::Unknown())},
@@ -360,7 +362,8 @@ TEST(CCECodegenTest, SnapshotsCyclicCarriedValuesBeforeForJump)
         auto left = std::make_shared<const ir::IterArg>("left", scalar_type, MakeConstInt(1), ir::Span::Unknown());
         auto right = std::make_shared<const ir::IterArg>("right", scalar_type, MakeConstInt(2), ir::Span::Unknown());
         auto alias = MakeVar("old_left", scalar_type);
-        auto copy = std::make_shared<const ir::AssignStmt>(alias, left->iterVar_, ir::Span::Unknown());
+        auto copy = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{alias}, left->iterVar_,
+                                                           ir::Span::Unknown());
         std::vector<ir::ExprPtr> values{right->iterVar_, alias};
         ir::StmtPtr jump;
         if (is_break) {
@@ -431,9 +434,11 @@ TEST(CCECodegenTest, SnapshotsCarriedTupleStorageBeforeWritingSlots)
         std::make_shared<const ir::ConstBool>(true, ir::Span::Unknown()), std::vector<ir::IterArgPtr>{left, right},
         jump, std::vector<ir::VarPtr>{MakeVar("left_out", type), MakeVar("right_out", type)}, ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::AssignStmt>(left_init, left_value, ir::Span::Unknown()),
-                                 std::make_shared<const ir::AssignStmt>(right_init, right_value, ir::Span::Unknown()),
-                                 loop},
+        std::vector<ir::StmtPtr>{
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{left_init}, left_value, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{right_init}, right_value,
+                                                   ir::Span::Unknown()),
+            loop},
         ir::Span::Unknown());
 
     CCECodegen codegen(ir::SectionKind::Vector);
@@ -459,13 +464,15 @@ TEST(CCECodegenTest, SnapshotsSingleAggregateBeforePermutingItsLeaves)
     auto next = MakeVar("next", type);
     auto jump = std::make_shared<const ir::ContinueStmt>(std::vector<ir::ExprPtr>{next}, ir::Span::Unknown());
     auto loop_body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::AssignStmt>(next, swapped, ir::Span::Unknown()), jump},
+        std::vector<ir::StmtPtr>{
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{next}, swapped, ir::Span::Unknown()), jump},
         ir::Span::Unknown());
     auto loop = std::make_shared<const ir::WhileStmt>(
         std::make_shared<const ir::ConstBool>(true, ir::Span::Unknown()), std::vector<ir::IterArgPtr>{state}, loop_body,
         std::vector<ir::VarPtr>{MakeVar("result", type)}, ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::AssignStmt>(init, initial, ir::Span::Unknown()), loop},
+        std::vector<ir::StmtPtr>{
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{init}, initial, ir::Span::Unknown()), loop},
         ir::Span::Unknown());
     auto debug_info = std::make_shared<ir::IRDebugInfo>();
     debug_info->RegisterTupleTypeInfo(type, {ir::TupleTypeKind::NAMED_TUPLE, std::nullopt, {"first", "second"}});
@@ -488,7 +495,8 @@ TEST(CCECodegenTest, PreservesSingleIterationLoopForAddrReg)
     auto addr_reg = MakeVar("addr", addrRegType);
     auto create_addr = std::make_shared<const ir::Call>("vf.create_addr_reg", std::vector<ir::ExprPtr>{MakeConstInt(1)},
                                                         addrRegType, ir::Span::Unknown());
-    auto assign = std::make_shared<const ir::AssignStmt>(addr_reg, create_addr, ir::Span::Unknown());
+    auto assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{addr_reg}, create_addr,
+                                                         ir::Span::Unknown());
     auto for_loop = std::make_shared<const ir::ForStmt>(loop_var, MakeConstInt(0), MakeConstInt(1), MakeConstInt(1),
                                                         std::vector<ir::IterArgPtr>{}, assign,
                                                         std::vector<ir::VarPtr>{}, ir::Span::Unknown());
@@ -511,13 +519,14 @@ TEST(CCECodegenTest, UsesOneBackingArrayForDynamicAndStaticTupleReads)
     auto dynamic_value = MakeVar("dynamic_value", scalar_type);
     auto static_value = MakeVar("static_value", scalar_type);
 
-    auto tuple_assign = std::make_shared<const ir::AssignStmt>(tuple_var, values, ir::Span::Unknown());
+    auto tuple_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tuple_var}, values,
+                                                               ir::Span::Unknown());
     auto dynamic_read = std::make_shared<const ir::AssignStmt>(
-        dynamic_value, std::make_shared<const ir::GetItemExpr>(tuple_var, index, ir::Span::Unknown()),
-        ir::Span::Unknown());
+        std::vector<ir::VarPtr>{dynamic_value},
+        std::make_shared<const ir::GetItemExpr>(tuple_var, index, ir::Span::Unknown()), ir::Span::Unknown());
     auto static_read = std::make_shared<const ir::AssignStmt>(
-        static_value, std::make_shared<const ir::GetItemExpr>(tuple_var, MakeConstInt(0), ir::Span::Unknown()),
-        ir::Span::Unknown());
+        std::vector<ir::VarPtr>{static_value},
+        std::make_shared<const ir::GetItemExpr>(tuple_var, MakeConstInt(0), ir::Span::Unknown()), ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{tuple_assign, dynamic_read, static_read},
                                                      ir::Span::Unknown());
 
@@ -541,10 +550,13 @@ TEST(CCECodegenTest, SharesBackingArrayAcrossTupleAliases)
     auto second = MakeVar("second", values->GetType());
     auto selected = MakeVar("selected", scalar_type);
 
-    auto first_assign = std::make_shared<const ir::AssignStmt>(first, values, ir::Span::Unknown());
-    auto second_assign = std::make_shared<const ir::AssignStmt>(second, first, ir::Span::Unknown());
+    auto first_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{first}, values,
+                                                               ir::Span::Unknown());
+    auto second_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{second}, first,
+                                                                ir::Span::Unknown());
     auto read = std::make_shared<const ir::AssignStmt>(
-        selected, std::make_shared<const ir::GetItemExpr>(second, index, ir::Span::Unknown()), ir::Span::Unknown());
+        std::vector<ir::VarPtr>{selected}, std::make_shared<const ir::GetItemExpr>(second, index, ir::Span::Unknown()),
+        ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{first_assign, second_assign, read},
                                                      ir::Span::Unknown());
 
@@ -566,9 +578,11 @@ TEST(CCECodegenTest, ClearsTupleBackingArraysBetweenGenerations)
                                                         ir::Span::Unknown());
     auto tuple_var = MakeVar("values", values->GetType());
     auto selected = MakeVar("selected", scalar_type);
-    auto tuple_assign = std::make_shared<const ir::AssignStmt>(tuple_var, values, ir::Span::Unknown());
+    auto tuple_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tuple_var}, values,
+                                                               ir::Span::Unknown());
     auto read = std::make_shared<const ir::AssignStmt>(
-        selected, std::make_shared<const ir::GetItemExpr>(tuple_var, index, ir::Span::Unknown()), ir::Span::Unknown());
+        std::vector<ir::VarPtr>{selected},
+        std::make_shared<const ir::GetItemExpr>(tuple_var, index, ir::Span::Unknown()), ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{tuple_assign, read}, ir::Span::Unknown());
     auto program = MakeProgram(body, {index});
 
@@ -591,7 +605,7 @@ TEST(CCECodegenTest, ClearsTileTypeStateBetweenGenerations)
     auto tile = MakeVar("tile", tile_type);
     auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
-    auto body = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tile}, make_tile, ir::Span::Unknown());
     auto program = MakeProgram(body);
 
     CCECodegen codegen(ir::SectionKind::Vector);
@@ -623,12 +637,12 @@ TEST(CCECodegenTest, MaterializesHomogeneousTileTuple)
 
     auto body = std::make_shared<const ir::SeqStmts>(
         std::vector<ir::StmtPtr>{
-            std::make_shared<const ir::AssignStmt>(tile0, make_tile0, ir::Span::Unknown()),
-            std::make_shared<const ir::AssignStmt>(tile1, make_tile1, ir::Span::Unknown()),
-            std::make_shared<const ir::AssignStmt>(tiles, values, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tile0}, make_tile0, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tile1}, make_tile1, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tiles}, values, ir::Span::Unknown()),
             std::make_shared<const ir::AssignStmt>(
-                selected, std::make_shared<const ir::GetItemExpr>(tiles, index, ir::Span::Unknown()),
-                ir::Span::Unknown()),
+                std::vector<ir::VarPtr>{selected},
+                std::make_shared<const ir::GetItemExpr>(tiles, index, ir::Span::Unknown()), ir::Span::Unknown()),
         },
         ir::Span::Unknown());
 
@@ -667,7 +681,7 @@ TEST(CCECodegenTest, CastsPointerAddressesWithoutScalarConversion)
             auto ptr = MakeVar("ptr", std::make_shared<const ir::PtrType>(dtype));
             auto address = std::make_shared<const ir::Cast>(ptr, ir::DataType::UINT64, span);
             auto result = MakeVar("address", std::make_shared<const ir::ScalarType>(ir::DataType::UINT64));
-            auto body = std::make_shared<const ir::AssignStmt>(result, address, span);
+            auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, address, span);
             CCECodegen codegen(target);
             auto cpp = codegen.GenerateSingle(MakeProgram(body, {ptr}), npu::tile_fwk::NPUArch::DAV_3510);
             EXPECT_NE(cpp.find("((uint64_t)ptr)"), std::string::npos);
@@ -754,9 +768,10 @@ TEST(CCECodegenTest, EmitsBFloat16ScalarHelpersInVFSection)
     auto comparison = std::make_shared<const ir::Eq>(lhs, rhs, ir::DataType::BOOL, ir::Span::Unknown());
     auto negation = std::make_shared<const ir::Neg>(rhs, ir::DataType::BF16, ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::AssignStmt>(converted, cast, ir::Span::Unknown()),
-                                 std::make_shared<const ir::AssignStmt>(equal, comparison, ir::Span::Unknown()),
-                                 std::make_shared<const ir::AssignStmt>(negative, negation, ir::Span::Unknown())},
+        std::vector<ir::StmtPtr>{
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{converted}, cast, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{equal}, comparison, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{negative}, negation, ir::Span::Unknown())},
         ir::Span::Unknown());
     auto program = MakeVfProgram("vf_body", body, {lhs, rhs}, {lhs, rhs}, {lhs, rhs});
 
@@ -969,11 +984,13 @@ TEST(CCECodegenTest, MergesArrayTuplePhiThroughOneBackingArray)
     auto if_stmt = std::make_shared<const ir::IfStmt>(condition, then_yield, std::optional<ir::StmtPtr>(else_yield),
                                                       std::vector<ir::VarPtr>{selected}, ir::Span::Unknown());
     auto read_selected = std::make_shared<const ir::AssignStmt>(
-        picked, std::make_shared<const ir::GetItemExpr>(selected, index, ir::Span::Unknown()), ir::Span::Unknown());
+        std::vector<ir::VarPtr>{picked}, std::make_shared<const ir::GetItemExpr>(selected, index, ir::Span::Unknown()),
+        ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::AssignStmt>(left, left_value, ir::Span::Unknown()),
-                                 std::make_shared<const ir::AssignStmt>(right, right_value, ir::Span::Unknown()),
-                                 if_stmt, read_selected},
+        std::vector<ir::StmtPtr>{
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{left}, left_value, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{right}, right_value, ir::Span::Unknown()),
+            if_stmt, read_selected},
         ir::Span::Unknown());
 
     CCECodegen codegen(ir::SectionKind::Vector);
@@ -997,7 +1014,8 @@ TEST(CCECodegenTest, DoesNotMaterializeHomogeneousTupleOfTuples)
                                                              ir::Span::Unknown());
     auto nested = MakeVar("nested", outer_value->GetType());
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::AssignStmt>(nested, outer_value, ir::Span::Unknown())},
+        std::vector<ir::StmtPtr>{
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{nested}, outer_value, ir::Span::Unknown())},
         ir::Span::Unknown());
 
     CCECodegen codegen(ir::SectionKind::Vector);
@@ -1028,12 +1046,13 @@ TEST(CCECodegenTest, FlattensAggregateTuplePhiIntoLeafSlots)
     auto if_stmt = std::make_shared<const ir::IfStmt>(condition, then_yield, std::optional<ir::StmtPtr>(else_yield),
                                                       std::vector<ir::VarPtr>{selected}, ir::Span::Unknown());
     auto read_selected = std::make_shared<const ir::AssignStmt>(
-        picked, std::make_shared<const ir::GetItemExpr>(selected, MakeConstInt(1), ir::Span::Unknown()),
-        ir::Span::Unknown());
+        std::vector<ir::VarPtr>{picked},
+        std::make_shared<const ir::GetItemExpr>(selected, MakeConstInt(1), ir::Span::Unknown()), ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::AssignStmt>(left, left_value, ir::Span::Unknown()),
-                                 std::make_shared<const ir::AssignStmt>(right, right_value, ir::Span::Unknown()),
-                                 if_stmt, read_selected},
+        std::vector<ir::StmtPtr>{
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{left}, left_value, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{right}, right_value, ir::Span::Unknown()),
+            if_stmt, read_selected},
         ir::Span::Unknown());
     auto debug_info = std::make_shared<ir::IRDebugInfo>();
     debug_info->RegisterTupleTypeInfo(aggregate_type,
@@ -1058,7 +1077,8 @@ TEST(CCECodegenTest, WritesBackWhileCarriedValueBeforeBreak)
     auto iter_arg = std::make_shared<const ir::IterArg>("acc", scalar_type, MakeConstInt(0), ir::Span::Unknown());
     auto return_var = MakeVar("acc_out", scalar_type);
     auto updated = MakeVar("acc_updated", scalar_type);
-    auto update = std::make_shared<const ir::AssignStmt>(updated, MakeConstInt(9), ir::Span::Unknown());
+    auto update = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{updated}, MakeConstInt(9),
+                                                         ir::Span::Unknown());
     auto break_stmt = std::make_shared<const ir::BreakStmt>(std::vector<ir::ExprPtr>{updated}, ir::Span::Unknown());
     auto loop_body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{update, break_stmt},
                                                           ir::Span::Unknown());
@@ -1088,12 +1108,13 @@ TEST(CCECodegenTest, GeneratesTensorDescriptorAndLoadFromAccessShape)
     auto tile = MakeVar("tile", tile_type);
     auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
-    auto tile_assign = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
+    auto tile_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tile}, make_tile,
+                                                              ir::Span::Unknown());
     auto offsets = std::make_shared<const ir::MakeTuple>(std::vector<ir::ExprPtr>{MakeConstInt(0), MakeConstInt(0)},
                                                          ir::Span::Unknown());
     auto load = std::make_shared<const ir::Call>("block.load", std::vector<ir::ExprPtr>{tile, input, offsets},
                                                  tile_type, ir::Span::Unknown());
-    auto load_stmt = std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown());
+    auto load_stmt = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, load, ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{tile_assign, load_stmt},
                                                      ir::Span::Unknown());
 
@@ -1125,14 +1146,16 @@ TEST(CCECodegenTest, ResolvesTensorAliasAndTransposeLayout)
     auto tile = MakeVar("tile", tile_type);
     auto make_tile = std::make_shared<const ir::Call>("block.make_mutex_tile", MakeTileOperands(tile_type), tile_type,
                                                       ir::Span::Unknown());
-    auto alias_assign = std::make_shared<const ir::AssignStmt>(alias, input, ir::Span::Unknown());
-    auto tile_assign = std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown());
+    auto alias_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{alias}, input,
+                                                               ir::Span::Unknown());
+    auto tile_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tile}, make_tile,
+                                                              ir::Span::Unknown());
     auto offsets = std::make_shared<const ir::MakeTuple>(std::vector<ir::ExprPtr>{MakeConstInt(0), MakeConstInt(0)},
                                                          ir::Span::Unknown());
     std::vector<std::pair<std::string, std::any>> kwargs{{"is_transpose", true}};
     auto load = std::make_shared<const ir::Call>("block.load", std::vector<ir::ExprPtr>{tile, alias, offsets}, kwargs,
                                                  tile_type, ir::Span::Unknown());
-    auto load_stmt = std::make_shared<const ir::EvalStmt>(load, ir::Span::Unknown());
+    auto load_stmt = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, load, ir::Span::Unknown());
     auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{alias_assign, tile_assign, load_stmt},
                                                      ir::Span::Unknown());
 
@@ -1162,12 +1185,12 @@ TEST(CCECodegenTest, HoistsAutoDeclaredVFDestinations)
     auto dst0 = MakeVar("dst0", regFp32);
     auto dst1 = MakeVar("dst1", regFp32);
     auto add0 = std::make_shared<const ir::AssignStmt>(
-        dst0,
+        std::vector<ir::VarPtr>{dst0},
         std::make_shared<const ir::Call>("vf.add", std::vector<ir::ExprPtr>{src0, src1, mask}, regFp32,
                                          ir::Span::Unknown()),
         ir::Span::Unknown());
     auto add1 = std::make_shared<const ir::AssignStmt>(
-        dst1,
+        std::vector<ir::VarPtr>{dst1},
         std::make_shared<const ir::Call>("vf.add", std::vector<ir::ExprPtr>{src0, src1, mask}, regFp32,
                                          ir::Span::Unknown()),
         ir::Span::Unknown());
@@ -1225,8 +1248,9 @@ TEST(CCECodegenTest, EmitsRegisterParametersInVfSignature)
     auto calleeBody = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{}, ir::Span::Unknown());
     auto call = std::make_shared<const ir::Call>("callee", std::vector<ir::ExprPtr>{vfReg}, ir::GetNoneType(),
                                                  ir::Span::Unknown());
-    auto vfBody = std::make_shared<const ir::SeqStmts>(
-        std::vector<ir::StmtPtr>{std::make_shared<const ir::EvalStmt>(call, ir::Span::Unknown())}, ir::Span::Unknown());
+    auto vfBody = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{std::make_shared<const ir::AssignStmt>(
+                                                           std::vector<ir::VarPtr>{}, call, ir::Span::Unknown())},
+                                                       ir::Span::Unknown());
     auto calleeFunc = std::make_shared<const ir::Function>("callee", std::vector<ir::VarPtr>{calleeReg},
                                                            std::vector<ir::TypePtr>{}, calleeBody, ir::Span::Unknown(),
                                                            ir::FunctionType::SIMD_CALLEE, false);
@@ -1287,9 +1311,11 @@ TEST(CCECodegenTest, EmitsKernelTileValidShapeGetters)
     };
     auto body = std::make_shared<const ir::SeqStmts>(
         std::vector<ir::StmtPtr>{
-            std::make_shared<const ir::AssignStmt>(tile, make_tile, ir::Span::Unknown()),
-            std::make_shared<const ir::AssignStmt>(MakeVar("rows", int64_type), valid_shape(0), ir::Span::Unknown()),
-            std::make_shared<const ir::AssignStmt>(MakeVar("cols", int64_type), valid_shape(1), ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tile}, make_tile, ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{MakeVar("rows", int64_type)}, valid_shape(0),
+                                                   ir::Span::Unknown()),
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{MakeVar("cols", int64_type)}, valid_shape(1),
+                                                   ir::Span::Unknown()),
         },
         ir::Span::Unknown());
     CCECodegen codegen(ir::SectionKind::Vector);
@@ -1350,7 +1376,7 @@ TEST(CCECodegenTest, AddsExpressionSpanToCodegenErrors)
     auto scalar_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
     auto unknown_call = std::make_shared<const ir::Call>("unknown.codegen.op", std::vector<ir::ExprPtr>{}, scalar_type,
                                                          call_span);
-    auto body = std::make_shared<const ir::EvalStmt>(unknown_call, call_span);
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, unknown_call, call_span);
 
     CCECodegen codegen(ir::SectionKind::Vector);
     try {

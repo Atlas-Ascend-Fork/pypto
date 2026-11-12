@@ -22,6 +22,7 @@
 #include "ir/scalar_expr.h"
 #include "ir/stmt.h"
 #include "ir/transforms/passes.h"
+#include "ir/transforms/utils/dead_code_elimination.h"
 #include "ir/type.h"
 
 #include "interface/function/function.h"
@@ -174,4 +175,49 @@ TEST(DcePassTest, OpDumpSurvivesAggressiveDce)
     auto dumpOut = std::dynamic_pointer_cast<const ir::TensorOpStmt>(outFunc->body_->stmts_[0]);
     ASSERT_NE(dumpOut, nullptr);
     EXPECT_EQ(dumpOut->opcode_, "OP_DUMP");
+}
+
+TEST(DcePassTest, DiscardedExpressionKeepsDependency)
+{
+    auto span = ir::Span::Unknown();
+    auto type = std::make_shared<ir::ScalarType>(ir::DataType::INT64);
+    auto source = std::make_shared<ir::Var>("source", type, span);
+    auto dead = std::make_shared<ir::Var>("dead", type, span);
+    auto value = std::make_shared<ir::ConstInt>(7, ir::DataType::INT64, span);
+    auto dependency = std::make_shared<ir::AssignStmt>(std::vector<ir::VarPtr>{source}, value, span);
+    auto unused = std::make_shared<ir::AssignStmt>(std::vector<ir::VarPtr>{dead}, value, span);
+    auto call = std::make_shared<ir::Call>("consume", std::vector<ir::ExprPtr>{source}, span);
+    for (const auto& expr : std::vector<ir::ExprPtr>{source, call}) {
+        auto discard = std::make_shared<ir::AssignStmt>(std::vector<ir::VarPtr>{}, expr, span);
+        std::vector<ir::StmtPtr> stmts{dependency, unused, discard};
+        std::vector<ir::StmtPtr> expected{dependency, discard};
+        EXPECT_EQ(ir::dce::EliminateDeadCode(stmts), expected);
+        EXPECT_EQ(ir::dce::EliminateDeadScalarAssignments(stmts), expected);
+    }
+}
+
+TEST(DcePassTest, DiscardedExpressionUsesCustomLivenessPredicate)
+{
+    auto span = ir::Span::Unknown();
+    auto type = std::make_shared<ir::ScalarType>(ir::DataType::INT64);
+    auto source = std::make_shared<ir::Var>("source", type, span);
+    auto value = std::make_shared<ir::ConstInt>(7, ir::DataType::INT64, span);
+    auto dependency = std::make_shared<ir::AssignStmt>(std::vector<ir::VarPtr>{source}, value, span);
+    auto discard = std::make_shared<ir::AssignStmt>(std::vector<ir::VarPtr>{}, source, span);
+    std::vector<ir::StmtPtr> stmts{dependency, discard};
+    for (bool removable : {false, true}) {
+        bool visitedDiscard = false;
+        auto isRemovable = [&](const ir::StmtPtr& stmt) {
+            if (stmt == discard) {
+                visitedDiscard = true;
+                return removable;
+            }
+            return true;
+        };
+        // Match the former EvalStmt path: the statement survives, while its
+        // operands become live roots only when the predicate returns false.
+        auto expected = removable ? std::vector<ir::StmtPtr>{discard} : stmts;
+        EXPECT_EQ(ir::dce::EliminateDeadCode(stmts, isRemovable), expected);
+        EXPECT_TRUE(visitedDiscard);
+    }
 }

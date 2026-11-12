@@ -37,7 +37,11 @@ def _program_ir(func: ir.Function) -> str:
 
 
 def _find_call(func: ir.Function, name: str):
-    return next(stmt.expr for stmt in func.body.stmts if isinstance(stmt, ir.EvalStmt) and stmt.expr.name == name)
+    return next(
+        stmt.value
+        for stmt in func.body.stmts
+        if (isinstance(stmt, ir.AssignStmt) and not stmt.targets) and stmt.value.name == name
+    )
 
 
 def test_coordinate_apis_use_sequence_parameters():
@@ -1613,7 +1617,7 @@ def test_modern_allows_regular_cube_buffer_layouts(monkeypatch, arch, assert_920
     assert_9201_golden(create_tile)
 
     stmt = create_tile.body.stmts[0] if hasattr(create_tile.body, "stmts") else create_tile.body
-    assert isinstance(stmt.var.type.hardware_info, _ir.HardwareInfo)
+    assert isinstance(stmt.targets[0].type.hardware_info, _ir.HardwareInfo)
 
 
 @pytest.mark.parametrize(

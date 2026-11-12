@@ -230,7 +230,7 @@ public:
 
     /* ==== scf statement ==== */
 
-    ir::AssignStmtPtr CreateAssignStmt(ir::VarPtr var, ir::ExprPtr value, ir::Span span);
+    ir::AssignStmtPtr CreateAssignStmt(std::vector<ir::VarPtr> targets, ir::ExprPtr value, ir::Span span);
 
     ir::SeqStmtsPtr CreateSeqStmts(std::vector<ir::StmtPtr> stmts, ir::Span span);
 

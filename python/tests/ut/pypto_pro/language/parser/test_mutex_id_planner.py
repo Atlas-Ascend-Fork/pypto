@@ -26,7 +26,7 @@ def _declare_tile(declarations, addr, size, memory_space, ids, span):
         span,
     )
     tile = ir.Var(f"tile_{index}", call.type, span)
-    declarations.append(ir.AssignStmt(tile, call, span))
+    declarations.append(ir.AssignStmt([tile], call, span))
     return index
 
 
@@ -69,6 +69,16 @@ def test_independent_auto_tiles_are_balanced(count, expected_min, expected_max):
     assert max(usage_counts) == expected_max
     if count <= 32:
         assert len(set(assigned)) == count
+
+
+def test_discarded_mutex_tile_does_not_affect_allocation():
+    declarations = []
+    manual = _declare_manual(declarations, [0], [[7]], size=16)
+    declaration = declarations[manual[0]]
+    declarations[manual[0]] = ir.AssignStmt([], declaration.value, _SPAN)
+    auto = _declare_auto(declarations, [0], size=16)
+
+    assert _resolve_groups(declarations, [manual, auto]) == (((7,),), ((0,),))
 
 
 def test_manual_multi_ids_are_flattened_before_auto_allocation():

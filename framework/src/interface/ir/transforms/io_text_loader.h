@@ -224,7 +224,6 @@ public:
     StmtPtr ParseStmtFor(const VarDefList& defVarList);
     StmtPtr ParseStmtWhile(const VarDefList& defVarList);
     StmtPtr ParseStmtSection(const VarDefList&);
-    StmtPtr ParseStmtEval(const VarDefList&);
     StmtPtr ParseStmtBreak(const VarDefList&);
     StmtPtr ParseStmtContinue(const VarDefList&);
     StmtPtr ParseStmtTensorOrScalarOp(const VarDefList& defVarList);

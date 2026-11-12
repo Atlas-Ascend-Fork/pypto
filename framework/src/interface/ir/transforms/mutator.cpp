@@ -335,14 +335,14 @@ DEFINE_UNARY_MUTATOR(Cast)
 
 StmtPtr IRMutator::VisitStmt_(const AssignStmtPtr& op)
 {
-    INTERNAL_CHECK_SPAN(op->var_, op->span_) << "AssignStmt has null var";
     INTERNAL_CHECK_SPAN(op->value_, op->span_) << "AssignStmt has null value";
-    auto newVarExpr = ExprFunctor<ExprPtr>::VisitExpr(op->var_);
+    for (const auto& target : op->targets_) {
+        INTERNAL_CHECK_SPAN(target, op->span_) << "AssignStmt has null target";
+    }
+    auto [newTargets, targetsChanged] = VisitVarList(op->targets_);
     auto newValue = ExprFunctor<ExprPtr>::VisitExpr(op->value_);
-
-    auto newVar = AsVar(newVarExpr, op->span_);
-    if (newVar.get() != op->var_.get() || newValue.get() != op->value_.get()) {
-        return std::make_shared<const AssignStmt>(std::move(newVar), std::move(newValue), op->span_);
+    if (targetsChanged || newValue.get() != op->value_.get()) {
+        return std::make_shared<const AssignStmt>(std::move(newTargets), std::move(newValue), op->span_);
     }
     return op;
 }
@@ -494,16 +494,6 @@ StmtPtr IRMutator::VisitStmt_(const SectionStmtPtr& op)
     auto newBody = StmtFunctor<StmtPtr>::VisitStmt(op->body_);
     if (newBody.get() != op->body_.get()) {
         return std::make_shared<const SectionStmt>(op->sectionKind_, std::move(newBody), op->span_);
-    }
-    return op;
-}
-
-StmtPtr IRMutator::VisitStmt_(const EvalStmtPtr& op)
-{
-    INTERNAL_CHECK_SPAN(op->expr_, op->span_) << "EvalStmt has null expr";
-    auto newExpr = ExprFunctor<ExprPtr>::VisitExpr(op->expr_);
-    if (newExpr.get() != op->expr_.get()) {
-        return std::make_shared<const EvalStmt>(std::move(newExpr), op->span_);
     }
     return op;
 }

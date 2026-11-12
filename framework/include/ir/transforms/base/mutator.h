@@ -96,7 +96,6 @@ protected:
     StmtPtr VisitStmt_(const WhileStmtPtr& op) override;
     StmtPtr VisitStmt_(const SeqStmtsPtr& op) override;
     StmtPtr VisitStmt_(const SectionStmtPtr& op) override;
-    StmtPtr VisitStmt_(const EvalStmtPtr& op) override;
     StmtPtr VisitStmt_(const BreakStmtPtr& op) override;
     StmtPtr VisitStmt_(const ContinueStmtPtr& op) override;
     StmtPtr VisitStmt_(const ScalarOpStmtPtr& op) override;

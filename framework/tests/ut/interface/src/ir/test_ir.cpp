@@ -257,7 +257,7 @@ TEST_F(IRStmtStrTest, TestAssignStmtStr)
 {
     auto x = std::make_shared<Var>("x", st, sp);
     auto val = std::make_shared<ConstInt>(42, DataType::INT32, sp);
-    auto assign = std::make_shared<AssignStmt>(x, val, sp);
+    auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val, sp);
     ASSERT_EQ(PythonPrint(std::static_pointer_cast<const IRNode>(assign)), "x: ir.Scalar[ir.INT32] = 42");
 }
 
@@ -265,8 +265,10 @@ TEST_F(IRStmtStrTest, TestSeqStmtsStr)
 {
     auto x = std::make_shared<Var>("x", st, sp);
     auto y = std::make_shared<Var>("y", st, sp);
-    auto assign_x = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
-    auto assign_y = std::make_shared<AssignStmt>(y, std::make_shared<ConstInt>(0, DataType::INT32, sp), sp);
+    auto assign_x = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                                 std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    auto assign_y = std::make_shared<AssignStmt>(std::vector<VarPtr>{y},
+                                                 std::make_shared<ConstInt>(0, DataType::INT32, sp), sp);
     auto seq = std::make_shared<SeqStmts>(std::vector<StmtPtr>{assign_x, assign_y}, sp);
     ASSERT_EQ(PythonPrint(std::static_pointer_cast<const IRNode>(seq)),
               "x: ir.Scalar[ir.INT32] = 42\ny: ir.Scalar[ir.INT32] = 0");
@@ -276,7 +278,8 @@ TEST_F(IRStmtStrTest, TestIfStmtStr)
 {
     auto x = std::make_shared<Var>("x", st, sp);
     auto cond = std::make_shared<ConstBool>(true, sp);
-    auto assign = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                               std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
 
     auto ifStmt = std::make_shared<IfStmt>(cond, assign, std::nullopt, std::vector<VarPtr>{}, sp);
     ASSERT_EQ(PythonPrint(std::static_pointer_cast<const IRNode>(ifStmt)), "if True:\n    x: ir.Scalar[ir.INT32] = 42");
@@ -287,8 +290,10 @@ TEST_F(IRStmtStrTest, TestIfElseStmtStr)
     auto x = std::make_shared<Var>("x", st, sp);
     auto y = std::make_shared<Var>("y", st, sp);
     auto cond = std::make_shared<ConstBool>(true, sp);
-    auto thenBody = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
-    auto elseBody = std::make_shared<AssignStmt>(y, std::make_shared<ConstInt>(0, DataType::INT32, sp), sp);
+    auto thenBody = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                                 std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    auto elseBody = std::make_shared<AssignStmt>(std::vector<VarPtr>{y},
+                                                 std::make_shared<ConstInt>(0, DataType::INT32, sp), sp);
 
     auto ifElse = std::make_shared<IfStmt>(cond, thenBody, elseBody, std::vector<VarPtr>{}, sp);
     ASSERT_EQ(PythonPrint(std::static_pointer_cast<const IRNode>(ifElse)),
@@ -318,7 +323,8 @@ TEST_F(IRStmtStrTest, TestWhileStmtStr)
 {
     auto x = std::make_shared<Var>("x", st, sp);
     auto cond = std::make_shared<ConstBool>(true, sp);
-    auto assign = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                               std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
 
     auto whileStmt = std::make_shared<WhileStmt>(cond, std::vector<IterArgPtr>{}, assign, std::vector<VarPtr>{}, sp);
     ASSERT_EQ(PythonPrint(std::static_pointer_cast<const IRNode>(whileStmt)),
@@ -354,18 +360,19 @@ TEST_F(IRStmtStrTest, TestBreakContinueStmtStr)
     ASSERT_EQ(PythonPrint(std::static_pointer_cast<const IRNode>(cont)), "continue");
 }
 
-TEST_F(IRStmtStrTest, TestEvalStmtStr)
+TEST_F(IRStmtStrTest, TestAssignStmtWithoutTargetsStr)
 {
     auto val = std::make_shared<ConstInt>(42, DataType::INT32, sp);
     auto call = std::make_shared<Call>("some_op", std::vector<ExprPtr>{val}, sp);
-    auto eval = std::make_shared<EvalStmt>(call, sp);
-    ASSERT_EQ(PythonPrint(std::static_pointer_cast<const IRNode>(eval)), "ir.eval(ir.call @some_op(42))");
+    auto eval = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, sp);
+    ASSERT_EQ(PythonPrint(std::static_pointer_cast<const IRNode>(eval)), "ir.call @some_op(42)");
 }
 
 TEST_F(IRStmtStrTest, TestFunctionStr)
 {
     auto x = std::make_shared<Var>("x", st, sp);
-    auto assign = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                               std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
     auto func = std::make_shared<Function>("test_func", std::vector<VarPtr>{x}, std::vector<TypePtr>{st}, assign, sp);
 
     ASSERT_EQ(PythonPrint(std::static_pointer_cast<const IRNode>(func)),
@@ -376,7 +383,8 @@ TEST_F(IRStmtStrTest, TestFunctionStr)
 TEST_F(IRStmtStrTest, TestProgramStr)
 {
     auto x = std::make_shared<Var>("x", st, sp);
-    auto assign = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
+    auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                               std::make_shared<ConstInt>(42, DataType::INT32, sp), sp);
     auto func1 = std::make_shared<Function>("test_func", std::vector<VarPtr>{x}, std::vector<TypePtr>{st}, assign, sp);
     auto func2 = std::make_shared<Function>("test_func2", std::vector<VarPtr>{x}, std::vector<TypePtr>{st}, assign, sp);
 
@@ -526,7 +534,7 @@ TEST_F(IRStructuralTest, TestEqualNestedStatements)
 {
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), sp);
     auto val = std::make_shared<ConstInt>(42, DataType::INT32, sp);
-    auto assign = std::make_shared<AssignStmt>(x, val, sp);
+    auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, val, sp);
 
     auto seq1 = std::make_shared<SeqStmts>(std::vector<StmtPtr>{assign}, sp);
     auto seq2 = std::make_shared<SeqStmts>(std::vector<StmtPtr>{assign}, sp);

@@ -229,7 +229,9 @@ private:
     void VisitStmt_(const AssignStmtPtr& op) override
     {
         IRVisitor::VisitStmt_(op);
-        SetCandidates(op->var_, GetCandidates(op->value_));
+        if (op->targets_.size() == 1) {
+            SetCandidates(op->targets_.front(), GetCandidates(op->value_));
+        }
     }
 
     void VisitStmt_(const IfStmtPtr& op) override
@@ -355,7 +357,7 @@ private:
                     auto index = std::make_shared<ConstInt>(slot, DataType::INT64, span);
                     auto getter = OpRegistry::GetInstance().Create("block.tile_mutex_id", {tile, index}, span);
                     id = Temp("id", getter->GetType(), span);
-                    setup.push_back(std::make_shared<AssignStmt>(As<Var>(id), getter, span));
+                    setup.push_back(std::make_shared<AssignStmt>(std::vector<VarPtr>{As<Var>(id)}, getter, span));
                 }
                 for (const auto& old : prior) {
                     if (old.tile == tile)
@@ -369,14 +371,14 @@ private:
                 }
                 if (guard) {
                     auto var = Temp("needed", guard->GetType(), span);
-                    setup.push_back(std::make_shared<AssignStmt>(var, guard, span));
+                    setup.push_back(std::make_shared<AssignStmt>(std::vector<VarPtr>{var}, guard, span));
                     guard = var;
                 }
                 for (bool lock : {true, false}) {
                     auto call = OpRegistry::GetInstance().Create(
                         lock ? "system.mutex_lock_dyn" : "system.mutex_unlock_dyn", {id},
                         {{"pipe", static_cast<int>(pipe)}}, span);
-                    StmtPtr sync = std::make_shared<EvalStmt>(call, span);
+                    StmtPtr sync = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, span);
                     if (guard) {
                         auto body = std::make_shared<SeqStmts>(
                             std::vector<StmtPtr>{sync, std::make_shared<YieldStmt>(span)}, span);
@@ -411,14 +413,13 @@ private:
         return Wrap(stmt, tiles, *pipe);
     }
     StmtPtr VisitStmt_(const AssignStmtPtr& op) override { return Operation(op, op->value_); }
-    StmtPtr VisitStmt_(const EvalStmtPtr& op) override { return Operation(op, op->expr_); }
     StmtPtr VisitStmt_(const SectionStmtPtr& op) override
     {
         if (op->sectionKind_ != SectionKind::VF)
             return IRMutator::VisitStmt_(op);
         for (const auto& stmt : op->body_->stmts_) {
-            auto eval = As<EvalStmt>(stmt);
-            auto call = eval ? As<Call>(eval->expr_) : nullptr;
+            auto assign = As<AssignStmt>(stmt);
+            auto call = assign && assign->targets_.empty() ? As<Call>(assign->value_) : nullptr;
             if (call && call->name_ == "system.vf_scope_args") {
                 std::vector<ExprPtr> tiles;
                 for (const auto& arg : call->args_)

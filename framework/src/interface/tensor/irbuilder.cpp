@@ -211,9 +211,9 @@ ir::VarPtr IRBuilder::CreateVarLike(std::string name, ir::ExprPtr value)
 }
 
 /* scf statement */
-ir::AssignStmtPtr IRBuilder::CreateAssignStmt(ir::VarPtr var, ir::ExprPtr value, ir::Span span)
+ir::AssignStmtPtr IRBuilder::CreateAssignStmt(std::vector<ir::VarPtr> targets, ir::ExprPtr value, ir::Span span)
 {
-    return std::make_shared<ir::AssignStmt>(var, value, span);
+    return std::make_shared<ir::AssignStmt>(std::move(targets), value, span);
 }
 
 ir::SeqStmtsPtr IRBuilder::CreateSeqStmts(std::vector<ir::StmtPtr> stmts, ir::Span span)

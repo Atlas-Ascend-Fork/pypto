@@ -55,7 +55,7 @@ class IRBuilder:
         ...     y = f.param("y", ir.ScalarType(ir.DataType.INT64))
         ...     f.return_type(ir.ScalarType(ir.DataType.INT64))
         ...     result = ib.var("result", ir.ScalarType(ir.DataType.INT64))
-        ...     ib.assign(result, ir.Add(x, y, ir.DataType.INT64, ir.Span.unknown()))
+        ...     ib.assign([result], ir.Add(x, y, ir.DataType.INT64, ir.Span.unknown()))
         >>> func = f.get_result()
     """
 
@@ -243,10 +243,10 @@ class IRBuilder:
         Example:
             >>> with ib.if_stmt(condition) as if_builder:
             ...     # then branch
-            ...     ib.assign(x, value)
+            ...     ib.assign([x], value)
             ...     if_builder.else_()
             ...     # else branch
-            ...     ib.assign(x, other_value)
+            ...     ib.assign([x], other_value)
         """
         begin_span = span if span is not None else self.capture_call_span()
         ctx_id = self._ctx_counter
@@ -279,7 +279,7 @@ class IRBuilder:
         Example:
             >>> with ib.section(ir.SectionKind.Vector) as section_builder:
             ...     # Vector section body
-            ...     ib.assign(y, add_expr)
+            ...     ib.assign([y], add_expr)
         """
         begin_span = span if span is not None else self.capture_call_span()
         ctx_id = self._ctx_counter
@@ -367,14 +367,14 @@ class IRBuilder:
 
     def assign(
         self,
-        var: ir.Var,
+        targets: Sequence[ir.Var],
         value: int | float | ir.Expr,
         span: ir.Span | None = None,
     ) -> ir.AssignStmt:
         """Create assignment statement and emit it.
 
         Args:
-            var: Variable to assign to (must be an ir.Var)
+            targets: Result variables; empty to discard the result
             value: Expression value (int, float, or Expr)
             span: Optional explicit span. If None, captured from call site.
 
@@ -383,7 +383,7 @@ class IRBuilder:
         """
         actual_span = span if span is not None else self.capture_call_span()
         value_expr = _normalize_expr(value, actual_span)
-        return self.builder.assign(var, value_expr, actual_span)
+        return self.builder.assign(list(targets), value_expr, actual_span)
 
     def let(
         self,
@@ -466,7 +466,7 @@ class IRBuilder:
             final_type = inferred_type
 
         var = self.var(name, final_type, actual_span)
-        self.builder.assign(var, value_expr, actual_span)
+        self.builder.assign([var], value_expr, actual_span)
         return var
 
     def make_tuple(
@@ -528,30 +528,6 @@ class IRBuilder:
             value_list = [_normalize_expr(values, actual_span)]
 
         return self.builder.return_(value_list, actual_span)
-
-    def eval_stmt(
-        self,
-        expr: int | float | ir.Expr,
-        span: ir.Span | None = None,
-    ) -> ir.EvalStmt:
-        """Create evaluation statement and emit it.
-
-        Evaluation statements execute expressions for their side effects,
-        discarding any return value. Useful for operations like barriers,
-        synchronization primitives, or other side-effect-only operations.
-
-        Args:
-            expr: Expression to evaluate (int, float, or Expr)
-            span: Optional explicit span. If None, captured from call site.
-
-        Returns:
-            EvalStmt: The created evaluation statement
-        """
-        actual_span = span if span is not None else self.capture_call_span()
-        expr_normalized = _normalize_expr(expr, actual_span)
-        stmt = ir.EvalStmt(expr_normalized, actual_span)
-        self.builder.emit(stmt)
-        return stmt
 
     def break_stmt(self, span: ir.Span | None = None) -> ir.BreakStmt:
         """Create break statement and emit it.

@@ -99,7 +99,6 @@ protected:
     void VisitStmt_(const WhileStmtPtr& op) override;
     void VisitStmt_(const SeqStmtsPtr& op) override;
     void VisitStmt_(const SectionStmtPtr& op) override;
-    void VisitStmt_(const EvalStmtPtr& op) override;
     void VisitStmt_(const BreakStmtPtr& op) override;
     void VisitStmt_(const ContinueStmtPtr& op) override;
     void VisitStmt_(const TensorOpStmtPtr& op) override;

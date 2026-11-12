@@ -344,14 +344,14 @@ def test_array_subscript_access():
 
     assert isinstance(kernel, ir.Function)
     assert len(kernel.params) == 2
-    assignments = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.AssignStmt)]
-    result = next(stmt for stmt in assignments if stmt.var.name == "result_0")
+    assignments = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and bool(stmt.targets))]
+    result = next(stmt for stmt in assignments if stmt.targets[0].name == "result_0")
     assert isinstance(result.value, ir.GetItemExpr)
     assert isinstance(result.value.value, ir.Var)
     assert isinstance(result.value.slice, ir.ConstInt)
     assert result.value.slice.value == 1
 
-    field = next(stmt for stmt in assignments if stmt.var.name == result.value.value.name)
+    field = next(stmt for stmt in assignments if stmt.targets[0].name == result.value.value.name)
     assert isinstance(field.value, ir.GetItemExpr)
     assert isinstance(field.value.value, ir.Var)
     assert field.value.value.name == "tiling_0"

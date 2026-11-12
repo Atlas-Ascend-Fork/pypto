@@ -96,7 +96,6 @@ void FindLiveRootsRecursiveImpl(const std::vector<StmtPtr>& stmts, const Removab
         // ContinueStmt/BreakStmt are always non-removable — their carried vars
         // must be considered live even when no other statement uses them.
         bool isLeaf = std::dynamic_pointer_cast<const AssignStmt>(stmt) ||
-                      std::dynamic_pointer_cast<const EvalStmt>(stmt) ||
                       std::dynamic_pointer_cast<const ReturnStmt>(stmt) ||
                       std::dynamic_pointer_cast<const YieldStmt>(stmt) ||
                       std::dynamic_pointer_cast<const TensorOpStmt>(stmt) ||
@@ -165,7 +164,9 @@ std::vector<StmtPtr> FilterDeadCodeImpl(const std::vector<StmtPtr>& stmts, const
 
     for (const auto& stmt : stmts) {
         if (auto assign = std::dynamic_pointer_cast<const AssignStmt>(stmt)) {
-            if (isRemovable(stmt) && !live.count(assign->var_.get()))
+            if (!assign->targets_.empty() && isRemovable(stmt) &&
+                std::none_of(assign->targets_.begin(), assign->targets_.end(),
+                             [&live](const VarPtr& target) { return live.count(target.get()) != 0; }))
                 continue;
             result.push_back(stmt);
         } else if (auto tensorOp = std::dynamic_pointer_cast<const TensorOpStmt>(stmt)) {
@@ -302,7 +303,8 @@ std::vector<StmtPtr> FilterDeadCodeImpl(const std::vector<StmtPtr>& stmts, const
 /// a known side-effect op is a removal candidate.
 bool IsRemovableForDefaultDce(const StmtPtr& stmt)
 {
-    return std::dynamic_pointer_cast<const AssignStmt>(stmt) != nullptr;
+    auto assign = As<AssignStmt>(stmt);
+    return assign && !assign->targets_.empty();
 }
 
 /// Walk an expression tree and report whether any Call appears.
@@ -333,9 +335,10 @@ bool ExprContainsCall(const ExprPtr& expr)
 bool IsRemovableScalarAssign(const StmtPtr& stmt)
 {
     auto assign = std::dynamic_pointer_cast<const AssignStmt>(stmt);
-    if (!assign)
+    if (!assign || assign->targets_.empty())
         return false;
-    if (!As<ScalarType>(assign->var_->GetType()))
+    if (!std::all_of(assign->targets_.begin(), assign->targets_.end(),
+                     [](const VarPtr& target) { return As<ScalarType>(target->GetType()) != nullptr; }))
         return false;
     if (ExprContainsCall(assign->value_))
         return false;
@@ -366,7 +369,11 @@ std::vector<StmtPtr> EliminateDeadCode(const std::vector<StmtPtr>& stmts, const 
     std::function<void(const std::vector<StmtPtr>&)> collectDefSites = [&](const std::vector<StmtPtr>& stmtsVec) {
         for (const auto& s : stmtsVec) {
             if (auto assign = std::dynamic_pointer_cast<const AssignStmt>(s)) {
-                defSites.push_back({{assign->var_.get()}, {}, CollectVarUses(assign->value_)});
+                std::vector<const Var*> defs;
+                for (const auto& target : assign->targets_) {
+                    defs.push_back(target.get());
+                }
+                defSites.push_back({std::move(defs), {}, CollectVarUses(assign->value_)});
             } else if (auto tensorOp = std::dynamic_pointer_cast<const TensorOpStmt>(s)) {
                 std::vector<const Var*> defs;
                 std::vector<MemoryDef> memoryDefs;

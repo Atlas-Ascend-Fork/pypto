@@ -120,8 +120,8 @@ TEST_F(IRStructEqExprTest, TestAllStmtsEqual)
     auto call = std::make_shared<Call>("op", std::vector<ExprPtr>{v42a}, Sp());
 
     // AssignStmt
-    EXPECT_TRUE(structural_equal(Node(std::make_shared<AssignStmt>(x, v42a, Sp())),
-                                 Node(std::make_shared<AssignStmt>(x, v42b, Sp()))));
+    EXPECT_TRUE(structural_equal(Node(std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v42a, Sp())),
+                                 Node(std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v42b, Sp()))));
 
     // IfStmt without else
     EXPECT_TRUE(
@@ -129,8 +129,8 @@ TEST_F(IRStructEqExprTest, TestAllStmtsEqual)
                          Node(std::make_shared<IfStmt>(cond, yield, std::nullopt, std::vector<VarPtr>{}, Sp()))));
 
     // IfStmt with else
-    auto then = std::make_shared<AssignStmt>(x, v1, Sp());
-    auto els = std::make_shared<AssignStmt>(x, v2, Sp());
+    auto then = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v1, Sp());
+    auto els = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v2, Sp());
     EXPECT_TRUE(structural_equal(Node(std::make_shared<IfStmt>(cond, then, els, std::vector<VarPtr>{}, Sp())),
                                  Node(std::make_shared<IfStmt>(cond, then, els, std::vector<VarPtr>{}, Sp()))));
 
@@ -150,16 +150,16 @@ TEST_F(IRStructEqExprTest, TestAllStmtsEqual)
         Node(std::make_shared<WhileStmt>(cond, std::vector<IterArgPtr>{}, yield, std::vector<VarPtr>{}, Sp()))));
 
     // SeqStmts
-    auto a = std::make_shared<AssignStmt>(x, v1, Sp());
+    auto a = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v1, Sp());
     EXPECT_TRUE(structural_equal(Node(std::make_shared<SeqStmts>(std::vector<StmtPtr>{a, a}, Sp())),
                                  Node(std::make_shared<SeqStmts>(std::vector<StmtPtr>{a, a}, Sp()))));
 
-    // BreakStmt, ContinueStmt, EvalStmt
+    // BreakStmt, ContinueStmt, AssignStmtWithoutTargets
     EXPECT_TRUE(structural_equal(Node(std::make_shared<BreakStmt>(Sp())), Node(std::make_shared<BreakStmt>(Sp()))));
     EXPECT_TRUE(
         structural_equal(Node(std::make_shared<ContinueStmt>(Sp())), Node(std::make_shared<ContinueStmt>(Sp()))));
-    EXPECT_TRUE(
-        structural_equal(Node(std::make_shared<EvalStmt>(call, Sp())), Node(std::make_shared<EvalStmt>(call, Sp()))));
+    EXPECT_TRUE(structural_equal(Node(std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, Sp())),
+                                 Node(std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, Sp()))));
 }
 
 // ============================================================================
@@ -171,8 +171,8 @@ TEST_F(IRStructEqExprTest, TestFunctionAndProgramEqual)
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
     auto v1 = std::make_shared<ConstInt>(42, DataType::INT32, Sp());
     auto v2 = std::make_shared<ConstInt>(42, DataType::INT32, Sp());
-    auto body1 = std::make_shared<AssignStmt>(x, v1, Sp());
-    auto body2 = std::make_shared<AssignStmt>(x, v2, Sp());
+    auto body1 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v1, Sp());
+    auto body2 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v2, Sp());
 
     // Function equal
     auto f1 = std::make_shared<Function>("f", std::vector<VarPtr>{x}, std::vector<TypePtr>{Scalar(DataType::INT32)},
@@ -183,14 +183,14 @@ TEST_F(IRStructEqExprTest, TestFunctionAndProgramEqual)
 
     // Function not equal (different body)
     auto v99 = std::make_shared<ConstInt>(99, DataType::INT32, Sp());
-    auto body3 = std::make_shared<AssignStmt>(x, v99, Sp());
+    auto body3 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v99, Sp());
     auto f3 = std::make_shared<Function>("f", std::vector<VarPtr>{x}, std::vector<TypePtr>{Scalar(DataType::INT32)},
                                          body3, Sp());
     EXPECT_FALSE(structural_equal(Node(f1), Node(f3)));
 
     // Program equal
     auto v = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
-    auto fbody = std::make_shared<AssignStmt>(x, v, Sp());
+    auto fbody = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v, Sp());
     auto f = std::make_shared<Function>("f", std::vector<VarPtr>{x}, std::vector<TypePtr>{}, fbody, Sp());
     auto p1 = std::make_shared<Program>(std::vector<FunctionPtr>{f}, "prog", Sp());
     auto p2 = std::make_shared<Program>(std::vector<FunctionPtr>{f}, "prog", Sp());
@@ -349,8 +349,10 @@ TEST_F(IRStructEqAssertTest, TestAssertStmtMismatches)
     auto yield = std::make_shared<YieldStmt>(std::vector<ExprPtr>{}, Sp());
 
     // Function body mismatch
-    auto body1 = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
-    auto body2 = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(2, DataType::INT32, Sp()), Sp());
+    auto body1 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                              std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
+    auto body2 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                              std::make_shared<ConstInt>(2, DataType::INT32, Sp()), Sp());
     EXPECT_THROW(
         assert_structural_equal(
             Node(std::make_shared<Function>("f", std::vector<VarPtr>{x}, std::vector<TypePtr>{}, body1, Sp())),
@@ -364,8 +366,10 @@ TEST_F(IRStructEqAssertTest, TestAssertStmtMismatches)
         npu::tile_fwk::Error);
 
     // Vector size mismatch (SeqStmts)
-    auto a1 = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
-    auto a2 = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(2, DataType::INT32, Sp()), Sp());
+    auto a1 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, std::make_shared<ConstInt>(1, DataType::INT32, Sp()),
+                                           Sp());
+    auto a2 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, std::make_shared<ConstInt>(2, DataType::INT32, Sp()),
+                                           Sp());
     EXPECT_THROW(assert_structural_equal(Node(std::make_shared<SeqStmts>(std::vector<StmtPtr>{a1}, Sp())),
                                          Node(std::make_shared<SeqStmts>(std::vector<StmtPtr>{a1, a2}, Sp()))),
                  npu::tile_fwk::Error);
@@ -421,16 +425,16 @@ TEST_F(IRStructEqExprTest, TestVarAutoMappingEqual)
     auto v2 = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
 
     // Auto-mapping: x↔y mapped, same structure
-    EXPECT_TRUE(structural_equal(Node(std::make_shared<AssignStmt>(x, v1, Sp())),
-                                 Node(std::make_shared<AssignStmt>(y, v2, Sp())), true));
+    EXPECT_TRUE(structural_equal(Node(std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v1, Sp())),
+                                 Node(std::make_shared<AssignStmt>(std::vector<VarPtr>{y}, v2, Sp())), true));
 
     // Without auto-mapping, distinct vars differ
     EXPECT_FALSE(structural_equal(Node(x), Node(y), false));
 
     // Auto-mapping with type mismatch
     auto z = std::make_shared<Var>("z", Scalar(DataType::FP32), Sp());
-    EXPECT_FALSE(structural_equal(Node(std::make_shared<AssignStmt>(x, v1, Sp())),
-                                  Node(std::make_shared<AssignStmt>(z, v1, Sp())), true));
+    EXPECT_FALSE(structural_equal(Node(std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v1, Sp())),
+                                  Node(std::make_shared<AssignStmt>(std::vector<VarPtr>{z}, v1, Sp())), true));
 }
 
 TEST_F(IRStructEqExprTest, TestVarConsistentMapping)
@@ -442,10 +446,12 @@ TEST_F(IRStructEqExprTest, TestVarConsistentMapping)
 
     // x used twice on left, y used twice on right — consistent mapping
     auto body1 = std::make_shared<SeqStmts>(
-        std::vector<StmtPtr>{std::make_shared<AssignStmt>(x, v1, Sp()), std::make_shared<AssignStmt>(x, v2, Sp())},
+        std::vector<StmtPtr>{std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v1, Sp()),
+                             std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v2, Sp())},
         Sp());
     auto body2 = std::make_shared<SeqStmts>(
-        std::vector<StmtPtr>{std::make_shared<AssignStmt>(y, v1, Sp()), std::make_shared<AssignStmt>(y, v2, Sp())},
+        std::vector<StmtPtr>{std::make_shared<AssignStmt>(std::vector<VarPtr>{y}, v1, Sp()),
+                             std::make_shared<AssignStmt>(std::vector<VarPtr>{y}, v2, Sp())},
         Sp());
     EXPECT_TRUE(structural_equal(Node(body1), Node(body2), true));
 }
@@ -495,8 +501,8 @@ TEST_F(IRStructEqExprTest, TestSectionStmtEqual)
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
     auto v1 = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
     auto v2 = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
-    auto body1 = std::make_shared<AssignStmt>(x, v1, Sp());
-    auto body2 = std::make_shared<AssignStmt>(x, v2, Sp());
+    auto body1 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v1, Sp());
+    auto body2 = std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v2, Sp());
 
     EXPECT_TRUE(structural_equal(Node(std::make_shared<SectionStmt>(SectionKind::Vector, body1, Sp())),
                                  Node(std::make_shared<SectionStmt>(SectionKind::Vector, body2, Sp()))));
@@ -714,7 +720,8 @@ TEST_F(IRStructEqExprTest, TestCallKwargsValueTypeMismatch)
 TEST_F(IRStructEqExprTest, TestFunctionReturnTypesSizeMismatch)
 {
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-    auto body = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                             std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
 
     auto f1 = std::make_shared<Function>("f", std::vector<VarPtr>{x}, std::vector<TypePtr>{Scalar(DataType::INT32)},
                                          body, Sp());
@@ -727,7 +734,8 @@ TEST_F(IRStructEqExprTest, TestFunctionReturnTypesSizeMismatch)
 TEST_F(IRStructEqExprTest, TestFunctionReturnTypesElementMismatch)
 {
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-    auto body = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                             std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
 
     auto f1 = std::make_shared<Function>("f", std::vector<VarPtr>{x}, std::vector<TypePtr>{Scalar(DataType::INT32)},
                                          body, Sp());
@@ -824,7 +832,8 @@ TEST_F(IRStructEqAssertTest, TestMemRefMismatch)
 TEST_F(IRStructEqAssertTest, TestAssertProgramMapMismatch)
 {
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-    auto body = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                             std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
     auto f1 = std::make_shared<Function>("f", std::vector<VarPtr>{}, std::vector<TypePtr>{}, body, Sp());
     auto f2 = std::make_shared<Function>("g", std::vector<VarPtr>{}, std::vector<TypePtr>{}, body, Sp());
 
@@ -835,8 +844,9 @@ TEST_F(IRStructEqAssertTest, TestAssertProgramMapMismatch)
 
 TEST_F(IRStructEqAssertTest, TestAssertProgramMapSizeMismatch)
 {
-    auto body = std::make_shared<AssignStmt>(std::make_shared<Var>("x", Scalar(DataType::INT32), Sp()),
-                                             std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
+    auto body = std::make_shared<AssignStmt>(
+        std::vector<VarPtr>{std::make_shared<Var>("x", Scalar(DataType::INT32), Sp())},
+        std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
     auto f1 = std::make_shared<Function>("f", std::vector<VarPtr>{}, std::vector<TypePtr>{}, body, Sp());
     auto f2 = std::make_shared<Function>("g", std::vector<VarPtr>{}, std::vector<TypePtr>{}, body, Sp());
 
@@ -920,9 +930,13 @@ TEST_F(IRStructEqExprTest, TestVarNoAutoMapping_InconsistentMapping)
     auto c2_rhs = std::make_shared<Call>("op", std::vector<ExprPtr>{y2}, Sp());
 
     auto seq1 = std::make_shared<SeqStmts>(
-        std::vector<StmtPtr>{std::make_shared<EvalStmt>(c1_lhs, Sp()), std::make_shared<EvalStmt>(c2_lhs, Sp())}, Sp());
+        std::vector<StmtPtr>{std::make_shared<AssignStmt>(std::vector<VarPtr>{}, c1_lhs, Sp()),
+                             std::make_shared<AssignStmt>(std::vector<VarPtr>{}, c2_lhs, Sp())},
+        Sp());
     auto seq2 = std::make_shared<SeqStmts>(
-        std::vector<StmtPtr>{std::make_shared<EvalStmt>(c1_rhs, Sp()), std::make_shared<EvalStmt>(c2_rhs, Sp())}, Sp());
+        std::vector<StmtPtr>{std::make_shared<AssignStmt>(std::vector<VarPtr>{}, c1_rhs, Sp()),
+                             std::make_shared<AssignStmt>(std::vector<VarPtr>{}, c2_rhs, Sp())},
+        Sp());
 
     EXPECT_FALSE(structural_equal(Node(seq1), Node(seq2), true));
 }
@@ -935,13 +949,17 @@ TEST_F(IRStructEqExprTest, TestVarAutoMapping_ReverseInconsistent)
 
     auto seq1 = std::make_shared<SeqStmts>(
         std::vector<StmtPtr>{
-            std::make_shared<EvalStmt>(std::make_shared<Call>("op", std::vector<ExprPtr>{x1}, Sp()), Sp()),
-            std::make_shared<EvalStmt>(std::make_shared<Call>("op", std::vector<ExprPtr>{x2}, Sp()), Sp())},
+            std::make_shared<AssignStmt>(std::vector<VarPtr>{},
+                                         std::make_shared<Call>("op", std::vector<ExprPtr>{x1}, Sp()), Sp()),
+            std::make_shared<AssignStmt>(std::vector<VarPtr>{},
+                                         std::make_shared<Call>("op", std::vector<ExprPtr>{x2}, Sp()), Sp())},
         Sp());
     auto seq2 = std::make_shared<SeqStmts>(
         std::vector<StmtPtr>{
-            std::make_shared<EvalStmt>(std::make_shared<Call>("op", std::vector<ExprPtr>{y}, Sp()), Sp()),
-            std::make_shared<EvalStmt>(std::make_shared<Call>("op", std::vector<ExprPtr>{y}, Sp()), Sp())},
+            std::make_shared<AssignStmt>(std::vector<VarPtr>{},
+                                         std::make_shared<Call>("op", std::vector<ExprPtr>{y}, Sp()), Sp()),
+            std::make_shared<AssignStmt>(std::vector<VarPtr>{},
+                                         std::make_shared<Call>("op", std::vector<ExprPtr>{y}, Sp()), Sp())},
         Sp());
 
     EXPECT_FALSE(structural_equal(Node(seq1), Node(seq2), true));
@@ -1024,7 +1042,8 @@ TEST_F(IRStructEqAssertTest, TestAssertConstFloatValueMismatch)
 TEST_F(IRStructEqAssertTest, TestAssertSectionKindMismatch)
 {
     auto x = std::make_shared<Var>("x", Scalar(DataType::INT32), Sp());
-    auto body = std::make_shared<AssignStmt>(x, std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
+    auto body = std::make_shared<AssignStmt>(std::vector<VarPtr>{x},
+                                             std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
 
     try {
         assert_structural_equal(Node(std::make_shared<SectionStmt>(SectionKind::Vector, body, Sp())),
@@ -1043,8 +1062,8 @@ TEST_F(IRStructEqAssertTest, TestAssertVarTypeMismatch)
     auto v1 = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
 
     try {
-        assert_structural_equal(Node(std::make_shared<AssignStmt>(x, v1, Sp())),
-                                Node(std::make_shared<AssignStmt>(z, v1, Sp())));
+        assert_structural_equal(Node(std::make_shared<AssignStmt>(std::vector<VarPtr>{x}, v1, Sp())),
+                                Node(std::make_shared<AssignStmt>(std::vector<VarPtr>{z}, v1, Sp())));
         FAIL() << "Expected npu::tile_fwk::Error";
     } catch (const npu::tile_fwk::Error& e) {
         std::string msg = e.what();
@@ -1061,13 +1080,17 @@ TEST_F(IRStructEqAssertTest, TestAssertVarMappingInconsistent)
 
     auto seq1 = std::make_shared<SeqStmts>(
         std::vector<StmtPtr>{
-            std::make_shared<EvalStmt>(std::make_shared<Call>("op", std::vector<ExprPtr>{x}, Sp()), Sp()),
-            std::make_shared<EvalStmt>(std::make_shared<Call>("op", std::vector<ExprPtr>{x}, Sp()), Sp())},
+            std::make_shared<AssignStmt>(std::vector<VarPtr>{},
+                                         std::make_shared<Call>("op", std::vector<ExprPtr>{x}, Sp()), Sp()),
+            std::make_shared<AssignStmt>(std::vector<VarPtr>{},
+                                         std::make_shared<Call>("op", std::vector<ExprPtr>{x}, Sp()), Sp())},
         Sp());
     auto seq2 = std::make_shared<SeqStmts>(
         std::vector<StmtPtr>{
-            std::make_shared<EvalStmt>(std::make_shared<Call>("op", std::vector<ExprPtr>{y1}, Sp()), Sp()),
-            std::make_shared<EvalStmt>(std::make_shared<Call>("op", std::vector<ExprPtr>{y2}, Sp()), Sp())},
+            std::make_shared<AssignStmt>(std::vector<VarPtr>{},
+                                         std::make_shared<Call>("op", std::vector<ExprPtr>{y1}, Sp()), Sp()),
+            std::make_shared<AssignStmt>(std::vector<VarPtr>{},
+                                         std::make_shared<Call>("op", std::vector<ExprPtr>{y2}, Sp()), Sp())},
         Sp());
 
     try {

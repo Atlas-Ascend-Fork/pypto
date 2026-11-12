@@ -220,8 +220,11 @@ def test_nested_vector_helpers_restore_caller_scope(after):
         program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
         func = program.get_function(kernel.__name__)
         calls = [
-            stmt.expr for stmt in func.body.stmts
-            if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == "simd.call"
+            stmt.value
+            for stmt in func.body.stmts
+            if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)
+            and isinstance(stmt.value, ir.Call)
+            and stmt.value.name == "simd.call"
         ]
         assert len(calls) == 2
         _check_ir_snapshot(str(program), "test_nested_vector_helpers_restore_caller_scope")
@@ -249,8 +252,12 @@ def test_vf_helper_accepts_register_parameter():
     program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     func = program.get_function(kernel.__name__)
     calls = [
-        stmt.expr for stmt in func.body.stmts
-        if isinstance(stmt, ir.EvalStmt) and isinstance(stmt.expr, ir.Call) and stmt.expr.name == "simd.call"
+        stmt.value
+        for stmt in func.body.stmts
+        if isinstance(stmt, ir.AssignStmt)
+        and not stmt.targets
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "simd.call"
     ]
     assert [call.kwargs["callee"] for call in calls] == ["_load_store"]
 

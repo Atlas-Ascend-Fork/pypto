@@ -2190,7 +2190,7 @@ static std::string MakeDistAtomicCodegenCCE(const ir::CallPtr& op, codegen::Code
     if (!codegen.GetCurrentResultTarget().empty()) {
         return call.str();
     }
-    // EvalStmt and nested value positions (e.g. out[i] = pld.atomic_add(...)) both have an
+    // Result-discarding assignments and nested value positions (e.g. out[i] = pld.atomic_add(...)) both have an
     // empty target: materialize the result so the atomic still executes and the caller can
     // consume the temp. Same naming pattern as MakeSimtAtomicCodegenCCE.
     const std::string temp = "__pypto_dist_atomic_" + std::to_string(codegen.GetTileOffsetCounter());

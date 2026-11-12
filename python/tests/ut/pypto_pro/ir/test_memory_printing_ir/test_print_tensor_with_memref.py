@@ -27,7 +27,7 @@ def test_print_tensor_with_memref():
 
     tensor_type = ir.TensorType(shape, DataType.FP32, memref)
     tensor_var = ir.Var("tensor", tensor_type, span)
-    stmt = ir.AssignStmt(tensor_var, ir.ConstInt(0, DataType.INT64, span), span)
+    stmt = ir.AssignStmt([tensor_var], ir.ConstInt(0, DataType.INT64, span), span)
 
     printed = str(stmt)
     golden = Path(__file__).with_suffix(".pypto").read_text(encoding="utf-8")

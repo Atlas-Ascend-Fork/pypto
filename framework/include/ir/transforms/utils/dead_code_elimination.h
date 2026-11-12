@@ -41,12 +41,12 @@ std::vector<StmtPtr> EliminateDeadCode(const std::vector<StmtPtr>& stmts);
 
 /// Conservative scalar-only DCE.
 /// Removes every `AssignStmt` that satisfies ALL of:
-///   - LHS Var has `ScalarType`
+///   - The target list is nonempty and every target has `ScalarType`
 ///   - RHS expression contains no `Call` anywhere (Call may have side effects)
-///   - LHS Var is not transitively used by any preserved statement
+///   - No target is transitively used by any preserved statement
 ///
 /// Preserves every other statement kind: AssignStmts with non-scalar LHS,
-/// Call-containing AssignStmts, EvalStmt, ReturnStmt, YieldStmt, and the
+/// Call-containing or result-discarding AssignStmts, ReturnStmt, YieldStmt, and the
 /// control-flow nodes themselves (ForStmt/IfStmt/WhileStmt/ScopeStmt). The
 /// bodies of those control-flow nodes are filtered recursively, so nested
 /// scalar assignments remain eligible for removal.

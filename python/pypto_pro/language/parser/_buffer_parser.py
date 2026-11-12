@@ -367,7 +367,9 @@ class BufferParserMixin:
 
     def _emit_cursor_advance(self, cursor_struct, new_val, span: ir.Span) -> None:
         self.builder.emit(
-            ir.EvalStmt(ir.create_op_call("struct.set", [cursor_struct, new_val], {"field": "cursor"}, span), span)
+            ir.AssignStmt(
+                [], ir.create_op_call("struct.set", [cursor_struct, new_val], {"field": "cursor"}, span), span
+            )
         )
 
     def _group_meta(self, group_var) -> tuple:

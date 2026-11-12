@@ -187,7 +187,7 @@ def test_arr_field_whole_assign_expands():
     kernel = kernel_program.get_function(kernel.__name__)
 
     assert isinstance(kernel, ir.Function)
-    eval_stmts = [stmt for stmt in kernel.body.stmts if isinstance(stmt, ir.EvalStmt)]
+    eval_stmts = [stmt for stmt in kernel.body.stmts if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)]
     struct_set_stmts = [stmt for stmt in eval_stmts if "struct.set" in str(stmt)]
     assert len(struct_set_stmts) == 4
 

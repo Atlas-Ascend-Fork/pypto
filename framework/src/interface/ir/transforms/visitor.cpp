@@ -204,9 +204,11 @@ DEFINE_UNARY_VISITOR(Cast)
 
 void IRVisitor::VisitStmt_(const AssignStmtPtr& op)
 {
-    INTERNAL_CHECK_SPAN(op->var_, op->span_) << "AssignStmt has null var";
     INTERNAL_CHECK_SPAN(op->value_, op->span_) << "AssignStmt has null value";
-    VisitExpr(op->var_);
+    for (const auto& target : op->targets_) {
+        INTERNAL_CHECK_SPAN(target, op->span_) << "AssignStmt has null target";
+        VisitExpr(target);
+    }
     VisitExpr(op->value_);
 }
 
@@ -296,12 +298,6 @@ void IRVisitor::VisitStmt_(const SectionStmtPtr& op)
 {
     INTERNAL_CHECK_SPAN(op->body_, op->span_) << "SectionStmt has null body";
     VisitStmt(op->body_);
-}
-
-void IRVisitor::VisitStmt_(const EvalStmtPtr& op)
-{
-    INTERNAL_CHECK_SPAN(op->expr_, op->span_) << "EvalStmt has null expr";
-    VisitExpr(op->expr_);
 }
 
 void IRVisitor::VisitStmt_(const BreakStmtPtr& op)
