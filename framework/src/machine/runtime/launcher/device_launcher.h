@@ -48,6 +48,7 @@ constexpr uint32_t DAV3510_AICPU_NUM_6 = 6;      // DAV3510 6 个 AICPU 配置
 constexpr uint32_t DAV3510_AICPU_NUM_7 = 7;      // DAV3510 7 个 AICPU 配置
 constexpr uint32_t DAV3510_DIE0_MAX_CPUID_4 = 4; // 对应 aiCpuNum=6 的 die0 最大 CPU ID
 constexpr uint32_t DAV3510_DIE0_MAX_CPUID_5 = 5; // 对应 aiCpuNum=7 的 die0 最大 CPU ID
+constexpr uint32_t DAV9201_DIE0_MAX_CPUID = 5;
 
 inline void ValidateRuntimeDevice(int32_t targetDevId)
 {
@@ -89,7 +90,7 @@ public:
     static void DeviceLauncherConfigFillDeviceInfo(const DeviceLauncherConfig& config)
     {
         DeviceLauncherConfig& devConfig = const_cast<DeviceLauncherConfig&>(config);
-        int maxBlockDim = GetCfgBlockdim();
+        int maxBlockDim = GetCfgBlockdim(static_cast<ArchInfo>(Platform::Instance().GetSoc().GetNPUArch()));
         int maxAicpuNum = static_cast<int>(Platform::Instance().GetSoc().GetAICPUNum());
         maxAicpuNum = maxAicpuNum > 0 ? maxAicpuNum : 5;
 
@@ -201,6 +202,8 @@ public:
 
         if (devProg->devArgs.archInfo == ArchInfo::DAV_3510) {
             devProg->devArgs.die0MaxCpuid = GetDav3510DieMaxCpuid(aiCpuNum);
+        } else if (devProg->devArgs.archInfo == ArchInfo::DAV_9201) {
+            devProg->devArgs.die0MaxCpuid = DAV9201_DIE0_MAX_CPUID;
         }
 
         devProg->devArgs.nrValidAic = config.blockdim;
@@ -210,17 +213,26 @@ public:
         devProg->devArgs.nrAicpu = config.aicpuNum;
     }
 
+    static bool IsEnableVFFusion()
+    {
+        auto npuArch = Platform::Instance().GetSoc().GetNPUArch();
+        if ((npuArch == NPUArch::DAV_3510 || npuArch == NPUArch::DAV_9201) &&
+            config::GetPassGlobalConfig(KEY_ENABLE_VF, false)) {
+            return true;
+        }
+        return false;
+    }
+
     // Prepare device program scheduling and memory budget related args (keeps <= 50 lines)
     static void PrepareDevProgArgs(DevAscendProgram* devProg, DeviceLauncherConfig& config,
                                    [[maybe_unused]] bool isDevice)
     {
         devProg->devArgs.taskId = 0;
-        devProg->devArgs.nrAic = kDefaultAicNum;
-        devProg->devArgs.nrAiv = kDefaultAivNum;
         devProg->devArgs.archInfo = static_cast<ArchInfo>(Platform::Instance().GetSoc().GetNPUArch());
+        devProg->devArgs.nrAic = GetMaxCore(devProg->devArgs.archInfo);
+        devProg->devArgs.nrAiv = devProg->devArgs.nrAic * GetAivNumPerCore(devProg->devArgs.archInfo);
         devProg->devArgs.taskType = DEVICE_TASK_TYPE_DYN;
-        bool enableVFFusion = Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510 &&
-                              config::GetPassGlobalConfig(KEY_ENABLE_VF, false);
+        bool enableVFFusion = IsEnableVFFusion();
         devProg->devArgs.enableVFFusion = (config::GetRuntimeOption<int64_t>(CFG_VALID_SHAPE_OPTIMIZE) == 1 ||
                                            enableVFFusion);
 

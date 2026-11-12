@@ -381,7 +381,7 @@ TEST(CtrlFlowCacheDrcoUt, ReadyQueuePingPongRoundTrip)
         lastData[i] = queue[i]->Data();
     }
     auto runLaunch = [&]() {
-        ctrl.ReadyQueueDataPingPongSwap(dyntask.get(), 4);
+        ctrl.ReadyQueueDataPingPongSwap(dyntask.get(), 4, ArchInfo::DAV_3510);
         for (size_t i = 0; i < READY_QUEUE_SIZE; ++i) {
             EXPECT_NE(queue[i]->Data(), lastData[i]);
             lastData[i] = queue[i]->Data();
@@ -460,7 +460,7 @@ TEST(CtrlFlowCacheDrcoUt, ReadyQueueDataBackupRestore_WithDrco)
     ASSERT_EQ(dyntask->readyQueueBackup->drcoShadowReady, 1);
 
     auto* recorded = drco.root.perCorePendingQueueArray[3];
-    ctrl.ReadyQueueDataPingPongSwap(dyntask.get(), 4);
+    ctrl.ReadyQueueDataPingPongSwap(dyntask.get(), 4, ArchInfo::DAV_3510);
     SUCCEED();
 
     EXPECT_EQ(dyntask->devTask.coreFunctionCnt, 8U);
@@ -755,7 +755,7 @@ TEST(CtrlFlowCacheDrcoUt, DrcoReadyQueueDataRestore_WithMixWraps)
     queue[aivIdx]->UnsafeEnqueue(MakeTaskID(2, 302));
     queue[aicIdx]->UnsafeEnqueue(MakeTaskID(2, 301));
 
-    ctrl.DrcoReadyQueueDataRestore(dyntask.get(), 4);
+    ctrl.DrcoReadyQueueDataRestore(dyntask.get(), 4, ArchInfo::DAV_3510);
 
     auto* root = &drco.root;
 

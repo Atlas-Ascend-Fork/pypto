@@ -16,11 +16,11 @@
 #pragma once
 
 #include "tilefwk/aicpu_common.h"
-#include "machine/device/dynamic/aicore_constants.h"
 #include "machine/device/dynamic/aicore_runtime_model.h"
 #include "machine/device/dynamic/aicore_prof.h"
 #include "machine/device/dynamic/costmodel_utils.h"
 #include "machine/device/dynamic/eslmodel_aicore_hal.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "machine/simulation/aicore_hardware.h"
 
 namespace npu::tile_fwk::dynamic {
@@ -35,16 +35,6 @@ const int32_t CORE_QUEUE_MODE_NUM_2 = 2;
 const int32_t CORE_QUEUE_MODE_NUM_1 = 1;
 
 const uint32_t REG_SPR_MAGIC = 0x78;
-
-namespace DAV_2201 {
-const uint32_t REG_SPR_DATA_MAIN_BASE = 0xA0;
-const uint32_t REG_SPR_COND = 0x4C8;
-} // namespace DAV_2201
-
-namespace DAV_3510 {
-const uint32_t REG_SPR_DATA_MAIN_BASE = 0xD0;
-const uint32_t REG_SPR_COND = 0x5108;
-} // namespace DAV_3510
 
 class AicoreHAL {
 public:
@@ -61,11 +51,9 @@ public:
         finishRegQueues_.fill(nullptr);
         blockIdToPhyCoreId_.fill(-1);
         args_.fill(nullptr);
-        if (deviceArgs->archInfo == ArchInfo::DAV_3510) {
-            regSprDataMainBase_ = DAV_3510::REG_SPR_DATA_MAIN_BASE;
-            regSprCond_ = DAV_3510::REG_SPR_COND;
-            isNeedWriteRegForFastPath_ = false;
-        }
+        readyRegOffset_ = GetReadyRegOffset(archInfo_);
+        finishRegOffset_ = GetFinishRegOffset(archInfo_);
+        isNeedWriteRegForFastPath_ = GetIsNeedWriteRegForFastPath(archInfo_);
         enableEslModel_ = deviceArgs->enableEslModel;
         DEV_IF_NONDEVICE
         {
@@ -78,7 +66,7 @@ public:
         }
     }
 
-    inline uint32_t GetRegSprDataMainBase() { return regSprDataMainBase_; }
+    inline ArchInfo GetArchInfo() { return archInfo_; }
 
     inline void SetMngCoreBlockId(int aicStart, int aicEnd, int aivStart, int aivEnd)
     {
@@ -225,19 +213,19 @@ public:
 
     int64_t GetSharedBuffer() { return sharedBuffer_; }
 
-    inline void MapRegistersForAllCores(int aicNum)
+    inline void MapRegistersForAllCores(int aicNum, int aivNum)
     {
-        for (uint32_t idx = 0; idx < static_cast<u_int32_t>(aicNum * CORE_NUM_PER_AI_CORE); idx++) {
+        for (uint32_t idx = 0; idx < static_cast<u_int32_t>(aicNum + aivNum); idx++) {
             void* addr = reinterpret_cast<void*>(regAddrs_[idx]);
             if (addr == nullptr) {
                 continue;
             }
             DEV_VERBOSE_DEBUG("phy core %u Addr is %p.", idx, addr);
             volatile uint64_t* reqQueueReg = reinterpret_cast<volatile uint64_t*>(static_cast<uint8_t*>(addr) +
-                                                                                  regSprDataMainBase_);
+                                                                                  readyRegOffset_);
             readyRegQueues_[idx] = reqQueueReg;
             volatile uint64_t* finishQueueReg = reinterpret_cast<volatile uint64_t*>(static_cast<uint8_t*>(addr) +
-                                                                                     regSprCond_);
+                                                                                     finishRegOffset_);
             finishRegQueues_[idx] = finishQueueReg;
         }
     }
@@ -510,8 +498,8 @@ private:
     std::array<int, MAX_AICORE_NUM> blockIdToPhyCoreId_;
     std::array<uint32_t, MAX_AICORE_NUM> parallelDevTaskCtxVersion;
 
-    uint32_t regSprDataMainBase_{DAV_2201::REG_SPR_DATA_MAIN_BASE};
-    uint32_t regSprCond_{DAV_2201::REG_SPR_COND};
+    uint32_t readyRegOffset_{GetArchCfg(ArchInfo::DAV_2201).readyRegOffset};
+    uint32_t finishRegOffset_{GetArchCfg(ArchInfo::DAV_2201).finishRegOffset};
 
     bool isNeedWriteRegForFastPath_{true};
     AiCoreProf* aicoreProf_{nullptr};

@@ -383,8 +383,9 @@ void VisitForStmtForControlFlow(IrBackendContext& ctx, FunctionCache& cache, Lin
     bool submitBeforeLoop = forStmt->GetAttr<bool>("submit_before_loop", false);
     bool parallel = forStmt->GetAttr<bool>("parallel", false);
     bool supportParallelLoop = (config::GetDeviceSchedParallelism() > 1);
-    bool isDav3510 = Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510;
-    bool needCrossDie = isDav3510 && parallel;
+    auto arch = Platform::Instance().GetSoc().GetNPUArch();
+    bool isCrossDie = (arch == NPUArch::DAV_3510 || arch == NPUArch::DAV_9201);
+    bool needCrossDie = isCrossDie && parallel;
 
     controlFlowOss << std::setw(indent * TABSIZE) << ' ' << "// hash=" << loopFunc->GetFunctionHash() << "\n";
     if (submitBeforeLoop) {

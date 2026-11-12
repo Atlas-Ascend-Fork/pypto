@@ -139,7 +139,7 @@ public:
         bool isValid = true;
         DEV_IF_DEVICE
         {
-            if (aicoreHal_.GetRegSprDataMainBase() == DAV_3510::REG_SPR_DATA_MAIN_BASE) {
+            if (IsA5A6Architecture(aicoreHal_.GetArchInfo())) {
                 return true;
             }
             auto regAddrs = aicoreHal_.GetRegAddrs();
@@ -1868,6 +1868,7 @@ private:
                      int arbitratedScheNum)
     {
         archInfo_ = deviceArgs->archInfo;
+        aivPerCore_ = GetAivNumPerCore(archInfo_);
         aicNum_ = static_cast<int32_t>(deviceArgs->nrAic);
         aivNum_ = static_cast<int32_t>(deviceArgs->nrAiv);
         aicpuNum_ = arbitratedScheNum;
@@ -1915,7 +1916,7 @@ private:
         }
         UpdateAiCoreBlockIndexSection();
         if constexpr (IsDeviceMode()) {
-            aicoreHal_.MapRegistersForAllCores(aicNum_);
+            aicoreHal_.MapRegistersForAllCores(aicNum_, aivNum_);
             aicoreProf_.ProfInit(deviceArgs);
         } else {
             aicoreHal_.SetTaskTimeCost([this](uint64_t coreIdx, uint64_t taskId, uint64_t time) {
@@ -2138,10 +2139,10 @@ private:
         };
 
         f(aicValidNum_, schedIdx_, aicpuNum_, 1, aicStart_, aicEnd_);
-        if (archInfo_ == ArchInfo::DAV_3510) {
-            f(aicValidNum_, schedIdx_, aicpuNum_, AIV_NUM_PER_AI_CORE, aivStart_, aivEnd_);
+        if (IsA5A6Architecture(archInfo_)) {
+            f(aicValidNum_, schedIdx_, aicpuNum_, aivPerCore_, aivStart_, aivEnd_);
         } else {
-            f(AIV_NUM_PER_AI_CORE * aicValidNum_, schedIdx_, aicpuNum_, 1, aivStart_, aivEnd_);
+            f(aivPerCore_ * aicValidNum_, schedIdx_, aicpuNum_, 1, aivStart_, aivEnd_);
         }
 
         aivStart_ += aicValidNum_;
@@ -2475,8 +2476,8 @@ private:
     void ApplyCoreBudgetToAdjRange(int aicBudget, int aivBudget, int schedPart, int localSchedIdx)
     {
         UpdateAicoreEnd(aicBudget, localSchedIdx, schedPart, 1, aicStart_, adjAicEnd_);
-        if (archInfo_ == ArchInfo::DAV_3510) {
-            UpdateAicoreEnd(aicBudget, localSchedIdx, schedPart, AIV_NUM_PER_AI_CORE, aivStart_, adjAivEnd_);
+        if (IsA5A6Architecture(archInfo_)) {
+            UpdateAicoreEnd(aicBudget, localSchedIdx, schedPart, aivPerCore_, aivStart_, adjAivEnd_);
         } else {
             UpdateAicoreEnd(aivBudget, localSchedIdx, schedPart, 1, aivStart_, adjAivEnd_);
         }
@@ -2487,8 +2488,8 @@ private:
     void ApplyGlobalCoreBudgetToAdjRange(int maxC, int maxV)
     {
         UpdateAicoreEnd(maxC, schedIdx_, aicpuNum_, 1, aicStart_, adjAicEnd_);
-        if (archInfo_ == ArchInfo::DAV_3510) {
-            UpdateAicoreEnd(maxC, schedIdx_, aicpuNum_, AIV_NUM_PER_AI_CORE, aivStart_, adjAivEnd_);
+        if (IsA5A6Architecture(archInfo_)) {
+            UpdateAicoreEnd(maxC, schedIdx_, aicpuNum_, aivPerCore_, aivStart_, adjAivEnd_);
         } else {
             UpdateAicoreEnd(maxV, schedIdx_, aicpuNum_, 1, aivStart_, adjAivEnd_);
         }
@@ -2510,7 +2511,7 @@ private:
             auto taskCtrl = devTaskCtx->GetDeviceTaskCtrl();
             int maxC = static_cast<int>(taskCtrl->GetMaxC());
             int maxV = static_cast<int>(taskCtrl->GetMaxV());
-            int maxAivNum = aicValidNum_ * static_cast<int>(AIV_NUM_PER_AI_CORE);
+            int maxAivNum = aicValidNum_ * static_cast<int>(aivPerCore_);
             if ((maxC >= aicValidNum_ && maxV >= maxAivNum) || maxC == 0 || maxV == 0) {
                 adjAicEnd_ = aicEnd_;
                 adjAivEnd_ = aivEnd_;
@@ -2622,6 +2623,7 @@ private:
 
     SchduleContext* context_{nullptr};
     ArchInfo archInfo_{ArchInfo::DAV_2201};
+    uint32_t aivPerCore_{2};
     SchThreadStatus& threadStatus;
 
     bool taskCtrlDequeFinish{false};

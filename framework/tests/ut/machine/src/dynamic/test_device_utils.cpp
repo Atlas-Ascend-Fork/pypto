@@ -115,7 +115,12 @@ TEST(DeviceUtilsTest, NumericConstants)
     EXPECT_EQ(MAX_MNG_AICORE_AVG_NUM, 8);
     EXPECT_EQ(CORE_IDX_AIV, 0u);
     EXPECT_EQ(CORE_IDX_AIC, 1u);
-    EXPECT_EQ(AIV_NUM_PER_AI_CORE, 2u);
+    EXPECT_EQ(GetAivNumPerCore(ArchInfo::DAV_2201), 2u);
+    EXPECT_EQ(GetAivNumPerCore(ArchInfo::DAV_3510), 2u);
+    EXPECT_EQ(GetAivNumPerCore(ArchInfo::DAV_9201), 1u);
+    EXPECT_EQ(GetAicorePerDie(ArchInfo::DAV_2201), 0u);
+    EXPECT_EQ(GetAicorePerDie(ArchInfo::DAV_3510), 18u);
+    EXPECT_EQ(GetAicorePerDie(ArchInfo::DAV_9201), 35u);
     EXPECT_EQ(INVALID_CORE_IDX, 0xFFu);
 }
 

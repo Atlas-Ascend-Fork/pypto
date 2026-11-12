@@ -18,6 +18,7 @@
 
 #include <stdint.h>
 #include <cstdint>
+#include "tilefwk/aikernel_define.h"
 #include "tilefwk/aicpu_common.h"
 #include "tilefwk/aicore_runtime.h"
 #include "tilefwk/aicore_print.h"
@@ -53,7 +54,7 @@ INLINE void Trap()
 }
 
 // AICore timeout must exceed AICPU dispatch timeout. Warning is set at 80% of AICPU dispatch timeout.
-#ifdef __DAV_V310
+#if defined(__DAV_V310) || defined(__DAV_V920)
 // A5: 1000MHz, AICPU dispatch 超时 10s
 #define AICORE_WARNING_CYCLES (AICPU_DISPATCH_TIMEOUT_A5 * 8ULL / 10ULL)
 #define AICORE_GM_DCCI_TIMEOUT 13000000000ULL          // 13s
@@ -109,15 +110,19 @@ using npu::tile_fwk::DynFuncHeader;
 #include "tilefwk/aicore_entry_dfx.h"
 
 #if IS_AICORE
-INLINE uint64_t GetDataMainBase()
+INLINE uint64_t ReadReadyReg()
 {
+#if defined(__DAV_920R1__)
+    return get_ipc_reg_0();
+#else
     uint64_t coreStatus = 0;
     __asm__ volatile("MOV %0, DATA_MAIN_BASE\n" : "+l"(coreStatus));
     return coreStatus;
+#endif
 }
 #endif
 
-INLINE uint32_t GetLeafTaskId() { return ((GetDataMainBase() & 0xFFFFFFFF) - 1); }
+INLINE uint32_t GetLeafTaskId() { return ((ReadReadyReg() & 0xFFFFFFFF) - 1); }
 
 INLINE uint32_t GetNextLeafTask(uint32_t lastTaskIdx, __gm__ KernelArgs* args)
 {
@@ -138,7 +143,7 @@ INLINE uint32_t GetRegHighValue(__gm__ KernelArgs* args, uint32_t lastHighRegVal
     uint64_t regValue = 0;
     AICORE_TIMEOUT_CHECK_BEGIN(t0, loop_count);
     do {
-        regValue = GetDataMainBase();
+        regValue = ReadReadyReg();
         highRegVal = (uint32_t)(regValue >> REG_HIGH_DTASKID_SHIFT);
         AICORE_TIMEOUT_CHECK_RETURN(t0, loop_count, AICORE_GET_LEAF_HIGHREG_TIMEOUT, STAGE_GET_HIGH_REG_TIMEOUT, 0);
     } while (highRegVal == 0 || lastHighRegValue == highRegVal);
@@ -150,7 +155,7 @@ constexpr uint8_t EVENT_ID15 = 15;
 constexpr uint8_t EVENT_NUMS_PER_AIV = 16;
 enum class MixResourceType { MIX_UNKNOWN = 0, MIX_1C1V = 1, MIX_1C2V = 2 };
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if IS_MIX_ARCH
 INLINE void PipeSyncPre(uint8_t mixResourceType, uint8_t lastMixResourceType)
 {
     // only lastTask and curTask are mix should insert sync
@@ -195,9 +200,23 @@ INLINE void HandshakeClient(volatile __gm__ int64_t* shakeBuffer)
     Barrier();
 }
 
-INLINE void SendRegFinish(uint32_t curTaskIdx) { set_cond(curTaskIdx | AICORE_FIN_MASK); }
+INLINE void SendRegFinish(uint32_t curTaskIdx)
+{
+#if IS_AICORE && defined(__DAV_920R1__)
+    set_ipc_reg_4(curTaskIdx | AICORE_FIN_MASK);
+#else
+    set_cond(curTaskIdx | AICORE_FIN_MASK);
+#endif
+}
 
-INLINE void SendRegAck(uint32_t taskIdx) { set_cond(taskIdx); }
+INLINE void SendRegAck(uint32_t taskIdx)
+{
+#if IS_AICORE && defined(__DAV_920R1__)
+    set_ipc_reg_4(taskIdx);
+#else
+    set_cond(taskIdx);
+#endif
+}
 
 INLINE void PmuTestBegin(uint32_t profLevel)
 {
@@ -224,7 +243,7 @@ INLINE __gm__ FedProfLeafTaskProf* InitTaskStat(ExecuteContext* ctx)
 {
     __gm__ FedProfLeafTaskProf* taskStat = nullptr;
     (void)ctx;
-#ifdef __DAV_V310
+#if defined(__DAV_V310) || defined(__DAV_V920)
     if (unlikely(ctx->profLevel >= PRO_LEVEL1)) {
         auto m = ctx->perCoreProf;
         taskStat = &m->leafTaskProfList[m->status.leafTaskCount];
@@ -277,7 +296,7 @@ INLINE void ExecDynCoreFunctionKernel(ExecuteContext* ctx, uint32_t taskId, uint
 #define __MAIN_BLOCK 0
 #endif
 
-#ifdef __DAV_V310
+#if defined(__DAV_V310) || defined(__DAV_V920)
     // for mix coretasks, use cube's stackworkspace
     int index = __MAIN_BLOCK ? (opAttrs[0] + 1) / 2 : opAttrs[0];
     uint8_t mixResourceType = cachedTask.cceBinary[index].mixResourceType;
@@ -289,7 +308,7 @@ INLINE void ExecDynCoreFunctionKernel(ExecuteContext* ctx, uint32_t taskId, uint
     __gm__ FedProfLeafTaskProf* taskStat = nullptr;
     taskStat = InitTaskStat(ctx);
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if IS_MIX_ARCH
     PipeSyncPre(mixResourceType, lastMixResourceType);
     lastMixResourceType = mixResourceType;
 #else
@@ -339,10 +358,18 @@ INLINE uint32_t WaitWaveSignal(__gm__ KernelArgs* args)
     }
 }
 
+INLINE void ResetIpcReg()
+{
+#if IS_AICORE && defined(__DAV_920R1__)
+    set_ipc_reg_0(0);
+    set_ipc_reg_4(0);
+#endif
+}
+
 #include "tilefwk/aicore_entry_devtask.h"
 
 #if IS_AICORE
-#if ENABLE_AICORE_RESOLVE && defined(__DAV_C310__)
+#if ENABLE_AICORE_RESOLVE && (defined(__DAV_C310__) || defined(__DAV_920R1__))
 #include "tilefwk/aicore_entry_drco.h"
 #endif
 #endif
@@ -351,7 +378,7 @@ INLINE void KernelEntry(int64_t ffts_addr, int64_t inputs, int64_t outputs, int6
                         int64_t cfgdata)
 {
 #if IS_AICORE
-#if ENABLE_AICORE_RESOLVE && defined(__DAV_C310__)
+#if ENABLE_AICORE_RESOLVE && (defined(__DAV_C310__) || defined(__DAV_920R1__))
     KernelEntryDrco(ffts_addr, inputs, outputs, workspace, tilingdata, cfgdata);
     return;
 #endif
@@ -390,7 +417,7 @@ INLINE void KernelEntry(int64_t ffts_addr, int64_t inputs, int64_t outputs, int6
         ctx.devTaskProfStatus.devTaskProf = &(perCoreProf->aicoreDevTaskInfo[round]);
         FedProfDevTaskProfRecord(INVALID_DEV_TASK_ID, ctx.devTaskProfStatus.devTaskProf, PERF_TRACE_CORE_BEGIN, start);
     }
-
+    ResetIpcReg();
     bool isFirstTask = true;
     SetStatus(args, STAGE_HANDSHAKE_START);
     HandshakeClient(args->shakeBuffer);

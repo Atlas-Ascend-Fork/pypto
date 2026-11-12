@@ -145,7 +145,7 @@ bool DevControlFlowCache::BackupDrcoPerCorePending(ReadyQueueCache* readyQueueBa
     return true;
 }
 
-void DevControlFlowCache::DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uint32_t nrValidAic)
+void DevControlFlowCache::DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uint32_t nrValidAic, ArchInfo arch)
 {
     auto* perCorePendingQueueArray = base->drcoRootFuncList->perCorePendingQueueArray;
     for (size_t i = 0; i < npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE; i++) {
@@ -157,9 +157,10 @@ void DevControlFlowCache::DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uin
         dst->tail = 0;
         dst->size = 0;
     }
+    uint32_t aivNumPerCore = GetAivNumPerCore(arch);
     // middleQueue 回放无需恢复：队列内容只读不变量（设备不写回 GM），slab 镜像跨轮有效
     // ——与 v2（9a6f7a7ff）验证通过的形态一致；v3 曾加 backup/Restore 回退（见 Backup 注释）
-    const uint32_t nrAivCores = nrValidAic * 2;
+    const uint32_t nrAivCores = nrValidAic * aivNumPerCore;
     ReadyCoreFunctionQueue* aivQueue = base->readyQueue[0];
     ReadyCoreFunctionQueue* aicQueue = base->readyQueue[1];
     uint32_t wrapCoreIdx = 0;
@@ -179,7 +180,7 @@ void DevControlFlowCache::DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uin
                 // 与 DispatchReadyQueueToCores 保持一致：wrap 静态余数反向分配（高 index 核），
                 // 非 wrap 任务按当前静态计数反向填充，避免与 wrap 占用的高 index 核叠加。
                 uint32_t aicCore = (nrValidAic - 1) - (wrapCoreIdx++ % nrValidAic);
-                uint32_t aiv0Core = nrValidAic + aicCore * 2;
+                uint32_t aiv0Core = nrValidAic + aicCore * aivNumPerCore;
                 perCorePendingQueueArray[aicCore]->UnsafeEnqueue(info.tasklist[WRAP_IDX_AIC]);
                 perCorePendingQueueArray[aiv0Core]->UnsafeEnqueue(info.tasklist[WRAP_IDX_AIV0]);
                 if (targetType == MIX_TYPE_1C2V) {

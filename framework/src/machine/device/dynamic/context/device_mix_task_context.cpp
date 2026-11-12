@@ -74,12 +74,18 @@ WrapInfoQueue* DeviceTaskContext::AllocWrapQueue(DynDeviceTask* dyntask)
     return q;
 }
 
-bool DeviceTaskContext::IsMixArch(DevAscendProgram* devProg) { return devProg->devArgs.archInfo == ArchInfo::DAV_3510; }
+bool DeviceTaskContext::IsMixArch(DevAscendProgram* devProg)
+{
+    return (devProg->devArgs.archInfo == ArchInfo::DAV_3510 || devProg->devArgs.archInfo == ArchInfo::DAV_9201);
+}
 
 bool DeviceTaskContext::IsMultiDie(DevAscendProgram* devProg)
 {
-    return devProg->devArgs.archInfo == ArchInfo::DAV_3510;
+    bool isMultiDie = (devProg->devArgs.archInfo == ArchInfo::DAV_3510 ||
+                       devProg->devArgs.archInfo == ArchInfo::DAV_9201);
+    return isMultiDie;
 }
+
 bool DeviceTaskContext::IsNeedWrapProcess(DynDeviceTask* dyntask, DevAscendProgram* devProg)
 {
     dyntask->devTask.mixTaskData.wrapIdNum = 0;

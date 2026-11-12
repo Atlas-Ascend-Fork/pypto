@@ -1164,7 +1164,7 @@ uint32_t DeviceWorkspaceAllocator::ReadyQueSlabMemObjSize()
 
 uint32_t DeviceWorkspaceAllocator::DieReadyQueSlabMemObjSize()
 {
-    if (devProg_->devArgs.archInfo == ArchInfo::DAV_3510) {
+    if (devProg_->devArgs.archInfo == ArchInfo::DAV_3510 || devProg_->devArgs.archInfo == ArchInfo::DAV_9201) {
         return sizeof(ReadyCoreFunctionQueue) + devProg_->stitchFunctionsize * sizeof(uint32_t);
     } else {
         return 0;
@@ -1173,7 +1173,7 @@ uint32_t DeviceWorkspaceAllocator::DieReadyQueSlabMemObjSize()
 
 uint32_t DeviceWorkspaceAllocator::WrapQueSlabMemObjSize()
 {
-    if (devProg_->devArgs.archInfo == ArchInfo::DAV_3510) {
+    if (devProg_->devArgs.archInfo == ArchInfo::DAV_3510 || devProg_->devArgs.archInfo == ArchInfo::DAV_9201) {
         return sizeof(WrapInfoQueue) + devProg_->stitchFunctionsize * sizeof(WrapInfo);
     } else {
         return 0;

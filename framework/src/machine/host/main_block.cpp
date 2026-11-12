@@ -25,7 +25,8 @@ static bool IsEnableVF()
     if (config::GetRuntimeOption<int64_t>(CFG_VALID_SHAPE_OPTIMIZE) == 1) {
         return true;
     }
-    bool enableVF = Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510;
+    auto npuArch = Platform::Instance().GetSoc().GetNPUArch();
+    bool enableVF = (npuArch == NPUArch::DAV_3510 || npuArch == NPUArch::DAV_9201);
     enableVF = enableVF && config::GetPassGlobalConfig(KEY_ENABLE_VF, false);
     return enableVF;
 }

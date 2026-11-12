@@ -11,7 +11,7 @@
 #pragma once
 #include <cstdint>
 #include <cstring>
-#include "aicore_constants.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "machine/utils/device_log.h"
 
 namespace npu::tile_fwk::dynamic {

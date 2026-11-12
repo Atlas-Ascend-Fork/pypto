@@ -18,6 +18,7 @@
 #include <vector>
 #include "tilefwk/pypto_fwk_log.h"
 #include "adapter/api/acl_api.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "machine/runtime/runner/runtime_utils.h"
 
 namespace npu::tile_fwk {
@@ -36,7 +37,7 @@ public:
         return inst;
     }
     int GetAicoreRegInfo(std::vector<int64_t>& aic, std::vector<int64_t>& aiv, const int addrType);
-    static void GetAicoreRegInfoForDAV3510(std::vector<int64_t>& regs, std::vector<int64_t>& regsPmu);
+    static void GetAicoreRegInfoForDAVID(std::vector<int64_t>& regs, std::vector<int64_t>& regsPmu, ArchInfo arch);
 
     bool GetValidGetPgMask() const { return validGetPgMask; }
 

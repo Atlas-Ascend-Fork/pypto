@@ -31,14 +31,7 @@ namespace {
 constexpr int32_t MODULE_TYPE_AI_CORE = 4;
 constexpr int32_t INFO_TYPE_OCCUPY = 8;
 constexpr uint8_t AICORE_MAP_BUFF_LEN = 2;
-constexpr uint32_t SUB_CORE_PER_AICORE = 3;
-namespace DAV_2201 {
-constexpr uint32_t MAX_CORE = 25;
-}
 
-namespace DAV_3510 {
-constexpr uint32_t MAX_CORE = 36;
-}
 bool GetPgMask(uint64_t& valid, int32_t& deviceId)
 {
     deviceId = GetLogDeviceId();
@@ -83,8 +76,8 @@ int RuntimeAgent::GetAicoreRegInfo(std::vector<int64_t>& aic, std::vector<int64_
                      deviceId);
         return ret;
     }
-    for (uint32_t i = 0; i < DAV_2201::MAX_CORE; i++) {
-        for (uint32_t j = 0; j < SUB_CORE_PER_AICORE; j++) {
+    for (uint32_t i = 0; i < dynamic::GetMaxCore(ArchInfo::DAV_2201); i++) {
+        for (uint32_t j = 0; j < dynamic::GetSubCorePerAiCore(ArchInfo::DAV_2201); j++) {
             uint64_t vaddr = 0UL;
             if (isValid(i)) {
                 vaddr = outMapPara.ptr + (i * coreStride + j * subCoreStride);
@@ -99,19 +92,20 @@ int RuntimeAgent::GetAicoreRegInfo(std::vector<int64_t>& aic, std::vector<int64_
     return 0;
 }
 
-void RuntimeAgent::GetAicoreRegInfoForDAV3510(std::vector<int64_t>& regs, std::vector<int64_t>& regsPmu)
+void RuntimeAgent::GetAicoreRegInfoForDAVID(std::vector<int64_t>& regs, std::vector<int64_t>& regsPmu, ArchInfo arch)
 {
-    if (Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510) {
+    if (arch != ArchInfo::DAV_3510 && arch != ArchInfo::DAV_9201) {
         return;
     }
-    constexpr uint32_t AICORE_PER_DIE = 18;
-    constexpr uint32_t AIV_BASE_OFFSET = 18;
-    constexpr uint32_t SUB_CORE_PER_DIE = AICORE_PER_DIE * SUB_CORE_PER_AICORE;
-
-    constexpr unsigned long SUB_CORE_STRIDE = 0x100000ULL;
-    constexpr unsigned long AIV_STRIDE = SUB_CORE_STRIDE;
-    constexpr unsigned long AIV_SECOND_STRIDE = 2 * SUB_CORE_STRIDE;
-    constexpr size_t MAX_INDEX = DAV_3510::MAX_CORE * SUB_CORE_PER_AICORE;
+    uint32_t aicorePerDie = dynamic::GetAicorePerDie(arch);
+    uint32_t aivBaseOffset = dynamic::GetAicorePerDie(arch);
+    uint32_t subCorePerAicore = dynamic::GetSubCorePerAiCore(arch);
+    uint32_t maxCore = dynamic::GetMaxCore(arch);
+    const uint32_t subCorePerDie = aicorePerDie * subCorePerAicore;
+    constexpr unsigned long subCoreStride = 0x100000ULL;
+    constexpr unsigned long aivStride = subCoreStride;
+    const unsigned long aivSecondStide = (subCorePerAicore - 1) * subCoreStride;
+    const size_t maxIndex = static_cast<size_t>(maxCore) * subCorePerAicore;
     unsigned int devId = GetLogDeviceId();
 
     struct ResMapInfo mapInfo;
@@ -120,29 +114,31 @@ void RuntimeAgent::GetAicoreRegInfoForDAV3510(std::vector<int64_t>& regs, std::v
     mapInfo.flag = 0;
     mapInfo.rsv[0] = 0;
 
-    regs.resize(MAX_INDEX);
-    regsPmu.resize(MAX_INDEX);
-    for (uint32_t coreIndex = 0; coreIndex < DAV_3510::MAX_CORE; coreIndex++) {
+    regs.resize(maxIndex);
+    regsPmu.resize(maxIndex);
+    for (uint32_t coreIndex = 0; coreIndex < maxCore; coreIndex++) {
         mapInfo.res_id = coreIndex;
         unsigned long mapAddr;
-        unsigned int len = 0x300000;
+        unsigned int len = subCoreStride * subCorePerAicore;
         (void)HalResMap(devId, &mapInfo, &mapAddr, &len);
-        uint32_t dieIdx = coreIndex / AICORE_PER_DIE;
-        uint32_t localIdx = coreIndex % AICORE_PER_DIE;
-        uint32_t dieBase = dieIdx * SUB_CORE_PER_DIE;
+        uint32_t dieIdx = coreIndex / aicorePerDie;
+        uint32_t localIdx = coreIndex % aicorePerDie;
+        uint32_t dieBase = dieIdx * subCorePerDie;
 
         uint32_t aicoreIndex = dieBase + localIdx;
-        uint32_t aivFirstIndex = dieBase + AIV_BASE_OFFSET + localIdx * 2;
+        uint32_t aivFirstIndex = dieBase + aivBaseOffset + localIdx * (subCorePerAicore - 1);
         uint32_t aivSecondIndex = aivFirstIndex + 1;
         // aic
         regs[aicoreIndex] = mapAddr;
         regsPmu[aicoreIndex] = mapAddr;
         // first aiv
-        regs[aivFirstIndex] = mapAddr + AIV_STRIDE;
-        regsPmu[aivFirstIndex] = mapAddr + AIV_STRIDE;
-        // second aiv
-        regs[aivSecondIndex] = mapAddr + AIV_SECOND_STRIDE;
-        regsPmu[aivSecondIndex] = mapAddr + AIV_SECOND_STRIDE;
+        regs[aivFirstIndex] = mapAddr + aivStride;
+        regsPmu[aivFirstIndex] = mapAddr + aivStride;
+        if (arch == ArchInfo::DAV_3510) {
+            // second aiv
+            regs[aivSecondIndex] = mapAddr + aivSecondStide;
+            regsPmu[aivSecondIndex] = mapAddr + aivSecondStide;
+        }
     }
 }
 } // namespace npu::tile_fwk

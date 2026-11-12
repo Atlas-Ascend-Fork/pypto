@@ -93,7 +93,7 @@ TEST(SimulationExtraTest, HostAicoreEntryAdapter_AllFunctions)
     HostCoreCtx::SetCurrent({1, 2});
 
     hw.WriteMainBase(2, 12345);
-    EXPECT_EQ(GetDataMainBase(), 12345ULL);
+    EXPECT_EQ(ReadReadyReg(), 12345ULL);
 
     set_cond(999);
     EXPECT_EQ(hw.ReadCond(2), 999ULL);

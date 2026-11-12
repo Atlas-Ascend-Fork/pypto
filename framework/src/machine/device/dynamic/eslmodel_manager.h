@@ -21,7 +21,7 @@
 #include "securec.h"
 #include "tilefwk/aicpu_common.h"
 #include "tilefwk/aikernel_data.h"
-#include "machine/device/dynamic/aicore_constants.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "machine/device/dynamic/device_utils.h"
 #include "machine/device/dynamic/device_sche_context.h"
 #include "machine/utils/dynamic/device_task.h"

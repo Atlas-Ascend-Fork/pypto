@@ -20,7 +20,7 @@
 #include "device_sche_context.h"
 #include "device_common.h"
 #include "aicore_manager.h"
-#include "aicore_constants.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "machine/utils/machine_ws_intf.h"
 #include "machine/utils/device_log.h"
 #include "machine/device/dynamic/aicore_prof.h"

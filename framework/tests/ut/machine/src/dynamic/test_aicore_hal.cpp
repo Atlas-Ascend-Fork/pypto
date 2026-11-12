@@ -10,6 +10,7 @@
 
 #include <gtest/gtest.h>
 #include <cstring>
+#include <memory>
 
 #define private public
 #define protected public
@@ -67,14 +68,16 @@ struct HalTestEnv {
 
 TEST(AicoreHalTest, GetRegAddrsAndRegNum)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     EXPECT_EQ(env.hal.GetRegAddrs(), env.regAddrsArr);
     EXPECT_EQ(env.hal.GetregNum(), static_cast<uint32_t>(HalTestEnv::NUM_CORES));
 }
 
 TEST(AicoreHalTest, ReadWriteReg32)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     int coreIdx = 0;
     env.hal.GetPhyIdByBlockId(coreIdx) = 0;
 
@@ -87,7 +90,8 @@ TEST(AicoreHalTest, ReadWriteReg32)
 
 TEST(AicoreHalTest, ReadReg32_InvalidPhyId)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     int coreIdx = 0;
     env.hal.GetPhyIdByBlockId(coreIdx) = -1;
     EXPECT_EQ(env.hal.ReadReg32(coreIdx, 0), 0u);
@@ -95,7 +99,8 @@ TEST(AicoreHalTest, ReadReg32_InvalidPhyId)
 
 TEST(AicoreHalTest, WriteReg32_InvalidPhyId)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     int coreIdx = 0;
     env.hal.GetPhyIdByBlockId(coreIdx) = -1;
     env.hal.WriteReg32(coreIdx, 0, 0x1234);
@@ -103,14 +108,16 @@ TEST(AicoreHalTest, WriteReg32_InvalidPhyId)
 
 TEST(AicoreHalTest, ReadPathReg_FastPathDisabled)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     env.hal.isNeedWriteRegForFastPath_ = false;
     EXPECT_EQ(env.hal.ReadPathReg(0), 0u);
 }
 
 TEST(AicoreHalTest, ReadPathReg_FastPathEnabled)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     int coreIdx = 0;
     env.hal.GetPhyIdByBlockId(coreIdx) = 0;
     env.hal.isNeedWriteRegForFastPath_ = true;
@@ -122,7 +129,8 @@ TEST(AicoreHalTest, ReadPathReg_FastPathEnabled)
 
 TEST(AicoreHalTest, NeedsFastPathRegClose)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     EXPECT_TRUE(env.hal.NeedsFastPathRegClose());
     env.hal.isNeedWriteRegForFastPath_ = false;
     EXPECT_FALSE(env.hal.NeedsFastPathRegClose());
@@ -130,7 +138,8 @@ TEST(AicoreHalTest, NeedsFastPathRegClose)
 
 TEST(AicoreHalTest, GetAicoreStatusAndLastWord)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     int coreIdx = 0;
     volatile KernelArgs* args = env.GetArgs(coreIdx);
     args->dfxBuffer[2] = 0xDEADBEEF;
@@ -142,7 +151,8 @@ TEST(AicoreHalTest, GetAicoreStatusAndLastWord)
 
 TEST(AicoreHalTest, GetHostSimPhyId)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     env.hal.GetPhyIdByBlockId(0) = 5;
     EXPECT_EQ(env.hal.GetHostSimPhyId(0), 5);
 
@@ -152,13 +162,15 @@ TEST(AicoreHalTest, GetHostSimPhyId)
 
 TEST(AicoreHalTest, IsHostSimMode_CostModel)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     EXPECT_FALSE(env.hal.IsHostSimMode());
 }
 
 TEST(AicoreHalTest, IsSpecialTask)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     EXPECT_TRUE(env.hal.IsSpecialTask(AICORE_TASK_INIT));
     EXPECT_TRUE(env.hal.IsSpecialTask(AICORE_TASK_STOP));
     EXPECT_TRUE(env.hal.IsSpecialTask(AICORE_FUNC_STOP));
@@ -167,14 +179,16 @@ TEST(AicoreHalTest, IsSpecialTask)
 
 TEST(AicoreHalTest, TryHandShakeByGm_CostModelReturnsFalse)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     int coreIdx = 0;
     EXPECT_FALSE(env.hal.TryHandShakeByGm(coreIdx, 0));
 }
 
 TEST(AicoreHalTest, SendWaveGoodbye_CostModel)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     int coreIdx = 0;
     env.hal.args_[coreIdx] = const_cast<KernelArgs*>(env.GetArgs(coreIdx));
     env.hal.SendWaveGoodbye(coreIdx);
@@ -182,7 +196,8 @@ TEST(AicoreHalTest, SendWaveGoodbye_CostModel)
 
 TEST(AicoreHalTest, InitKernelArgs_CostModel)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     int coreIdx = 0;
     env.hal.args_[coreIdx] = nullptr;
     env.hal.InitKernelArgs(coreIdx, 0);
@@ -190,7 +205,8 @@ TEST(AicoreHalTest, InitKernelArgs_CostModel)
 
 TEST(AicoreHalTest, ParallelDevTaskCtxVersion_GetSet)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     int coreIdx = 0;
     env.hal.args_[coreIdx] = const_cast<KernelArgs*>(env.GetArgs(coreIdx));
 
@@ -202,7 +218,8 @@ TEST(AicoreHalTest, ParallelDevTaskCtxVersion_GetSet)
 
 TEST(AicoreHalTest, GetSetParallelDevTask)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     int coreIdx = 0;
     env.hal.args_[coreIdx] = const_cast<KernelArgs*>(env.GetArgs(coreIdx));
 
@@ -215,7 +232,8 @@ TEST(AicoreHalTest, GetSetParallelDevTask)
 
 TEST(AicoreHalTest, ResetCoreStopSlot_CostModel)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     int coreIdx = 0;
     env.hal.args_[coreIdx] = const_cast<KernelArgs*>(env.GetArgs(coreIdx));
     env.hal.ResetCoreStopSlot(coreIdx);
@@ -223,19 +241,22 @@ TEST(AicoreHalTest, ResetCoreStopSlot_CostModel)
 
 TEST(AicoreHalTest, InitCostModelDevTaskData)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     env.hal.InitCostModelDevTaskData(0, 0xABCD);
 }
 
 TEST(AicoreHalTest, GetSharedBuffer)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     EXPECT_EQ(env.hal.GetSharedBuffer(), reinterpret_cast<int64_t>(env.sharedBuf));
 }
 
 TEST(AicoreHalTest, SetMngCoreBlockId)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     env.hal.SetMngCoreBlockId(0, 2, 2, 4);
     EXPECT_EQ(env.hal.aicStart_, 0);
     EXPECT_EQ(env.hal.aicEnd_, 2);
@@ -243,15 +264,17 @@ TEST(AicoreHalTest, SetMngCoreBlockId)
     EXPECT_EQ(env.hal.aivEnd_, 4);
 }
 
-TEST(AicoreHalTest, GetRegSprDataMainBase_Default)
+TEST(AicoreHalTest, ReadyRegOffset_Default)
 {
-    HalTestEnv env;
-    EXPECT_EQ(env.hal.GetRegSprDataMainBase(), DAV_2201::REG_SPR_DATA_MAIN_BASE);
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
+    EXPECT_EQ(env.hal.readyRegOffset_, 0xA0u);
 }
 
 TEST(AicoreHalTest, CostModelSendAndGetTask)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     int coreIdx = 0;
 
     env.hal.SetTaskTimeCost([](uint64_t, uint64_t, uint64_t) -> uint64_t { return 100; });
@@ -265,7 +288,8 @@ TEST(AicoreHalTest, CostModelSendAndGetTask)
 
 TEST(AicoreHalTest, CostModelGetTask_Empty)
 {
-    HalTestEnv env;
+    auto envOwner = std::make_unique<HalTestEnv>();
+    HalTestEnv& env = *envOwner;
     uint64_t result = env.hal.CostModelGetTask(0);
     EXPECT_EQ(result, AICORE_FUNC_STOP | AICORE_FIN_MASK);
 }

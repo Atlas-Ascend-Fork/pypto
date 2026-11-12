@@ -25,7 +25,7 @@ inline constexpr size_t MAX_STITCH_FUNC_NUM = 1024; // stitch数量阈值
 inline constexpr size_t MAX_STITCH_LEAFFUNC_NUM = 60000;
 constexpr int MAX_DIMS = 8;
 constexpr uint32_t AICORE_TYPE_NUM = 2;
-constexpr uint32_t MAX_SCHEDULE_AICPU_NUM = 5;
+constexpr uint32_t MAX_SCHEDULE_AICPU_NUM = 6;
 
 using taskid_t = uint32_t;
 

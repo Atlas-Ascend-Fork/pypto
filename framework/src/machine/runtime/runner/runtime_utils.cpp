@@ -28,23 +28,22 @@ extern "C" __attribute__((weak)) int drvGetProcessSign(process_sign* sign);
 namespace npu::tile_fwk {
 namespace {
 constexpr uint32_t kMinDefaultDim = 20;
-constexpr uint32_t AICAIVRATIO = 2; // AIC:AIV的比例系数
-
-int GetMaxBlockdim()
+int GetMaxBlockdim(ArchInfo arch)
 {
     uint32_t cubeBlockDim = 0;
     uint32_t vectorBlockDim = 0;
+    uint32_t aivAicRatio = dynamic::GetAivAicRatio(arch);
     // 若未进行控核，AclRtGetStreamResLimit返回的是满核
     auto aicoreStream = GetStreamContext().GetCurrentStream();
     AclRtGetStreamResLimit(aicoreStream, AclRtDevResLimitType::CUBE_CORE, &cubeBlockDim);
     AclRtGetStreamResLimit(aicoreStream, AclRtDevResLimitType::VECTOR_CORE, &vectorBlockDim);
     // 若不满足AIC和AIV的比例，手动处理成为符合AIC和AIV的比例最大值
-    if (vectorBlockDim != cubeBlockDim * AICAIVRATIO) {
-        auto rtsMaxBlockDim = std::min(cubeBlockDim, vectorBlockDim / AICAIVRATIO);
+    if (vectorBlockDim != cubeBlockDim * aivAicRatio) {
+        auto rtsMaxBlockDim = std::min(cubeBlockDim, vectorBlockDim / aivAicRatio);
         MACHINE_LOGW("The cubeBlockDim[%u] and vectorBlockDim[%u] do not conform to the 1: %u ratio of AIC and AIV, "
                      "and will be set to values that conform to the ratio of AIC and AIV. "
                      "The cubeBlockDim and vectorBlockDim are set at %u and %u",
-                     cubeBlockDim, vectorBlockDim, AICAIVRATIO, rtsMaxBlockDim, rtsMaxBlockDim * AICAIVRATIO);
+                     cubeBlockDim, vectorBlockDim, aivAicRatio, rtsMaxBlockDim, rtsMaxBlockDim * aivAicRatio);
         return rtsMaxBlockDim;
     } else {
         return cubeBlockDim;
@@ -52,14 +51,14 @@ int GetMaxBlockdim()
 }
 } // namespace
 
-int GetCfgBlockdim()
+int GetCfgBlockdim(ArchInfo arch)
 {
     auto blk = Platform::Instance().GetSoc().GetAICoreNum();
     blk = blk > 0 ? blk : kMinDefaultDim;
 
     // 通过GetMaxBlockdim接口获取设置的最大核数，如果设置的最大核数大于硬件物理最大核数时，控核不生效
     // 如果未进行控核，GetMaxBlockdim接口将通过AclRtGetStreamResLimit函数返回硬件物理最大核数
-    auto maxBlk = GetMaxBlockdim();
+    auto maxBlk = GetMaxBlockdim(arch);
     blk = (maxBlk > 0 && maxBlk < static_cast<int>(blk)) ? maxBlk : blk;
     MACHINE_LOGD("Get blockdim[%zu].", blk);
     return blk;

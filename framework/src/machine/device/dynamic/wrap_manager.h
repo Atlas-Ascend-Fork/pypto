@@ -15,9 +15,10 @@
 
 #pragma once
 #include <cstdint>
-#include "aicore_constants.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "machine/utils/machine_ws_intf.h"
 #include "machine/device/tilefwk/core_func_data.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "core_status_manager.h"
 #include "wrap_task_utils.h"
 
@@ -64,6 +65,7 @@ public:
     SendTaskToAiCoreFunc SendTaskToAiCore;
     bool isOpenMixSche{false};
     ArchInfo archInfo;
+    uint32_t aivPerCore_{2};
     int schedIdx_;
 
     // for die-to-die shchedule
@@ -115,7 +117,7 @@ public:
                      uint32_t* pendingIds, uint32_t* runningIds, int aicValidNum, uint32_t aicStart, uint32_t aicEnd,
                      SendTaskToAiCoreFunc func)
     {
-        if (archInfo != ArchInfo::DAV_3510)
+        if (archInfo != ArchInfo::DAV_3510 && archInfo != ArchInfo::DAV_9201)
             return;
         schDevTaskCtx = devTaskctx;
         isOpenMixSche = curDevTask->mixTaskData.wrapIdNum > 0;
@@ -125,6 +127,7 @@ public:
         runningIds_ = runningIds;
         aicEnd_ = aicEnd;
         aicStart_ = aicStart;
+        aivPerCore_ = GetAivNumPerCore(archInfo);
 
         aicValidNum_ = aicValidNum;
         SendTaskToAiCore = func;
@@ -138,14 +141,18 @@ public:
             CoreType::AIV, reinterpret_cast<ReadyCoreFunctionQueue*>(curDevTask->readyAivCoreFunctionQue));
     }
 
-    inline bool IsMixArch() { return archInfo == ArchInfo::DAV_3510; }
+    inline bool IsMixArch()
+    {
+        bool isMixArch = (archInfo == ArchInfo::DAV_3510 || archInfo == ArchInfo::DAV_9201);
+        return isMixArch;
+    }
 
     inline bool GetAvailableWrapCoreIdx(uint8_t mixResourceType, uint32_t aicReadyCnt, uint32_t& coreIdx,
                                         uint32_t& v0Idx)
     {
         for (uint32_t idx = 0; idx < aicReadyCnt; idx++) {
             uint32_t aicIdx = coreStatusMgr_->GetRunReadyCoreIdx(CORE_IDX_AIC, idx);
-            uint32_t aivIdx0 = aicIdx * AIV_NUM_PER_AI_CORE + aicValidNum_;
+            uint32_t aivIdx0 = aicIdx * aivPerCore_ + aicValidNum_;
             switch (mixResourceType) {
                 case static_cast<uint8_t>(MixResourceType::MIX_1C1V):
                     if (coreStatusMgr_->GetCoreIdxPosition(aivIdx0) != INVALID_COREIDX_POSITION) {
@@ -171,16 +178,16 @@ public:
 
     inline uint32_t GetWrapCoreRunningCnt(WrapCoreCandidates& candidates, uint32_t& core1c1vCnt, uint32_t& core1c2vCnt)
     {
+        const bool hasSecondAiv = aivPerCore_ >= NUM_TWO;
         uint32_t aicReadyCnt = coreStatusMgr_->GetCoreRunReadyCnt(CORE_IDX_AIC);
         for (uint32_t idx = 0; idx < aicReadyCnt && core1c2vCnt < MAX_DISPATCH_TASK_CNT; idx++) {
             uint32_t aicIdx = coreStatusMgr_->GetRunReadyCoreIdx(CORE_IDX_AIC, idx);
             uint32_t aivIdx0 = GetWrapAiv0CoreIdx(aicIdx);
-            uint32_t aivIdx1 = GetWrapAiv1CoreIdx(aivIdx0);
             if (coreStatusMgr_->GetCoreIdxPosition(aivIdx0) != INVALID_COREIDX_POSITION) {
                 CheckCoreIdxInitStatus(aicIdx);
                 CheckCoreIdxInitStatus(aivIdx0);
-                if (coreStatusMgr_->GetCoreIdxPosition(aivIdx1) != INVALID_COREIDX_POSITION) {
-                    CheckCoreIdxInitStatus(aivIdx1);
+                if (hasSecondAiv && coreStatusMgr_->GetCoreIdxPosition(aivIdx0 + 1) != INVALID_COREIDX_POSITION) {
+                    CheckCoreIdxInitStatus(aivIdx0 + 1);
                     candidates.core1c2vIdx[core1c2vCnt] = aicIdx;
                     core1c2vCnt++;
                 } else if (core1c1vCnt < MAX_DISPATCH_TASK_CNT) {
@@ -196,11 +203,11 @@ public:
 
     inline uint32_t GetWrapCorePendingCnt(WrapCoreCandidates& candidates, uint32_t& core1c1vCnt, uint32_t& core1c2vCnt)
     {
+        const bool hasSecondAiv = aivPerCore_ >= NUM_TWO;
         for (uint32_t idx = aicStart_; idx < aicEnd_ && core1c2vCnt < MAX_DISPATCH_TASK_CNT; idx++) {
             uint32_t aivIdx0 = GetWrapAiv0CoreIdx(idx);
-            uint32_t aivIdx1 = GetWrapAiv1CoreIdx(aivIdx0);
             if (pendingIds_[idx] == AICORE_TASK_INIT && pendingIds_[aivIdx0] == AICORE_TASK_INIT) {
-                if (pendingIds_[aivIdx1] == AICORE_TASK_INIT) {
+                if (hasSecondAiv && pendingIds_[aivIdx0 + 1] == AICORE_TASK_INIT) {
                     candidates.core1c2vIdx[core1c2vCnt] = idx;
                     core1c2vCnt++;
                 } else if (core1c1vCnt < MAX_DISPATCH_TASK_CNT) {
@@ -217,10 +224,10 @@ public:
     // 根据Wrap中任意核找对对应的AIC核
     inline uint16_t GetWrapAicCoreIdx(uint16_t coreIdx)
     {
-        return coreIdx < aicValidNum_ ? coreIdx : (coreIdx - aicValidNum_) / AIV_NUM_PER_AI_CORE;
+        return coreIdx < aicValidNum_ ? coreIdx : (coreIdx - aicValidNum_) / aivPerCore_;
     }
 
-    inline uint16_t GetWrapAiv0CoreIdx(uint16_t aicIdx) { return aicIdx * AIV_NUM_PER_AI_CORE + aicValidNum_; }
+    inline uint16_t GetWrapAiv0CoreIdx(uint16_t aicIdx) { return aicIdx * aivPerCore_ + aicValidNum_; }
     inline uint16_t GetWrapAiv1CoreIdx(uint16_t aiv0Idx) { return aiv0Idx + 1; }
 
     inline void SendMixTasksToCore(const uint32_t* taskIds, uint8_t mixResourceType, uint32_t aicIdx, uint32_t aivIdx0)
@@ -468,7 +475,7 @@ public:
     inline void ResolveDepForOneMix(const uint32_t* taskIds, uint8_t mixResourceType, uint16_t coreIdx)
     {
         uint32_t aicIdx = GetWrapAicCoreIdx(coreIdx);
-        uint32_t aivIdx0 = aicIdx * AIV_NUM_PER_AI_CORE + aicValidNum_;
+        uint32_t aivIdx0 = GetWrapAiv0CoreIdx(aicIdx);
         bool is1c1v = mixResourceType == static_cast<uint8_t>(MixResourceType::MIX_1C1V);
         bool coreAvailable = coreStatusMgr_->GetCoreIdxPosition(aicIdx) != INVALID_COREIDX_POSITION &&
                              coreStatusMgr_->GetCoreIdxPosition(aivIdx0) != INVALID_COREIDX_POSITION;

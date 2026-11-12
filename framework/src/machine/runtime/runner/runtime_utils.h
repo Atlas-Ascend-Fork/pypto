@@ -221,7 +221,7 @@ inline bool GetStreamCaptureInfo(RtStream aicoreStream, AclMdlRI& rtModel, bool&
     return true;
 }
 
-int GetCfgBlockdim();
+int GetCfgBlockdim(ArchInfo arch);
 
 uint32_t GetProcessId();
 } // namespace npu::tile_fwk

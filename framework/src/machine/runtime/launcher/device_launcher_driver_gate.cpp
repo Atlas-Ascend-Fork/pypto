@@ -74,7 +74,7 @@ bool MeetsMinAscendDriverMajorMinor(int maj, int minVer)
 void RunDriverVersionCheck()
 {
     const auto arch = static_cast<ArchInfo>(Platform::Instance().GetSoc().GetNPUArch());
-    if (arch == ArchInfo::DAV_3510) {
+    if (arch == ArchInfo::DAV_3510 || arch == ArchInfo::DAV_9201) {
         return;
     }
 

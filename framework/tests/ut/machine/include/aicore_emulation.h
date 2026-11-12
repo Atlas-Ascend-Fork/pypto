@@ -235,7 +235,7 @@ static inline void set_cond(uint64_t cond)
     npu::tile_fwk::machine::AicoreEmulationManager::GetInstance().GetEmulation()->AicoreSetCond(cond);
 }
 
-static inline uint64_t GetDataMainBase()
+static inline uint64_t ReadReadyReg()
 {
     auto mainBase = npu::tile_fwk::machine::AicoreEmulationManager::GetInstance().GetEmulation()->AicoreGetData();
     return mainBase;

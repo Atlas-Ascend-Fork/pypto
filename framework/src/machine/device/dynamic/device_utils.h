@@ -267,23 +267,25 @@ inline uint64_t CurrentTime()
 // 100ms：规避 device OS 对单 AICPU 连跑 ~950ms 强制让出 ~50ms，再叠加系统调度延迟后切回任务可能超过 55ms 的节流误超时
 inline uint64_t GetOsThrottleSafeWaitTimeout(ArchInfo archInfo)
 {
-    return (archInfo == ArchInfo::DAV_3510) ? TIMEOUT_A5_100MS : TIMEOUT_A2A3_100MS;
+    return (archInfo == ArchInfo::DAV_3510 || archInfo == ArchInfo::DAV_9201) ? TIMEOUT_A5_100MS : TIMEOUT_A2A3_100MS;
 }
 
 // Timeout check macros
 // TIMEOUT_CHECK_INIT(arch, timeout_cycles_val) - initializes timeout_map, start, timeout_cycles, warn_interval(1/10)
 // TIMEOUT_CHECK_INIT_WARN_ONLY(arch) - for infinite wait scenarios (no timeout, warn_interval = 1MIN)
 
-#define TIMEOUT_CHECK_INIT(arch, timeout_cycles_val)                                                \
-    const uint64_t* timeout_map = (arch == ArchInfo::DAV_3510) ? TIMEOUT_MAP_A5 : TIMEOUT_MAP_A2A3; \
-    uint64_t start = GetCycles();                                                                   \
-    uint64_t timeout_cycles = timeout_cycles_val;                                                   \
-    uint64_t warn_interval = timeout_cycles / 10;                                                   \
+#define TIMEOUT_CHECK_INIT(arch, timeout_cycles_val)                                                             \
+    const uint64_t* timeout_map = (arch == ArchInfo::DAV_3510 || arch == ArchInfo::DAV_9201) ? TIMEOUT_MAP_A5 :  \
+                                                                                               TIMEOUT_MAP_A2A3; \
+    uint64_t start = GetCycles();                                                                                \
+    uint64_t timeout_cycles = timeout_cycles_val;                                                                \
+    uint64_t warn_interval = timeout_cycles / 10;                                                                \
     (void)timeout_map;
 
-#define TIMEOUT_CHECK_INIT_WARN_ONLY(arch) \
-    uint64_t start = GetCycles();          \
-    uint64_t warn_interval = (arch == ArchInfo::DAV_3510) ? TIMEOUT_A5_1MIN : TIMEOUT_A2A3_1MIN
+#define TIMEOUT_CHECK_INIT_WARN_ONLY(arch)                                                                  \
+    uint64_t start = GetCycles();                                                                           \
+    uint64_t warn_interval = (arch == ArchInfo::DAV_3510 || arch == ArchInfo::DAV_9201) ? TIMEOUT_A5_1MIN : \
+                                                                                          TIMEOUT_A2A3_1MIN
 
 constexpr uint64_t TIMEOUT_INDEX_50US = 0;
 constexpr uint64_t TIMEOUT_INDEX_1SEC = 1;

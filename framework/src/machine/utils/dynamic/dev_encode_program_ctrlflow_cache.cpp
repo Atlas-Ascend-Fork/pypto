@@ -192,7 +192,7 @@ void DevControlFlowCache::ReadyQueueDataPingPongRestore(DynDeviceTaskBase* base)
     }
 }
 
-void DevControlFlowCache::ReadyQueueDataPingPongSwap(DynDeviceTaskBase* base, uint32_t nrValidAic)
+void DevControlFlowCache::ReadyQueueDataPingPongSwap(DynDeviceTaskBase* base, uint32_t nrValidAic, ArchInfo arch)
 {
     ReadyQueueCache* readyQueueBackup = base->readyQueueBackup;
     base->devTask.coreFunctionCnt = readyQueueBackup->coreFunctionCnt;
@@ -211,7 +211,7 @@ void DevControlFlowCache::ReadyQueueDataPingPongSwap(DynDeviceTaskBase* base, ui
         DrcoShadowPingPongSwap(base);
         return;
     }
-    DrcoReadyQueueDataRestore(base, nrValidAic);
+    DrcoReadyQueueDataRestore(base, nrValidAic, arch);
 }
 
 void DevControlFlowCache::DieReadyQueueDataBackup(DynDeviceTaskBase* base)

@@ -16,6 +16,7 @@
 #ifndef AIKERNEL_DRCO_LEAF_TASK_READY_QUEUE_H
 #define AIKERNEL_DRCO_LEAF_TASK_READY_QUEUE_H
 
+#include "tilefwk/aikernel_define.h"
 #include "tilefwk/aikernel_tensor.h"
 
 namespace npu::tile_fwk {
@@ -45,7 +46,7 @@ struct DrcoSsbufSPSCQueue {
 #ifndef __TILE_FWK_HOST__
     static inline void Init(DrcoSsbufSPSCQueue* addr)
     {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if IS_MIX_ARCH
         __ssbuf__ uint32_t* ptr = (__ssbuf__ uint32_t*)addr;
         ptr[0] = 0;
         ptr[1] = 0;
@@ -58,7 +59,7 @@ struct DrcoSsbufSPSCQueue {
     // C(AIC)调用：写入一个元素，满则返回false
     static inline bool Push(DrcoSsbufSPSCQueue* addr, uint32_t elem)
     {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if IS_MIX_ARCH
         __ssbuf__ uint32_t* ptr = (__ssbuf__ uint32_t*)addr;
         uint32_t curHead = ptr[0];
         uint32_t curTail = ptr[1];
@@ -80,7 +81,7 @@ struct DrcoSsbufSPSCQueue {
     // V(AIV)调用：读出一个元素，空则返回false
     static inline bool Pop(DrcoSsbufSPSCQueue* addr, uint32_t& elem)
     {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if IS_MIX_ARCH
         __ssbuf__ uint32_t* ptr = (__ssbuf__ uint32_t*)addr;
         uint32_t curTail = ptr[1];
         uint32_t curHead = ptr[0];
@@ -100,7 +101,7 @@ struct DrcoSsbufSPSCQueue {
 
     static inline uint32_t Size(DrcoSsbufSPSCQueue* addr)
     {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if IS_MIX_ARCH
         __ssbuf__ uint32_t* ptr = (__ssbuf__ uint32_t*)addr;
         uint32_t curHead = ptr[0];
         uint32_t curTail = ptr[1];
@@ -131,7 +132,7 @@ struct DrcoWarpExecuteCount {
 #ifndef __TILE_FWK_HOST__
     static inline void Init(DrcoWarpExecuteCount* addr)
     {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if IS_MIX_ARCH
         __ssbuf__ uint32_t* ptr = (__ssbuf__ uint32_t*)addr;
         ptr[0] = 0;
         ptr[1] = 0;
@@ -145,7 +146,7 @@ struct DrcoWarpExecuteCount {
     // V 端调用：本核分片计数自增（单写者，普通读改写即可，无需 GM 原子）
     static inline void VCountAdd(DrcoWarpExecuteCount* addr, uint32_t idx, uint32_t count)
     {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if IS_MIX_ARCH
         if (count == 0) {
             return;
         }
@@ -162,7 +163,7 @@ struct DrcoWarpExecuteCount {
     // C 端调用：读组内 V 计数
     static inline uint32_t VCountLoad(DrcoWarpExecuteCount* addr, uint32_t idx)
     {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if IS_MIX_ARCH
         __ssbuf__ volatile uint32_t* ptr = (__ssbuf__ volatile uint32_t*)addr;
         return ptr[idx];
 #else
@@ -175,7 +176,7 @@ struct DrcoWarpExecuteCount {
     // C 端调用：完成镜像位置位（幂等；bits 取 FINISH_VECTOR / FINISH_ALL，单调置位不清）
     static inline void FinishPublish(DrcoWarpExecuteCount* addr, uint32_t bits)
     {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if IS_MIX_ARCH
         __ssbuf__ volatile uint32_t* ptr = (__ssbuf__ volatile uint32_t*)addr;
         ptr[2] |= bits;
         __asm__ volatile("DSB #0");
@@ -188,7 +189,7 @@ struct DrcoWarpExecuteCount {
     // V 端调用：读完成镜像字（一轮一次，FINISH_VECTOR / FINISH_ALL 位复用）
     static inline uint32_t FinishStateLoad(DrcoWarpExecuteCount* addr)
     {
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if IS_MIX_ARCH
         __ssbuf__ volatile uint32_t* ptr = (__ssbuf__ volatile uint32_t*)addr;
         return ptr[2];
 #else

@@ -17,7 +17,7 @@
 #include "machine/device/dynamic/costmodel_utils.h"
 #include "machine/device/dynamic/eslmodel_aicore_hal.h"
 #include "machine/device/dynamic/device_utils.h"
-#include "machine/device/dynamic/aicore_constants.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "machine/device/dynamic/eslmodel_manager.h"
 #include "machine/simulation/aicore_hardware.h"
 #include "interface/machine/device/tilefwk/aicpu_common.h"

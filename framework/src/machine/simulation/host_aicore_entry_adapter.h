@@ -76,7 +76,7 @@ static inline void set_cond(uint64_t v)
     npu::tile_fwk::dynamic::AicoreHardware::Global().WriteCond(static_cast<size_t>(ctx.phyId), v);
 }
 
-static inline uint64_t GetDataMainBase()
+static inline uint64_t ReadReadyReg()
 {
     const auto& ctx = npu::tile_fwk::dynamic::HostCoreCtx::Current();
     return npu::tile_fwk::dynamic::AicoreHardware::Global().ReadMainBase(static_cast<size_t>(ctx.phyId));

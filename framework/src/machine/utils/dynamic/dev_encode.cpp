@@ -570,7 +570,8 @@ static int GetCceIndex(const std::unordered_map<uint64_t, int>& calleeHashIndexD
                        const std::shared_ptr<CallOpAttribute>& callop)
 {
     int cceIndex = calleeHashIndexDict.at(callop->GetCalleeHash().GetHash());
-    bool enableVF = Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510;
+    auto arch = Platform::Instance().GetSoc().GetNPUArch();
+    bool enableVF = (arch == NPUArch::DAV_3510 || arch == NPUArch::DAV_9201);
     enableVF = enableVF && config::GetPassGlobalConfig(KEY_ENABLE_VF, false);
     if (config::GetRuntimeOption<int64_t>(CFG_VALID_SHAPE_OPTIMIZE) == 1 || enableVF) {
         cceIndex = std::max(0, cceIndex * MAIN_BLOCK_SIZE - 1);
@@ -1237,7 +1238,8 @@ void DevAscendFunction::InitWrapInfo(uintdevptr_t& initOffset, const OrderedSet<
                                      const std::unordered_map<uint64_t, int>& calleeHashIndexDict,
                                      const std::vector<CceCodeInfo>& cceCodeInfoList)
 {
-    if (Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510) {
+    if (Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510 &&
+        Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_9201) {
         return;
     }
     opWrapList_.HostInitDataSizeOffset(initOffset, callList.size());
@@ -3644,7 +3646,8 @@ struct EncodeDevAscendProgramInfo {
 
     bool GetEnableVFFusion()
     {
-        bool enableVFFusion = Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510;
+        auto arch = Platform::Instance().GetSoc().GetNPUArch();
+        bool enableVFFusion = (arch == NPUArch::DAV_3510 || arch == NPUArch::DAV_9201);
         enableVFFusion = enableVFFusion && config::GetPassGlobalConfig(KEY_ENABLE_VF, false);
         return (config::GetRuntimeOption<int64_t>(CFG_VALID_SHAPE_OPTIMIZE) == 1 || enableVFFusion);
     };

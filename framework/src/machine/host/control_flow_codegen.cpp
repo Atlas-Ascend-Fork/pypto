@@ -117,7 +117,8 @@ void GenerateExpression(SymbolicExpressionTable* exprTable, int devRootKey, cons
 
 bool NeedCrossDie(Function* func, bool isLoop)
 {
-    if ((Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) &&
+    auto arch = Platform::Instance().GetSoc().GetNPUArch();
+    if ((arch == NPUArch::DAV_3510 || arch == NPUArch::DAV_9201) &&
         (!isLoop || (GetFunctionParallelMode(func) == ParallelMode::PARALLEL))) {
         return true;
     }

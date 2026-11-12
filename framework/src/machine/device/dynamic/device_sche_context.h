@@ -21,7 +21,7 @@
 #include "machine/utils/dynamic/device_task.h"
 #include "aicpu_task_manager.h"
 #include "tilefwk/aicpu_common.h"
-#include "aicore_constants.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "core_status_manager.h"
 #include "wrap_manager.h"
 

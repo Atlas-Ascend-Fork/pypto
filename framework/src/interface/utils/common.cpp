@@ -202,7 +202,8 @@ int SafeExecCommand(const std::vector<std::string>& args)
 bool IsDrcoArchSupported()
 {
     try {
-        return Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510;
+        auto arch = Platform::Instance().GetSoc().GetNPUArch();
+        return (arch == NPUArch::DAV_3510 || arch == NPUArch::DAV_9201);
     } catch (...) {
         // 平台信息不可用（如无 ini 配置）时保守关闭
         return false;

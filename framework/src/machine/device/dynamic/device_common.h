@@ -17,7 +17,7 @@
 #include <atomic>
 #include <cstdint>
 #include <cstdlib>
-#include "aicore_constants.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "device_utils.h"
 #include "machine/utils/dynamic/spsc_queue.h"
 #include "machine/utils/dynamic/dev_workspace.h"
@@ -27,6 +27,7 @@
 namespace npu::tile_fwk::dynamic {
 const uint32_t MAX_DAV_2201_SCHEDULE_AICPU_NUM = 3;
 const uint32_t MAX_DAV_3510_SCHEDULE_AICPU_NUM = 4;
+const uint32_t MAX_DAV_9201_SCHEDULE_AICPU_NUM = 6;
 inline uint32_t CalcSchAicpuNumByBlockDim(uint32_t blockDim, uint32_t aiCpuNum, ArchInfo archInfo)
 {
     uint32_t maxScheCore = aiCpuNum - dynamic::MAX_CONTROL_FLOW_AICPU_NUM;
@@ -34,6 +35,8 @@ inline uint32_t CalcSchAicpuNumByBlockDim(uint32_t blockDim, uint32_t aiCpuNum, 
         maxScheCore = maxScheCore >= MAX_DAV_2201_SCHEDULE_AICPU_NUM ? MAX_DAV_2201_SCHEDULE_AICPU_NUM : maxScheCore;
     } else if (archInfo == ArchInfo::DAV_3510) {
         maxScheCore = maxScheCore >= MAX_DAV_3510_SCHEDULE_AICPU_NUM ? MAX_DAV_3510_SCHEDULE_AICPU_NUM : maxScheCore;
+    } else if (archInfo == ArchInfo::DAV_9201) {
+        maxScheCore = maxScheCore >= MAX_DAV_9201_SCHEDULE_AICPU_NUM ? MAX_DAV_9201_SCHEDULE_AICPU_NUM : maxScheCore;
     }
 
     if (blockDim > (maxScheCore - 1) * dynamic::MAX_MNG_AICORE_AVG_NUM) {
@@ -62,7 +65,6 @@ inline uint32_t ResolveRoundScheCpuNum(uint32_t nrValidAic, uint32_t capacitySch
     return roundSche < capacityScheCpuNum ? roundSche : capacityScheCpuNum;
 }
 
-const int DEVICE_MAX_AICPU_NUM = 7;
 const uint16_t AICPU_EXECUTE_TIMEOUT = 1080; // 18min
 
 } // namespace npu::tile_fwk::dynamic

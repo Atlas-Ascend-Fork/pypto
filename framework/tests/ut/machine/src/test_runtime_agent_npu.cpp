@@ -8,7 +8,6 @@
 #include "adapter/api/acl_api.h"
 #include "adapter/api/runtime_api.h"
 #include "machine/runtime/runner/runtime_agent.h"
-#include "tilefwk/platform.h"
 
 using namespace npu::tile_fwk;
 
@@ -43,13 +42,10 @@ TEST_F(RuntimeAgentNpuTest, GetAicoreRegInfo_ReturnsValidData)
     EXPECT_FALSE(aiv.empty());
 }
 
-TEST_F(RuntimeAgentNpuTest, GetAicoreRegInfoForDAV3510_SkipsOnOtherArch)
+TEST_F(RuntimeAgentNpuTest, GetAicoreRegInfoForDAVID_SkipsOnOtherArch)
 {
-    RuntimeAgent agent;
     std::vector<int64_t> regs, regsPmu;
-    agent.GetAicoreRegInfoForDAV3510(regs, regsPmu);
-    if (Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510) {
-        EXPECT_TRUE(regs.empty());
-        EXPECT_TRUE(regsPmu.empty());
-    }
+    RuntimeAgent::GetAicoreRegInfoForDAVID(regs, regsPmu, ArchInfo::DAV_2201);
+    EXPECT_TRUE(regs.empty());
+    EXPECT_TRUE(regsPmu.empty());
 }

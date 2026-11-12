@@ -351,6 +351,7 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
                 COMPONENT pypto
         )
         install(FILES
+                    framework/src/interface/machine/device/tilefwk/aikernel_constants.h
                     framework/src/interface/machine/device/tilefwk/aicpu_common.h
                     framework/src/interface/machine/device/tilefwk/aikernel_profile_aicpu.h
                     framework/src/interface/machine/device/tilefwk/aikernel_profile.h
@@ -435,7 +436,6 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
                 COMPONENT pypto
         )
         install(FILES
-                    framework/src/machine/device/dynamic/aicore_constants.h
                     framework/src/machine/device/dynamic/aicpu_instrumentation.h
                     framework/src/machine/device/dynamic/costmodel_utils.h
                     framework/src/machine/device/dynamic/device_common.h

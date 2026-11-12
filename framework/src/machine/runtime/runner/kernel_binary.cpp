@@ -40,6 +40,7 @@
 #include "machine/runtime/runner/pmu_common.h"
 #include "machine/device/dump/dump_device_memory.h"
 #include "machine/device/dynamic/device_common.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "machine/device/tilefwk/aicore_print_base.h"
 #include "machine/runtime/launcher/cell_match_dynamic.h"
 #include "machine/runtime/launcher/device_launcher.h"
@@ -59,8 +60,6 @@
 
 namespace npu::tile_fwk::dynamic {
 namespace {
-constexpr uint32_t SUB_CORE = 3;
-constexpr uint32_t AIV_PER_AICORE = 2;
 constexpr uint32_t AICPU_NUM_OF_RUN_AICPU_TASKS = 1;
 // AiCpu backend .so bytes from a kernel bundle; when non-empty, InitAiCpuSoBin uses these instead of the
 // on-disk copy. Set before init runs, so no locking is needed.
@@ -667,8 +666,8 @@ void KernelBinary::InitAiCpuSoBin(DeviceArgs& devArgs)
 
 void KernelBinary::GetAicoreRegs(const ArchInfo archInfo, std::vector<int64_t>& regs, std::vector<int64_t>& regsPmu)
 {
-    if (archInfo == ArchInfo::DAV_3510) {
-        RuntimeAgent::GetAicoreRegInfoForDAV3510(regs, regsPmu);
+    if (archInfo == ArchInfo::DAV_3510 || archInfo == ArchInfo::DAV_9201) {
+        RuntimeAgent::GetAicoreRegInfoForDAVID(regs, regsPmu, archInfo);
         return;
     }
     if (archInfo == ArchInfo::DAV_2201) {
@@ -696,8 +695,8 @@ int KernelBinary::InitDeviceArgsCore(DeviceArgs& args)
     std::vector<int64_t> regsPmu;
     GetAicoreRegs(args.archInfo, regs, regsPmu);
 
-    args.nrAic = regs.size() / SUB_CORE;
-    args.nrAiv = args.nrAic * AIV_PER_AICORE;
+    args.nrAic = regs.size() / GetSubCorePerAiCore(args.archInfo);
+    args.nrAiv = args.nrAic * GetAivNumPerCore(args.archInfo);
     uint64_t nrCore = regs.size() + AICPU_NUM_OF_RUN_AICPU_TASKS;
     args.sharedBuffer = reinterpret_cast<uint64_t>(DevAlloc(nrCore * SHARED_BUFFER_SIZE));
     args.corePmuAddr = reinterpret_cast<uint64_t>(DevAlloc(nrCore * PMU_BUFFER_SIZE));
@@ -751,9 +750,9 @@ int KernelBinary::InitDeviceArgs(DeviceArgs& args)
     memset_s(&args, sizeof(args), 0, sizeof(args));
     args.deviceId = GetLogDeviceId();
     args.archInfo = static_cast<ArchInfo>(Platform::Instance().GetSoc().GetNPUArch());
-    uint32_t aicpuNum = args.archInfo == ArchInfo::DAV_3510 ? dynamic::DEVICE_MAX_AICPU_NUM : 5;
+    uint32_t aicpuNum = GetMaxAicpuNum(args.archInfo);
     uint32_t maxAicpuNum = static_cast<uint32_t>(Platform::Instance().GetSoc().GetAICPUNum());
-    args.nrValidAic = GetCfgBlockdim();
+    args.nrValidAic = GetCfgBlockdim(args.archInfo);
     args.nrAicpu = std::min(aicpuNum, maxAicpuNum);
     args.scheCpuNum = dynamic::CalcSchAicpuNumByBlockDim(args.nrValidAic, args.nrAicpu, args.archInfo);
     MACHINE_LOGD("DevArgs: block dim[%u], aicpu num[%u], max aicpu num[%u], sche cpu num[%u].", args.nrValidAic,

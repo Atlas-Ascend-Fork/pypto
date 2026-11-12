@@ -16,7 +16,7 @@
 #pragma once
 
 #include <cstdint>
-#include "aicore_constants.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "machine/utils/machine_ws_intf.h"
 #include "machine/device/tilefwk/core_func_data.h"
 

@@ -167,6 +167,17 @@ int RunBishengQuiet(const std::string& compileCmd, const std::string& workDir)
     return ret;
 }
 
+static std::string GetDavArchMacro(NPUArch arch)
+{
+    if (arch == NPUArch::DAV_2201) {
+        return "-D__DAV_V220";
+    }
+    if (arch == NPUArch::DAV_9201) {
+        return "-D__DAV_V920";
+    }
+    return "-D__DAV_V310";
+}
+
 static int CompileCoreMachine(const std::string& objFile, bool isCube, uint64_t tilingKey, const std::string& headFile,
                               const std::string& aicoreSrcFile, const std::string& funcRawName, bool requiresSimt,
                               bool graphHasMixWork, bool l2Close)
@@ -177,8 +188,7 @@ static int CompileCoreMachine(const std::string& objFile, bool isCube, uint64_t 
     const std::string coreType = isCube ? "-D__AIC__" : "-D__AIV__";
     const auto& opType = OpInfoManager::GetInstance().GetOpType();
     std::string hasSubFunc = headFile.empty() ? "" : "-D__HAS_SUB_FUNC__";
-    const std::string davArch = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_2201) ? "-D__DAV_V220" :
-                                                                                                    "-D__DAV_V310";
+    const std::string davArch = GetDavArchMacro(Platform::Instance().GetSoc().GetNPUArch());
     const std::string enableMainBlock = ((config::GetPassGlobalConfig(KEY_ENABLE_VF, false) ||
                                           config::GetRuntimeOption<int64_t>(CFG_VALID_SHAPE_OPTIMIZE) == 1)) ?
                                             "-D__ENABLE_MAIN_BLOCK" :

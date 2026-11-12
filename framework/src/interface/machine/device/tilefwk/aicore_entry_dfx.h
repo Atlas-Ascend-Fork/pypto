@@ -149,7 +149,7 @@ INLINE void FedProfLeafTaskProfRecord(ExecuteContext* ctx, uint32_t seqNo, uint3
 INLINE void FedProfLeafTaskProfRecordMix(ExecuteContext* ctx, uint32_t taskId, int32_t subGraphId)
 {
     if (unlikely(ctx->profLevel == PRO_LEVEL2 || ctx->profLevel == PRO_LEVEL1)) {
-#ifdef __DAV_V310
+#if defined(__DAV_V310) || defined(__DAV_V920)
         // set mix event info for new taskstat
         auto perCoreProf = ctx->perCoreProf;
         if (perCoreProf && perCoreProf->status.leafTaskCount < FED_PROF_LEAF_TASK_MAX_COUNT) {

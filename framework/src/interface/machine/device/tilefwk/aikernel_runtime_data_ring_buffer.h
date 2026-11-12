@@ -18,6 +18,7 @@
 
 #include "tilefwk/aikernel_tensor.h"
 #include "tilefwk/aikernel_device_task.h"
+#include "tilefwk/aikernel_constants.h"
 
 namespace npu::tile_fwk {
 
@@ -63,8 +64,6 @@ public:
     /* mutable: const readers (Full/Empty) must still perform an atomic load */
     uint64_t value{0};
 };
-
-enum class ArchInfo : uint32_t { DAV_1001 = 1001, DAV_2201 = 2201, DAV_3510 = 3510, DAV_UNKNOWN };
 
 struct RuntimeDataRingBufferHeadData {
     uint64_t runtimeDataSize;

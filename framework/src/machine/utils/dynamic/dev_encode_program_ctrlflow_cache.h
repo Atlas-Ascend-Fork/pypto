@@ -463,11 +463,11 @@ struct DevControlFlowCache {
 
     void ReadyQueueDataBackup(DynDeviceTaskBase* base);
 
-    void ReadyQueueDataPingPongSwap(DynDeviceTaskBase* base, uint32_t nrValidAic);
+    void ReadyQueueDataPingPongSwap(DynDeviceTaskBase* base, uint32_t nrValidAic, ArchInfo arch);
 
     void ReadyQueueDataPingPongRestore(DynDeviceTaskBase* base);
 
-    void DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uint32_t nrValidAic);
+    void DrcoReadyQueueDataRestore(DynDeviceTaskBase* base, uint32_t nrValidAic, ArchInfo arch);
 
     /* Snapshot per-core pending queues into the ready-queue canon. Returns false if cache allocation fails. */
     bool BackupDrcoPerCorePending(ReadyQueueCache* readyQueueBackup, DynDeviceTaskBase* base);

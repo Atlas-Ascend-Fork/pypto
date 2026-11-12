@@ -18,7 +18,7 @@
 
 #include "tilefwk/aicore_pto_debug.h"
 
-#ifdef __DAV_C310__
+#if defined(__DAV_C310__) || defined(__DAV_920R1__)
 
 #if defined(__MIX__)
 #define IS_MIX 1
@@ -60,7 +60,13 @@ using npu::tile_fwk::TaskID;
 #define DRCO_BUSY_BACKOFF_CYC 500
 // 共享 stitch 矩阵的全核行域倍率：AIC [0,nrValidAic) + AIV [nrValidAic, 3*nrValidAic)，
 // 即全核数 = AIC 1 倍 + AIV 2 倍；矩阵行 = 全局 blockIdx，行数上限钳到 MAX_AICORE_NUM_FOR_QUEUE
+#if defined(__DAV_C310__)
 constexpr uint32_t DRCO_ALL_CORES_PER_AIC = 3;
+constexpr uint32_t DRCO_AIV_NUM_PER_CORE = 2;
+#elif defined(__DAV_920R1__)
+constexpr uint32_t DRCO_ALL_CORES_PER_AIC = 2;
+constexpr uint32_t DRCO_AIV_NUM_PER_CORE = 1;
+#endif
 
 // L2 亲和调度（device_sched_mode 含 MachineScheduleConfig::L2CACHE_AFFINITY_SCH 位）编译期开关：
 // host 编译 CCE 时按该 function 的调度模式传入 -DDRCO_FLAG_L2_CLOSE=1/0（CompileCoreMachine），
@@ -151,11 +157,15 @@ __aicore__ inline void SyncAllMix()
     pipe_barrier(PIPE_ALL);
 #if defined(__DAV_CUBE__)
     wait_intra_block(PIPE_S, SYNC_AIV_FLAG);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     wait_intra_block(PIPE_S, SYNC_AIV_FLAG + SYNC_FLAG_ID_MAX);
+#endif
     ffts_cross_core_sync(PIPE_FIX, GetffstMsg(0, SYNC_AIC_FLAG));
     wait_flag_dev(PIPE_S, SYNC_AIC_FLAG);
     set_intra_block(PIPE_S, SYNC_AIC_AIV_FLAG);
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
     set_intra_block(PIPE_S, SYNC_AIC_AIV_FLAG + SYNC_FLAG_ID_MAX);
+#endif
 #elif defined(__DAV_VEC__)
     set_intra_block(PIPE_MTE3, SYNC_AIV_FLAG);
     wait_intra_block(PIPE_S, SYNC_AIC_AIV_FLAG);
@@ -907,7 +917,8 @@ INLINE void GetDrcoActiveGroupRange(uint32_t queueType, uint32_t aicCoreNum, uin
 {
     if (queueType == npu::tile_fwk::DRCO_QUEUE_AIV) {
         groupBeg = 0;
-        groupEnd = (aicCoreNum * 2 + npu::tile_fwk::LOCAL_GROUP_SIZE - 1) / npu::tile_fwk::LOCAL_GROUP_SIZE;
+        groupEnd = (aicCoreNum * DRCO_AIV_NUM_PER_CORE + npu::tile_fwk::LOCAL_GROUP_SIZE - 1) /
+                   npu::tile_fwk::LOCAL_GROUP_SIZE;
     } else if (queueType == npu::tile_fwk::DRCO_QUEUE_AIC || queueType == npu::tile_fwk::DRCO_QUEUE_MIX) {
         groupBeg = 0;
         groupEnd = (aicCoreNum + npu::tile_fwk::LOCAL_GROUP_SIZE - 1) / npu::tile_fwk::LOCAL_GROUP_SIZE;
@@ -2119,7 +2130,8 @@ INLINE void InitDrcoEntry(DrcoEntryState* state, int64_t cfgdata)
     uint32_t blockIdx = get_block_idx();
 #endif
     uint32_t typedBlockIdx = DrcoGetCoreTypedIdx(blockIdx, devArgs->nrValidAic);
-    state->blockDesc = BlockDescCreate(blockIdx, typedBlockIdx, devArgs->nrValidAic, devArgs->nrValidAic * 2);
+    state->blockDesc = BlockDescCreate(blockIdx, typedBlockIdx, devArgs->nrValidAic,
+                                       devArgs->nrValidAic * DRCO_AIV_NUM_PER_CORE);
     state->args = (__gm__ KernelArgs*)(devArgs->sharedBuffer +
                                        BlockDescBlockIdx(state->blockDesc) * SHARED_BUFFER_SIZE);
     __gm__ FedProfPerCoreProf* metric = (__gm__ FedProfPerCoreProf*)(devArgs->fedProfAddrList[FED_PROF_PER_CORE_PROF] +
@@ -3130,8 +3142,10 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
         npu::tile_fwk::DrcoMixHubC2VReadyQueue::Init(&state.ssbuf->mixHubC2VReadyQueue[0][1]);
         // V 计数/完成镜像复位：须在 set_intra_block 放行 V 之前（跨 devTask 不残留，V 只读不承担复位）
         npu::tile_fwk::DrcoWarpExecuteCount::Init(&state.ssbuf->warpExecuteCount);
-        set_intra_block(PIPE_S, EVENT_ID14);                      // 作用于Vec0
+        set_intra_block(PIPE_S, EVENT_ID14); // 作用于Vec0
+#if defined(__DAV_C310__)
         set_intra_block(PIPE_S, EVENT_ID14 + EVENT_NUMS_PER_AIV); // 作用与Vec1
+#endif
 #endif
 #endif
         if (DrcoGmLoad(&rootFuncList->totalTaskCount) == 0) {

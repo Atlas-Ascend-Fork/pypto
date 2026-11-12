@@ -18,6 +18,7 @@
 #include <gtest/gtest.h>
 #include <thread>
 #include <cstdint>
+#include <vector>
 #include "tilefwk/pypto_fwk_log.h"
 #include "tilefwk/error_code.h"
 #include "interface/interpreter/raw_tensor_data.h"
@@ -416,13 +417,13 @@ private:
 
     void RunTestMode(DeviceKernelArgs* kArgs)
     {
-        std::thread aicpus[DEVICE_MAX_AICPU_NUM];
         std::atomic<int> idx{0};
         auto* devProg = (DevAscendProgram*)(kArgs->cfgdata);
         size_t shmSize = DEVICE_TASK_CTRL_POOL_SIZE + DEVICE_TASK_QUEUE_SIZE * devProg->devArgs.scheCpuNum;
         auto deviceTaskCtrlPoolAddr = devProg->GetRuntimeDataList()->GetRuntimeData() + DEV_ARGS_SIZE;
         (void)memset_s(reinterpret_cast<void*>(deviceTaskCtrlPoolAddr), shmSize, 0, shmSize);
         auto threadNum = static_cast<int>(devProg->devArgs.nrAicpu + dynamic::MAX_CONTROL_FLOW_AICPU_NUM);
+        std::vector<std::thread> aicpus(threadNum);
         auto threadFun = [&](uint32_t runMode) {
             int tidx = idx++;
             cpu_set_t cpuset;

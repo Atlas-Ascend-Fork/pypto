@@ -16,6 +16,12 @@
 #ifndef AIKERNEL_DEFINE_H
 #define AIKERNEL_DEFINE_H
 
+#if defined(__NPU_ARCH__) && ((__NPU_ARCH__ == 3510) || (__NPU_ARCH__ == 9201))
+#define IS_MIX_ARCH 1
+#else
+#define IS_MIX_ARCH 0
+#endif
+
 #ifndef __gm__
 
 // Host or aicpu

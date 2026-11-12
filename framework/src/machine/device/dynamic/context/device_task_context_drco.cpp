@@ -216,11 +216,11 @@ uint32_t CollectEligibleMembers(DynDeviceTask* dyntask, uint64_t funcCount, Pred
 bool SpreadMiddleQueueMembers(npu::tile_fwk::DrcoRootFuncList* rootFuncList, DeviceWorkspaceAllocator* workspace,
                               const uint32_t* memberTask, const uint32_t* memberCt, const bool* memberSkip,
                               uint32_t memberCnt, uint32_t headFlat, uint32_t slot, uint32_t nrValidAic,
-                              uint32_t queueCapacity)
+                              uint32_t queueCapacity, uint32_t aivNumPerCore, uint32_t subCorePerAicore)
 {
     uint32_t memberCore[MIDDLE_QUEUE_MAX_SUCC];
     uint32_t perCore[3 * npu::tile_fwk::MAX_AICORE_NUM_FOR_QUEUE];
-    for (uint32_t c = 0; c < 3 * nrValidAic; c++) {
+    for (uint32_t c = 0; c < subCorePerAicore * nrValidAic; c++) {
         perCore[c] = 0;
     }
     uint32_t aicSeq = 0;
@@ -228,12 +228,12 @@ bool SpreadMiddleQueueMembers(npu::tile_fwk::DrcoRootFuncList* rootFuncList, Dev
     for (uint32_t mi = 0; mi < memberCnt; mi++) {
         memberCore[mi] = (memberCt[mi] == static_cast<uint32_t>(CoreType::AIC)) ?
                              (aicSeq++ % nrValidAic) :
-                             nrValidAic + ((aivSeq++) % (2 * nrValidAic));
+                             nrValidAic + ((aivSeq++) % (aivNumPerCore * nrValidAic));
     }
     for (uint32_t mi = 0; mi < memberCnt; mi++) {
         perCore[memberCore[mi]]++;
     }
-    for (uint32_t c = 0; c < 3 * nrValidAic; c++) {
+    for (uint32_t c = 0; c < subCorePerAicore * nrValidAic; c++) {
         if (perCore[c] > queueCapacity) {
             return false;
         }
@@ -357,7 +357,8 @@ void DeviceTaskContext::InitDrcoRootFuncList(DynDeviceTask* dyntask)
     uint32_t matrixColNum = devProg_->rootFuncMaxCallOpsize > npu::tile_fwk::DRCO_MATRIX_COL_DEFAULT ?
                                 npu::tile_fwk::DRCO_MATRIX_COL_MAX :
                                 npu::tile_fwk::DRCO_MATRIX_COL_DEFAULT;
-    const uint32_t matrixValidCoreNums[npu::tile_fwk::DRCO_QUEUE_MAX] = {nrValidAic * 2, nrValidAic, nrValidAic};
+    const uint32_t matrixValidCoreNums[npu::tile_fwk::DRCO_QUEUE_MAX] = {
+        nrValidAic * GetAivNumPerCore(devProg_->devArgs.archInfo), nrValidAic, nrValidAic};
     for (uint32_t ct = 0; ct < npu::tile_fwk::DRCO_QUEUE_MAX; ct++) {
         auto* localMatrix = workspace_->AllocateDrcoLocalReadyMatrix(sizeof(npu::tile_fwk::DrcoLocalReadyMatrix));
         new (localMatrix) npu::tile_fwk::DrcoLocalReadyMatrix(matrixColNum, matrixValidCoreNums[ct]);
@@ -396,8 +397,9 @@ void DeviceTaskContext::DispatchReadyQueueToCores(DynDeviceTask* dyntask, DevAsc
     ReadyCoreFunctionQueue* aivQueue = dyntask->readyQueue[DynDeviceTask::GetReadyQueueIndexByCoreType(CoreType::AIV)];
     ReadyCoreFunctionQueue* aicQueue = dyntask->readyQueue[DynDeviceTask::GetReadyQueueIndexByCoreType(CoreType::AIC)];
 
+    uint32_t aivNumPerCore = GetAivNumPerCore(devProg->devArgs.archInfo);
     uint32_t nrValidAic = devProg->devArgs.nrValidAic;
-    uint32_t nrAivCores = 2 * nrValidAic;
+    uint32_t nrAivCores = aivNumPerCore * nrValidAic;
 
     // perCorePendingQueue: distribute wrap (mix) tasks, AIC task to core w, AIV tasks to paired vector cores
     WrapInfoQueue* wrapQueue = reinterpret_cast<WrapInfoQueue*>(dyntask->devTask.mixTaskData.readyWrapCoreFunctionQue);
@@ -407,6 +409,9 @@ void DeviceTaskContext::DispatchReadyQueueToCores(DynDeviceTask* dyntask, DevAsc
         constexpr uint8_t MIX_TYPE_1C2V = 2;
         constexpr uint8_t MIX_TYPE_1C1V = 1;
         for (uint8_t targetType : {MIX_TYPE_1C2V, MIX_TYPE_1C1V}) {
+            if (aivNumPerCore < 2 && targetType == MIX_TYPE_1C2V) {
+                continue;
+            }
             for (uint32_t idx = wrapQueue->head; idx < wrapQueue->tail; idx++) {
                 WrapInfo& info = wrapQueue->elem[idx];
                 if (info.mixResourceType != targetType) {
@@ -415,7 +420,7 @@ void DeviceTaskContext::DispatchReadyQueueToCores(DynDeviceTask* dyntask, DevAsc
                 // wrap 静态余数反向分配：+1 落在高 index 核，与动态 fetch 从 0 起的 +1 互补，
                 // 避免同一批核同时拿到 wrap 静态 +1 和动态 +1（per-core 总数由 ±1 扩大到 ±2）。
                 uint32_t aicCore = (nrValidAic - 1) - (wrapCoreIdx++ % nrValidAic);
-                uint32_t aiv0Core = nrValidAic + aicCore * 2;
+                uint32_t aiv0Core = nrValidAic + aicCore * aivNumPerCore;
                 perCorePendingQueueArray[aicCore]->UnsafeEnqueue(info.tasklist[WRAP_IDX_AIC]);
                 perCorePendingQueueArray[aiv0Core]->UnsafeEnqueue(info.tasklist[WRAP_IDX_AIV0]);
                 if (targetType == MIX_TYPE_1C2V) {
@@ -461,8 +466,10 @@ void DeviceTaskContext::DispatchDieReadyQueueToCores(DynDeviceTask* dyntask, Dev
     if (!IsMultiDie(devProg)) {
         return;
     }
+
+    uint32_t aivNumPerCore = GetAivNumPerCore(devProg->devArgs.archInfo);
     uint32_t nrValidAic = devProg->devArgs.nrValidAic;
-    uint32_t nrAivCores = 2 * nrValidAic;
+    uint32_t nrAivCores = aivNumPerCore * nrValidAic;
     uint32_t halfAic = nrValidAic / 2;
     uint32_t halfAiv = nrAivCores / 2;
     // perCorePendingQueue: distribute die tasks, die0 to first-half cores, die1 to second-half cores
@@ -770,10 +777,12 @@ bool DeviceTaskContext::TryHeadReleaseFastPath(DynDeviceTask* dyntask, DevAscend
             rootFuncList->middleQueueRegionLeafCountAic[regionIdx] = aicLeafCnt;
             rootFuncList->middleQueueRegionLeafCountAiv[regionIdx] = aivLeafCnt;
 
+            auto arch = devProg->devArgs.archInfo;
             // 撒核 + 入队。slot = regionApplied（候选序）：同 devTask 多头各自独立槽位/
             // 独立门——共享单槽会 headTaskId 互相覆盖，后入队头开门时放行未完成头的成员
             if (!SpreadMiddleQueueMembers(rootFuncList, workspace_, succBuf, memberCt, memberSkip, memberCnt, headFlat,
-                                          regionApplied, nrValidAic, queueCapacity)) {
+                                          regionApplied, nrValidAic, queueCapacity, GetAivNumPerCore(arch),
+                                          GetSubCorePerAiCore(arch))) {
                 rootFuncList->middleQueueRegionHeadCount--; // 容量不足回退本次注册
                 continue;
             }

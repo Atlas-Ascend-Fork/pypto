@@ -752,7 +752,8 @@ static void CompileControlFlow(const std::string& aicpuDirPath, const std::strin
 
 int GetRootFuncNum(std::shared_ptr<DyndevFunctionAttribute> attr)
 {
-    bool enableVF = Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510 &&
+    auto arch = Platform::Instance().GetSoc().GetNPUArch();
+    bool enableVF = (arch == NPUArch::DAV_3510 || arch == NPUArch::DAV_9201) &&
                     config::GetPassGlobalConfig(KEY_ENABLE_VF, false);
     int rootFuncNum = static_cast<int>(attr->funcGroup.devRootList.size());
     if (enableVF) {
@@ -1086,7 +1087,8 @@ static void CompileDyndevFunction(Function* function, FunctionCache& cache, [[ma
 {
     ASSERT(HostBackEndErr::RUN_PASS_FAILED,
            (PassManager::Instance().RunPass(Program::GetInstance(), *function, "ExecuteGraph") == SUCCESS));
-    if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510 && config::IsRuntimeDebugAllEnabled()) {
+    auto arch = Platform::Instance().GetSoc().GetNPUArch();
+    if ((arch == NPUArch::DAV_3510 || arch == NPUArch::DAV_9201) && config::IsRuntimeDebugAllEnabled()) {
         mix_info::DumpMixInfo(function);
     }
     std::shared_ptr<DyndevFunctionAttribute> attr = function->GetDyndevAttribute();

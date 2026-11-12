@@ -7,9 +7,10 @@
  * INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
  * See LICENSE in the root of the software repository for the full text of the License.
  */
+
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "machine/utils/dynamic/dev_encode_workspace.h"
 #include "machine/utils/dynamic/rebuildable_workspace_desc.h"
-
 #include "machine/utils/dynamic/dev_encode_program_ctrlflow_cache.h"
 #include "machine/utils/dynamic/dev_encode_function.h"
 #include "machine/utils/dynamic/dev_workspace.h"
@@ -36,8 +37,6 @@
 namespace npu::tile_fwk {
 namespace dynamic {
 
-constexpr int32_t MAX_AICORE_NUM_2210 = 75;
-constexpr int32_t MAX_AICORE_NUM_3510 = 108;
 static constexpr uint64_t GENERAL_METADATA_SIZE_MIN = 2 * MEBI;
 constexpr size_t CALC_STITCH_NUM = ToUnderlying(WsAicpuSlabMemType::DUPPED_STITCH) -
                                    ToUnderlying(WsAicpuSlabMemType::READY_QUE);
@@ -310,10 +309,7 @@ uint64_t CalcStitchCacheSize(DevAscendProgram* devProg)
 
 int32_t GetPlatformMaxAicoreNum()
 {
-    if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) {
-        return MAX_AICORE_NUM_3510;
-    }
-    return MAX_AICORE_NUM_2210;
+    return GetMaxAicoreNum(static_cast<ArchInfo>(Platform::Instance().GetSoc().GetNPUArch()));
 }
 
 void ApplyStitchDepthConfig(DevAscendProgram* devProg, WorkspaceDesc& wsDesc, const StitchDepthConfig& config,

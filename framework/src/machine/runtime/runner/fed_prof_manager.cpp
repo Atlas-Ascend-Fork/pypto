@@ -87,7 +87,7 @@ void FedProfManager::PerCoreProfSync(bool debugEnable)
 {
     if (debugEnable) {
         // 多轮控核，nrValidAic和scheCpuNum需实时刷新，否则泳道图会出错
-        args_.nrValidAic = GetCfgBlockdim();
+        args_.nrValidAic = GetCfgBlockdim(args_.archInfo);
         args_.scheCpuNum = dynamic::CalcSchAicpuNumByBlockDim(args_.nrValidAic, args_.nrAicpu, args_.archInfo);
         PerCoreProfDumpSwimlane();
     }

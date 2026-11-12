@@ -16,6 +16,7 @@
 #pragma once
 
 #include "machine/device/dynamic/context/device_stitch_context.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "machine/utils/dynamic/dev_workspace.h"
 #include "../device_trace.h"
 

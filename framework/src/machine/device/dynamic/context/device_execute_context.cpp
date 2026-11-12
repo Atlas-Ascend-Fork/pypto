@@ -15,6 +15,7 @@
 
 #include "machine/device/dynamic/context/device_execute_context.h"
 #include "machine/device/distributed/shmem_wait_until.h"
+#include "machine/device/tilefwk/aikernel_constants.h"
 #include "tilefwk/aicpu_runtime.h"
 #include "tileop/distributed/comm_context.h"
 
@@ -196,7 +197,8 @@ void DeviceExecuteContext::GELaunchRunCached(DevStartArgs* startArgs, PushTaskEn
         }
         devProg->ctrlFlowCacheAnchor->MixTaskDataPingPongSwap(dynTask);
         /* Publishes the DRCO shadow and restores precount. Die swap only rebinds die elems. */
-        devProg->ctrlFlowCacheAnchor->ReadyQueueDataPingPongSwap(dynTask, startArgs->nrValidAic);
+        devProg->ctrlFlowCacheAnchor->ReadyQueueDataPingPongSwap(dynTask, startArgs->nrValidAic,
+                                                                 devProg->devArgs.archInfo);
         devProg->ctrlFlowCacheAnchor->DieReadyQueuePingPongSwap(dynTask);
         taskContext.UpdateReadyTaskNum(dynTask->readyQueueBackup->readyTaskNum);
 
@@ -398,6 +400,7 @@ void DeviceExecuteContext::ProcessControlFlowCacheRecord(DynDeviceTask* dynTask)
 void DeviceExecuteContext::CalcControlMaxAicore()
 {
     // 在 Submit 时遍历 stitchContext 累加所有真正执行的 devRoot 的 maxCV
+    uint32_t aivNumPerCore = GetAivNumPerCore(devProg->devArgs.archInfo);
     currentMaxC_ = 0;
     currentMaxV_ = 0;
     const auto& stitchedList = stitchContext.GetStitchedList();
@@ -414,19 +417,20 @@ void DeviceExecuteContext::CalcControlMaxAicore()
     const uint32_t nrValidAic = args->nrValidAic;
     if (currentMaxC_ == 0 && currentMaxV_ == 0) {
         currentMaxC_ = nrValidAic;
-        currentMaxV_ = currentMaxC_ * AIV_NUM_PER_AI_CORE;
+        currentMaxV_ = currentMaxC_ * aivNumPerCore;
         return;
     }
 
-    uint32_t oriAivNum = nrValidAic * AIV_NUM_PER_AI_CORE;
+    uint32_t oriAivNum = nrValidAic * aivNumPerCore;
     currentMaxC_ = currentMaxC_ >= nrValidAic ? nrValidAic : currentMaxC_;
     currentMaxV_ = currentMaxV_ >= oriAivNum ? oriAivNum : currentMaxV_;
-    if (devProg->devArgs.archInfo == ArchInfo::DAV_3510) {
-        if (currentMaxC_ * AIV_NUM_PER_AI_CORE >= currentMaxV_) {
-            currentMaxV_ = currentMaxC_ * AIV_NUM_PER_AI_CORE;
+
+    if (devProg->devArgs.archInfo == ArchInfo::DAV_3510 || devProg->devArgs.archInfo == ArchInfo::DAV_9201) {
+        if (currentMaxC_ * aivNumPerCore >= currentMaxV_) {
+            currentMaxV_ = currentMaxC_ * aivNumPerCore;
         } else {
             currentMaxV_ = (currentMaxV_ & 1) ? currentMaxV_ + 1 : currentMaxV_;
-            currentMaxC_ = currentMaxV_ / AIV_NUM_PER_AI_CORE;
+            currentMaxC_ = currentMaxV_ / aivNumPerCore;
         }
     }
     DEV_INFO("[CalcControlMaxAicore] stitchedSize=%u, maxC=%u, maxV=%u", static_cast<uint32_t>(stitchedSize),
