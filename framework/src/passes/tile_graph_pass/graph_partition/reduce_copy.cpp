@@ -1271,6 +1271,8 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
     bool hasSimpleTensorEdge = false;
     bool hasDirectPathEdge = false;
     bool hasCrossCoreEdge = false;
+    // Also collect external hinge endpoints, without changing candidate-local benefit evidence.
+    std::unordered_map<int, std::set<int>> directConsumersByRoot;
     std::set<std::pair<int, int>> directPathRootPairs; // 跨核直连 root 对: N:M 放行证据须来自结构自身的边
     for (int root : actualGroup) {
         for (int tensorId : mRootToBoundaryTensorIds[root]) {
@@ -1295,20 +1297,14 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                     consRoots.insert(parent);
                 }
             }
-            if (prodRoots.empty() || consRoots.empty()) {
-                continue;
-            }
             // 仅"分属不同候选 root 的真实 op 对"才构成本次新增边界; 同 root 关系已被前序合并
             // 内部化, 不计本次收益。混合子图/root 不改变 op 自身核型, 也不因此产生豁免
             // (核型事实属于 op, 子图聚合时代的 MIXED 豁免已不成立)。
             for (const auto& prod : info.producers) {
                 const int prodRoot = FindParent(prod.subgraphId);
-                if (mergedRoot.count(prodRoot) == 0) {
-                    continue;
-                }
                 for (const auto& cons : info.consumers) {
                     const int consRoot = FindParent(cons.subgraphId);
-                    if (mergedRoot.count(consRoot) == 0 || prodRoot == consRoot) {
+                    if (prodRoot == consRoot) {
                         continue;
                     }
                     // 仅 AIC↔AIV 端点对参与本收益门; AICPU/UNKNOWN 端点对不计入本次跨核边:
@@ -1317,8 +1313,14 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                     if (!IsCrossCoreEndpointPair(prod.coreKind, cons.coreKind)) {
                         continue;
                     }
-                    hasCrossCoreEdge = true;
                     const bool pairDirectPath = prod.directPath || cons.directPath;
+                    if (pairDirectPath) {
+                        directConsumersByRoot[prodRoot].insert(consRoot);
+                    }
+                    if (mergedRoot.count(prodRoot) == 0 || mergedRoot.count(consRoot) == 0) {
+                        continue;
+                    }
+                    hasCrossCoreEdge = true;
                     hasDirectPathEdge = hasDirectPathEdge || pairDirectPath;
                     if (pairDirectPath) {
                         directPathRootPairs.insert({prodRoot, consRoot});
@@ -1329,6 +1331,9 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                                       info.tensorMagic, prod.subgraphId, cons.subgraphId,
                                       pairDirectPath ? "hit" : "miss");
                 }
+            }
+            if (prodRoots.empty() || consRoots.empty()) {
+                continue;
             }
             // Evaluate complete N:M candidates after collecting their scheduler dependencies.
             if (prodRoots.size() >= kMultiBranchThreshold && consRoots.size() >= kMultiBranchThreshold) {
@@ -1528,6 +1533,17 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                     sumBranchLatency += lat;
                     maxBranchLatency = std::max(maxBranchLatency, lat);
                 }
+            }
+            // A direct-path 1:N hinge can remove a shared GM round trip for every branch.
+            // Charge the hinge's parallel-loss budget only when its latency is comparable to
+            // the largest branch; otherwise the direct-path benefit cannot amortize serialization.
+            const auto directIt = directConsumersByRoot.find(kv.first);
+            if (hingeLatency <= maxBranchLatency && directIt != directConsumersByRoot.end() &&
+                std::includes(directIt->second.begin(), directIt->second.end(), kv.second.begin(), kv.second.end())) {
+                APASS_LOG_DEBUG_F(Elements::Operation,
+                                  "Structural merge allowed: direct-path 1:N hinge root %d has %zu branches.", kv.first,
+                                  kv.second.size());
+                continue;
             }
             if (sumBranchLatency - maxBranchLatency <= kSerialLossRatio * hingeLatency) {
                 continue;

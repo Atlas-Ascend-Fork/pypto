@@ -1990,6 +1990,141 @@ TEST_F(ReduceCopyTest, MixGraphMerger_TwoStageNmHingeStillGuardsForeignFanout)
     EXPECT_EQ(output.numSubgraphUpdated, 7);
 }
 
+// 直连豁免放行(扇出): hinge sg0(40) 扇出 3 个互不可达分支(500/400/300), 每个分支都有
+// hinge->branch 的直连边界端点(全直连 1:N, 搬运收益按分支数放大), 且 hinge(40) <=
+// 最大分支(500) 非规模主导 -> 豁免放行归 1 (旧规模标尺下损失 700 > 8x40 应拒;
+// 同拓扑无直连端点被拒, 见 MixGraphMerger_HingeGuardRejectsHeavyPureVecFanout)
+TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardExemptsDirectPathFanoutBeyondScale)
+{
+    std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
+    MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
+    input.isEnforceMergeGroup = {false};
+    input.boundaryTensors = {
+        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
+    for (int i = 0; i < 3; ++i) {
+        input.boundaryTensors[i].producers = {{0, EndpointCoreKind::AIC, false}};
+        input.boundaryTensors[i].consumers = {{i + 1, EndpointCoreKind::AIV, true}};
+    }
+    input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
+    input.subgraphAICOpNum = {2, 0, 0, 0};
+    input.subgraphAICLatency = {40, 0, 0, 0};
+    input.subgraphAIVLatency = {0, 500, 400, 300};
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+    EXPECT_EQ(output.numSubgraphUpdated, 1);
+}
+
+// 部分直连回落旧判据(扇出): 仅 2/3 分支有直连边界端点, allBranchesDirect 不成立,
+// 走规模标尺: 损失 700 > 8x40 拒绝保持 4 (豁免要求全部分支直连, 一条不满足即回落)
+TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardPartialDirectPathFallsBackToScale)
+{
+    std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
+    MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
+    input.isEnforceMergeGroup = {false};
+    input.boundaryTensors = {
+        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
+    for (int i = 0; i < 2; ++i) {
+        input.boundaryTensors[i].producers = {{0, EndpointCoreKind::AIC, false}};
+        input.boundaryTensors[i].consumers = {{i + 1, EndpointCoreKind::AIV, true}};
+    }
+    input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
+    input.subgraphAICOpNum = {2, 0, 0, 0};
+    input.subgraphAICLatency = {40, 0, 0, 0};
+    input.subgraphAIVLatency = {0, 500, 400, 300};
+    MixGraphMerger merger;
+    MergeOutput output = merger.Merge(input);
+    EXPECT_EQ(output.numSubgraphUpdated, 4);
+}
+
+// Shared preparation roots feed four independent Cube branches, as in cases
+// 51/52/62/64/67/69/82. Root 1 stays outside the candidate: its direct paths
+// must still be considered by the hinge guard. Root 6 is a heavy downstream sink, outside the candidate.
+static MergeInput BuildDirectPathHingeInput(int hingeLatency, int branchLatency)
+{
+    MergeInput input = BuildSimpleMergeInput(7, {{2, 3, 4, 5}, {2, 3, 4, 5}, {6}, {6}, {6}, {6}, {}},
+                                             {{0, 2, 3, 4, 5}});
+    input.isEnforceMergeGroup = {false};
+    input.subgraphAICLatency = {0, 0, branchLatency, branchLatency, branchLatency, branchLatency, 0};
+    input.subgraphAIVLatency = {hingeLatency, hingeLatency, 0, 0, 0, 0, 10000};
+    input.subgraphAICOpNum = {0, 0, 1, 1, 1, 1, 0};
+    input.subgraphAIVOpNum = {1, 1, 0, 0, 0, 0, 1};
+    input.boundaryTensors = {{400,
+                              {0},
+                              {2, 3, 4, 5},
+                              true,
+                              {},
+                              {},
+                              {{0, EndpointCoreKind::AIV, false}},
+                              {{2, EndpointCoreKind::AIC, true},
+                               {3, EndpointCoreKind::AIC, true},
+                               {4, EndpointCoreKind::AIC, true},
+                               {5, EndpointCoreKind::AIC, true}}},
+                             {401,
+                              {1},
+                              {2, 3, 4, 5},
+                              true,
+                              {},
+                              {},
+                              {{1, EndpointCoreKind::AIV, false}},
+                              {{2, EndpointCoreKind::AIC, true},
+                               {3, EndpointCoreKind::AIC, true},
+                               {4, EndpointCoreKind::AIC, true},
+                               {5, EndpointCoreKind::AIC, true}}},
+                             {402, {2, 3, 4, 5}, {6}, true, {}, {}}};
+    input.subgraphToBoundaryTensorIds = {{0}, {1}, {0, 1, 2}, {0, 1, 2}, {0, 1, 2}, {0, 1, 2}, {2}};
+    return input;
+}
+
+TEST_F(ReduceCopyTest, MixGraphMerger_DirectPathHingeAllowsFourCubeBranches)
+{
+    // PATH estimates from FP32 cases 52/82 and BF16 cases 64/67.
+    // Their serial losses exceed the old 8 * hinge budget.
+    for (int branchLatency : {435, 267}) {
+        SCOPED_TRACE(branchLatency);
+        MergeInput input = BuildDirectPathHingeInput(1, branchLatency);
+        MixGraphMerger merger;
+        MergeOutput output = merger.Merge(input);
+        EXPECT_EQ(output.numSubgraphUpdated, 3);
+    }
+}
+
+TEST_F(ReduceCopyTest, MixGraphMerger_DirectPathHingePreservesExistingBudgetAllows)
+{
+    // Representative nontrivial hinge estimates from 51/69 and 62.
+    // These satisfy the old budget too and must remain mergeable.
+    for (const auto& latency : std::vector<std::pair<int, int>>{{366, 845}, {480, 517}}) {
+        SCOPED_TRACE(latency.first);
+        MergeInput input = BuildDirectPathHingeInput(latency.first, latency.second);
+        MixGraphMerger merger;
+        EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, 3);
+    }
+}
+
+TEST_F(ReduceCopyTest, MixGraphMerger_DirectPathHingeRejectsOneMissingBranch)
+{
+    MergeInput input = BuildDirectPathHingeInput(1, 435);
+    input.boundaryTensors[0].consumers.back().directPath = false;
+    MixGraphMerger merger;
+    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, 7);
+}
+
+TEST_F(ReduceCopyTest, MixGraphMerger_DirectPathHingeRejectsForeignMissingBranch)
+{
+    MergeInput input = BuildDirectPathHingeInput(1, 435);
+    input.boundaryTensors[1].consumers.back().directPath = false;
+    MixGraphMerger merger;
+    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, 7);
+}
+
+TEST_F(ReduceCopyTest, MixGraphMerger_DirectPathHingeFallsBackToOriginalBudget)
+{
+    // A heavier hinge fails the new shortcut, but the original loss budget
+    // still allows the merge: 3 * 435 <= 8 * 436.
+    MergeInput input = BuildDirectPathHingeInput(436, 435);
+    MixGraphMerger merger;
+    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, 3);
+}
+
 // 对照: 同上拓扑无 slotScope 时门控不启用, 全部合并到 1 子图 (mla / gqa-PATH0 场景)
 TEST_F(ReduceCopyTest, RunOnFunction_NoSlotScopeMergesAll)
 {
