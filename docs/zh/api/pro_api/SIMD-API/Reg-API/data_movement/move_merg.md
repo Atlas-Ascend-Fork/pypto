@@ -1,4 +1,4 @@
-# vf.move_acc
+# vf.move_merg
 
 ## 产品支持情况
 
@@ -24,7 +24,7 @@
 ## 函数原型
 
 ```python
-move_acc(dst, src, preg, /, *, mode: Optional[MergeMode] = None) -> dst
+move_merg(dst, src, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 ```
 
 ## 参数说明
@@ -59,7 +59,7 @@ def example_vf(src_tile, dst_tile):
     preg_half = vf.update_mask(32, dtype=pl.DT_FP32)
     reg_src = vf.load_align(src_tile, 0)
     reg_old = vf.full(1.0, preg_all)
-    reg_dst = vf.move_acc(reg_old, reg_src, preg_half)
+    reg_dst = vf.move_merg(reg_old, reg_src, preg_half)
     vf.store_align(dst_tile, reg_dst, preg_all)
 
 @pl.jit()

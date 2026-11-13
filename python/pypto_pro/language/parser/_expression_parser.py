@@ -1514,8 +1514,8 @@ class ExpressionParserMixin:
         the temporary let is only a CCE backing-array anchor, so callers can
         continue folding the enclosing expression.
 
-        Expressions with UnknownType are skipped to avoid materializing
-        void/sentinel results (e.g. nbuf.advance() void calls).
+        Expressions with UnknownType or NoneType are skipped to avoid
+        materializing void/sentinel results (e.g. nbuf.advance() void calls).
         """
         from ...ir.op.dist_ops import _ChannelCreate
 
@@ -1536,7 +1536,7 @@ class ExpressionParserMixin:
             return result
         if not isinstance(result, ir.Expr):
             return result
-        if isinstance(result.type, ir.UnknownType):
+        if isinstance(result.type, (ir.UnknownType, ir.NoneType)):
             return result
         name = f"_expr_tmp_{self._expr_tmp_counter}"
         self._expr_tmp_counter += 1

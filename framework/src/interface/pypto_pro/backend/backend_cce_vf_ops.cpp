@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Copyright (c) 2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
@@ -203,6 +203,15 @@ static bool IsArithSignedIntType(DataType dt) { return dt.IsSignedInt() && dt.Ge
 
 // Check if a DataType is a b16-width type (16-bit storage).
 static bool IsB16Type(DataType dt) { return dt.GetBit() == 16; }
+
+// vmula (vf.mul_add_dst / vf.mul_add_dst_acc) has no b64 overload on the current
+// device; AscendC decomposes the 8-byte element case into Mul + Add instead.
+// Only the documented 16/32-bit set is accepted.
+static bool IsMulAddDstType(DataType dt)
+{
+    return dt == DataType::INT16 || dt == DataType::UINT16 || dt == DataType::INT32 || dt == DataType::UINT32 ||
+           dt == DataType::FP16 || dt == DataType::BF16 || dt == DataType::FP32;
+}
 
 // ============================================================================
 // B64 helper: deinterleave a b64 RegTensor into b32 low/high halves.
@@ -1254,8 +1263,9 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
                          ", " + vldsMode + ", POST_UPDATE);");
         } else {
             b32Ptr = GetUBufPtr(codegen, op->args_[1], "uint32_t");
-            codegen.Emit("vlds((RegTensor<uint32_t>&)" + dst + ", " + b32Ptr + ", " + effectiveOffset + ", " +
-                         vldsMode + ");");
+            std::string loadOffset = (effectiveOffset == "0") ? effectiveOffset : "(" + effectiveOffset + ") * 2";
+            codegen.Emit("vlds((RegTensor<uint32_t>&)" + dst + ", " + b32Ptr + ", " + loadOffset + ", " + vldsMode +
+                         ");");
         }
     } else if (postUpdate) {
         std::string postOffset = effectiveOffset;
@@ -2144,11 +2154,11 @@ static std::string EmitVFMulAddDst(const ir::CallPtr& op, codegen::CodegenBase& 
         << op->name_ << " requires 4 args (dst, src0, src1, mask) or 5 (dst, old, src0, src1, mask)";
     size_t base = op->args_.size() == 5 ? 1 : 0;
     DataType s0Dt = GetExprDtype(op->args_[base + 1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (s0Dt.GetBit() == 16 || s0Dt.GetBit() == 32 || s0Dt.GetBit() == 64))
-        << "vf.mul_add_dst src only supports supported types, got " << DTypeStr(s0Dt);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, IsMulAddDstType(s0Dt))
+        << op->name_ << " src0 only supports INT16/UINT16/INT32/UINT32/FP16/BF16/FP32, got " << DTypeStr(s0Dt);
     DataType s1Dt = GetExprDtype(op->args_[base + 2]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (s1Dt.GetBit() == 16 || s1Dt.GetBit() == 32 || s1Dt.GetBit() == 64))
-        << "vf.mul_add_dst src only supports supported types, got " << DTypeStr(s1Dt);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, IsMulAddDstType(s1Dt))
+        << op->name_ << " src1 only supports INT16/UINT16/INT32/UINT32/FP16/BF16/FP32, got " << DTypeStr(s1Dt);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, s0Dt == s1Dt)
         << op->name_ << " requires src0 and src1 to have the same type, got src0=" << DTypeStr(s0Dt)
         << " src1=" << DTypeStr(s1Dt);
@@ -5723,8 +5733,8 @@ static std::string EmitVFUnsqueeze(const ir::CallPtr& op, codegen::CodegenBase& 
     // PrefixSum (vusqz): int8/uint8/int16/uint16/int32/uint32 only
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string mask = codegen.GetExprAsCode(op->args_[1]);
-    DataType dstDt = GetExprDtype(op->args_[1]);
-    if (const auto& t = op->args_[1]->GetType(); t != nullptr) {
+    DataType dstDt = GetExprDtype(op->args_[0]);
+    if (const auto& t = op->args_[0]->GetType(); t != nullptr) {
         dstDt = GetTypeDtype(t);
     }
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
@@ -6752,18 +6762,18 @@ REGISTER_BACKEND_OP(BackendCCE, VF_MOVE)
         return EmitVFValueForm(op, codegen, EmitVFMove);
     });
 
-static std::string EmitVFMoveAcc(const ir::CallPtr& op, codegen::CodegenBase& codegen)
+static std::string EmitVFMoveMerg(const ir::CallPtr& op, codegen::CodegenBase& codegen)
 {
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << op->name_ << " requires 4 args (dst, old, src, mask)";
     return EmitVFMove(op, codegen);
 }
 
-REGISTER_BACKEND_OP(BackendCCE, VF_MOVE_ACC)
+REGISTER_BACKEND_OP(BackendCCE, VF_MOVE_MERG)
 
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return EmitVFValueForm(op, codegen, EmitVFMoveAcc);
+        return EmitVFValueForm(op, codegen, EmitVFMoveMerg);
     });
 
 // ============================================================================

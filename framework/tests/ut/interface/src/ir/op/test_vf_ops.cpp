@@ -155,5 +155,31 @@ TEST_F(VFOpsTest, Arange_NoDtypeKwarg_IsRejected)
     EXPECT_THROW((void)reg.Create(VF_ARANGE, {start}, Sp()), pypto::ir::TypeError);
 }
 
+// ============================================================================
+// DeduceVFRegType: vf.unsqueeze (the only MaskReg source carries no dtype)
+// ============================================================================
+
+TEST_F(VFOpsTest, Unsqueeze_WithDtypeKwarg_ReturnsRequestedVecDtype)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto mask = std::make_shared<Var>("mask", std::make_shared<RegType>(RegKind::PredReg, DataType::UINT16), Sp());
+    auto call = reg.Create(VF_UNSQUEEZE, {mask}, {{"dtype", DataType::INT32}}, Sp());
+    auto rt = As<RegType>(call->GetType());
+    ASSERT_NE(rt, nullptr);
+    EXPECT_EQ(rt->regtype_, RegKind::VecReg);
+    EXPECT_EQ(rt->dtype_, DataType::INT32);
+}
+
+TEST_F(VFOpsTest, Unsqueeze_NoDtypeKwarg_FallsBackToMaskPlaceholder)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto mask = std::make_shared<Var>("mask", std::make_shared<RegType>(RegKind::PredReg, DataType::UINT16), Sp());
+    auto call = reg.Create(VF_UNSQUEEZE, {mask}, Sp());
+    auto rt = As<RegType>(call->GetType());
+    ASSERT_NE(rt, nullptr);
+    EXPECT_EQ(rt->regtype_, RegKind::VecReg);
+    EXPECT_EQ(rt->dtype_, DataType::UINT16);
+}
+
 } // namespace ir
 } // namespace pypto

@@ -173,12 +173,12 @@ def vf_mask_gen_with_reg_tensor_api(counter, src, preg_out):
     vf.store_align(preg_out, result)
 
 @pl.vector_function
-def vf_move_acc_api(counter, dst, src, dst_out):
+def vf_move_merg_api(counter, dst, src, dst_out):
     vf_counter_inc(counter)
     preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
     reg_dst = vf.load_align(dst, 0, dtype=pl.DT_FP32)
     reg_src = vf.load_align(src, 0, dtype=pl.DT_FP32)
-    result = vf.move_acc(reg_dst, reg_src, preg, mode=pl.MergeMode.MERGING)
+    result = vf.move_merg(reg_dst, reg_src, preg, mode=pl.MergeMode.MERGING)
     vf.store_align(dst_out, result, preg)
 
 @pl.vector_function
@@ -768,7 +768,7 @@ _VF_OP_NAMES = (
     "store_align",
     "scatter",
     "mask_gen_with_reg_tensor",
-    "move_acc",
+    "move_merg",
     "add",
     "sub",
     "mul",
@@ -904,7 +904,7 @@ def test_vf_ops_kernel(
         elif idx == 14:
             vf_mask_gen_with_reg_tensor_api(t_counter, t_in0, t_out2)
         elif idx == 15:
-            vf_move_acc_api(t_counter, t_in0, t_in1, t_out0)
+            vf_move_merg_api(t_counter, t_in0, t_in1, t_out0)
         elif idx == 16:
             vf_add_api(t_counter, t_in0, t_in1, t_out0)
         elif idx == 17:
@@ -1106,7 +1106,7 @@ def _torch_golden(idx, in0, in1):
         return [None, None, None, None, None]
     elif idx in (9, 10, 11, 12, 75, 76, 78):  # load/store identity paths
         o0 = in0.clone()
-    elif idx == 15:  # move_acc, src=in1
+    elif idx == 15:  # move_merg, src=in1
         o0 = in1.clone()
     elif idx == 16:
         o0 = in0 + in1

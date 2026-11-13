@@ -97,7 +97,7 @@ program #entry() {
                                                                 } else {
                                                                     bool %_expr_tmp_19_0 = (%idx_0 eq 15);
                                                                     if %_expr_tmp_19_0 then {
-                                                                        simd.call(%t_counter_0, %t_in0_0, %t_in1_0, %t_out0_0, callee=vf_move_acc_api);
+                                                                        simd.call(%t_counter_0, %t_in0_0, %t_in1_0, %t_out0_0, callee=vf_move_merg_api);
                                                                         yield;
                                                                     } else {
                                                                         bool %_expr_tmp_20_0 = (%idx_0 eq 16);
@@ -1016,21 +1016,21 @@ program #entry() {
         vf.store_align(%dst_0, %result_0, %preg_0);
         return;
     }
-    function vf_move_acc_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc__callee(%counter_0);
-        reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
-        reg<vec_reg,float> %reg_dst_0 = vf.load_align(%dst_0, 0, dtype=float);
-        reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
-        reg<vec_reg,float> %result_0 = vf.move_acc(%reg_dst_0, %reg_src_0, %preg_0, mode=1);
-        vf.store_align(%dst_out_0, %result_0, %preg_0);
-        return;
-    }
     function vf_move_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
         vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.move(%reg_src_0);
         vf.store_align(%dst_0, %result_0, %preg_0);
+        return;
+    }
+    function vf_move_merg_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_out_0) outcast() #entry(false) #type(SimdVF) {
+        vf_counter_inc__callee(%counter_0);
+        reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
+        reg<vec_reg,float> %reg_dst_0 = vf.load_align(%dst_0, 0, dtype=float);
+        reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
+        reg<vec_reg,float> %result_0 = vf.move_merg(%reg_dst_0, %reg_src_0, %preg_0, mode=1);
+        vf.store_align(%dst_out_0, %result_0, %preg_0);
         return;
     }
     function vf_mul_add_dst_acc_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_out_0) outcast() #entry(false) #type(SimdVF) {

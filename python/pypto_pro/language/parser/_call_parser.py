@@ -583,7 +583,7 @@ class CallParserMixin:
             span: Source span for the call
         """
         if not return_types:
-            return ir.Call(op, args, span)
+            return ir.Call(op, args, ir.NoneType.get(), span)
         if len(return_types) == 1:
             return ir.Call(op, args, return_types[0], span)
         return ir.Call(op, args, ir.TupleType(return_types), span)

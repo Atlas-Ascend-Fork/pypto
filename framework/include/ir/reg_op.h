@@ -55,7 +55,7 @@
 #define VF_MIN "vf.min"
 #define VF_MINS "vf.mins"
 #define VF_MOVE "vf.move"
-#define VF_MOVE_ACC "vf.move_acc"
+#define VF_MOVE_MERG "vf.move_merg"
 #define VF_MUL "vf.mul"
 #define VF_MUL_ADD_DST "vf.mul_add_dst"
 #define VF_MUL_ADD_DST_ACC "vf.mul_add_dst_acc"

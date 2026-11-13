@@ -485,7 +485,7 @@
         - [vf.load_unalign_pre](pro_api/SIMD-API/Reg-API/data_movement/load_unalign_pre.md)
         - [vf.mem_bar](pro_api/SIMD-API/Reg-API/data_movement/mem_bar.md)
         - [vf.move](pro_api/SIMD-API/Reg-API/data_movement/move.md)
-        - [vf.move_acc](pro_api/SIMD-API/Reg-API/data_movement/move_acc.md)
+        - [vf.move_merg](pro_api/SIMD-API/Reg-API/data_movement/move_merg.md)
         - [vf.scatter](pro_api/SIMD-API/Reg-API/data_movement/scatter.md)
         - [vf.store](pro_api/SIMD-API/Reg-API/data_movement/store.md)
         - [vf.store_align](pro_api/SIMD-API/Reg-API/data_movement/store_align.md)

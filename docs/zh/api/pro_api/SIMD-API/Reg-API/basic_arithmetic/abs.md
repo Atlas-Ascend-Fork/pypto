@@ -14,7 +14,7 @@
 
 ## 功能说明
 
-- 对实数类型（DT_INT8、DT_INT16、DT_INT32、DT_FP16、DT_FP32）
+- 对实数类型（DT_INT8、DT_INT16、DT_INT32、DT_FP16、DT_FP32、DT_INT64）
 
     对src中的有效元素逐个取绝对值，并将结果写入dst对应位置，计算公式如下：
 

@@ -37,10 +37,10 @@ namespace ir {
 
 namespace {
 
-TypePtr DeduceVFUnknownType([[maybe_unused]] const std::vector<ExprPtr>& args,
-                            [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+TypePtr DeduceVFNoneType([[maybe_unused]] const std::vector<ExprPtr>& args,
+                         [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    return GetUnknownType();
+    return GetNoneType();
 }
 
 static DataType VfDeduceDataDtype(const std::vector<ExprPtr>& args,
@@ -339,7 +339,7 @@ REGISTER_OP(VF_STORE_ALIGN)
     .set_attr<int>("block_stride")
     .set_attr<int>("repeat_stride")
     .set_attr<bool>("post_update")
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFNoneType);
 
 // Compute
 REGISTER_OP(VF_MAX)
@@ -822,7 +822,7 @@ REGISTER_OP(VF_MEM_BAR)
     .set_description("Memory barrier")
     .no_argument()
     .set_attr<int>("mode")
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFNoneType);
 
 // TopK VF ops
 REGISTER_OP(VF_HISTOGRAMS)
@@ -945,7 +945,7 @@ REGISTER_OP(VF_STORE_UNALIGN)
     .add_argument("src", "Source register")
     .add_argument("align_reg", "Alignment register")
     .set_attr<bool>("post_update")
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFNoneType);
 
 REGISTER_OP(VF_STORE_UNALIGN_POST)
     .set_op_category("VFOp")
@@ -953,7 +953,7 @@ REGISTER_OP(VF_STORE_UNALIGN_POST)
     .add_argument("dst_ptr", "Destination UB pointer")
     .add_argument("align_reg", "Alignment register")
     .set_attr<bool>("post_update")
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFNoneType);
 
 REGISTER_OP(VF_SQUEEZE_STORE_UNALIGN)
     .set_op_category("VFOp")
@@ -961,14 +961,14 @@ REGISTER_OP(VF_SQUEEZE_STORE_UNALIGN)
     .add_argument("dst_ptr", "Destination UB pointer")
     .add_argument("src", "Source register")
     .add_argument("align_reg", "Alignment register")
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFNoneType);
 
 REGISTER_OP(VF_SQUEEZE_STORE_UNALIGN_POST)
     .set_op_category("VFOp")
     .set_description("Complete squeeze-based unaligned store (reads AR register for remaining bytes)")
     .add_argument("dst_ptr", "Destination UB pointer")
     .add_argument("align_reg", "Alignment register")
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFNoneType);
 
 REGISTER_OP(VF_UNALIGN_REG_FOR_STORE)
     .set_op_category("VFOp")
@@ -980,7 +980,7 @@ REGISTER_OP(VF_CLEAR_SPR)
     .set_op_category("VFOp")
     .set_description("Clear special purpose register AR")
     .no_argument()
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFNoneType);
 
 REGISTER_OP(VF_LOAD_UNALIGN_INIT)
     .set_op_category("VFOp")
@@ -993,7 +993,7 @@ REGISTER_OP(VF_LOAD_UNALIGN_PRE)
     .set_description("Setup unaligned load (vldas)")
     .add_argument("ureg", "UnalignRegForLoad register")
     .add_argument("src_ptr", "Source UB pointer")
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFNoneType);
 
 REGISTER_OP(VF_LOAD_UNALIGN)
     .set_op_category("VFOp")
@@ -1011,13 +1011,14 @@ REGISTER_OP(VF_SCATTER)
     .add_argument("src", "Source register")
     .add_argument("index", "Index register")
     .add_argument("mask", "Mask register")
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFNoneType);
 
 REGISTER_OP(VF_UNSQUEEZE)
     .set_op_category("VFOp")
     .set_description("Unsqueeze mask bits to register (vusqz)")
     .add_argument("dst", "Destination register")
     .add_argument("mask", "Mask register to unsqueeze")
+    .set_attr<DataType>("dtype")
     .f_deduce_type(DeduceVFRegType);
 
 REGISTER_OP(VF_TRUNCATE)
@@ -1100,7 +1101,7 @@ REGISTER_OP(VF_STORE)
     .add_argument("dst_ptr", "Destination UB pointer")
     .add_argument("src", "Source register")
     .add_argument("count", "Element count (optional, defaults to 256/elem_bytes)")
-    .f_deduce_type(DeduceVFUnknownType);
+    .f_deduce_type(DeduceVFNoneType);
 
 REGISTER_OP(VF_CREATE_ADDR_REG)
     .set_op_category("VFOp")
@@ -1124,12 +1125,12 @@ REGISTER_OP(VF_MOVE)
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegLikeType);
 
-REGISTER_OP(VF_MOVE_ACC)
+REGISTER_OP(VF_MOVE_MERG)
     .set_op_category("VFOp")
-    .set_description("Masked move with an explicit accumulate source: the old dst is an "
+    .set_description("Masked move with an explicit merge source: the old dst is an "
                      "explicit argument copy-fetched into the fresh SSA dst, then "
                      "vmov/pmov with MODE_MERGING (masked-out lanes keep the old value)")
-    .add_argument("dst", "Destination/accumulator register (read+write) (RegTensor or MaskReg)")
+    .add_argument("dst", "Destination/merge-source register (read+write) (RegTensor or MaskReg)")
     .add_argument("src", "Source register")
     .add_argument("mask", "Mask register")
     .set_attr<int>("mode")

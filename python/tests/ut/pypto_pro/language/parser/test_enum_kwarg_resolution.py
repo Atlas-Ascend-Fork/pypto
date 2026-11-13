@@ -320,6 +320,33 @@ def test_vf_enum_kwarg_closure_var():
 
 
 @pytest.mark.soc("950")
+def test_simd_vf_scalar_parameter_annotation_is_validated():
+    """A scalar dtype annotation on a SIMD VF parameter is checked against the call site."""
+
+    @pl.vector_function
+    def vf_body(in_a, t_out, n: pl.DT_INT64):
+        preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
+        reg_a = vf.load_align(in_a, 0)
+        vf.store_align(t_out, reg_a, preg)
+
+    @pl.jit()
+    def kernel(
+        a: pl.Tensor[[_VF_N, _VF_M], pl.DT_FP32],
+        out: pl.Tensor[[_VF_N, _VF_M], pl.DT_FP32],
+        n: pl.DT_INT64,
+    ):
+        tf = pl.TileType(shape=[_VF_N, _VF_M], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        in_a = pl.make_tile(tf, addr=0)
+        t_out = pl.make_tile(tf, addr=_VF_TILE_SIZE)
+        with pl.section_vector():
+            pl.load(in_a, a, [0, 0])
+            vf_body(in_a, t_out, n)
+            pl.store(out, t_out, [0, 0])
+
+    kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.soc("950")
 def test_vf_register_writes_are_not_loop_carried_ssa_values():
     @pl.vector_function
     def vf_body(in_a):

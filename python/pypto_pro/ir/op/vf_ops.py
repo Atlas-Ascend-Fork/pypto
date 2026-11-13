@@ -117,7 +117,7 @@ _IMPLICIT_DST_ACC = {
     "mul_add_dst": "mul_add_dst_acc",
     "histograms": "histogram_acc",
     "mul_dst_add": "mul_dst_add_acc",
-    "move": "move_acc",
+    "move": "move_merg",
 }
 
 
@@ -177,7 +177,7 @@ _PLAIN_VF_OPS: frozenset[str] = frozenset(
         "astype", "log2", "log10", "reduce_sum", "reduce_max", "reduce_min",
         "exp_sub", "mul_dst_add_acc", "mul_add_dst_acc", "histogram_acc", "pack", "unpack",
         "unsqueeze", "load_align", "load", "load_unalign", "gather",
-        "move_acc", "bit_cast",
+        "move_merg", "bit_cast",
         "interleave", "de_interleave", "mull", "addc", "subc",
         "store_align", "store_unalign", "store_unalign_post", "squeeze_store_unalign",
         "squeeze_store_unalign_post", "scatter", "store",

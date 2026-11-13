@@ -16,7 +16,7 @@ load_unalign_init
 load_unalign_pre
 mem_bar
 move
-move_acc
+move_merg
 scatter
 store
 store_align

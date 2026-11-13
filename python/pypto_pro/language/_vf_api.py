@@ -1836,7 +1836,7 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def unsqueeze(preg, /):
+    def unsqueeze(preg, /, *, dtype: Optional[DType] = None):
         """Unsqueeze mask bits into a register (vusqz instruction).
 
         Expands each mask bit into the corresponding register lane
@@ -1844,6 +1844,13 @@ class Vf:
 
         Args:
             preg: Mask register to unsqueeze
+
+        Kwargs:
+            dtype: Destination element type, one of ``DT_INT8``/``DT_UINT8``/
+                ``DT_INT16``/``DT_UINT16``/``DT_INT32``/``DT_UINT32``.
+                A ``MaskReg`` carries no semantic element type, so without
+                ``dtype`` the destination keeps the mask register's own type
+                (``DT_UINT16`` for masks from ``create_mask``/``update_mask``).
 
         Returns:
             Destination register (``RegTensor``) holding one lane per mask bit:
@@ -2094,19 +2101,19 @@ class Vf:
 
     @staticmethod
     @_api_decl
-    def move_acc(dst, src, preg, /, *, mode: Optional[MergeMode] = None):
-        r"""Masked move with an explicit accumulate source (vmov/pmov, MODE_MERGING).
+    def move_merg(dst, src, preg, /, *, mode: Optional[MergeMode] = None):
+        r"""Masked move with an explicit merge source (vmov/pmov, MODE_MERGING).
 
         For each lane where ``preg`` is active, copies ``src`` into ``dst``;
         masked-out positions retain the old value supplied by ``dst``.
-        ``dst`` is a plain SSA argument (the value being accumulated from),
-        like ``mul_dst_add_acc``: the backend first copies it into the fresh SSA
-        dst, then applies the masked move.
+        ``dst`` is a plain SSA argument (the previous dst value being merged
+        from): the backend first copies it into the fresh SSA dst, then applies
+        the masked move. Nothing is accumulated.
 
         .. math:: dstReg_i = preg_i ? srcReg_i : dstReg_i
 
         Args:
-            dst: Accumulate source register (the old dst; RegTensor or
+            dst: Merge source register (the old dst; RegTensor or
                 MaskReg, matching src)
             src: Source register (RegTensor or MaskReg, matching dst)
             preg: Predicate mask register

@@ -402,6 +402,13 @@ TEST(BackendCCEVFOpsTest, EmitsArithmeticIntrinsics)
     expect_binary(VF_MUL_DST_ADD_ACC, "vmadd(");
     expect_binary(VF_PRELU, "vprelu(");
 
+    // vf.mul_add_dst has no b64 vmula form: the documented 16/32-bit set is enforced
+    auto src64 = MakeVar("src64", ir::DataType::INT64);
+    ExpectInvoke(codegen, VF_MUL_ADD_DST, {"vmula("}, {int_src0, int_src1, mask}, zeroing, "dst",
+                 std::make_shared<const ir::RegType>(ir::RegKind::VecReg, ir::DataType::INT32));
+    EXPECT_ANY_THROW(Invoke(codegen, VF_MUL_ADD_DST, {src64, src64, mask}, zeroing, "dst"));
+    EXPECT_ANY_THROW(Invoke(codegen, VF_MUL_ADD_DST_ACC, {src64, src64, src64, mask}, zeroing, "dst"));
+
     // B64 bitwise ops (mirrors AscendC b64 path): b64 mask packed via ppack,
     // operands deinterleaved into u32 lo/hi halves, b32 vand/vxor/vor/vnot per
     // half with the packed mask, halves re-interleaved into the b64 dst.
@@ -859,7 +866,10 @@ TEST(BackendCCEVFOpsTest, EmitsCompareHistogramAndMaskConversions)
     ExpectInvoke(codegen, VF_ARANGE, {"vci(i32, 3, DEC_ORDER)"}, {Int(3)},
                  {{"index_order", EnumValue(ir::IndexOrder::DECREASE_ORDER)}, {"dtype", ir::DataType::INT32}}, "i32");
     ExpectInvoke(codegen, VF_ARANGE, {"vci(i64_b64_lo_"}, {Int(5)}, {{"dtype", ir::DataType::INT64}}, "i64");
-    ExpectInvoke(codegen, VF_UNSQUEEZE, {"vusqz("}, {mask}, {}, "i32");
+    ExpectInvoke(codegen, VF_UNSQUEEZE, {"RtWrap<int32_t> i32", "vusqz(i32"}, {mask}, {}, "i32",
+                 std::make_shared<const ir::RegType>(ir::RegKind::VecReg, ir::DataType::INT32));
+    EXPECT_ANY_THROW(Invoke(codegen, VF_UNSQUEEZE, {mask}, {}, "i32",
+                            std::make_shared<const ir::RegType>(ir::RegKind::VecReg, ir::DataType::FP32)));
     ExpectInvoke(codegen, VF_TRUNCATE, {"vtrc(fp32, fp32, ROUND_C, mask, MODE_ZEROING)"}, {fp32, mask},
                  {{"round_mode", EnumValue(ir::VFRoundMode::CAST_CEIL)}, {"mode", EnumValue(ir::MergeMode::ZEROING)}},
                  "fp32");
@@ -884,6 +894,9 @@ TEST(BackendCCEVFOpsTest, EmitsAlignedDataMovement)
                  u8->GetType());
     ExpectInvoke(codegen, VF_LOAD_ALIGN, {"(2)", "POST_UPDATE"}, {tile64, Int(2)}, {{"post_update", true}}, "i64",
                  i64->GetType());
+    ExpectInvoke(codegen, VF_LOAD_ALIGN,
+                 {"vlds((RegTensor<uint32_t>&)i64", "(__ubuf__ uint32_t *)tile64", "(32) * 2", "NORM"},
+                 {tile64, Int(32)}, {}, "i64", i64->GetType());
     ExpectInvoke(codegen, VF_LOAD_ALIGN, {"vld(fp16"}, {tile, addr}, {}, "fp16");
     ExpectInvoke(codegen, VF_LOAD_ALIGN, {"plds(mask"}, {tile, Int(0)}, {{"dist", EnumValue(ir::LoadDist::US)}}, "mask",
                  mask->GetType());
