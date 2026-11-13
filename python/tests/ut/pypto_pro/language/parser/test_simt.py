@@ -739,7 +739,7 @@ def test_simt_function_rejects_argument_incompatible_with_annotation():
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
-def test_cached_simt_function_rejects_incompatible_argument_type():
+def test_simt_function_specializes_unannotated_argument_types():
     @pl.vector_function(mode="simt", max_threads=32)
     def entry(value):
         return
@@ -750,8 +750,12 @@ def test_cached_simt_function_rejects_incompatible_argument_type():
             entry[32](integer)
             entry[32](floating)
 
-    with pytest.raises(InvalidVal, match="SIMT parameter 'value_0' annotated as"):
-        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    functions = [f for f in program.functions.values() if f.func_type == ir.FunctionType.SimtVF]
+    assert len(functions) == 2
+    assert {f.name for f in functions} == {"entry", "entry__type_1"}
+    functions = sorted(functions, key=lambda f: f.name)
+    assert [f.params[0].type.dtype for f in functions] == [pl.DT_INT32, pl.DT_FP32]
 
 
 def test_simt_entry_rejects_value_return():

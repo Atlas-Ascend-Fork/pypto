@@ -59,7 +59,7 @@ def test_vector_function_marker():
         pass
 
     decorator = pl.parser.decorator
-    assert vf_body._pypto_vector_function is True
+    assert vf_body._pypto_vector_function_mode == "simd"
     assert decorator.is_vector_function(vf_body)
     assert not decorator.is_simt_function(vf_body)
 

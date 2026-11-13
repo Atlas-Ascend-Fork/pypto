@@ -10,7 +10,7 @@ template<class Tile, uint32_t N> struct SyncedTile {
 #endif
 #include <pypto_dump.h>
 #include <pypto_vf_support.h>
-__simd_vf__ inline void _register_shift(__ubuf__ int32_t* src_0, __ubuf__ int32_t* shift_0, __ubuf__ int32_t* dst_0)
+__simd_vf__ inline void _register_shift(__ubuf__ int32_t* src_0, uint32_t src_0__valid_row, uint32_t src_0__valid_col, __ubuf__ int32_t* shift_0, uint32_t shift_0__valid_row, uint32_t shift_0__valid_col, __ubuf__ int32_t* dst_0, uint32_t dst_0__valid_row, uint32_t dst_0__valid_col)
 {
     MaskReg mask_0;
     mask_0 = pset_b32(PAT_ALL);
@@ -36,7 +36,7 @@ __aicore__ inline void _shift_kernel_impl_vector(__gm__ int32_t* x_0)
     using dst_0_Type = SyncedTile<Tile<TileType::Vec, int32_t, 1, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>;
     dst_0_Type dst_0{dst_0_Type::PtoTile(1, 64), {}};
     TASSIGN(dst_0.tile, 0x200);
-    _register_shift((__ubuf__ int32_t *)src_0.tile.data(), (__ubuf__ int32_t *)shift_0.tile.data(), (__ubuf__ int32_t *)dst_0.tile.data());
+    _register_shift((__ubuf__ int32_t *)src_0.tile.data(), (uint32_t)src_0.tile.GetValidRow(), (uint32_t)src_0.tile.GetValidCol(), (__ubuf__ int32_t *)shift_0.tile.data(), (uint32_t)shift_0.tile.GetValidRow(), (uint32_t)shift_0.tile.GetValidCol(), (__ubuf__ int32_t *)dst_0.tile.data(), (uint32_t)dst_0.tile.GetValidRow(), (uint32_t)dst_0.tile.GetValidCol());
     return;
 }
 #endif

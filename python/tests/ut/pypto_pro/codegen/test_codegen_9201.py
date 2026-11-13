@@ -13,12 +13,14 @@
 from dataclasses import dataclass
 import re
 
+from pypto_pro import ir
 from pypto_pro._errors import NotSupported
 import pypto_pro.language as pl
 from pypto_pro.language import Vf as vf  # noqa: N813
 import pytest
 
 from pypto.pypto_impl import NpuArch
+from pypto.pypto_impl.codegen import CCECodegen
 
 
 @dataclass
@@ -122,11 +124,26 @@ def _shift_kernel(x: pl.Ptr[pl.DT_INT32]):
 
 
 @pytest.mark.parametrize("arch", [NpuArch.DAV_3510, NpuArch.DAV_9201])
-def test_register_shift_unsigned_operand_is_9201_only(arch, monkeypatch, codegen_9201):
+def test_register_shift_unsigned_operand_is_9201_only(arch, monkeypatch, assert_9201_golden):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", str(arch))
-    _, vector = codegen_9201(_shift_kernel.to_kernel_def(), arch)
-    assert "vshl(" in vector.content
-    assert ("(RegTensor<uint32_t>&)" in vector.content) == (arch == NpuArch.DAV_9201)
+    program, matched = _shift_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert matched
+    assert_9201_golden(program, "vector-ir")
+    source = CCECodegen(ir.SectionKind.Vector).generate_single(program, arch)
+    assert_9201_golden(source, "vector-cce")
+    assert "vshl(" in source
+    assert ("(RegTensor<uint32_t>&)" in source) == (arch == NpuArch.DAV_9201)
+    params = []
+    args = []
+    for tile in ("src_0", "shift_0", "dst_0"):
+        params.extend([f"__ubuf__ int32_t* {tile}", f"uint32_t {tile}__valid_row", f"uint32_t {tile}__valid_col"])
+        args.extend([
+            f"(__ubuf__ int32_t *){tile}.tile.data()",
+            f"(uint32_t){tile}.tile.GetValidRow()",
+            f"(uint32_t){tile}.tile.GetValidCol()",
+        ])
+    assert f"__simd_vf__ inline void _register_shift({', '.join(params)})" in source
+    assert f"_register_shift({', '.join(args)});" in source
 
 
 @pytest.mark.parametrize("arch", [NpuArch.DAV_3510, NpuArch.DAV_9201])

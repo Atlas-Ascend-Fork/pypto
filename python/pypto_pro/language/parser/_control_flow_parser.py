@@ -560,7 +560,7 @@ class ControlFlowParserMixin:
 
     def _record_if_const(self, test_node: ast.expr, is_const: bool, value) -> None:
         """Record each ``if`` condition's compile-time constness for the auto-pipeline's branch pruning."""
-        if not self.auto_pipeline_enabled or self.inline_call_stack or self._in_vf_body():
+        if not self.auto_pipeline_enabled or self.inline_call_stack or self._in_simd_vf_body():
             return
         self.parse_facts.if_const_map[(test_node.lineno, test_node.col_offset)] = (is_const, value)
 
@@ -644,7 +644,7 @@ class ControlFlowParserMixin:
         attr = self._get_with_context_attr(stmt)
         span = self.span_tracker.get_span(stmt)
 
-        if attr in ("section_vector", "section_cube") and self._in_vf_body():
+        if attr in ("section_vector", "section_cube") and self._in_simd_vf_body():
             raise InvalidOperation(
                 f"Section 'pl.{attr}' cannot be nested inside @pl.vector_function",
                 span=span,
@@ -900,7 +900,7 @@ class ControlFlowParserMixin:
             return
         value = from_storage_int(expr.value, expr.type.dtype)
 
-        in_vf = self._in_vf_body()
+        in_vf = self._in_simd_vf_body()
         hi = _UINT16_MAX if in_vf else INT64_MAX
         if is_step:
             lo = 1
@@ -924,7 +924,7 @@ class ControlFlowParserMixin:
             return
 
         peak = s + ((t - s - 1) // p) * p + p
-        hi = _UINT16_MAX if self._in_vf_body() else INT64_MAX
+        hi = _UINT16_MAX if self._in_simd_vf_body() else INT64_MAX
         if peak > hi:
             raise OutOfRange(
                 f"pl.range(): loop variable reaches {peak} on the final step, exceeding {hi}",

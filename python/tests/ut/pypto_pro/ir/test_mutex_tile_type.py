@@ -58,6 +58,36 @@ def test_op_accepts_different_counts_and_returns_none():
     assert call.args[0].type.mutex_count == 1
 
 
+@pytest.mark.parametrize("valid", [(7, 29), (-1, -1)])
+@pytest.mark.parametrize("mutex_count", [None, 0, 2])
+def test_linear_subview_preserves_type_but_slice_has_own_valid_shape(valid, mutex_count):
+    span = ir.Span.unknown()
+
+    def pair(a, b):
+        return ir.MakeTuple([ir.ConstInt(a, ir.DataType.INT64, span), ir.ConstInt(b, ir.DataType.INT64, span)], span)
+
+    memref = ir.MemRef(ir.MemorySpace.Vec, ir.ConstInt(0, ir.DataType.INT64, span), 1024)
+    view = ir.TileView([ir.ConstInt(dim, ir.DataType.INT64, span) for dim in valid])
+    tile_type = ir.TileType([8, 32], ir.DataType.FP32, memref, view)
+    if mutex_count is not None:
+        tile_type = ir.MutexTileType(tile_type, mutex_count)
+    tile = ir.Var("tile", tile_type, span)
+    offsets = [
+        ir.ConstInt(0, ir.DataType.INT64, span),
+        ir.ConstInt(3, ir.DataType.INT64, span),
+        ir.Var("offset", ir.ScalarType(ir.DataType.INT64), span),
+    ]
+    for offset in offsets:
+        alias = ir.create_op_call("block.subview", [tile, offset, pair(8, 32)], {}, span)
+        assert ir.structural_equal(alias.type, tile_type)
+
+    sliced = ir.create_op_call("block.subview", [tile, pair(1, 0), pair(4, 16)], {}, span)
+    assert [dim.value for dim in sliced.type.tile_view.valid_shape] == [-1, -1]
+    assert [dim.value for dim in sliced.type.shape] == [8, 32]
+    if mutex_count is not None:
+        assert sliced.type.mutex_count == mutex_count
+
+
 def test_matmul_acc_compares_data_type_without_mutex_count():
     dst = make_mutex_tile_expr([64, 64], ir.DataType.FP32, ir.MemorySpace.Acc, addr=0, mutex_ids=[1])
     acc = make_mutex_tile_expr([64, 64], ir.DataType.FP32, ir.MemorySpace.Acc, addr=16384, mutex_ids=[2, 3])

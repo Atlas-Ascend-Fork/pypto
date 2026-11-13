@@ -20,6 +20,7 @@ from ..._errors import InvalidVal, NotSupported, OutOfRange
 
 _SIMT_FUNCTION_MARKER = "_pypto_simt_function"
 _SIMT_MAX_THREADS_ATTR = "_pypto_simt_max_threads"
+_VECTOR_FUNCTION_MODE_ATTR = "_pypto_vector_function_mode"
 
 
 def inline(fn: Callable) -> Callable:
@@ -41,10 +42,11 @@ def vector_function(
     mode: str | None = None,
     max_threads: int | None = None,
 ) -> Callable:
-    """Mark a callable as a SIMD or SIMT vector function.
+    """Mark a callable as a SIMD, SIMD tile, or SIMT vector function.
 
     ``@pl.vector_function`` and ``@pl.vector_function(mode="simd")`` declare
-    SIMD vector functions expanded at their call sites. ``mode="simt"`` marks
+    SIMD vector functions. ``mode="simd_tile"`` declares tile instructions
+    expanded into VF IR before code generation. ``mode="simt"`` marks
     a delayed SIMT template; providing ``max_threads`` makes it launchable via
     ``fn[threads](...)``, while omitting it declares a SIMT helper.
     """
@@ -52,7 +54,7 @@ def vector_function(
         raise NotSupported("@pl.vector_function() is not supported; use @pl.vector_function")
 
     actual_mode = "simd" if mode is None else mode
-    if actual_mode == "simd":
+    if actual_mode in ("simd", "simd_tile"):
         if max_threads is not None:
             raise InvalidVal("max_threads is only supported when mode='simt'")
     elif actual_mode == "simt":
@@ -62,13 +64,13 @@ def vector_function(
             if not 1 <= max_threads <= 2048:
                 raise OutOfRange("max_threads must be in [1, 2048]")
     else:
-        raise InvalidVal("mode must be 'simd' or 'simt'")
+        raise InvalidVal("mode must be 'simd' or 'simt' or 'simd_tile'")
 
     def decorate(func: Callable) -> Callable:
         if not callable(func):
             raise InvalidVal("@pl.vector_function can only decorate a callable")
-        if actual_mode == "simd":
-            _mark_vector_function(func)
+        if actual_mode in ("simd", "simd_tile"):
+            _mark_vector_function(func, actual_mode)
         else:
             _mark_simt_function(func, max_threads)
         return func
@@ -76,9 +78,9 @@ def vector_function(
     return decorate(fn) if fn is not None else decorate
 
 
-def _mark_vector_function(fn: Callable) -> None:
+def _mark_vector_function(fn: Callable, mode: str) -> None:
     """Set the internal marker used for SIMD vector-function expansion."""
-    setattr(fn, "_pypto_vector_function", True)
+    setattr(fn, _VECTOR_FUNCTION_MODE_ATTR, mode)
 
 
 def _mark_simt_function(fn: Callable, max_threads: int | None) -> None:
@@ -89,12 +91,17 @@ def _mark_simt_function(fn: Callable, max_threads: int | None) -> None:
 
 def is_vector_function(fn: Callable) -> bool:
     """Return whether *fn* is a SIMD vector-function body."""
-    return bool(getattr(fn, "_pypto_vector_function", False))
+    return getattr(fn, _VECTOR_FUNCTION_MODE_ATTR, None) in ("simd", "simd_tile")
 
 
 def is_simt_function(fn: Callable) -> bool:
     """Return whether *fn* is marked as a delayed SIMT function template."""
     return bool(getattr(fn, _SIMT_FUNCTION_MARKER, False))
+
+
+def is_simd_tile_function(fn: Callable) -> bool:
+    """Return whether *fn* contains tile instructions for VF expansion."""
+    return getattr(fn, _VECTOR_FUNCTION_MODE_ATTR, None) == "simd_tile"
 
 
 def get_simt_max_threads(fn: Callable) -> int | None:

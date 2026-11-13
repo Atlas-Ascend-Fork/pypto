@@ -163,6 +163,7 @@ def runtime(monkeypatch):
         FunctionType=types.SimpleNamespace(
             SimtVF="simt", SimtCallee="simt_callee", SimtKernel="simt_kernel",
             SimdVF="simd_vf", SimdCallee="simd_callee",
+            SimdTileVF="simd_tile_vf", SimdTileCallee="simd_tile_callee",
         ),
         SectionKind=types.SimpleNamespace(Cube="cube", Vector="vector"),
     )
@@ -260,6 +261,14 @@ def runtime(monkeypatch):
     helper_class = ast.ClassDef(
         name="ParserHelpers", bases=[], keywords=[], decorator_list=[],
         body=[node for node in mixin.body if isinstance(node, ast.FunctionDef) and node.name in helper_names],
+    )
+    parser_tree = ast.parse((_SOURCE / "language/parser/_ast_parser.py").read_text(encoding="utf-8"))
+    parser_class = next(
+        node for node in parser_tree.body if isinstance(node, ast.ClassDef) and node.name == "ASTParser"
+    )
+    helper_class.body.extend(
+        node for node in parser_class.body
+        if isinstance(node, ast.FunctionDef) and node.name == "_in_simd_tile_body"
     )
     expression_tree = ast.parse((_SOURCE / "language/parser/_expression_parser.py").read_text(encoding="utf-8"))
     expression_mixin = next(node for node in expression_tree.body if isinstance(node, ast.ClassDef)
@@ -1467,7 +1476,9 @@ def test_cached_vf_reparses_accesses_only_for_pipeline_analysis(runtime, auto_pi
 
     cached = object()
     kind = runtime.ir.FunctionType.SimdVF
-    parser.vf_func_cache = {(id(fn), kind, ()): cached}
+    cache_key = object()
+    parser.vf_func_cache = {cache_key: cached}
+    parser._vf_specialization_key = lambda *args: (cache_key, 0)
     parser.auto_pipeline_enabled = auto_pipeline
     reparsed, registered = [], []
     parser._instantiate_vf_body = lambda *args, **kwargs: (reparsed.append(args) or object(), [])

@@ -164,9 +164,15 @@ class ASTParser(
 ):
     """Parses Python AST and builds IR using IRBuilder."""
 
-    def _in_vf_body(self) -> bool:
+    def _in_simd_vf_body(self) -> bool:
         """True while parsing a __simd_vf__/__simd_callee__ function body."""
-        return self._current_func_type in (ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee)
+        return self._current_func_type in (
+            ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee,
+            ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee,
+        )
+
+    def _in_simd_tile_body(self) -> bool:
+        return self._current_func_type in (ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee)
 
     def __init__(
         self,
@@ -466,6 +472,8 @@ class ASTParser(
             ir.FunctionType.SimtCallee,
             ir.FunctionType.SimdVF,
             ir.FunctionType.SimdCallee,
+            ir.FunctionType.SimdTileVF,
+            ir.FunctionType.SimdTileCallee,
         ):
             raise NotSupported(
                 "callsite_param_types/const_param_values/callsite_param_buffers is only "
@@ -547,7 +555,7 @@ class ASTParser(
             # Standalone __simd_vf__/__simd_callee__ body: the "inside a VF
             # body" semantics (UINT16 loop-bound clamps, tile+offset pointer
             # arithmetic) are keyed off
-            # the function type via _in_vf_body() rather than a counter.
+            # the function type via _in_simd_vf_body() rather than a counter.
             self._parse_statement_list(body_stmts)
 
             if self.scope_manager.current_scope.jump_kind is None:
@@ -602,7 +610,7 @@ class ASTParser(
         self._current_node = stmt
         # Where the ops this statement emits are recorded, while it is the kernel body's own.
         # A vector function body is parsed at its call site and keeps the site handed to it.
-        if not self.inline_call_stack and not self._in_vf_body():
+        if not self.inline_call_stack and not self._in_simd_vf_body():
             self._access_site = (stmt.lineno, stmt.col_offset)
         # Publish where this statement was written, for anything raised below that
         # passed no span of its own. A compound statement is excluded: its span
@@ -795,7 +803,7 @@ class ASTParser(
         if not reaches_buffer:
             return
         self.parse_facts.op_accesses.setdefault(self._access_site, []).append(
-            OpAccess(op_name, tuple(recorded), keyword_names, self._in_vf_body(), span)
+            OpAccess(op_name, tuple(recorded), keyword_names, self._in_simd_vf_body(), span)
         )
 
     def _validate_tiling_params(

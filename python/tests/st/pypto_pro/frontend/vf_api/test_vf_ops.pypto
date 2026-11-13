@@ -639,7 +639,7 @@ program #entry() {
         return;
     }
     function vf_abs_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.abs(%reg_src_0, %preg_0, mode=0);
@@ -647,7 +647,7 @@ program #entry() {
         return;
     }
     function vf_abs_sub_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -656,7 +656,7 @@ program #entry() {
         return;
     }
     function vf_add_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -665,7 +665,7 @@ program #entry() {
         return;
     }
     function vf_addc_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %carry_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<pred_reg,uint16_t> %carry_src_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=uint32_t);
@@ -678,7 +678,7 @@ program #entry() {
         return;
     }
     function vf_adds_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.adds(%reg_src_0, 1.0, %preg_0, mode=0);
@@ -686,7 +686,7 @@ program #entry() {
         return;
     }
     function vf_and__api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=uint32_t);
@@ -695,14 +695,14 @@ program #entry() {
         return;
     }
     function vf_arange_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<vec_reg,uint32_t> %result_0 = vf.arange(0, dtype=uint32_t);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         vf.store_align(%dst_0, %result_0, %preg_0);
         return;
     }
     function vf_astype_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,int32_t> %result_s32_0 = vf.astype(%reg_src_0, %preg_0, round_mode=4, dtype=int32_t);
@@ -711,7 +711,7 @@ program #entry() {
         return;
     }
     function vf_axpy_acc_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_dst_0 = vf.load_align(%dst_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
@@ -720,7 +720,7 @@ program #entry() {
         return;
     }
     function vf_axpy_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.axpy(%reg_src_0, 1.0, %preg_0, mode=0);
@@ -728,7 +728,7 @@ program #entry() {
         return;
     }
     function vf_bit_cast_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,uint32_t> %result_0 = vf.bit_cast(%reg_src_0, dtype=uint32_t);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
@@ -736,11 +736,11 @@ program #entry() {
         return;
     }
     function vf_clear_spr_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         vf.clear_spr();
         return;
     }
-    function vf_counter_inc incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0) outcast() #entry(false) #type(SimdCallee) {
+    function vf_counter_inc__callee incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0) outcast() #entry(false) #type(SimdCallee) {
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_0 = vf.load_align(%counter_0, 0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_1 = vf.adds(%reg_0, 1, %preg_0);
@@ -748,7 +748,7 @@ program #entry() {
         return;
     }
     function vf_create_addr_reg_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         for %___iterator_0 inrange 0, 1, 1 iter { } {
             int64_t %__0 = %___iterator_0;
             reg<addr_reg,uint32_t> %ar_0 = vf.create_addr_reg(0, 0, 0, 0, dtype=uint32_t);
@@ -757,13 +757,13 @@ program #entry() {
         return;
     }
     function vf_create_mask_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %preg_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %result_0 = vf.create_mask(pattern=0, dtype=float);
         vf.store_align(%preg_out_0, %result_0);
         return;
     }
     function vf_de_interleave_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst1_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
         tuple<reg<vec_reg,float>, reg<vec_reg,float>> %result_0 = vf.de_interleave(%reg_src0_0, %reg_src1_0, dtype=float);
@@ -775,7 +775,7 @@ program #entry() {
         return;
     }
     function vf_div_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -784,7 +784,7 @@ program #entry() {
         return;
     }
     function vf_eq_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %preg_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -793,7 +793,7 @@ program #entry() {
         return;
     }
     function vf_exp_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.exp(%reg_src_0, %preg_0, mode=0, precision=false);
@@ -801,7 +801,7 @@ program #entry() {
         return;
     }
     function vf_exp_sub_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -810,7 +810,7 @@ program #entry() {
         return;
     }
     function vf_full_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.full(%reg_src_0, %preg_0, dtype=float, mode=0, pos=0);
@@ -818,7 +818,7 @@ program #entry() {
         return;
     }
     function vf_gather_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %index_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,uint32_t> %reg_index_0 = vf.load_align(%index_0, 0, dtype=uint32_t);
@@ -827,7 +827,7 @@ program #entry() {
         return;
     }
     function vf_ge_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %preg_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -836,13 +836,13 @@ program #entry() {
         return;
     }
     function vf_get_mask_spr_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %preg_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %result_0 = vf.get_mask_spr(width=0);
         vf.store_align(%preg_out_0, %result_0);
         return;
     }
     function vf_gt_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %preg_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -851,7 +851,7 @@ program #entry() {
         return;
     }
     function vf_histogram_acc_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint8_t);
         reg<vec_reg,uint16_t> %reg_dst_0 = vf.load_align(%dst_0, 0, dtype=uint16_t);
         reg<vec_reg,uint8_t> %reg_src_0 = vf.load_align(%src_0, 0, dtype=uint8_t);
@@ -860,14 +860,14 @@ program #entry() {
         return;
     }
     function vf_histograms_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint8_t);
         reg<vec_reg,uint8_t> %reg_src_0 = vf.load_align(%src_0, 0, dtype=uint8_t);
         reg<vec_reg,uint16_t> %result_0 = vf.histograms(%reg_src_0, %preg_0);
         return;
     }
     function vf_interleave_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst1_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
         tuple<reg<vec_reg,float>, reg<vec_reg,float>> %result_0 = vf.interleave(%reg_src0_0, %reg_src1_0, dtype=float);
@@ -879,7 +879,7 @@ program #entry() {
         return;
     }
     function vf_le_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %preg_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -888,7 +888,7 @@ program #entry() {
         return;
     }
     function vf_leaky_relu_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.leaky_relu(%reg_src_0, 1.0, %preg_0, mode=0);
@@ -896,7 +896,7 @@ program #entry() {
         return;
     }
     function vf_ln_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.ln(%reg_src_0, %preg_0, mode=0, precision=false);
@@ -904,21 +904,21 @@ program #entry() {
         return;
     }
     function vf_load_align_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %tile_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<vec_reg,float> %result_0 = vf.load_align(%tile_0, 0, dtype=float, post_update=false, is_reg=true);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         vf.store_align(%dst_0, %result_0, %preg_0);
         return;
     }
     function vf_load_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %tile_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<vec_reg,float> %result_0 = vf.load(%tile_0, 0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         vf.store_align(%dst_0, %result_0, %preg_0);
         return;
     }
     function vf_load_unalign_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %tile_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<unalign_reg,uint32_t> %align_reg_0 = vf.load_unalign_init();
         vf.load_unalign_pre(%align_reg_0, %tile_0);
@@ -927,18 +927,18 @@ program #entry() {
         return;
     }
     function vf_load_unalign_init_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<unalign_reg,uint32_t> %align_reg_0 = vf.load_unalign_init();
         return;
     }
     function vf_load_unalign_pre_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %tile_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<unalign_reg,uint32_t> %align_reg_0 = vf.load_unalign_init();
         vf.load_unalign_pre(%align_reg_0, %tile_0);
         return;
     }
     function vf_log10_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.log10(%reg_src_0, %preg_0, mode=0, precision=false);
@@ -946,7 +946,7 @@ program #entry() {
         return;
     }
     function vf_log2_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.log2(%reg_src_0, %preg_0, mode=0, precision=false);
@@ -954,7 +954,7 @@ program #entry() {
         return;
     }
     function vf_log_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.log(%reg_src_0, %preg_0, mode=0, precision=false);
@@ -962,7 +962,7 @@ program #entry() {
         return;
     }
     function vf_lt_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %preg_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -971,14 +971,14 @@ program #entry() {
         return;
     }
     function vf_mask_gen_with_reg_tensor_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %preg_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<pred_reg,uint16_t> %result_0 = vf.mask_gen_with_reg_tensor(%reg_src_0, offset=0);
         vf.store_align(%preg_out_0, %result_0);
         return;
     }
     function vf_max_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -987,7 +987,7 @@ program #entry() {
         return;
     }
     function vf_maxs_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.maxs(%reg_src_0, 1.0, %preg_0, mode=0);
@@ -995,12 +995,12 @@ program #entry() {
         return;
     }
     function vf_mem_bar_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         vf.mem_bar(mode=0);
         return;
     }
     function vf_min_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -1009,7 +1009,7 @@ program #entry() {
         return;
     }
     function vf_mins_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.mins(%reg_src_0, 1.0, %preg_0, mode=0);
@@ -1017,7 +1017,7 @@ program #entry() {
         return;
     }
     function vf_move_acc_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_dst_0 = vf.load_align(%dst_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
@@ -1026,7 +1026,7 @@ program #entry() {
         return;
     }
     function vf_move_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.move(%reg_src_0);
@@ -1034,7 +1034,7 @@ program #entry() {
         return;
     }
     function vf_mul_add_dst_acc_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_dst_0 = vf.load_align(%dst_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
@@ -1044,7 +1044,7 @@ program #entry() {
         return;
     }
     function vf_mul_add_dst_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -1053,7 +1053,7 @@ program #entry() {
         return;
     }
     function vf_mul_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -1062,7 +1062,7 @@ program #entry() {
         return;
     }
     function vf_mul_dst_add_acc_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_dst_0 = vf.load_align(%dst_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
@@ -1072,7 +1072,7 @@ program #entry() {
         return;
     }
     function vf_mul_dst_add_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -1081,7 +1081,7 @@ program #entry() {
         return;
     }
     function vf_mull_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %lo_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %hi_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=uint32_t);
@@ -1093,7 +1093,7 @@ program #entry() {
         return;
     }
     function vf_muls_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.muls(%reg_src_0, 1.0, %preg_0, mode=0);
@@ -1101,7 +1101,7 @@ program #entry() {
         return;
     }
     function vf_muls_cast_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,half> %result_0 = vf.muls_cast(%reg_src_0, 1.0, %preg_0, dtype=half);
@@ -1110,7 +1110,7 @@ program #entry() {
         return;
     }
     function vf_ne_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %preg_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -1119,7 +1119,7 @@ program #entry() {
         return;
     }
     function vf_neg_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.neg(%reg_src_0, %preg_0, mode=0);
@@ -1127,7 +1127,7 @@ program #entry() {
         return;
     }
     function vf_not__api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src_0 = vf.load_align(%src_0, 0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %result_0 = vf.not_(%reg_src_0, %preg_0, mode=0);
@@ -1135,7 +1135,7 @@ program #entry() {
         return;
     }
     function vf_or__api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=uint32_t);
@@ -1144,7 +1144,7 @@ program #entry() {
         return;
     }
     function vf_pack_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src_0 = vf.load_align(%src_0, 0, dtype=uint32_t);
         reg<vec_reg,uint16_t> %reg_u16_0 = vf.pack(%reg_src_0, part=0, dtype=uint16_t);
@@ -1153,7 +1153,7 @@ program #entry() {
         return;
     }
     function vf_pair_reduce_sum_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.pair_reduce_sum(%reg_src_0, %preg_0, mode=0);
@@ -1161,7 +1161,7 @@ program #entry() {
         return;
     }
     function vf_prelu_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %slope_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %reg_slope_0 = vf.load_align(%slope_0, 0, dtype=float);
@@ -1170,7 +1170,7 @@ program #entry() {
         return;
     }
     function vf_reduce_max_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.reduce_max(%reg_src_0, %preg_0, datablock=false);
@@ -1178,7 +1178,7 @@ program #entry() {
         return;
     }
     function vf_reduce_min_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.reduce_min(%reg_src_0, %preg_0, datablock=false);
@@ -1186,7 +1186,7 @@ program #entry() {
         return;
     }
     function vf_reduce_sum_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.reduce_sum(%reg_src_0, %preg_0, datablock=false);
@@ -1194,7 +1194,7 @@ program #entry() {
         return;
     }
     function vf_relu_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.relu(%reg_src_0, %preg_0, mode=0);
@@ -1202,7 +1202,7 @@ program #entry() {
         return;
     }
     function vf_scatter_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %index_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %tile_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,uint32_t> %reg_index_0 = vf.arange(0, dtype=uint32_t);
@@ -1210,7 +1210,7 @@ program #entry() {
         return;
     }
     function vf_select_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -1219,7 +1219,7 @@ program #entry() {
         return;
     }
     function vf_shift_left_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src_0 = vf.load_align(%src_0, 0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %result_0 = vf.shift_left(%reg_src_0, 1, %preg_0, mode=0);
@@ -1227,7 +1227,7 @@ program #entry() {
         return;
     }
     function vf_shift_right_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src_0 = vf.load_align(%src_0, 0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %result_0 = vf.shift_right(%reg_src_0, 1, %preg_0, mode=0);
@@ -1235,7 +1235,7 @@ program #entry() {
         return;
     }
     function vf_sqrt_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.sqrt(%reg_src_0, %preg_0, mode=0, precision=false);
@@ -1243,7 +1243,7 @@ program #entry() {
         return;
     }
     function vf_squeeze_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.squeeze(%reg_src_0, %preg_0);
@@ -1251,7 +1251,7 @@ program #entry() {
         return;
     }
     function vf_squeeze_store_unalign_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %tile_0, int64_t %count_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         bool %_expr_tmp_0_0 = (%count_0 gt 1000);
         none %align_reg_2, none %reg_src_2 = if %_expr_tmp_0_0 then {
             reg<unalign_reg,uint32_t> %align_reg_0 = vf.unalign_reg_for_store();
@@ -1264,7 +1264,7 @@ program #entry() {
         return;
     }
     function vf_squeeze_store_unalign_post_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %tile_0, int64_t %count_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         bool %_expr_tmp_0_0 = (%count_0 gt 1000);
         none %align_reg_2 = if %_expr_tmp_0_0 then {
             reg<unalign_reg,uint32_t> %align_reg_0 = vf.unalign_reg_for_store();
@@ -1276,33 +1276,33 @@ program #entry() {
         return;
     }
     function vf_store_align_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %tile_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         vf.store_align(%tile_0, %reg_src_0, %preg_0, 0, post_update=false);
         return;
     }
     function vf_store_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %tile_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         vf.store(%tile_0, %reg_src_0, 64);
         return;
     }
     function vf_store_unalign_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %tile_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<unalign_reg,uint32_t> %align_reg_0 = vf.unalign_reg_for_store();
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         vf.store_unalign(%tile_0, %reg_src_0, %align_reg_0, 0, post_update=true);
         return;
     }
     function vf_store_unalign_post_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %tile_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<unalign_reg,uint32_t> %align_reg_0 = vf.unalign_reg_for_store();
         vf.store_unalign_post(%tile_0, %align_reg_0, 0, post_update=true);
         return;
     }
     function vf_sub_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=float);
         reg<vec_reg,float> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=float);
@@ -1311,7 +1311,7 @@ program #entry() {
         return;
     }
     function vf_subc_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %borrow_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<pred_reg,uint16_t> %borrow_src_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=uint32_t);
@@ -1324,7 +1324,7 @@ program #entry() {
         return;
     }
     function vf_truncate_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,float> %reg_src_0 = vf.load_align(%src_0, 0, dtype=float);
         reg<vec_reg,float> %result_0 = vf.truncate(%reg_src_0, %preg_0, round_mode=4, mode=0);
@@ -1332,12 +1332,12 @@ program #entry() {
         return;
     }
     function vf_unalign_reg_for_store_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<unalign_reg,uint32_t> %align_reg_0 = vf.unalign_reg_for_store();
         return;
     }
     function vf_unpack_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<vec_reg,uint16_t> %reg_src_0 = vf.load_align(%src_0, 0, dtype=uint16_t);
         reg<vec_reg,uint32_t> %result_0 = vf.unpack(%reg_src_0, part=0, dtype=uint32_t);
@@ -1345,20 +1345,20 @@ program #entry() {
         return;
     }
     function vf_unsqueeze_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=float);
         reg<vec_reg,uint16_t> %result_0 = vf.unsqueeze(%preg_0);
         vf.store_align(%dst_0, %result_0, %preg_0);
         return;
     }
     function vf_update_mask_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %preg_out_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %result_0 = vf.update_mask(1.0, dtype=float);
         vf.store_align(%preg_out_0, %result_0);
         return;
     }
     function vf_xor_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src0_0, mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %src1_0, mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0) outcast() #entry(false) #type(SimdVF) {
-        vf_counter_inc(%counter_0);
+        vf_counter_inc__callee(%counter_0);
         reg<pred_reg,uint16_t> %preg_0 = vf.create_mask(pattern=0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src0_0 = vf.load_align(%src0_0, 0, dtype=uint32_t);
         reg<vec_reg,uint32_t> %reg_src1_0 = vf.load_align(%src1_0, 0, dtype=uint32_t);

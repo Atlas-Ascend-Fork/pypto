@@ -23,6 +23,7 @@
 #include "ir/transforms/base/visitor.h"
 #include "ir/verifier/verification_error.h"
 #include "ir/verifier/verifier.h"
+#include "ir/reg_op.h"
 
 namespace pypto {
 namespace ir {
@@ -155,7 +156,7 @@ void NoNestedCallVerifier::VisitExpr_(const CallPtr& op)
             // Allow vf.bit_cast as a nested call — it is a type annotation,
             // not a real compute op, and is designed to be used as an
             // argument inside other vf.xxx calls.
-            if (nested->name_ == "vf.bit_cast") {
+            if (nested->name_ == VF_BIT_CAST) {
                 VisitExpr(arg);
                 continue;
             }

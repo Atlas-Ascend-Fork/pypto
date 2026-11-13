@@ -1510,6 +1510,8 @@ void BindProgram(py::module_& ir)
         .value("SimtKernel", FunctionType::SIMT_KERNEL, "3510 SIMT kernel launched from host")
         .value("SimdVF", FunctionType::SIMD_VF, "3510 SIMD vector function (__simd_vf__) launched from an AIV kernel")
         .value("SimdCallee", FunctionType::SIMD_CALLEE, "3510 SIMD helper callable from SIMD functions")
+        .value("SimdTileVF", FunctionType::SIMD_TILE_VF, "Tile function expanded into a SIMD VF")
+        .value("SimdTileCallee", FunctionType::SIMD_TILE_CALLEE, "Tile helper expanded into a SIMD callee")
         .export_values();
 
     // Function - const shared_ptr

@@ -30,6 +30,7 @@
 #include "ir/pipe.h"
 #include "ir/op_attr_types.h"
 #include "ir/type.h"
+#include "ir/reg_op.h"
 #include "pypto_pro/error.h"
 #include "tilefwk/error.h"
 
@@ -873,7 +874,7 @@ static std::string EmitVFDuplicate(const ir::CallPtr& op, codegen::CodegenBase& 
                       (IsB8Type(srcDt) || srcDt.GetBit() == 16 || srcDt.GetBit() == 32 || srcDt.GetBit() == 64))
         << "vf.full src only supports b8/b16/b32/b64 types, got " << DTypeStr(srcDt);
     // MERGING is not supported by the underlying vdup/vbr instructions on current device.
-    VFZeroingOnly(op, "vf.full");
+    VFZeroingOnly(op, VF_FULL);
     // The fill width follows the DST. The Scalar-mode ``dtype`` kwarg is what
     // the frontend uses to declare dst (a bare int literal is INT64, so it
     // must not be compared against dst nor route a b16/b32 fill into the b64
@@ -902,7 +903,7 @@ static std::string EmitVFDuplicate(const ir::CallPtr& op, codegen::CodegenBase& 
             pos = "POS_LOWEST";
         else if (pos == "HIGHEST")
             pos = "POS_HIGHEST";
-        std::string mode = VFZeroingOnly(op, "vf.full");
+        std::string mode = VFZeroingOnly(op, VF_FULL);
         // FP4/HF8/HF4/INT4/UINT4 lack a vdup overload — reinterpret as uint8_t
         std::string cast = GetB8Cast(srcDt);
         // Tensor mode always requires a mask (vdup(dstReg, srcReg, mask))
@@ -926,7 +927,7 @@ static std::string EmitVFDuplicate(const ir::CallPtr& op, codegen::CodegenBase& 
     } else if (op->args_.size() >= 3) {
         // Scalar broadcast with mask: vdup(dst, scalar, preg, MODE_ZEROING/MERGING)
         std::string mask = codegen.GetExprAsCode(op->args_[2]);
-        std::string mode = VFZeroingOnly(op, "vf.full");
+        std::string mode = VFZeroingOnly(op, VF_FULL);
         // The fill width follows DST: an int literal is INT64 and must not route
         // a b16/b32 fill into the b64 split path.
         if (dstDt.GetBit() == 64) {
@@ -1009,7 +1010,7 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
         if (dstIsMask) {
             std::string mode = "NORM";
             if (op->HasKwarg("dist")) {
-                mode = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/true, "vf.load_align");
+                mode = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/true, VF_LOAD_ALIGN);
                 PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, mode == "NORM" || mode == "US" || mode == "DS")
                     << "vf.load_align 1-arg (MaskReg) only supports NORM/US/DS dist, got " << mode;
             }
@@ -1018,7 +1019,7 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
         } else {
             // RegTensor 1-arg form: vlds with hardcoded NORM, dist kwarg not supported
             if (op->HasKwarg("dist")) {
-                auto distVal = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/true, "vf.load_align");
+                auto distVal = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/true, VF_LOAD_ALIGN);
                 PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, distVal == "NORM")
                     << "vf.load_align 1-arg (RegTensor) only supports NORM dist, got " << distVal;
             }
@@ -1073,7 +1074,7 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
     // name (e.g. "DS"), which plds accepts directly and vlds maps to Bxx suffix.
     std::string mode = "NORM";
     if (op->HasKwarg("dist"))
-        mode = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/true, "vf.load_align");
+        mode = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/true, VF_LOAD_ALIGN);
     // DINTLV de-interleave: the dst pair is the result target's tuple elements.
     if (mode == "DINTLV_B8" || mode == "DINTLV_B16" || mode == "DINTLV_B32") {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("data_copy_mode"))
@@ -1299,7 +1300,7 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
             << "vf.store_align (MaskReg src) does not support repeat_stride";
         std::string dist = "NORM";
         if (op->HasKwarg("dist")) {
-            dist = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/false, "vf.store_align");
+            dist = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/false, VF_STORE_ALIGN);
             // pst/psts: only supports NORM and PACK dist
             PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, dist == "NORM" || dist == "PACK" || dist == "PK")
                 << "vf.store_align (MaskReg) only supports NORM/PACK dist, got " << dist;
@@ -1335,7 +1336,7 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
     // DistVST constants (mirrors AscendC Reg::StoreDist / GetStoreDist).
     std::string dist = "";
     if (op->HasKwarg("dist")) {
-        dist = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/false, "vf.store_align");
+        dist = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/false, VF_STORE_ALIGN);
     }
     if (dist.empty()) {
         // Auto-select default dist based on src dtype (uses NORM_B8/B16/B32 by element width)
@@ -1678,7 +1679,7 @@ static std::string EmitVFMax(const ir::CallPtr& op, codegen::CodegenBase& codege
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     // MERGING is not supported by the underlying vmax instruction on current device.
-    std::string mode = VFZeroingOnly(op, "vf.max");
+    std::string mode = VFZeroingOnly(op, VF_MAX);
     if (s0Dt.GetBit() == 64) {
         // B64 max via deinterleave + b32 compare + vsel + interleave.
         // For INT64: compare high halves (signed), then low halves (unsigned) on tie.
@@ -1754,7 +1755,7 @@ static std::string EmitVFAdd(const ir::CallPtr& op, codegen::CodegenBase& codege
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
     // MERGING is not supported by the underlying vadd instruction on current device.
-    std::string mode = VFZeroingOnly(op, "vf.add");
+    std::string mode = VFZeroingOnly(op, VF_ADD);
     if (s0Dt.GetBit() == 64) {
         // B64 add: Mirrors AscendC AddB64Impl (vaddc + vaddcs carry-chain).
         // Uses CalTraitOneByTransToTraitTwo pattern: ppack mask, deinterleave both sources,
@@ -1807,7 +1808,7 @@ static std::string EmitVFSub(const ir::CallPtr& op, codegen::CodegenBase& codege
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    std::string mode = VFZeroingOnly(op, "vf.sub");
+    std::string mode = VFZeroingOnly(op, VF_SUB);
     if (s0Dt.GetBit() == 64) {
         // B64 sub: Mirrors AscendC SubB64Impl (vsubc + vsubcs borrow-chain).
         // Uses CalTraitOneByTransToTraitTwo pattern: ppack mask, deinterleave both sources,
@@ -1893,7 +1894,7 @@ static std::string EmitVFAnd(const ir::CallPtr& op, codegen::CodegenBase& codege
     std::string castPrefix = "(RegTensor<" + s0Dt.ToCTypeString() + "> &)";
     std::string s0Expr = (s0Dt == s1Dt) ? src0 : (castPrefix + src0);
     std::string s1Expr = (s1Dt == s0Dt) ? src1 : (castPrefix + src1);
-    std::string mode = VFZeroingOnly(op, "vf.and_");
+    std::string mode = VFZeroingOnly(op, VF_AND);
     if (s0Dt.GetBit() == 64) {
         // B64 bitwise via b32 vand (mirrors AscendC AndImpl b64 path, see EmitB64Bitwise).
         EmitB64Bitwise(codegen, "vand", {s0Expr, s1Expr}, dst, mask, mode, dst + "_and_");
@@ -1967,7 +1968,7 @@ static std::string EmitVFBinaryBitwise(const ir::CallPtr& op, codegen::CodegenBa
 
 static std::string EmitVFXor(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return EmitVFBinaryBitwise(op, codegenBase, "vf.xor", "vxor");
+    return EmitVFBinaryBitwise(op, codegenBase, VF_XOR, "vxor");
 }
 
 // ============================================================================
@@ -1976,7 +1977,7 @@ static std::string EmitVFXor(const ir::CallPtr& op, codegen::CodegenBase& codege
 
 static std::string EmitVFOr(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return EmitVFBinaryBitwise(op, codegenBase, "vf.or_", "vor");
+    return EmitVFBinaryBitwise(op, codegenBase, VF_OR, "vor");
 }
 
 // ============================================================================
@@ -2090,7 +2091,7 @@ static std::string EmitVFMul(const ir::CallPtr& op, codegen::CodegenBase& codege
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    std::string mode = VFZeroingOnly(op, "vf.mul");
+    std::string mode = VFZeroingOnly(op, VF_MUL);
     if (s0Dt.GetBit() == 64) {
         // B64 mul: Mirrors AscendC MulB64Impl (vmull + vmula).
         // MulB64Impl uses B64TraitOneToTraitTwo to split both sources into b32 halves,
@@ -2196,7 +2197,7 @@ static std::string EmitVFDiv(const ir::CallPtr& op, codegen::CodegenBase& codege
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    std::string mode = VFZeroingOnly(op, "vf.div");
+    std::string mode = VFZeroingOnly(op, VF_DIV);
     if (s0Dt.GetBit() == 64) {
         // B64 division (INT64/UINT64): Newton-Raphson reciprocal refinement
         // mirroring AscendC DivS64Impl / DivU64Impl. No native b64 vdiv.
@@ -2480,7 +2481,7 @@ static std::string EmitVFMuls(const ir::CallPtr& op, codegen::CodegenBase& codeg
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string scalarStr = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    std::string mode = VFZeroingOnly(op, "vf.muls");
+    std::string mode = VFZeroingOnly(op, VF_MULS);
     scalarStr = cce::CoerceScalarToInt(op->args_[2], srcDt, scalarStr);
     if (srcDt.GetBit() == 64) {
         // B64 Muls: dst = src * scalar. Mirrors AscendC MulsImpl: Duplicate(scalar) + Mul(src, scalar_reg).
@@ -2557,7 +2558,7 @@ static std::string EmitVFLn(const ir::CallPtr& op, codegen::CodegenBase& codegen
         std::string dst = codegen.GetExprAsCode(op->args_[0]);
         std::string src = codegen.GetExprAsCode(op->args_[1]);
         std::string mask = codegen.GetExprAsCode(op->args_[2]);
-        std::string mode = VFZeroingOnly(op, "vf.ln");
+        std::string mode = VFZeroingOnly(op, VF_LN);
         std::string mc = dst + "_mcmp_";
         std::string tp = dst + "_tmp_";
         std::string sc = dst + "_srcc_";
@@ -2586,7 +2587,7 @@ static std::string EmitVFLn(const ir::CallPtr& op, codegen::CodegenBase& codegen
         }
         return "";
     }
-    return EmitVFUnary(op, codegenBase, "vf.ln", "vln");
+    return EmitVFUnary(op, codegenBase, VF_LN, "vln");
 }
 
 // ============================================================================
@@ -2605,7 +2606,7 @@ static std::string EmitVFLog(const ir::CallPtr& op, codegen::CodegenBase& codege
         std::string dst = codegen.GetExprAsCode(op->args_[0]);
         std::string src = codegen.GetExprAsCode(op->args_[1]);
         std::string mask = codegen.GetExprAsCode(op->args_[2]);
-        std::string mode = VFZeroingOnly(op, "vf.log");
+        std::string mode = VFZeroingOnly(op, VF_LOG);
         std::string mc = dst + "_mcmp_";
         std::string tp = dst + "_tmp_";
         std::string sc = dst + "_srcc_";
@@ -2634,7 +2635,7 @@ static std::string EmitVFLog(const ir::CallPtr& op, codegen::CodegenBase& codege
         }
         return "";
     }
-    return EmitVFUnary(op, codegenBase, "vf.log", "vln");
+    return EmitVFUnary(op, codegenBase, VF_LOG, "vln");
 }
 
 // ============================================================================
@@ -2662,7 +2663,7 @@ static std::string EmitVFMin(const ir::CallPtr& op, codegen::CodegenBase& codege
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    std::string mode = VFZeroingOnly(op, "vf.min");
+    std::string mode = VFZeroingOnly(op, VF_MIN);
     if (s0Dt.GetBit() == 64) {
         // B64 min via deinterleave + b32 compare + vsel + interleave.
         // min = src1 when src0 > src1, else src0 (i.e., pick the smaller).
@@ -2726,7 +2727,7 @@ static std::string EmitVFExp(const ir::CallPtr& op, codegen::CodegenBase& codege
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
-    std::string mode = VFZeroingOnly(op, "vf.exp");
+    std::string mode = VFZeroingOnly(op, VF_EXP);
     if (op->HasKwarg("precision") && op->GetKwarg<bool>("precision")) {
         std::string ms = dst + "_sub_";
         std::string tw = dst + "_two_";
@@ -2772,7 +2773,7 @@ static std::string EmitVFAbs(const ir::CallPtr& op, codegen::CodegenBase& codege
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
-    std::string mode = VFZeroingOnly(op, "vf.abs");
+    std::string mode = VFZeroingOnly(op, VF_ABS);
     if (srcDt == DataType::INT64) {
         // B64 abs: abs(x) = x if x >= 0, -x if x < 0.
         // Mirrors AscendC AbsB64Impl: vbr(0) + vcmp_lt + Sub(vsubc) + SubC(vsubcs) + vsel.
@@ -2845,7 +2846,7 @@ static std::string EmitVFNot(const ir::CallPtr& op, codegen::CodegenBase& codege
         codegen.Emit("pnot(" + dst + ", " + src + ", " + mask + ");");
         return "";
     }
-    std::string mode = VFZeroingOnly(op, "vf.not_");
+    std::string mode = VFZeroingOnly(op, VF_NOT);
     if (srcDt.GetBit() == 64) {
         // B64 bitwise via b32 vnot (mirrors AscendC NotImpl b64 path, see EmitB64Bitwise).
         EmitB64Bitwise(codegen, "vnot", {src}, dst, mask, mode, dst + "_not_");
@@ -2871,7 +2872,7 @@ static std::string EmitVFSqrt(const ir::CallPtr& op, codegen::CodegenBase& codeg
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
-    std::string mode = VFZeroingOnly(op, "vf.sqrt");
+    std::string mode = VFZeroingOnly(op, VF_SQRT);
     if (op->HasKwarg("precision") && op->GetKwarg<bool>("precision")) {
         std::string mc = dst + "_mcmp_";
         std::string tp = dst + "_tmp_";
@@ -2925,7 +2926,7 @@ static std::string EmitVFRelu(const ir::CallPtr& op, codegen::CodegenBase& codeg
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
-    std::string mode = VFZeroingOnly(op, "vf.relu");
+    std::string mode = VFZeroingOnly(op, VF_RELU);
     if (srcDt == DataType::INT64) {
         // B64 relu (mirrors AscendC ReluB64Impl: Maxs(src, 0)): deinterleave +
         // scalar(0) two-stage compare + vsel + interleave. No native b64 vrelu.
@@ -2987,7 +2988,7 @@ static std::string EmitVFNeg(const ir::CallPtr& op, codegen::CodegenBase& codege
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
-    std::string mode = VFZeroingOnly(op, "vf.neg");
+    std::string mode = VFZeroingOnly(op, VF_NEG);
     if (srcDt == DataType::INT64 || srcDt == DataType::UINT64) {
         // B64 neg: dst = 0 - src. Mirrors AscendC NegB64Impl: Duplicate(0) + Sub(0, src).
         // Sub for b64 uses vsubc + vsubcs borrow-chain (mirrors SubB64Impl).
@@ -3048,7 +3049,7 @@ static std::string EmitVFAdds(const ir::CallPtr& op, codegen::CodegenBase& codeg
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string scalarStr = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    std::string mode = VFZeroingOnly(op, "vf.adds");
+    std::string mode = VFZeroingOnly(op, VF_ADDS);
     scalarStr = cce::CoerceScalarToInt(op->args_[2], srcDt, scalarStr);
     if (srcDt.GetBit() == 64) {
         // B64 Adds: dst = src + scalar.
@@ -3121,7 +3122,7 @@ static std::string EmitVFMins(const ir::CallPtr& op, codegen::CodegenBase& codeg
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string scalarStr = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    std::string mode = VFZeroingOnly(op, "vf.mins");
+    std::string mode = VFZeroingOnly(op, VF_MINS);
     scalarStr = cce::CoerceScalarToInt(op->args_[2], srcDt, scalarStr);
     if (srcDt.GetBit() == 64) {
         // B64 mins: min(src, scalar) via deinterleave + scalar compare + vsel + interleave.
@@ -3201,7 +3202,7 @@ static std::string EmitVFMaxs(const ir::CallPtr& op, codegen::CodegenBase& codeg
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string scalarStr = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    std::string mode = VFZeroingOnly(op, "vf.maxs");
+    std::string mode = VFZeroingOnly(op, VF_MAXS);
     scalarStr = cce::CoerceScalarToInt(op->args_[2], srcDt, scalarStr);
     if (srcDt.GetBit() == 64) {
         // B64 maxs: max(src, scalar) via deinterleave + scalar compare + vsel + interleave.
@@ -3277,7 +3278,7 @@ static std::string EmitVFLeakyRelu(const ir::CallPtr& op, codegen::CodegenBase& 
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string alpha = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    std::string mode = VFZeroingOnly(op, "vf.leaky_relu");
+    std::string mode = VFZeroingOnly(op, VF_LEAKY_RELU);
     codegen.Emit("vlrelu(" + dst + ", " + src + ", " + alpha + ", " + mask + ", " + mode + ");");
     return "";
 }
@@ -3350,7 +3351,7 @@ static std::string EmitVFPairReduceSum(const ir::CallPtr& op, codegen::CodegenBa
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
-    std::string mode = VFZeroingOnly(op, "vf.pair_reduce_sum");
+    std::string mode = VFZeroingOnly(op, VF_PAIR_REDUCE_SUM);
     codegen.Emit("vcpadd(" + dst + ", " + src + ", " + mask + ", " + mode + ");");
     return "";
 }
@@ -3380,7 +3381,7 @@ static std::string EmitVFAbsSub(const ir::CallPtr& op, codegen::CodegenBase& cod
     std::string src0 = codegen.GetExprAsCode(op->args_[1]);
     std::string src1 = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    std::string mode = VFZeroingOnly(op, "vf.abs_sub");
+    std::string mode = VFZeroingOnly(op, VF_ABS_SUB);
     if (s0Dt == DataType::INT64) {
         // B64 abs_sub: |src0 - src1| = abs(vsub(src0, src1)).
         // vsub has no b64 single-register overload; use deinterleave + vsub/vsubc
@@ -3747,7 +3748,7 @@ static std::string EmitVFPRelu(const ir::CallPtr& op, codegen::CodegenBase& code
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string slope = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
-    std::string mode = VFZeroingOnly(op, "vf.prelu");
+    std::string mode = VFZeroingOnly(op, VF_PRELU);
     codegen.Emit("vprelu(" + dst + ", " + src + ", " + slope + ", " + mask + ", " + mode + ");");
     return "";
 }
@@ -3800,7 +3801,7 @@ static std::string EmitVFShift(const ir::CallPtr& op, codegen::CodegenBase& code
         std::string hiDst = p + "_hid_";
         EmitRtWrapDecl(codegen, ir::DataType::UINT32, loDst);
         EmitRtWrapDecl(codegen, ir::DataType::UINT32, hiDst);
-        if (opName == "vf.shift_left") {
+        if (opName == VF_SHIFT_LEFT) {
             // Left shift: lo_dst = lo << N, carry = lo >> (32-N), hi_dst = (hi << N) | carry
             std::string carry = p + "_carry_";
             EmitRtWrapDecl(codegen, ir::DataType::UINT32, carry);
@@ -3867,7 +3868,7 @@ static std::string EmitVFShift(const ir::CallPtr& op, codegen::CodegenBase& code
 
 static std::string EmitVFShiftLeft(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return EmitVFShift(op, codegenBase, "vf.shift_left", "vshl", "vshls");
+    return EmitVFShift(op, codegenBase, VF_SHIFT_LEFT, "vshl", "vshls");
 }
 
 // ============================================================================
@@ -3879,7 +3880,7 @@ static std::string EmitVFShiftLeft(const ir::CallPtr& op, codegen::CodegenBase& 
 
 static std::string EmitVFShiftRight(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
-    return EmitVFShift(op, codegenBase, "vf.shift_right", "vshr", "vshrs");
+    return EmitVFShift(op, codegenBase, VF_SHIFT_RIGHT, "vshr", "vshrs");
 }
 
 // ============================================================================
@@ -4097,7 +4098,7 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
         roundMode = VFEnumValueName(ir::EnumToString(static_cast<ir::VFRoundMode>(op->GetKwarg<int>("round_mode"))));
     }
     // 3510 vcvt only supports MODE_ZEROING at the instruction level.
-    std::string modeValue = VFZeroingOnly(op, "vf.astype");
+    std::string modeValue = VFZeroingOnly(op, VF_ASTYPE);
     std::string part;
     if (layout == "ZERO")
         part = "PART_EVEN";
@@ -5774,7 +5775,7 @@ static std::string EmitVFTruncate(const ir::CallPtr& op, codegen::CodegenBase& c
             PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false)
                 << "vf.truncate got unknown round_mode " << VFEnumValueName(ir::EnumToString(rm));
     }
-    std::string mode = VFZeroingOnly(op, "vf.truncate");
+    std::string mode = VFZeroingOnly(op, VF_TRUNCATE);
     codegen.Emit("vtrc(" + dst + ", " + src + ", " + roundConst + ", " + mask + ", " + mode + ");");
     return "";
 }
@@ -5846,411 +5847,411 @@ static std::string EmitVFGetMaskSpr(const ir::CallPtr& op, codegen::CodegenBase&
 // Registration
 // ============================================================================
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.create_mask")
+REGISTER_BACKEND_OP(BackendCCE, VF_CREATE_MASK)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFCreateMask);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.full")
+REGISTER_BACKEND_OP(BackendCCE, VF_FULL)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFDuplicate);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.load_align")
+REGISTER_BACKEND_OP(BackendCCE, VF_LOAD_ALIGN)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFLoadAlign);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.store_align")
+REGISTER_BACKEND_OP(BackendCCE, VF_STORE_ALIGN)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFStoreAlign);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.max")
+REGISTER_BACKEND_OP(BackendCCE, VF_MAX)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMax);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.add")
+REGISTER_BACKEND_OP(BackendCCE, VF_ADD)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFAdd);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.sub")
+REGISTER_BACKEND_OP(BackendCCE, VF_SUB)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFSub);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.and_")
+REGISTER_BACKEND_OP(BackendCCE, VF_AND)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFAnd);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.xor")
+REGISTER_BACKEND_OP(BackendCCE, VF_XOR)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFXor);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.or_")
+REGISTER_BACKEND_OP(BackendCCE, VF_OR)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFOr);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.reduce_sum")
+REGISTER_BACKEND_OP(BackendCCE, VF_REDUCE_SUM)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFReduceSum);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.reduce_max")
+REGISTER_BACKEND_OP(BackendCCE, VF_REDUCE_MAX)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFReduceMax);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.reduce_min")
+REGISTER_BACKEND_OP(BackendCCE, VF_REDUCE_MIN)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFReduceMin);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.mul")
+REGISTER_BACKEND_OP(BackendCCE, VF_MUL)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMul);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.mul_add_dst")
+REGISTER_BACKEND_OP(BackendCCE, VF_MUL_ADD_DST)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMulAddDst);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.mul_add_dst_acc")
+REGISTER_BACKEND_OP(BackendCCE, VF_MUL_ADD_DST_ACC)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMulAddDst);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.div")
+REGISTER_BACKEND_OP(BackendCCE, VF_DIV)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFDiv);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.muls")
+REGISTER_BACKEND_OP(BackendCCE, VF_MULS)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMuls);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.ln")
+REGISTER_BACKEND_OP(BackendCCE, VF_LN)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFLn);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.log")
+REGISTER_BACKEND_OP(BackendCCE, VF_LOG)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFLog);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.min")
+REGISTER_BACKEND_OP(BackendCCE, VF_MIN)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMin);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.exp")
+REGISTER_BACKEND_OP(BackendCCE, VF_EXP)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFExp);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.abs")
+REGISTER_BACKEND_OP(BackendCCE, VF_ABS)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFAbs);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.not_")
+REGISTER_BACKEND_OP(BackendCCE, VF_NOT)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFNot);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.sqrt")
+REGISTER_BACKEND_OP(BackendCCE, VF_SQRT)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFSqrt);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.relu")
+REGISTER_BACKEND_OP(BackendCCE, VF_RELU)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFRelu);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.neg")
+REGISTER_BACKEND_OP(BackendCCE, VF_NEG)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFNeg);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.adds")
+REGISTER_BACKEND_OP(BackendCCE, VF_ADDS)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFAdds);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.mins")
+REGISTER_BACKEND_OP(BackendCCE, VF_MINS)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMins);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.maxs")
+REGISTER_BACKEND_OP(BackendCCE, VF_MAXS)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMaxs);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.leaky_relu")
+REGISTER_BACKEND_OP(BackendCCE, VF_LEAKY_RELU)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFLeakyRelu);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.interleave")
+REGISTER_BACKEND_OP(BackendCCE, VF_INTERLEAVE)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFInterleave);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.pair_reduce_sum")
+REGISTER_BACKEND_OP(BackendCCE, VF_PAIR_REDUCE_SUM)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFPairReduceSum);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.abs_sub")
+REGISTER_BACKEND_OP(BackendCCE, VF_ABS_SUB)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFAbsSub);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.axpy")
+REGISTER_BACKEND_OP(BackendCCE, VF_AXPY)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFAxpy);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.axpy_acc")
+REGISTER_BACKEND_OP(BackendCCE, VF_AXPY_ACC)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFAxpy);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.mul_dst_add")
+REGISTER_BACKEND_OP(BackendCCE, VF_MUL_DST_ADD)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMulDstAdd);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.mul_dst_add_acc")
+REGISTER_BACKEND_OP(BackendCCE, VF_MUL_DST_ADD_ACC)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMulDstAdd);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.pack")
+REGISTER_BACKEND_OP(BackendCCE, VF_PACK)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFPack);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.unpack")
+REGISTER_BACKEND_OP(BackendCCE, VF_UNPACK)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFUnpack);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.prelu")
+REGISTER_BACKEND_OP(BackendCCE, VF_PRELU)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFPRelu);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.shift_left")
+REGISTER_BACKEND_OP(BackendCCE, VF_SHIFT_LEFT)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFShiftLeft);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.shift_right")
+REGISTER_BACKEND_OP(BackendCCE, VF_SHIFT_RIGHT)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFShiftRight);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.mull")
+REGISTER_BACKEND_OP(BackendCCE, VF_MULL)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMull);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.addc")
+REGISTER_BACKEND_OP(BackendCCE, VF_ADDC)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFAddc);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.subc")
+REGISTER_BACKEND_OP(BackendCCE, VF_SUBC)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFSubc);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.exp_sub")
+REGISTER_BACKEND_OP(BackendCCE, VF_EXP_SUB)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFExpSub);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.astype")
+REGISTER_BACKEND_OP(BackendCCE, VF_ASTYPE)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFCast);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.de_interleave")
+REGISTER_BACKEND_OP(BackendCCE, VF_DE_INTERLEAVE)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFDeInterleave);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.select")
+REGISTER_BACKEND_OP(BackendCCE, VF_SELECT)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFSelect);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.update_mask")
+REGISTER_BACKEND_OP(BackendCCE, VF_UPDATE_MASK)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFUpdateMask);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.mem_bar")
+REGISTER_BACKEND_OP(BackendCCE, VF_MEM_BAR)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMemBar);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.histograms")
+REGISTER_BACKEND_OP(BackendCCE, VF_HISTOGRAMS)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFHistograms);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.histogram_acc")
+REGISTER_BACKEND_OP(BackendCCE, VF_HISTOGRAM_ACC)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFHistograms);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.eq")
+REGISTER_BACKEND_OP(BackendCCE, VF_EQ)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(
             op, codegen, [](const ir::CallPtr& o, codegen::CodegenBase& c) { return EmitVFCompareImpl(o, c, "EQ"); });
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.ne")
+REGISTER_BACKEND_OP(BackendCCE, VF_NE)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(
             op, codegen, [](const ir::CallPtr& o, codegen::CodegenBase& c) { return EmitVFCompareImpl(o, c, "NE"); });
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.lt")
+REGISTER_BACKEND_OP(BackendCCE, VF_LT)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(
             op, codegen, [](const ir::CallPtr& o, codegen::CodegenBase& c) { return EmitVFCompareImpl(o, c, "LT"); });
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.gt")
+REGISTER_BACKEND_OP(BackendCCE, VF_GT)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(
             op, codegen, [](const ir::CallPtr& o, codegen::CodegenBase& c) { return EmitVFCompareImpl(o, c, "GT"); });
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.le")
+REGISTER_BACKEND_OP(BackendCCE, VF_LE)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(
             op, codegen, [](const ir::CallPtr& o, codegen::CodegenBase& c) { return EmitVFCompareImpl(o, c, "LE"); });
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.ge")
+REGISTER_BACKEND_OP(BackendCCE, VF_GE)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(
             op, codegen, [](const ir::CallPtr& o, codegen::CodegenBase& c) { return EmitVFCompareImpl(o, c, "GE"); });
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.squeeze")
+REGISTER_BACKEND_OP(BackendCCE, VF_SQUEEZE)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFSqueeze);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.arange")
+REGISTER_BACKEND_OP(BackendCCE, VF_ARANGE)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFArange);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.gather")
+REGISTER_BACKEND_OP(BackendCCE, VF_GATHER)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFGather);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.store_unalign")
+REGISTER_BACKEND_OP(BackendCCE, VF_STORE_UNALIGN)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFStoreUnAlign);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.store_unalign_post")
+REGISTER_BACKEND_OP(BackendCCE, VF_STORE_UNALIGN_POST)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(
             op, codegen, [](const ir::CallPtr& o, codegen::CodegenBase& c) { return EmitVFStoreUnAlignPost(o, c); });
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.squeeze_store_unalign")
+REGISTER_BACKEND_OP(BackendCCE, VF_SQUEEZE_STORE_UNALIGN)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(
             op, codegen, [](const ir::CallPtr& o, codegen::CodegenBase& c) { return EmitVFSqueezeStoreUnAlign(o, c); });
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.squeeze_store_unalign_post")
+REGISTER_BACKEND_OP(BackendCCE, VF_SQUEEZE_STORE_UNALIGN_POST)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, [](const ir::CallPtr& o, codegen::CodegenBase& c) {
@@ -6258,57 +6259,57 @@ REGISTER_BACKEND_OP(BackendCCE, "vf.squeeze_store_unalign_post")
         });
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.unalign_reg_for_store")
+REGISTER_BACKEND_OP(BackendCCE, VF_UNALIGN_REG_FOR_STORE)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(
             op, codegen, [](const ir::CallPtr& o, codegen::CodegenBase& c) { return EmitVFUnalignRegForStore(o, c); });
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.clear_spr")
+REGISTER_BACKEND_OP(BackendCCE, VF_CLEAR_SPR)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFClearSpr);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.load_unalign_init")
+REGISTER_BACKEND_OP(BackendCCE, VF_LOAD_UNALIGN_INIT)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(
             op, codegen, [](const ir::CallPtr& o, codegen::CodegenBase& c) { return EmitVFUnalignRegForLoad(o, c); });
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.load_unalign_pre")
+REGISTER_BACKEND_OP(BackendCCE, VF_LOAD_UNALIGN_PRE)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFLoadUnalignPre);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.load_unalign")
+REGISTER_BACKEND_OP(BackendCCE, VF_LOAD_UNALIGN)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFLoadUnalign);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.scatter")
+REGISTER_BACKEND_OP(BackendCCE, VF_SCATTER)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFScatter);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.unsqueeze")
+REGISTER_BACKEND_OP(BackendCCE, VF_UNSQUEEZE)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFUnsqueeze);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.truncate")
+REGISTER_BACKEND_OP(BackendCCE, VF_TRUNCATE)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFTruncate);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.mask_gen_with_reg_tensor")
+REGISTER_BACKEND_OP(BackendCCE, VF_MASK_GEN_WITH_REG_TENSOR)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, [](const ir::CallPtr& o, codegen::CodegenBase& c) {
@@ -6316,7 +6317,7 @@ REGISTER_BACKEND_OP(BackendCCE, "vf.mask_gen_with_reg_tensor")
         });
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.get_mask_spr")
+REGISTER_BACKEND_OP(BackendCCE, VF_GET_MASK_SPR)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFGetMaskSpr);
@@ -6338,7 +6339,7 @@ static std::string EmitVFLog2(const ir::CallPtr& op, codegen::CodegenBase& codeg
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
-    std::string mode = VFZeroingOnly(op, "vf.log2");
+    std::string mode = VFZeroingOnly(op, VF_LOG2);
     if (op->HasKwarg("precision") && op->GetKwarg<bool>("precision")) {
         std::string mc = dst + "_mcmp_";
         std::string tp = dst + "_tmp_";
@@ -6391,7 +6392,7 @@ static std::string EmitVFLog10(const ir::CallPtr& op, codegen::CodegenBase& code
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[1]);
     std::string mask = codegen.GetExprAsCode(op->args_[2]);
-    std::string mode = VFZeroingOnly(op, "vf.log10");
+    std::string mode = VFZeroingOnly(op, VF_LOG10);
     if (op->HasKwarg("precision") && op->GetKwarg<bool>("precision")) {
         std::string mc = dst + "_mcmp_";
         std::string tp = dst + "_tmp_";
@@ -6466,19 +6467,19 @@ static std::string EmitVFMulsCast(const ir::CallPtr& op, codegen::CodegenBase& c
     return "";
 }
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.log2")
+REGISTER_BACKEND_OP(BackendCCE, VF_LOG2)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFLog2);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.log10")
+REGISTER_BACKEND_OP(BackendCCE, VF_LOG10)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFLog10);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.muls_cast")
+REGISTER_BACKEND_OP(BackendCCE, VF_MULS_CAST)
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFMulsCast);
@@ -6591,14 +6592,14 @@ static std::string EmitVFStore(const ir::CallPtr& op, codegen::CodegenBase& code
 // dst's IR type (RegType MaskReg vs RegTensor kind), matching the
 // function-overloading model.
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.load")
+REGISTER_BACKEND_OP(BackendCCE, VF_LOAD)
 
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFLoad);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.store")
+REGISTER_BACKEND_OP(BackendCCE, VF_STORE)
 
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
@@ -6737,14 +6738,14 @@ static std::string EmitVFMove(const ir::CallPtr& op, codegen::CodegenBase& codeg
     return "";
 }
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.create_addr_reg")
+REGISTER_BACKEND_OP(BackendCCE, VF_CREATE_ADDR_REG)
 
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return EmitVFValueForm(op, codegen, EmitVFCreateAddrReg);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.move")
+REGISTER_BACKEND_OP(BackendCCE, VF_MOVE)
 
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
@@ -6758,7 +6759,7 @@ static std::string EmitVFMoveAcc(const ir::CallPtr& op, codegen::CodegenBase& co
     return EmitVFMove(op, codegen);
 }
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.move_acc")
+REGISTER_BACKEND_OP(BackendCCE, VF_MOVE_ACC)
 
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
@@ -6783,7 +6784,7 @@ static std::string EmitVFBitCast(const ir::CallPtr& op, codegen::CodegenBase& co
     return "";
 }
 
-REGISTER_BACKEND_OP(BackendCCE, "vf.bit_cast")
+REGISTER_BACKEND_OP(BackendCCE, VF_BIT_CAST)
 
     .set_pipe(ir::PipeType::V)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
@@ -6802,8 +6803,13 @@ static std::string EmitSimdCall(const ir::CallPtr& op, codegen::CodegenBase& cod
         if (auto tileType = ir::As<ir::TileType>(actual->GetType())) {
             // Project a MutexTile wrapper to its native Tile before extracting the
             // UB pointer (the same operand adaptation the SIMT launch uses).
-            call << "(__ubuf__ " << tileType->dtype_.ToCTypeString() << " *)" << cce::GetOperandAsCode(codegen, actual)
-                 << ".data()";
+            const std::string tile = cce::GetOperandAsCode(codegen, actual);
+            call << "(__ubuf__ " << tileType->dtype_.ToCTypeString() << " *)" << tile << ".data()";
+            for (int axis = 0; axis < 2; ++axis) {
+                if (!codegen.GetStaticTileValidDim(tileType, axis)) {
+                    call << ", (uint32_t)" << tile << (axis == 0 ? ".GetValidRow()" : ".GetValidCol()");
+                }
+            }
         } else {
             call << codegen.GetExprAsCode(actual);
         }

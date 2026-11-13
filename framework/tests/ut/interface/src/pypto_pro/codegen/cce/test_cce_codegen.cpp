@@ -23,6 +23,7 @@
 #include "ir/function.h"
 #include "ir/program.h"
 #include "ir/stmt.h"
+#include "ir/reg_op.h"
 
 namespace pypto {
 namespace codegen {
@@ -522,7 +523,7 @@ TEST(CCECodegenTest, PreservesSingleIterationLoopForAddrReg)
     auto addrRegType = std::make_shared<const ir::RegType>(ir::RegKind::AddrReg, ir::DataType::UINT32);
     auto loop_var = MakeVar("i", scalar_type);
     auto addr_reg = MakeVar("addr", addrRegType);
-    auto create_addr = std::make_shared<const ir::Call>("vf.create_addr_reg", std::vector<ir::ExprPtr>{MakeConstInt(1)},
+    auto create_addr = std::make_shared<const ir::Call>(VF_CREATE_ADDR_REG, std::vector<ir::ExprPtr>{MakeConstInt(1)},
                                                         addrRegType, ir::Span::Unknown());
     auto assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{addr_reg}, create_addr,
                                                          ir::Span::Unknown());
@@ -1215,12 +1216,12 @@ TEST(CCECodegenTest, HoistsAutoDeclaredVFDestinations)
     auto dst1 = MakeVar("dst1", regFp32);
     auto add0 = std::make_shared<const ir::AssignStmt>(
         std::vector<ir::VarPtr>{dst0},
-        std::make_shared<const ir::Call>("vf.add", std::vector<ir::ExprPtr>{src0, src1, mask}, regFp32,
+        std::make_shared<const ir::Call>(VF_ADD, std::vector<ir::ExprPtr>{src0, src1, mask}, regFp32,
                                          ir::Span::Unknown()),
         ir::Span::Unknown());
     auto add1 = std::make_shared<const ir::AssignStmt>(
         std::vector<ir::VarPtr>{dst1},
-        std::make_shared<const ir::Call>("vf.add", std::vector<ir::ExprPtr>{src0, src1, mask}, regFp32,
+        std::make_shared<const ir::Call>(VF_ADD, std::vector<ir::ExprPtr>{src0, src1, mask}, regFp32,
                                          ir::Span::Unknown()),
         ir::Span::Unknown());
     auto vf_body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{add0, add1}, ir::Span::Unknown());

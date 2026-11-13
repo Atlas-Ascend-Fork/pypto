@@ -1,5 +1,5 @@
 program #entry() {
-    function inner incast() outcast() #entry(false) #type(SimdCallee) {
+    function inner__callee incast() outcast() #entry(false) #type(SimdCallee) {
         reg<pred_reg,uint16_t> %mask_0 = vf.create_mask();
         return;
     }
@@ -10,8 +10,8 @@ program #entry() {
         return;
     }
     function outer incast() outcast() #entry(false) #type(SimdVF) {
-        inner();
-        inner();
+        inner__callee();
+        inner__callee();
         return;
     }
 }

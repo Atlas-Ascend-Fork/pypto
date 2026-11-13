@@ -1,0 +1,70 @@
+#if defined(__DAV_VEC__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+#include <pypto_vf_support.h>
+__simd_callee__ inline void copy_valid__callee(__ubuf__ float* dst_0, __ubuf__ float* src_0)
+{
+    auto _expr_tmp_0_0 = (int64_t)(1);
+    const uint16_t row__iterator_0_ub = (uint16_t)(_expr_tmp_0_0);
+    for (uint16_t row__iterator_0 = 0; row__iterator_0 < row__iterator_0_ub; row__iterator_0 += 1) {
+        auto _expr_tmp_1_0 = (int64_t)(37);
+        MaskReg mask_0;
+        uint32_t _vf_mask_scalar_0 = (uint32_t)_expr_tmp_1_0;
+        mask_0 = plt_b32(_vf_mask_scalar_0, POST_UPDATE);
+        auto _expr_tmp_2_0 = (row__iterator_0 * 64);
+        RtWrap<float> value_0;
+        vlds(value_0, src_0, _expr_tmp_2_0, NORM);
+        auto _expr_tmp_3_0 = (row__iterator_0 * 64);
+        vsts(value_0, dst_0, _expr_tmp_3_0, NORM_B32, mask_0);
+        continue;
+    }
+    return;
+}
+
+__simd_vf__ inline void pointer_bindings(__ubuf__ float* dst_0, __ubuf__ float* src_0, int32_t count_0)
+{
+    __ubuf__ float* alias_0 = (src_0 + (0));
+    copy_valid__callee(dst_0, alias_0);
+    __ubuf__ float* _expr_tmp_0_0 = (src_0 + (0));
+    copy_valid__callee(dst_0, _expr_tmp_0_0);
+    const uint16_t ___iterator_0_ub = (uint16_t)(count_0);
+    __ubuf__ float* alias_1 = alias_0;
+
+    for (uint16_t ___iterator_0 = 0; ___iterator_0 < ___iterator_0_ub; ___iterator_0 += 1) {
+        __ubuf__ float* alias_2 = (alias_1 + (0));
+        alias_1 = alias_2;
+        continue;
+    }
+    copy_valid__callee(dst_0, alias_1);
+    return;
+}
+
+__aicore__ inline void pointer_kernel_impl_vector(int32_t count_0)
+{
+
+    using src_0_Type = SyncedTile<Tile<TileType::Vec, float, 2, 64, BLayout::RowMajor, 1, 37, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>;
+    src_0_Type src_0{src_0_Type::PtoTile(), {}};
+    TASSIGN(src_0.tile, 0x0);
+    using dst_0_Type = SyncedTile<Tile<TileType::Vec, float, 2, 64, BLayout::RowMajor, 1, 37, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>;
+    dst_0_Type dst_0{dst_0_Type::PtoTile(), {}};
+    TASSIGN(dst_0.tile, 0x1000);
+    pointer_bindings((__ubuf__ float *)dst_0.tile.data(), (__ubuf__ float *)src_0.tile.data(), count_0);
+    return;
+}
+#endif
+
+
+__aicore__ inline void pointer_kernel_impl(int32_t count_0)
+{
+#if defined(__DAV_VEC__)
+    pointer_kernel_impl_vector(count_0);
+#endif
+}

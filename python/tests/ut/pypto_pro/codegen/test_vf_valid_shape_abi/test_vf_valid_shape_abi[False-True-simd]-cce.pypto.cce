@@ -1,0 +1,44 @@
+#if defined(__DAV_VEC__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+#include <pypto_vf_support.h>
+__simd_callee__ inline void leaf__callee(__ubuf__ float* tile_0, uint32_t tile_0__valid_col)
+{
+    auto rows_0 = (int64_t)(1);
+    auto cols_0 = (int64_t)(tile_0__valid_col);
+    return;
+}
+
+__simd_vf__ inline void entry(__ubuf__ float* tile_0, uint32_t tile_0__valid_col)
+{
+    leaf__callee(tile_0, tile_0__valid_col);
+    return;
+}
+
+__aicore__ inline void kernel_impl_vector(int32_t rows_0, int32_t cols_0)
+{
+
+    int64_t valid_shape_0[] = {static_cast<int64_t>(1), static_cast<int64_t>(-1)};
+    using tile_0_Type = SyncedTile<Tile<TileType::Vec, float, 2, 64, BLayout::RowMajor, 1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 0>;
+    tile_0_Type tile_0{tile_0_Type::PtoTile(64), {}};
+    TASSIGN(tile_0.tile, 0x0);
+    entry((__ubuf__ float *)tile_0.tile.data(), (uint32_t)tile_0.tile.GetValidCol());
+    return;
+}
+#endif
+
+
+__aicore__ inline void kernel_impl(int32_t rows_0, int32_t cols_0)
+{
+#if defined(__DAV_VEC__)
+    kernel_impl_vector(rows_0, cols_0);
+#endif
+}

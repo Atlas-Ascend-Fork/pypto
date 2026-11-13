@@ -1822,7 +1822,11 @@ std::string MakeSimtLaunchCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
         if (tileType != nullptr) {
             std::string tile = cce::GetOperandAsCode(codegen, op->args_[i]);
             call << ", (__ubuf__ " << tileType->dtype_.ToCTypeString() << "*)" << tile << ".data()";
-            call << ", (uint32_t)" << tile << ".GetValidRow(), (uint32_t)" << tile << ".GetValidCol()";
+            for (int axis = 0; axis < 2; ++axis) {
+                if (!codegen.GetStaticTileValidDim(tileType, axis)) {
+                    call << ", (uint32_t)" << tile << (axis == 0 ? ".GetValidRow()" : ".GetValidCol()");
+                }
+            }
         } else if (auto tensorType = ir::As<ir::TensorType>(argType)) {
             auto tensorVar = ir::As<ir::Var>(op->args_[i]);
             std::string tensorName = codegen.GetVarName(tensorVar);

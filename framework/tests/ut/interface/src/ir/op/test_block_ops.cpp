@@ -398,8 +398,7 @@ TEST_F(BlockOpsMemoryTest, Subview_TilePreservesPhysicalTypeAndMemRef)
     auto tile = MakeTileVarWithMemRef("tile", {16, 32}, DataType::FP16, MemorySpace::Vec, 0x100, 1024);
     auto source_type = As<TileType>(tile->GetType());
 
-    auto call = reg.Create("block.subview", {tile, MakeScalarVar("offset", DataType::INT64), MakeIntTuple({8, 12})},
-                           Sp());
+    auto call = reg.Create("block.subview", {tile, MakeIntTuple({1, 2}), MakeIntTuple({8, 12})}, Sp());
 
     auto result_type = As<TileType>(call->GetType());
     ASSERT_NE(result_type, nullptr);
@@ -412,6 +411,26 @@ TEST_F(BlockOpsMemoryTest, Subview_TilePreservesPhysicalTypeAndMemRef)
     for (const auto& dim : result_type->tileView_->validShape) {
         EXPECT_EQ(As<ConstInt>(dim)->value_, -1);
     }
+}
+
+TEST_F(BlockOpsMemoryTest, Subview_LinearOffsetPreservesTypeAndValidShape)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto tile = MakeTileVarWithMemRef("tile", {16, 32}, DataType::FP16, MemorySpace::Vec, 0x100, 1024);
+    auto physicalType = As<TileType>(tile->GetType());
+    auto sourceType = std::make_shared<TileType>(physicalType->shape_, physicalType->dtype_, physicalType->memref_,
+                                                 TileView({std::make_shared<ConstInt>(8, DataType::INT64, Sp()),
+                                                           std::make_shared<ConstInt>(12, DataType::INT64, Sp())}));
+    tile = std::make_shared<Var>("tile", sourceType, Sp());
+
+    auto call = reg.Create("block.subview", {tile, MakeScalarVar("offset", DataType::INT64), MakeIntTuple({1, 4})},
+                           Sp());
+
+    auto resultType = As<TileType>(call->GetType());
+    ASSERT_EQ(resultType, sourceType);
+    ASSERT_TRUE(resultType->tileView_.has_value());
+    EXPECT_EQ(As<ConstInt>(resultType->tileView_->validShape[0])->value_, 8);
+    EXPECT_EQ(As<ConstInt>(resultType->tileView_->validShape[1])->value_, 12);
 }
 
 TEST_F(BlockOpsMemoryTest, Subview_WrongArgCount_Throws)

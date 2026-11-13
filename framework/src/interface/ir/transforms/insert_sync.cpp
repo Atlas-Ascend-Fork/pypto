@@ -442,6 +442,8 @@ Pass pass::InsertSync()
                 auto& function = entry.second;
                 if (function->funcType_ == FunctionType::SIMT_VF || function->funcType_ == FunctionType::SIMT_CALLEE ||
                     function->funcType_ == FunctionType::SIMD_VF || function->funcType_ == FunctionType::SIMD_CALLEE ||
+                    function->funcType_ == FunctionType::SIMD_TILE_VF ||
+                    function->funcType_ == FunctionType::SIMD_TILE_CALLEE ||
                     function->funcType_ == FunctionType::ORCHESTRATION)
                     continue;
                 SyncInserter inserter(function);

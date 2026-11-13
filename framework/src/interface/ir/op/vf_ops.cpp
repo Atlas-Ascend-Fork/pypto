@@ -30,6 +30,7 @@
 #include "ir/op_attr_types.h"
 #include "ir/op_registry.h"
 #include "ir/type.h"
+#include "ir/reg_op.h"
 
 namespace pypto {
 namespace ir {
@@ -288,7 +289,7 @@ TypePtr DeduceVFCarryPairOfFirstSrc(const std::vector<ExprPtr>& args,
 } // namespace
 
 // Mask
-REGISTER_OP("vf.create_mask")
+REGISTER_OP(VF_CREATE_MASK)
     .set_op_category("VFOp")
     .set_description("Declare and initialize a mask register")
     .no_argument()
@@ -297,7 +298,7 @@ REGISTER_OP("vf.create_mask")
     .f_deduce_type(DeduceVFMaskType);
 
 // Initialization
-REGISTER_OP("vf.full")
+REGISTER_OP(VF_FULL)
     .set_op_category("VFOp")
     .set_description("Scalar broadcast to register")
     .add_argument("dst", "Destination register")
@@ -309,7 +310,7 @@ REGISTER_OP("vf.full")
     .f_deduce_type(DeduceVFRegType);
 
 // Data transfer
-REGISTER_OP("vf.load_align")
+REGISTER_OP(VF_LOAD_ALIGN)
     .set_op_category("VFOp")
     .set_description("Unified vlds/plds load: MaskReg dst via US/DS dist (or is_reg=False with NORM), "
                      "RegTensor otherwise; "
@@ -326,7 +327,7 @@ REGISTER_OP("vf.load_align")
     .set_attr<DataType>("dtype")
     .f_deduce_type(DeduceVFLoadAlignType);
 
-REGISTER_OP("vf.store_align")
+REGISTER_OP(VF_STORE_ALIGN)
     .set_op_category("VFOp")
     .set_description(
         "Store aligned data from register to UB (MaskReg src via dist kwarg → psts/pst, RegTensor src → vsts/vst)")
@@ -341,7 +342,7 @@ REGISTER_OP("vf.store_align")
     .f_deduce_type(DeduceVFUnknownType);
 
 // Compute
-REGISTER_OP("vf.max")
+REGISTER_OP(VF_MAX)
     .set_op_category("VFOp")
     .set_description("Vector maximum")
     .add_argument("dst", "Destination register")
@@ -351,7 +352,7 @@ REGISTER_OP("vf.max")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.add")
+REGISTER_OP(VF_ADD)
     .set_op_category("VFOp")
     .set_description("Vector addition")
     .add_argument("dst", "Destination register")
@@ -361,7 +362,7 @@ REGISTER_OP("vf.add")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.sub")
+REGISTER_OP(VF_SUB)
     .set_op_category("VFOp")
     .set_description("Vector subtraction")
     .add_argument("dst", "Destination register")
@@ -371,7 +372,7 @@ REGISTER_OP("vf.sub")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.and_")
+REGISTER_OP(VF_AND)
     .set_op_category("VFOp")
     .set_description("Bitwise AND")
     .add_argument("dst", "Destination register")
@@ -381,7 +382,7 @@ REGISTER_OP("vf.and_")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegLikeType);
 
-REGISTER_OP("vf.xor")
+REGISTER_OP(VF_XOR)
     .set_op_category("VFOp")
     .set_description("Bitwise XOR")
     .add_argument("dst", "Destination register")
@@ -391,7 +392,7 @@ REGISTER_OP("vf.xor")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegLikeType);
 
-REGISTER_OP("vf.or_")
+REGISTER_OP(VF_OR)
     .set_op_category("VFOp")
     .set_description("Bitwise OR")
     .add_argument("dst", "Destination register")
@@ -402,7 +403,7 @@ REGISTER_OP("vf.or_")
     .f_deduce_type(DeduceVFRegLikeType);
 
 // Unified reduction: supports mode=SUM/MAX/MIN (new) and reduce_type=ADD/MAX (legacy)
-REGISTER_OP("vf.reduce_sum")
+REGISTER_OP(VF_REDUCE_SUM)
     .set_op_category("VFOp")
     .set_description("Sum reduction across all lanes (vcadd/vcgadd)")
     .add_argument("dst", "Destination register")
@@ -412,7 +413,7 @@ REGISTER_OP("vf.reduce_sum")
     .set_attr<int>("merge_mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.reduce_max")
+REGISTER_OP(VF_REDUCE_MAX)
     .set_op_category("VFOp")
     .set_description("Max reduction across all lanes (vcmax/vcgmax)")
     .add_argument("dst", "Destination register")
@@ -422,7 +423,7 @@ REGISTER_OP("vf.reduce_max")
     .set_attr<int>("merge_mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.reduce_min")
+REGISTER_OP(VF_REDUCE_MIN)
     .set_op_category("VFOp")
     .set_description("Min reduction across all lanes (vcmin/vcgmin)")
     .add_argument("dst", "Destination register")
@@ -432,7 +433,7 @@ REGISTER_OP("vf.reduce_min")
     .set_attr<int>("merge_mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.mul")
+REGISTER_OP(VF_MUL)
     .set_op_category("VFOp")
     .set_description("Vector multiplication")
     .add_argument("dst", "Destination register")
@@ -442,7 +443,7 @@ REGISTER_OP("vf.mul")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.mul_add_dst")
+REGISTER_OP(VF_MUL_ADD_DST)
     .set_op_category("VFOp")
     .set_description("Fused multiply-add (FMA): dst = src0 * src1 + dst (hardware vmadd)")
     .add_argument("dst", "Destination/accumulator register (read+write)")
@@ -452,7 +453,7 @@ REGISTER_OP("vf.mul_add_dst")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.mul_add_dst_acc")
+REGISTER_OP(VF_MUL_ADD_DST_ACC)
     .set_op_category("VFOp")
     .set_description("Fused multiply-add with explicit dst: dst = src0 * src1 + old (vmula)")
     .add_argument("dst", "Destination/accumulator register (read+write)")
@@ -462,7 +463,7 @@ REGISTER_OP("vf.mul_add_dst_acc")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.div")
+REGISTER_OP(VF_DIV)
     .set_op_category("VFOp")
     .set_description("Vector division")
     .add_argument("dst", "Destination register")
@@ -473,7 +474,7 @@ REGISTER_OP("vf.div")
     .set_attr<bool>("precision")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.muls")
+REGISTER_OP(VF_MULS)
     .set_op_category("VFOp")
     .set_description("Scalar multiplication")
     .add_argument("dst", "Destination register")
@@ -483,7 +484,7 @@ REGISTER_OP("vf.muls")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.ln")
+REGISTER_OP(VF_LN)
     .set_op_category("VFOp")
     .set_description("Natural logarithm (vln instruction)")
     .add_argument("dst", "Destination register")
@@ -493,7 +494,7 @@ REGISTER_OP("vf.ln")
     .set_attr<bool>("precision")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.log")
+REGISTER_OP(VF_LOG)
     .set_op_category("VFOp")
     .set_description("Natural logarithm (alias of Ln, same vln instruction on A5)")
     .add_argument("dst", "Destination register")
@@ -503,7 +504,7 @@ REGISTER_OP("vf.log")
     .set_attr<bool>("precision")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.min")
+REGISTER_OP(VF_MIN)
     .set_op_category("VFOp")
     .set_description("Vector minimum")
     .add_argument("dst", "Destination register")
@@ -513,7 +514,7 @@ REGISTER_OP("vf.min")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.exp")
+REGISTER_OP(VF_EXP)
     .set_op_category("VFOp")
     .set_description("Exponential function")
     .add_argument("dst", "Destination register")
@@ -523,7 +524,7 @@ REGISTER_OP("vf.exp")
     .set_attr<bool>("precision")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.abs")
+REGISTER_OP(VF_ABS)
     .set_op_category("VFOp")
     .set_description("Absolute value")
     .add_argument("dst", "Destination register")
@@ -532,7 +533,7 @@ REGISTER_OP("vf.abs")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.not_")
+REGISTER_OP(VF_NOT)
     .set_op_category("VFOp")
     .set_description("Bitwise NOT")
     .add_argument("dst", "Destination register")
@@ -541,7 +542,7 @@ REGISTER_OP("vf.not_")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegLikeType);
 
-REGISTER_OP("vf.sqrt")
+REGISTER_OP(VF_SQRT)
     .set_op_category("VFOp")
     .set_description("Square root")
     .add_argument("dst", "Destination register")
@@ -551,7 +552,7 @@ REGISTER_OP("vf.sqrt")
     .set_attr<bool>("precision")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.relu")
+REGISTER_OP(VF_RELU)
     .set_op_category("VFOp")
     .set_description("ReLU activation")
     .add_argument("dst", "Destination register")
@@ -560,7 +561,7 @@ REGISTER_OP("vf.relu")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.neg")
+REGISTER_OP(VF_NEG)
     .set_op_category("VFOp")
     .set_description("Negate")
     .add_argument("dst", "Destination register")
@@ -569,7 +570,7 @@ REGISTER_OP("vf.neg")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.adds")
+REGISTER_OP(VF_ADDS)
     .set_op_category("VFOp")
     .set_description("Scalar addition")
     .add_argument("dst", "Destination register")
@@ -579,7 +580,7 @@ REGISTER_OP("vf.adds")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.mins")
+REGISTER_OP(VF_MINS)
     .set_op_category("VFOp")
     .set_description("Scalar minimum")
     .add_argument("dst", "Destination register")
@@ -589,7 +590,7 @@ REGISTER_OP("vf.mins")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.maxs")
+REGISTER_OP(VF_MAXS)
     .set_op_category("VFOp")
     .set_description("Scalar maximum")
     .add_argument("dst", "Destination register")
@@ -599,7 +600,7 @@ REGISTER_OP("vf.maxs")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.leaky_relu")
+REGISTER_OP(VF_LEAKY_RELU)
     .set_op_category("VFOp")
     .set_description("Leaky ReLU activation")
     .add_argument("dst", "Destination register")
@@ -609,7 +610,7 @@ REGISTER_OP("vf.leaky_relu")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.interleave")
+REGISTER_OP(VF_INTERLEAVE)
     .set_op_category("VFOp")
     .set_description("Interleave two registers (vintlv for RegTensor, pintlv for MaskReg)")
     .add_argument("dst0", "Destination register 0")
@@ -619,7 +620,7 @@ REGISTER_OP("vf.interleave")
     .set_attr<DataType>("dtype")
     .f_deduce_type(DeduceVFPairLikeFirstSrc);
 
-REGISTER_OP("vf.pair_reduce_sum")
+REGISTER_OP(VF_PAIR_REDUCE_SUM)
     .set_op_category("VFOp")
     .set_description("Pairwise reduction sum")
     .add_argument("dst", "Destination register")
@@ -628,7 +629,7 @@ REGISTER_OP("vf.pair_reduce_sum")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.abs_sub")
+REGISTER_OP(VF_ABS_SUB)
     .set_op_category("VFOp")
     .set_description("Absolute difference |src0 - src1|")
     .add_argument("dst", "Destination register")
@@ -638,7 +639,7 @@ REGISTER_OP("vf.abs_sub")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.axpy")
+REGISTER_OP(VF_AXPY)
     .set_op_category("VFOp")
     .set_description("Accumulate: dst = src * scalar + dst")
     .add_argument("dst", "Destination/accumulator register (read+write)")
@@ -648,7 +649,7 @@ REGISTER_OP("vf.axpy")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.axpy_acc")
+REGISTER_OP(VF_AXPY_ACC)
     .set_op_category("VFOp")
     .set_description("Accumulate with explicit dst: dst = src * scalar + old (vaxpy)")
     .add_argument("dst", "Destination/accumulator register (read+write)")
@@ -658,7 +659,7 @@ REGISTER_OP("vf.axpy_acc")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.bit_cast")
+REGISTER_OP(VF_BIT_CAST)
     .set_op_category("VFOp")
     .set_description("Bitwise type reinterpretation (no value conversion)")
     .add_argument("dst", "Destination register")
@@ -666,7 +667,7 @@ REGISTER_OP("vf.bit_cast")
     .set_attr<DataType>("dtype")
     .f_deduce_type(DeduceVFTypeChangingRegType);
 
-REGISTER_OP("vf.mul_dst_add")
+REGISTER_OP(VF_MUL_DST_ADD)
     .set_op_category("VFOp")
     .set_description("Multiply-dst-add: dst = dst + src0 * src1 (vmadd)")
     .add_argument("dst", "Destination/accumulator register (read+write)")
@@ -676,7 +677,7 @@ REGISTER_OP("vf.mul_dst_add")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.mul_dst_add_acc")
+REGISTER_OP(VF_MUL_DST_ADD_ACC)
     .set_op_category("VFOp")
     .set_description("Multiply-add with an explicit dst operand: dst = dst * src0 + src1 (vmadd)")
     .add_argument("dst", "Destination/accumulator register (read+write)")
@@ -686,7 +687,7 @@ REGISTER_OP("vf.mul_dst_add_acc")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.pack")
+REGISTER_OP(VF_PACK)
     .set_op_category("VFOp")
     .set_description("Pack/narrow data type (e.g. u16->u8). vpack for RegTensor, ppack for MaskReg.")
     .add_argument("dst", "Destination register")
@@ -695,7 +696,7 @@ REGISTER_OP("vf.pack")
     .set_attr<int>("part")
     .f_deduce_type(DeduceVFTypeChangingLikeType);
 
-REGISTER_OP("vf.unpack")
+REGISTER_OP(VF_UNPACK)
     .set_op_category("VFOp")
     .set_description("Unpack/widen data type (e.g. u8->u16). vunpack for RegTensor, punpack for MaskReg.")
     .add_argument("dst", "Destination register")
@@ -704,7 +705,7 @@ REGISTER_OP("vf.unpack")
     .set_attr<int>("part")
     .f_deduce_type(DeduceVFTypeChangingLikeType);
 
-REGISTER_OP("vf.prelu")
+REGISTER_OP(VF_PRELU)
     .set_op_category("VFOp")
     .set_description("Parametric ReLU with per-element slope")
     .add_argument("dst", "Destination register")
@@ -714,7 +715,7 @@ REGISTER_OP("vf.prelu")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.shift_left")
+REGISTER_OP(VF_SHIFT_LEFT)
     .set_op_category("VFOp")
     .set_description("Shift left by a scalar or per-lane amount")
     .add_argument("dst", "Destination register")
@@ -724,7 +725,7 @@ REGISTER_OP("vf.shift_left")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.shift_right")
+REGISTER_OP(VF_SHIFT_RIGHT)
     .set_op_category("VFOp")
     .set_description("Shift right by a scalar or per-lane amount")
     .add_argument("dst", "Destination register")
@@ -734,7 +735,7 @@ REGISTER_OP("vf.shift_right")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.mull")
+REGISTER_OP(VF_MULL)
     .set_op_category("VFOp")
     .set_description("Long multiply: 32x32->64, output split into lo/hi registers")
     .add_argument("dst_lo", "Low 32 bits of product")
@@ -744,7 +745,7 @@ REGISTER_OP("vf.mull")
     .add_argument("mask", "Mask register")
     .f_deduce_type(DeduceVFRegPairOfFirstSrc);
 
-REGISTER_OP("vf.addc")
+REGISTER_OP(VF_ADDC)
     .set_op_category("VFOp")
     .set_description("Add with carry: carry_out, dst = src0 + src1 + carry_in")
     .add_argument("carry_out", "Output carry flag register")
@@ -755,7 +756,7 @@ REGISTER_OP("vf.addc")
     .add_argument("mask", "Mask register")
     .f_deduce_type(DeduceVFCarryPairOfFirstSrc);
 
-REGISTER_OP("vf.subc")
+REGISTER_OP(VF_SUBC)
     .set_op_category("VFOp")
     .set_description("Subtract with borrow: borrow_out, dst = src0 - src1 - borrow_in")
     .add_argument("borrow_out", "Output borrow flag register")
@@ -766,7 +767,7 @@ REGISTER_OP("vf.subc")
     .add_argument("mask", "Mask register")
     .f_deduce_type(DeduceVFCarryPairOfFirstSrc);
 
-REGISTER_OP("vf.exp_sub")
+REGISTER_OP(VF_EXP_SUB)
     .set_op_category("VFOp")
     .set_description("Fused exp(src - max)")
     .add_argument("dst", "Destination register")
@@ -777,7 +778,7 @@ REGISTER_OP("vf.exp_sub")
     .set_attr<DataType>("dtype")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.astype")
+REGISTER_OP(VF_ASTYPE)
     .set_op_category("VFOp")
     .set_description("Type conversion")
     .add_argument("dst", "Destination register")
@@ -790,7 +791,7 @@ REGISTER_OP("vf.astype")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFTypeChangingRegType);
 
-REGISTER_OP("vf.de_interleave")
+REGISTER_OP(VF_DE_INTERLEAVE)
     .set_op_category("VFOp")
     .set_description("De-interleave (vdintlv for RegTensor, pdintlv for MaskReg)")
     .add_argument("dst0", "Destination register 0")
@@ -800,7 +801,7 @@ REGISTER_OP("vf.de_interleave")
     .set_attr<DataType>("dtype")
     .f_deduce_type(DeduceVFPairLikeFirstSrc);
 
-REGISTER_OP("vf.select")
+REGISTER_OP(VF_SELECT)
     .set_op_category("VFOp")
     .set_description("Conditional select")
     .add_argument("dst", "Destination register")
@@ -809,14 +810,14 @@ REGISTER_OP("vf.select")
     .add_argument("mask", "Mask register")
     .f_deduce_type(DeduceVFRegLikeType);
 
-REGISTER_OP("vf.update_mask")
+REGISTER_OP(VF_UPDATE_MASK)
     .set_op_category("VFOp")
     .set_description("Update mask with scalar value")
     .add_argument("scalar", "Scalar value for mask")
     .set_attr<DataType>("dtype")
     .f_deduce_type(DeduceVFMaskType);
 
-REGISTER_OP("vf.mem_bar")
+REGISTER_OP(VF_MEM_BAR)
     .set_op_category("VFOp")
     .set_description("Memory barrier")
     .no_argument()
@@ -824,7 +825,7 @@ REGISTER_OP("vf.mem_bar")
     .f_deduce_type(DeduceVFUnknownType);
 
 // TopK VF ops
-REGISTER_OP("vf.histograms")
+REGISTER_OP(VF_HISTOGRAMS)
     .set_op_category("VFOp")
     .set_description("Histogram accumulation")
     .add_argument("dst", "Destination histogram register")
@@ -834,7 +835,7 @@ REGISTER_OP("vf.histograms")
     .set_attr<int>("hist_type")
     .f_deduce_type(DeduceVFHistogramsType);
 
-REGISTER_OP("vf.histogram_acc")
+REGISTER_OP(VF_HISTOGRAM_ACC)
     .set_op_category("VFOp")
     .set_description("Histogram accumulation with explicit dst")
     .add_argument("dst", "Destination histogram register")
@@ -844,7 +845,7 @@ REGISTER_OP("vf.histogram_acc")
     .set_attr<int>("hist_type")
     .f_deduce_type(DeduceVFHistogramsType);
 
-REGISTER_OP("vf.eq")
+REGISTER_OP(VF_EQ)
     .set_op_category("VFOp")
     .set_description("Equality compare and generate mask")
     .add_argument("dst", "Destination mask register")
@@ -853,7 +854,7 @@ REGISTER_OP("vf.eq")
     .add_argument("mask_src", "Source mask register")
     .f_deduce_type(DeduceVFMaskTypeFromSrc);
 
-REGISTER_OP("vf.ne")
+REGISTER_OP(VF_NE)
     .set_op_category("VFOp")
     .set_description("Not-equal compare and generate mask")
     .add_argument("dst", "Destination mask register")
@@ -862,7 +863,7 @@ REGISTER_OP("vf.ne")
     .add_argument("mask_src", "Source mask register")
     .f_deduce_type(DeduceVFMaskTypeFromSrc);
 
-REGISTER_OP("vf.lt")
+REGISTER_OP(VF_LT)
     .set_op_category("VFOp")
     .set_description("Less-than compare and generate mask")
     .add_argument("dst", "Destination mask register")
@@ -871,7 +872,7 @@ REGISTER_OP("vf.lt")
     .add_argument("mask_src", "Source mask register")
     .f_deduce_type(DeduceVFMaskTypeFromSrc);
 
-REGISTER_OP("vf.gt")
+REGISTER_OP(VF_GT)
     .set_op_category("VFOp")
     .set_description("Greater-than compare and generate mask")
     .add_argument("dst", "Destination mask register")
@@ -880,7 +881,7 @@ REGISTER_OP("vf.gt")
     .add_argument("mask_src", "Source mask register")
     .f_deduce_type(DeduceVFMaskTypeFromSrc);
 
-REGISTER_OP("vf.le")
+REGISTER_OP(VF_LE)
     .set_op_category("VFOp")
     .set_description("Less-or-equal compare and generate mask")
     .add_argument("dst", "Destination mask register")
@@ -889,7 +890,7 @@ REGISTER_OP("vf.le")
     .add_argument("mask_src", "Source mask register")
     .f_deduce_type(DeduceVFMaskTypeFromSrc);
 
-REGISTER_OP("vf.ge")
+REGISTER_OP(VF_GE)
     .set_op_category("VFOp")
     .set_description("Greater-or-equal compare and generate mask")
     .add_argument("dst", "Destination mask register")
@@ -898,7 +899,7 @@ REGISTER_OP("vf.ge")
     .add_argument("mask_src", "Source mask register")
     .f_deduce_type(DeduceVFMaskTypeFromSrc);
 
-REGISTER_OP("vf.squeeze")
+REGISTER_OP(VF_SQUEEZE)
     .set_op_category("VFOp")
     .set_description("Squeeze mask to indices")
     .add_argument("dst", "Destination register")
@@ -907,7 +908,7 @@ REGISTER_OP("vf.squeeze")
     .set_attr<int>("gather_mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.arange")
+REGISTER_OP(VF_ARANGE)
     .set_op_category("VFOp")
     .set_description("Generate index sequence (index_order=INCREASE_ORDER: vci INC_ORDER, DECREASE_ORDER: DEC_ORDER)")
     .add_argument("dst", "Destination register")
@@ -915,7 +916,7 @@ REGISTER_OP("vf.arange")
     .set_attr<DataType>("dtype")
     .f_deduce_type(DeduceVFArangeType);
 
-REGISTER_OP("vf.gather")
+REGISTER_OP(VF_GATHER)
     .set_op_category("VFOp")
     .set_description("Gather elements by indices. Two forms: "
                      "(1) UB-to-Reg: gather(src_ub, indices, mask[, data_copy_mode]). "
@@ -937,7 +938,7 @@ REGISTER_OP("vf.gather")
 //   store_unalign_post: 2 args [dst, align_reg] -> vstar (strideless)
 //                       3 args [dst, ureg, stride] -> vstas (strided)
 // Declared at the strideless minimum; the extra strided arg is passed through.
-REGISTER_OP("vf.store_unalign")
+REGISTER_OP(VF_STORE_UNALIGN)
     .set_op_category("VFOp")
     .set_description("Store unaligned data with post update")
     .add_argument("dst_ptr", "Destination UB pointer")
@@ -946,7 +947,7 @@ REGISTER_OP("vf.store_unalign")
     .set_attr<bool>("post_update")
     .f_deduce_type(DeduceVFUnknownType);
 
-REGISTER_OP("vf.store_unalign_post")
+REGISTER_OP(VF_STORE_UNALIGN_POST)
     .set_op_category("VFOp")
     .set_description("Complete unaligned store")
     .add_argument("dst_ptr", "Destination UB pointer")
@@ -954,7 +955,7 @@ REGISTER_OP("vf.store_unalign_post")
     .set_attr<bool>("post_update")
     .f_deduce_type(DeduceVFUnknownType);
 
-REGISTER_OP("vf.squeeze_store_unalign")
+REGISTER_OP(VF_SQUEEZE_STORE_UNALIGN)
     .set_op_category("VFOp")
     .set_description("Squeeze-based unaligned store (reads AR register for byte count)")
     .add_argument("dst_ptr", "Destination UB pointer")
@@ -962,39 +963,39 @@ REGISTER_OP("vf.squeeze_store_unalign")
     .add_argument("align_reg", "Alignment register")
     .f_deduce_type(DeduceVFUnknownType);
 
-REGISTER_OP("vf.squeeze_store_unalign_post")
+REGISTER_OP(VF_SQUEEZE_STORE_UNALIGN_POST)
     .set_op_category("VFOp")
     .set_description("Complete squeeze-based unaligned store (reads AR register for remaining bytes)")
     .add_argument("dst_ptr", "Destination UB pointer")
     .add_argument("align_reg", "Alignment register")
     .f_deduce_type(DeduceVFUnknownType);
 
-REGISTER_OP("vf.unalign_reg_for_store")
+REGISTER_OP(VF_UNALIGN_REG_FOR_STORE)
     .set_op_category("VFOp")
     .set_description("Declare unaligned register for store")
     .no_argument()
     .f_deduce_type(DeduceVFUnalignRegType);
 
-REGISTER_OP("vf.clear_spr")
+REGISTER_OP(VF_CLEAR_SPR)
     .set_op_category("VFOp")
     .set_description("Clear special purpose register AR")
     .no_argument()
     .f_deduce_type(DeduceVFUnknownType);
 
-REGISTER_OP("vf.load_unalign_init")
+REGISTER_OP(VF_LOAD_UNALIGN_INIT)
     .set_op_category("VFOp")
     .set_description("Declare unaligned register for load")
     .no_argument()
     .f_deduce_type(DeduceVFUnalignRegType);
 
-REGISTER_OP("vf.load_unalign_pre")
+REGISTER_OP(VF_LOAD_UNALIGN_PRE)
     .set_op_category("VFOp")
     .set_description("Setup unaligned load (vldas)")
     .add_argument("ureg", "UnalignRegForLoad register")
     .add_argument("src_ptr", "Source UB pointer")
     .f_deduce_type(DeduceVFUnknownType);
 
-REGISTER_OP("vf.load_unalign")
+REGISTER_OP(VF_LOAD_UNALIGN)
     .set_op_category("VFOp")
     .set_description("Load unaligned data from UB to register (vldus; passing stride selects POST_UPDATE mode)")
     .add_argument("dst", "Destination register")
@@ -1003,7 +1004,7 @@ REGISTER_OP("vf.load_unalign")
     .add_argument("stride", "Post-update stride in bytes (passing it selects POST_UPDATE mode)")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.scatter")
+REGISTER_OP(VF_SCATTER)
     .set_op_category("VFOp")
     .set_description("Scatter store by indices (vscatter)")
     .add_argument("base_ptr", "Base UB pointer")
@@ -1012,14 +1013,14 @@ REGISTER_OP("vf.scatter")
     .add_argument("mask", "Mask register")
     .f_deduce_type(DeduceVFUnknownType);
 
-REGISTER_OP("vf.unsqueeze")
+REGISTER_OP(VF_UNSQUEEZE)
     .set_op_category("VFOp")
     .set_description("Unsqueeze mask bits to register (vusqz)")
     .add_argument("dst", "Destination register")
     .add_argument("mask", "Mask register to unsqueeze")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.truncate")
+REGISTER_OP(VF_TRUNCATE)
     .set_op_category("VFOp")
     .set_description(
         "Convert float to integer register (vtrc; rounding via round_mode kwarg, default CAST_RINT/ROUND_R)")
@@ -1030,21 +1031,21 @@ REGISTER_OP("vf.truncate")
     .set_attr<int>("round_mode")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.mask_gen_with_reg_tensor")
+REGISTER_OP(VF_MASK_GEN_WITH_REG_TENSOR)
     .set_op_category("VFOp")
     .set_description("Generate MaskReg from RegTensor bit at offset (movvp)")
     .add_argument("src", "Source register (uint16/uint32)")
     .set_attr<int>("offset")
     .f_deduce_type(DeduceVFMaskType);
 
-REGISTER_OP("vf.get_mask_spr")
+REGISTER_OP(VF_GET_MASK_SPR)
     .set_op_category("VFOp")
     .set_description("Get mask from special purpose register (movp_b32/b16 via kwarg width)")
     .no_argument()
     .set_attr<int>("width")
     .f_deduce_type(DeduceVFMaskType);
 
-REGISTER_OP("vf.log2")
+REGISTER_OP(VF_LOG2)
     .set_op_category("VFOp")
     .set_description("Base-2 logarithm: dst = log2(src) = ln(src) * 1/ln(2)")
     .add_argument("dst", "Destination register")
@@ -1054,7 +1055,7 @@ REGISTER_OP("vf.log2")
     .set_attr<bool>("precision")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.log10")
+REGISTER_OP(VF_LOG10)
     .set_op_category("VFOp")
     .set_description("Base-10 logarithm: dst = log10(src) = ln(src) * 1/ln(10)")
     .add_argument("dst", "Destination register")
@@ -1064,7 +1065,7 @@ REGISTER_OP("vf.log10")
     .set_attr<bool>("precision")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.muls_cast")
+REGISTER_OP(VF_MULS_CAST)
     .set_op_category("VFOp")
     .set_description("Multiply by scalar then cast to half: dst(fp16) = cast(src(fp32) * scalar)")
     .add_argument("dst", "Destination register (fp16)")
@@ -1085,7 +1086,7 @@ REGISTER_OP("vf.muls_cast")
 // which dispatch on the destination register's IR type (RegTensor vs MaskReg,
 // matching AscendC's function-overloading model).
 
-REGISTER_OP("vf.load")
+REGISTER_OP(VF_LOAD)
     .set_op_category("VFOp")
     .set_description("Unified unaligned load (vldas+vldus, matches AscendC Load)")
     .add_argument("dst", "Destination register")
@@ -1093,7 +1094,7 @@ REGISTER_OP("vf.load")
     .add_argument("stride", "Post-update stride (optional, triggers POST_UPDATE mode)")
     .f_deduce_type(DeduceVFRegType);
 
-REGISTER_OP("vf.store")
+REGISTER_OP(VF_STORE)
     .set_op_category("VFOp")
     .set_description("Unified unaligned store (vstus+vstas, matches AscendC Store)")
     .add_argument("dst_ptr", "Destination UB pointer")
@@ -1101,7 +1102,7 @@ REGISTER_OP("vf.store")
     .add_argument("count", "Element count (optional, defaults to 256/elem_bytes)")
     .f_deduce_type(DeduceVFUnknownType);
 
-REGISTER_OP("vf.create_addr_reg")
+REGISTER_OP(VF_CREATE_ADDR_REG)
     .set_op_category("VFOp")
     .set_description("Create an address offset register for aligned load/store")
     .add_argument("stride0", "Loop axis 0 stride (element count)")
@@ -1111,7 +1112,7 @@ REGISTER_OP("vf.create_addr_reg")
     .set_attr<DataType>("dtype")
     .f_deduce_type(DeduceVFAddrRegType);
 
-REGISTER_OP("vf.move")
+REGISTER_OP(VF_MOVE)
     .set_op_category("VFOp")
     .set_description("Move/copy register elements (RegTensor or MaskReg). "
                      "RegTensor: vmov with MODE_MERGING (masked) or vmov (unmasked). "
@@ -1123,7 +1124,7 @@ REGISTER_OP("vf.move")
     .set_attr<int>("mode")
     .f_deduce_type(DeduceVFRegLikeType);
 
-REGISTER_OP("vf.move_acc")
+REGISTER_OP(VF_MOVE_ACC)
     .set_op_category("VFOp")
     .set_description("Masked move with an explicit accumulate source: the old dst is an "
                      "explicit argument copy-fetched into the fresh SSA dst, then "

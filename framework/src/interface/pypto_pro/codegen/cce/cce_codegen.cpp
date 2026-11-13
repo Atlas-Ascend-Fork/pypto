@@ -520,9 +520,10 @@ std::string CCECodegen::BuildVfFunctionSignature(const ir::FunctionPtr& func)
             RegisterPointer(paramName, paramName);
         } else if (auto tileType = ir::As<ir::TileType>(param->GetType())) {
             sig << "__ubuf__ " << tileType->dtype_.ToCTypeString() << "* " << paramName;
-            if (isSimt) {
-                sig << ", uint32_t " << paramName << "__valid_row";
-                sig << ", uint32_t " << paramName << "__valid_col";
+            for (int axis = 0; axis < 2; ++axis) {
+                if (!GetStaticTileValidDim(tileType, axis)) {
+                    sig << ", uint32_t " << paramName << (axis == 0 ? "__valid_row" : "__valid_col");
+                }
             }
         } else if (auto regType = ir::As<ir::RegType>(param->GetType())) {
             // SIMD VF/callee register parameters are passed by reference so the
@@ -998,9 +999,9 @@ void CCECodegen::VisitStmt_(const ir::AssignStmtPtr& op)
         bool isTuple = ir::As<ir::TupleType>(varType) != nullptr;
         bool rhsIsVar = ir::As<ir::Var>(op->value_) != nullptr;
         if (tileType != nullptr && IsInSimdContext()) {
-            emitter_.EmitLine("__ubuf__ " + tileType->dtype_.ToCTypeString() + " *" + varName + " = " +
-                              currentExprValue_ + ";");
+            emitter_.EmitLine(GetGeneratedType(varType) + " " + varName + " = " + currentExprValue_ + ";");
             context_.RegisterVar(targetVar, varName);
+            EmitVFTileValidShape(targetVar, op->value_, true);
         } else if (tileType != nullptr || isTuple || rhsIsVar || context_.HasVarName(currentExprValue_)) {
             // Tile/tuple aliases, simple var-to-var copies, and tuple items that
             // are already-declared variables: register as alias (no code emitted).
@@ -1027,6 +1028,7 @@ void CCECodegen::VisitStmt_(const ir::AssignStmtPtr& op)
                 << "Array tuple assignment to '" << varName << "' has elements without a C++ name at "
                 << op->span_.ToString();
             emitter_.EmitLine(BuildDynamicTupleArrayDecl(tt->types_[0], elemNames, varName));
+            EmitVFTileArrayValidShape(varName, tt, makeTuple, true);
             tupleBackingArr_.emplace(makeTuple.get(), varName);
         }
     }
@@ -1135,13 +1137,13 @@ std::string CCECodegen::GetGeneratedType(const ir::TypePtr& type) const
     if (auto tensorType = ir::As<ir::TensorType>(type)) {
         return "__gm__ " + tensorType->dtype_.ToCTypeString() + "*";
     }
+    if (auto tileType = ir::As<ir::TileType>(type); tileType && (IsInSimtContext() || IsInSimdContext())) {
+        return "__ubuf__ " + tileType->dtype_.ToCTypeString() + "*";
+    }
     if (auto tileType = ir::As<ir::MutexTileType>(type)) {
         auto shapeDims = ExtractShapeDimensions(tileType->shape_);
         int64_t rows = shapeDims.size() >= 1 ? shapeDims[0] : 1;
         int64_t cols = shapeDims.size() >= 2 ? shapeDims[1] : 1;
-        if (IsInSimtContext()) {
-            return "__ubuf__ " + tileType->dtype_.ToCTypeString() + "*";
-        }
         return typeConverter_.ConvertTileType(tileType, rows, cols);
     }
     if (auto tupleType = ir::As<ir::TupleType>(type)) {
@@ -1301,6 +1303,9 @@ void CCECodegen::EmitVariable(const ir::VarPtr& target, ir::ExprPtr value, bool 
     } else {
         emitter_.EmitLine(name + " = " + source + ";");
     }
+    if (ir::As<ir::TileType>(type) && IsInSimdContext()) {
+        EmitVFTileValidShape(target, value, initialize);
+    }
 }
 
 void CCECodegen::EmitTupleVariable(const std::string& name, const ir::TupleTypePtr& type, const ir::ExprPtr& value,
@@ -1341,6 +1346,7 @@ void CCECodegen::EmitTupleVariable(const std::string& name, const ir::TupleTypeP
                 }
             }
         }
+        EmitVFTileArrayValidShape(name, type, source, initialize);
         return;
     }
 
@@ -1718,6 +1724,88 @@ std::string CCECodegen::GetOrCreateVFTilePtr(const ir::ExprPtr& expr, bool isPos
     return code;
 }
 
+std::optional<int64_t> CCECodegen::GetStaticTileValidDim(const ir::TileTypePtr& type, int axis)
+{
+    if (type->tileView_ && static_cast<size_t>(axis) < type->tileView_->validShape.size()) {
+        auto dim = ir::As<ir::ConstInt>(type->tileView_->validShape[axis]);
+        if (dim && dim->value_ >= 0) {
+            return dim->value_;
+        }
+    }
+    return std::nullopt;
+}
+
+std::string CCECodegen::GetVFTileValidShape(const ir::ExprPtr& expr, int axis)
+{
+    if (auto dim = GetStaticTileValidDim(ir::As<ir::TileType>(expr->GetType()), axis)) {
+        return std::to_string(*dim);
+    }
+    if (auto call = ir::As<ir::Call>(expr); call && call->name_ == "block.subview") {
+        // Linear pointer offsets preserve the tile metadata. A slice carries its
+        // own valid extent, already computed by the frontend.
+        if (!ir::As<ir::MakeTuple>(call->args_[1])) {
+            return GetVFTileValidShape(call->args_[0], axis);
+        }
+        auto shape = ir::As<ir::MakeTuple>(call->args_[2]);
+        return GetExprAsCode(shape->elements_[axis]);
+    }
+    if (auto item = ir::As<ir::GetItemExpr>(expr)) {
+        auto tuple = GetExprAsMakeTuple(item->value_);
+        if (tuple) {
+            auto array = tupleBackingArr_.find(tuple.get());
+            if (array != tupleBackingArr_.end()) {
+                return array->second + (axis == 0 ? "__valid_row" : "__valid_col") + "[" + GetExprAsCode(item->slice_) +
+                       "]";
+            }
+            auto index = ir::As<ir::ConstInt>(item->slice_);
+            return GetVFTileValidShape(tuple->elements_[index->value_], axis);
+        }
+    }
+    return GetExprAsCode(expr) + (axis == 0 ? "__valid_row" : "__valid_col");
+}
+
+void CCECodegen::EmitVFTileArrayValidShape(const std::string& name, const ir::TupleTypePtr& type,
+                                           const ir::MakeTuplePtr& source, bool initialize)
+{
+    auto tile = ir::As<ir::TileType>(type->types_[0]);
+    if (!IsInSimdContext() || !tile) {
+        return;
+    }
+    auto sourceArray = source ? tupleBackingArr_.find(source.get()) : tupleBackingArr_.end();
+    for (int axis = 0; axis < 2; ++axis) {
+        if (GetStaticTileValidDim(tile, axis)) {
+            continue;
+        }
+        const std::string suffix = axis == 0 ? "__valid_row" : "__valid_col";
+        if (initialize) {
+            emitter_.EmitLine("uint32_t " + name + suffix + "[" + std::to_string(type->types_.size()) + "];");
+        }
+        if (!source || (sourceArray != tupleBackingArr_.end() && name == sourceArray->second)) {
+            continue;
+        }
+        for (size_t i = 0; i < type->types_.size(); ++i) {
+            const std::string index = "[" + std::to_string(i) + "]";
+            const std::string value = sourceArray != tupleBackingArr_.end() ?
+                                          sourceArray->second + suffix + index :
+                                          GetVFTileValidShape(source->elements_[i], axis);
+            emitter_.EmitLine(name + suffix + index + " = " + value + ";");
+        }
+    }
+}
+
+void CCECodegen::EmitVFTileValidShape(const ir::VarPtr& target, const ir::ExprPtr& value, bool initialize)
+{
+    const std::string name = context_.SanitizeName(target);
+    for (int axis = 0; axis < 2; ++axis) {
+        if (GetStaticTileValidDim(ir::As<ir::TileType>(target->GetType()), axis)) {
+            continue;
+        }
+        const std::string suffix = axis == 0 ? "__valid_row" : "__valid_col";
+        const std::string source = value ? " = " + GetVFTileValidShape(value, axis) : "";
+        emitter_.EmitLine((initialize ? "uint32_t " : "") + name + suffix + source + ";");
+    }
+}
+
 void CCECodegen::VisitExpr_(const ir::GetItemExprPtr& op)
 {
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr)
@@ -1999,22 +2087,18 @@ std::string CCECodegen::GenerateVfCalleeCall(const ir::CallPtr& op, const ir::Fu
 
     for (size_t i = 0; i < op->args_.size(); ++i) {
         const auto& actual = op->args_[i];
-        if (isSimt) {
-            append(GetExprAsCode(actual));
-            if (ir::As<ir::TileType>(callee->params_[i]->GetType())) {
+        append(GetExprAsCode(actual));
+        if (auto tileType = ir::As<ir::TileType>(actual->GetType())) {
+            if (isSimt) {
                 auto actualVar = ir::As<ir::Var>(actual);
                 PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, actualVar != nullptr)
                     << "SIMT Tile callee arguments must be named Tile variables";
-                std::string actualName = context_.SanitizeName(actualVar);
-                append(actualName + "__valid_row");
-                append(actualName + "__valid_col");
             }
-        } else {
-            // Inside a __simd_vf__/__simd_callee__ body, tile params are already
-            // __ubuf__ pointers — pass the argument code directly. Kernel-side
-            // VF calls never reach this helper: they use the registered
-            // "simd.call" op.
-            append(GetExprAsCode(actual));
+            for (int axis = 0; axis < 2; ++axis) {
+                if (!GetStaticTileValidDim(tileType, axis)) {
+                    append(GetVFTileValidShape(actual, axis));
+                }
+            }
         }
     }
     call << ")";

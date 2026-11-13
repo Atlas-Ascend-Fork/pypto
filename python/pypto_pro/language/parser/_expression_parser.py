@@ -357,7 +357,7 @@ class ExpressionParserMixin:
         '/' constructs a scalar FloatDiv, and float '//', '%' emit
         float math; neither can be lowered inside the VF vector scope.
         """
-        if not self._in_vf_body():
+        if not self._in_simd_vf_body():
             return
         if not (isinstance(left.type, ir.ScalarType) and isinstance(right.type, ir.ScalarType)):
             return
@@ -390,7 +390,7 @@ class ExpressionParserMixin:
         # Tile + offset: only supported in VF section as pointer arithmetic.
         # Non-VF sections require slice syntax (tile[r:r+h, c:c+w]) for sub-views.
         if isinstance(binop.op, ast.Add) and isinstance(left.type, ir.TileType):
-            if not self._in_vf_body():
+            if not self._in_simd_vf_body():
                 raise NotSupported(
                     "Tile + offset is not supported outside VF section; "
                     "use tile[i:i+h, j:j+w] slice syntax for sub-view",
@@ -1243,7 +1243,7 @@ class ExpressionParserMixin:
         # Single index A[x]: only valid for 1D containers (rank 1)
         if not isinstance(index_node, ast.Tuple):
             if len(shape) != 1:
-                if self._in_vf_body():
+                if self._in_simd_vf_body():
                     raise NotSupported(
                         "Tile[x] in VF section is not supported; use `tile + x` for pointer offset",
                         span=span,
@@ -1312,7 +1312,7 @@ class ExpressionParserMixin:
 
         # VF section: tile slice 'tile[a:b, c:d]' is not supported.
         # Use load_align(tile, [row, col]) / store_align(tile, ..., [row, col]) instead.
-        if self._in_vf_body():
+        if self._in_simd_vf_body():
             raise NotSupported(
                 "Tile slice 'tile[a:b, c:d]' is not supported in VF section; "
                 "use load_align(tile, [row, col]) or store_align(tile, reg, mask, [row, col]) instead",
@@ -1601,7 +1601,7 @@ class ExpressionParserMixin:
         span = self.span_tracker.get_span(node)
         if (
             self.target != ir.SectionKind.Vector
-            or self._in_vf_body()
+            or self._in_simd_vf_body()
             or self._current_func_type in (ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee)
         ):
             raise InvalidOperation(

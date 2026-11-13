@@ -1632,8 +1632,11 @@ static std::string MakeTileValidShapeCodegenCCE(const ir::CallPtr& op, codegen::
     PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, axis >= 0 && axis <= 1)
         << "block.tile_valid_shape axis must be in [0, 1]";
 
-    if (codegen.IsInSimtContext()) {
-        return "(int64_t)(" + codegen.GetExprAsCode(op->args_[0]) + (axis == 0 ? "__valid_row)" : "__valid_col)");
+    if (auto dim = codegen.GetStaticTileValidDim(ir::As<ir::TileType>(op->args_[0]->GetType()), axis)) {
+        return "(int64_t)(" + std::to_string(*dim) + ")";
+    }
+    if (codegen.IsInSimtContext() || codegen.IsInSimdContext()) {
+        return "(int64_t)(" + codegen.GetVFTileValidShape(op->args_[0], axis) + ")";
     }
     return "(int64_t)(" + cce::GetOperandAsCode(codegen, op->args_[0]) +
            (axis == 0 ? ".GetValidRow())" : ".GetValidCol())");

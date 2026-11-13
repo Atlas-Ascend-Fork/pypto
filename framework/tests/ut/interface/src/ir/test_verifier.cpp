@@ -33,6 +33,7 @@
 #include "ir/type.h"
 #include "ir/verifier/verification_error.h"
 #include "ir/verifier/verifier.h"
+#include "ir/reg_op.h"
 
 namespace pypto {
 namespace ir {
@@ -683,8 +684,8 @@ TEST_F(VerifierNoNestedCallTest, BitCastAsNestedCall_NoError)
     IRVerifier v;
     v.AddRule(CreateNoNestedCallPropertyVerifier());
 
-    auto bit_cast_call = std::make_shared<Call>("vf.bit_cast", std::vector<ExprPtr>{}, Sp());
-    auto outer_call = std::make_shared<Call>("vf.xor", std::vector<ExprPtr>{bit_cast_call}, Sp());
+    auto bit_cast_call = std::make_shared<Call>(VF_BIT_CAST, std::vector<ExprPtr>{}, Sp());
+    auto outer_call = std::make_shared<Call>(VF_XOR, std::vector<ExprPtr>{bit_cast_call}, Sp());
     auto eval = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, outer_call, Sp());
     auto program = MakeProgram("f", eval);
     auto diags = v.Verify(program);

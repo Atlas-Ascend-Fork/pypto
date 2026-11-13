@@ -46,15 +46,17 @@ inline constexpr char kMaxThreadsAttr[] = "max_threads";
  * - SimdCallee: 3510 SIMD helper callable from a SimdVF or another SimdCallee
  */
 enum class FunctionType : uint8_t {
-    OPAQUE = 0,        ///< Default: unspecified function type
-    ORCHESTRATION = 1, ///< Host/AICPU control and coordination
-    IN_CORE = 2,       ///< AICore sub-graph execution
-    HELPER = 3,        ///< Scalar helper function callable from kernels
-    SIMT_VF = 4,       ///< 3510 SIMT vector function launched from an AIV kernel
-    SIMT_CALLEE = 5,   ///< 3510 SIMT helper callable from SIMT functions
-    SIMT_KERNEL = 6,   ///< 3510 SIMT kernel launched directly from host
-    SIMD_VF = 7,       ///< 3510 SIMD vector function (__simd_vf__) launched from an AIV kernel
-    SIMD_CALLEE = 8    ///< 3510 SIMD helper callable from SIMD functions
+    OPAQUE = 0,           ///< Default: unspecified function type
+    ORCHESTRATION = 1,    ///< Host/AICPU control and coordination
+    IN_CORE = 2,          ///< AICore sub-graph execution
+    HELPER = 3,           ///< Scalar helper function callable from kernels
+    SIMT_VF = 4,          ///< 3510 SIMT vector function launched from an AIV kernel
+    SIMT_CALLEE = 5,      ///< 3510 SIMT helper callable from SIMT functions
+    SIMT_KERNEL = 6,      ///< 3510 SIMT kernel launched directly from host
+    SIMD_VF = 7,          ///< 3510 SIMD vector function (__simd_vf__) launched from an AIV kernel
+    SIMD_CALLEE = 8,      ///< 3510 SIMD helper callable from SIMD functions
+    SIMD_TILE_VF = 9,     ///< Tile instructions expanded into a SIMD vector function
+    SIMD_TILE_CALLEE = 10 ///< Tile instructions expanded into a SIMD helper
 };
 
 /**
@@ -83,6 +85,10 @@ inline std::string FunctionTypeToString(FunctionType type)
             return "SimdVF";
         case FunctionType::SIMD_CALLEE:
             return "SimdCallee";
+        case FunctionType::SIMD_TILE_VF:
+            return "SimdTileVF";
+        case FunctionType::SIMD_TILE_CALLEE:
+            return "SimdTileCallee";
         default:
             return "Unknown";
     }
@@ -114,6 +120,10 @@ inline FunctionType StringToFunctionType(const std::string& str)
         return FunctionType::SIMD_VF;
     } else if (str == "SimdCallee") {
         return FunctionType::SIMD_CALLEE;
+    } else if (str == "SimdTileVF") {
+        return FunctionType::SIMD_TILE_VF;
+    } else if (str == "SimdTileCallee") {
+        return FunctionType::SIMD_TILE_CALLEE;
     } else {
         throw std::invalid_argument("Unknown FunctionType: " + str);
     }

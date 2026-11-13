@@ -183,6 +183,9 @@ public:
     /// requires a named tile variable, whose pointer the intrinsic advances
     /// in place.
     std::string GetOrCreateVFTilePtr(const ir::ExprPtr& expr, bool isPostUpdate = false);
+    // Only dynamic tile dimensions travel beside the pointer; static dimensions are constants.
+    static std::optional<int64_t> GetStaticTileValidDim(const ir::TileTypePtr& type, int axis);
+    std::string GetVFTileValidShape(const ir::ExprPtr& expr, int axis);
     int64_t GetConstIntValue(const ir::ExprPtr& expr) override;
     std::string GetVarName(const ir::VarPtr& var) override;
 
@@ -469,6 +472,9 @@ private:
     /// UnknownType/NoneType sources as valueless, and drops self-assignment back edges.
     bool CheckEmitVariable(const ir::VarPtr& target, ir::ExprPtr& value, bool initialize);
     void EmitVariable(const ir::VarPtr& target, ir::ExprPtr value, bool initialize);
+    void EmitVFTileValidShape(const ir::VarPtr& target, const ir::ExprPtr& value, bool initialize);
+    void EmitVFTileArrayValidShape(const std::string& name, const ir::TupleTypePtr& type,
+                                   const ir::MakeTuplePtr& source, bool initialize);
     void EmitTupleVariable(const std::string& name, const ir::TupleTypePtr& type, const ir::ExprPtr& value,
                            bool initialize);
     void RegisterLoopReturnVars(const std::vector<ir::VarPtr>& returnVars,

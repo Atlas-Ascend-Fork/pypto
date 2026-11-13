@@ -49,6 +49,23 @@ _MAX_SIMT_THREADS = 2048
 logger = logging.getLogger(__name__)
 
 
+@dataclass(frozen=True, eq=False)
+class _VfTypeKey:
+    """Hash IR types structurally and compare them even when hashes collide."""
+
+    types: tuple[ir.Type, ...]
+
+    def __hash__(self):
+        return hash(tuple(ir.structural_hash(arg_type) for arg_type in self.types))
+
+    def __eq__(self, other):
+        if not isinstance(other, _VfTypeKey):
+            return NotImplemented
+        return len(self.types) == len(other.types) and all(
+            ir.structural_equal(lhs, rhs) for lhs, rhs in zip(self.types, other.types)
+        )
+
+
 def _get_source_file(entity: Callable | type) -> str:
     """Get source filename for an entity, with fallback to code object attributes.
 
@@ -894,7 +911,8 @@ class CallParserMixin:
             check_in_range(max_threads, 1, _MAX_SIMT_THREADS, subject="max_threads", error=ValueError)
 
         func_type = ir.FunctionType.SimtVF if launchable else ir.FunctionType.SimtCallee
-        cached = self.vf_func_cache.get((id(fn), func_type, ()))
+        cache_key, type_variant = self._vf_specialization_key(fn, func_type, (), [arg.type for arg in args])
+        cached = self.vf_func_cache.get(cache_key)
         if cached is not None:
             self._register_vf_external(cached)
             return cached
@@ -913,21 +931,19 @@ class CallParserMixin:
         _validate_simt_parameters(
             parsed, "SIMT function" if launchable else "SIMT helper", entry_type=self._simt_entry_type
         )
-        if launchable:
-            result = ir.Function(
-                parsed.name,
-                list(parsed.params),
-                list(parsed.return_types),
-                parsed.body,
-                parsed.span,
-                func_type,
-                parsed.entry,
-                {"max_threads": max_threads},
-            )
-        else:
-            result = parsed
+        specialized_name = f"{parsed.name}__type_{type_variant}" if type_variant else parsed.name
+        result = ir.Function(
+            specialized_name,
+            list(parsed.params),
+            list(parsed.return_types),
+            parsed.body,
+            parsed.span,
+            func_type,
+            parsed.entry,
+            {"max_threads": max_threads} if launchable else parsed.attrs,
+        )
         self._register_vf_external(result)
-        self.vf_func_cache[(id(fn), func_type, ())] = result
+        self.vf_func_cache[cache_key] = result
         return result
 
     def _instantiate_vf_body(
@@ -982,7 +998,10 @@ class CallParserMixin:
             )
 
         const_param_values = None
-        if func_type in (ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee):
+        if func_type in (
+            ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee,
+            ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee,
+        ):
             const_param_values = {
                 param.arg: arg for param, arg in zip(params, args) if _is_const_arg(arg)
             } or None
@@ -993,6 +1012,8 @@ class CallParserMixin:
         record_accesses = self.auto_pipeline_enabled and func_type in (
             ir.FunctionType.SimdVF,
             ir.FunctionType.SimdCallee,
+            ir.FunctionType.SimdTileVF,
+            ir.FunctionType.SimdTileCallee,
         )
         callsite_param_buffers = (
             {param.arg: self.buffer_refs_of(actual) for param, actual in zip(params, args)}
@@ -1044,6 +1065,8 @@ class CallParserMixin:
                 f"Conflicting external functions with name '{func.name}'",
             )
         self.external_funcs[func.name] = func
+        if func.func_type in (ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee):
+            self.has_tile_function = True
 
     def _validate_vf_function_arguments(
         self,
@@ -1096,18 +1119,29 @@ class CallParserMixin:
         callee name as a kwarg. Kernel-side SIMD functions are always void, so
         the call is assembled directly like simt.launch (no return type to
         attach)."""
-        callee, runtime_args, span = self._parse_simd_template_call(
-            local_name, fn, call, ir.FunctionType.SimdVF
-        )
+        from .decorator import is_simd_tile_function
+
+        func_type = ir.FunctionType.SimdTileVF if is_simd_tile_function(fn) else ir.FunctionType.SimdVF
+        callee, runtime_args, span = self._parse_simd_template_call(local_name, fn, call, func_type)
         return ir.create_op_call("simd.call", runtime_args, {"callee": callee.name}, span)
 
     def _parse_simd_inbody_call(self, local_name: str, fn: Callable, call: ast.Call) -> ir.Expr:
         """In-body SIMD VF call: a direct named call (like SIMT callee calls),
         carrying the callee's return types."""
-        callee, runtime_args, span = self._parse_simd_template_call(
-            local_name, fn, call, ir.FunctionType.SimdCallee
-        )
+        from .decorator import is_simd_tile_function
+
+        func_type = ir.FunctionType.SimdTileCallee if is_simd_tile_function(fn) else ir.FunctionType.SimdCallee
+        callee, runtime_args, span = self._parse_simd_template_call(local_name, fn, call, func_type)
         return self._make_call_with_return_type(ir.Op(callee.name), runtime_args, callee.return_types, span)
+
+    def _vf_specialization_key(
+        self, fn: Callable, func_type: ir.FunctionType, const_spec: tuple, arg_types: list[ir.Type]
+    ) -> tuple[tuple, int]:
+        """Share actual-type identity across VF modes, including specialized constants."""
+        prefix = (id(fn), func_type, const_spec)
+        key = (*prefix, _VfTypeKey(tuple(arg_types)))
+        type_variant = sum(existing[:3] == prefix for existing in self.vf_func_cache)
+        return key, type_variant
 
     def _instantiate_simd_function(
         self,
@@ -1116,12 +1150,7 @@ class CallParserMixin:
         args: list[ir.Expr],
         func_type: ir.FunctionType,
     ) -> ir.Function:
-        """Parse a SIMD vector-function once per callable/type/constant specialization.
-
-        Later call sites reuse the cached function and are validated against its
-        parameter types by ``_parse_simd_template_call`` (the same contract SIMT
-        follows). A tile argument is not part of the specialization: it is passed as a
-        parameter, so one function serves every call site.
+        """Specialize a SIMD callable by role, complete argument types and constants.
 
         A parse that records accesses for the automatic pipeline instantiates the body at
         every call site even so, and keeps the cached function. Which buffer a tile argument
@@ -1130,13 +1159,20 @@ class CallParserMixin:
         accesses at all. Such a parse discards the IR it builds, hence the prototype of a
         repeat is dropped and the cached function is the one returned.
         """
+        if func_type in (ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee):
+            for arg in args:
+                if not isinstance(arg.type, (ir.TileType, ir.ScalarType)):
+                    raise InvalidType(
+                        "simd_tile parameters must be TileType or ScalarType",
+                    )
         const_flags = [_is_const_arg(arg) for arg in args]
         const_spec = tuple(
             (idx, type(arg).__name__, arg.value)
             for idx, arg in enumerate(args)
             if const_flags[idx]
         )
-        cache_key = (id(fn), func_type, const_spec)
+        arg_types = [arg.type for arg in args]
+        cache_key, type_variant = self._vf_specialization_key(fn, func_type, const_spec, arg_types)
         cached = self.vf_func_cache.get(cache_key)
         if cached is not None and not self.auto_pipeline_enabled:
             self._register_vf_external(cached)
@@ -1148,7 +1184,7 @@ class CallParserMixin:
             args,
             decorator_label='@pl.vector_function',
             recursion_label='@pl.vector_function',
-            role="VF function" if func_type == ir.FunctionType.SimdVF else "VF callee",
+            role="VF function" if func_type in (ir.FunctionType.SimdVF, ir.FunctionType.SimdTileVF) else "VF callee",
             func_type=func_type,
             void_return_only=True,
             void_return_context='@pl.vector_function',
@@ -1165,6 +1201,10 @@ class CallParserMixin:
                 if _is_const_arg(arg)
             )
             specialized_name = f"{parsed.name}__{suffix}"
+        if func_type in (ir.FunctionType.SimdCallee, ir.FunctionType.SimdTileCallee):
+            specialized_name += "__callee"
+        if type_variant:
+            specialized_name += f"__type_{type_variant}"
         result = ir.Function(
             specialized_name,
             list(parsed.params),
@@ -1247,7 +1287,7 @@ class CallParserMixin:
         standalone ``__simd_vf__``/``__simd_callee__`` function.
         For regular callables, expands the body directly.
         """
-        from .decorator import get_simt_max_threads, is_simt_function, is_vector_function
+        from .decorator import get_simt_max_threads, is_simd_tile_function, is_simt_function, is_vector_function
 
         if is_simt_function(fn):
             if _is_simt_func_type(self._current_func_type):
@@ -1263,12 +1303,24 @@ class CallParserMixin:
             )
 
         if is_vector_function(fn):
-            if self._current_func_type in (ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee):
+            if self._current_func_type in (
+                ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee, ir.FunctionType.SimtKernel
+            ):
+                raise InvalidOperation(
+                    "SIMT functions cannot call SIMD functions",
+                    span=self.span_tracker.get_span(call),
+                )
+            if self._in_simd_vf_body():
+                if self._in_simd_tile_body() != is_simd_tile_function(fn):
+                    raise InvalidOperation(
+                        "SIMD callers and callees must use the same mode (simd or simd_tile)",
+                        span=self.span_tracker.get_span(call),
+                    )
                 return self._parse_simd_inbody_call(func_name, fn, call)
             return self._parse_simd_kernel_call(func_name, fn, call)
 
         span = self.span_tracker.get_span(call)
-        in_simd_vf = self._current_func_type in (ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee)
+        in_simd_vf = self._in_simd_vf_body()
         if in_simd_vf:
             # VF functions route to _parse_simd_inbody_call above, so any
             # helper reaching the inline path inside a VF body is a plain
