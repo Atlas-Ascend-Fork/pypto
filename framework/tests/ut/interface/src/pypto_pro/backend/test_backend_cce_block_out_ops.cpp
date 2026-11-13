@@ -812,7 +812,7 @@ TEST(BackendCCEBlockOutOps, L2CacheModeCodegenThroughFullProgram)
     std::string generated;
     AppendCodegenSection(generated, "vector l2 cache modes", vector_code);
     AppendCodegenSection(generated, "cube l2 cache modes with phase and scaling", cube_code);
-    EXPECT_EQ(generated, ReadCodegenGolden("l2_cache_modes.pypto"));
+    EXPECT_EQ(generated, ReadCodegenGolden("l2_cache_modes.pypto.cce"));
 
     for (const auto& load_case : load_cases) {
         const auto& expected = load_case.second;

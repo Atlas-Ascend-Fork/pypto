@@ -28,12 +28,16 @@ def duration_estimate(seconds: float):
     return decorator
 
 
+GOLDEN_SUFFIX = {"ir": ".pypto", "cce": ".pypto.cce", "entry": ".pypto.cce", "caller": ".pypto.cpp"}
+
+
 @pytest.fixture
 def assert_9201_golden(request):
     """Compare the complete 9201 regression output with its checked-in golden."""
     def check(actual, label="ir"):
         printed = re.sub(r"memref_id=\d+", "memref_id=<id>", str(actual))
-        path = Path(request.path).with_suffix("") / f"{request.node.name}-{label}.pypto"
+        suffix = GOLDEN_SUFFIX.get(label.rsplit("-", 1)[-1], ".pypto")
+        path = Path(request.path).with_suffix("") / f"{request.node.name}-{label}{suffix}"
         golden = path.read_text(encoding="utf-8")
         assert printed.rstrip("\n") == golden.rstrip("\n")
 

@@ -332,7 +332,7 @@ def test_icache_preload_codegen_includes_ascendc_cache_interface(tmp_path):
         has_cube=False, has_vector=True,
     )
     result = jit._add_kernel_header(result)
-    golden = Path(__file__).with_suffix(".pypto").read_text(encoding="utf-8")
+    golden = Path(__file__).with_suffix(".pypto.cce").read_text(encoding="utf-8")
     assert result.content.rstrip("\n") == golden.rstrip("\n")
 
 

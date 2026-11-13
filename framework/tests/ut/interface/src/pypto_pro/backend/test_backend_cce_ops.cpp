@@ -72,7 +72,7 @@ public:
 
 void ExpectScalarAccessCode(const std::string& generated, const std::string& name)
 {
-    const auto path = std::filesystem::path(CCE_SCALAR_ACCESS_TEST_DATA_DIR) / (name + ".pypto");
+    const auto path = std::filesystem::path(CCE_SCALAR_ACCESS_TEST_DATA_DIR) / (name + ".pypto.cce");
     std::ifstream expected(path);
     ASSERT_TRUE(expected.is_open()) << path;
     std::ostringstream content;
@@ -251,7 +251,7 @@ TEST(BackendCceOpsTest, ICachePreloadUsesAscendC)
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_EQ(generated, ReadBackendCodegenGolden("test_backend_cce_ops.pypto"));
+    EXPECT_EQ(generated, ReadBackendCodegenGolden("test_backend_cce_ops.pypto.cce"));
 }
 
 TEST(BackendCceOpsTest, ICachePreloadRejectsUnsupportedArch)

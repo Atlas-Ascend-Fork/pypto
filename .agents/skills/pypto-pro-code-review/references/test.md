@@ -12,6 +12,7 @@ PyPTO Pro 及相关公共 IR 的 UT/ST 用例、golden 文件和影响以下规�
 - [完整 IR 文本对比用例](../../../../python/tests/ut/pypto_pro/ir/test_function_type_ir/test_function_type_python_print.py)
   及其 [.pypto golden](../../../../python/tests/ut/pypto_pro/ir/test_function_type_ir/test_function_type_python_print.pypto)
 - [完整文本对比与增强校验用例](../../../../python/tests/ut/pypto_pro/runtime/test_parse_observer_ir/test_observer_sees_final_program_once.py)
+- [CCE/host 生成代码 golden 与后缀映射 helper](../../../../python/tests/ut/pypto_pro/conftest.py)
 - [公共 IR snapshot helper](../../../../python/tests/ut/ir/test_common.py)
 
 ## 测试专属规则
@@ -28,18 +29,26 @@ PyPTO Pro 及相关公共 IR 的 UT/ST 用例、golden 文件和影响以下规�
 - **边界**：真实上板用例因设备不可用或 SoC 不匹配而跳过，仍属于 ST；不能仅根据一次运行被
   skip 判为 UT。验证记录是否足以证明已上板，另按 `PRO-VALIDATE-001` 判断。
 
-### PRO-TEST-002：IR 与源码字符串断言使用完整 `.pypto` golden
+### PRO-TEST-002：IR 与生成代码字符串断言使用完整 golden，后缀按内容类型区分
 
 - **适用条件**：UT 新增或修改对 IR 打印结果、生成源码等文本内容的断言，或修改对应 golden
   及比较 helper。
-- **检查内容**：参考已有 UT，将预期的完整目标文本保存为 `.pypto` 文件，读取该 golden，
-  与实际输出的完整 IR 或源码作一致性比较。检查 golden 是否实际参与断言，不能只创建文件。
+- **检查内容**：参考已有 UT，将预期的完整目标文本保存为与内容类型匹配的 golden 文件，
+  读取该 golden，与实际输出的完整文本作一致性比较。golden 后缀按内容类型确定：
+  - IR 文本使用 `.pypto`，语法见 `framework/src/interface/ir/transforms/io_text.md`；
+  - CCE 代码使用 `.pypto.cce`，包括设备侧 kernel、`__global__` entry 及 kernel 头文件等
+    由 CCE 编译器编译的生成源码；
+  - host 侧生成的 C++ 源码使用 `.pypto.cpp`，如 runtime/jit 的 `call_kernel` 启动 TU；
+  - `exported_custom_op_litenpu` 等工具链生成的 host 侧 C++ 管理代码沿用该目录既有的
+    `<name>.cpp.golden` 约定，不属于 CCE，不使用 `.pypto.cce`。
+  检查 golden 是否实际参与断言，不能只创建文件。
   仅用子串包含/排除、正则、出现次数或抽取若干行来验证文本均不满足要求；在 Python 中
-  内嵌若干预期片段也不能替代 `.pypto` golden。
+  内嵌若干预期片段也不能替代完整 golden。
   可沿用现有用例对末尾换行的处理，但不能删除语句、只保留关注行等来缩小比较范围。
   在完整文本对比基础上，可追加关键内容、次数、顺序、IR 节点类型或其他行为的增强校验；
   这些断言不能替代完整对比。
-- **报告证据**：实际文本的生成位置、`.pypto` golden 路径及内容范围、完整比较调用链，
-  或仅有片段断言的位置与未覆盖内容。完整比较位于 helper 中时应沿调用确认，避免误报增强断言。
+- **报告证据**：实际文本的生成位置、golden 路径与后缀是否匹配内容类型、内容范围、
+  完整比较调用链，或仅有片段断言的位置与未覆盖内容。完整比较位于 helper 中时应沿调用确认，
+  避免误报增强断言。
 - **边界**：完整文本对应被测输出对象，如函数、Program 或生成源文件，不要求拼入无关输出。
   本规则针对 IR/源码文本一致性，不将异常消息匹配或普通标量属性断言强行改为 golden 测试。
