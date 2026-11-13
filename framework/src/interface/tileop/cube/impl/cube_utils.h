@@ -27,6 +27,8 @@
 
 constexpr int16_t SHAPE_DIM2 = 2;
 constexpr int16_t SHAPE_DIM3 = 3;
+constexpr int16_t SHAPE_DIM4 = 4;
+constexpr int16_t MX_SCALE_MAX_DIM = 5;
 constexpr uint16_t BLOCK_CUBE_M_N = 16;
 constexpr uint16_t BLOCK_ALIGN_BYTE = 32;
 constexpr int64_t FP4_BLOCK_ALIGN_BYTE = 64;
@@ -41,20 +43,65 @@ struct TStoreConfig {
     static constexpr uint8_t kReluMode = reluMode;
 };
 
-template <int16_t idx, typename U>
+template <int64_t idx, typename U>
 INLINE int64_t GetShape(const U& tileTensor)
 {
-    static_assert(idx < SHAPE_DIM2, "Idx should be less than 2");
+    static_assert(idx >= 0, "Idx should be non-negative");
+    static_assert(idx < static_cast<int64_t>(Std::tuple_size<typename U::Shape>::value),
+                  "Idx should be less than shape size");
     const auto tileLayout = tileTensor.GetLayout();
     return tileLayout.template GetShapeDim<idx>();
 }
 
-template <int16_t idx, typename U>
+template <int64_t idx, typename U>
 INLINE int64_t GetStride(const U& tileTensor)
 {
-    static_assert(idx < SHAPE_DIM2, "Idx should be less than 2");
+    static_assert(idx >= 0, "Idx should be non-negative");
+    static_assert(idx < static_cast<int64_t>(Std::tuple_size<typename U::Stride>::value),
+                  "Idx should be less than stride size");
     const auto tileLayout = tileTensor.GetLayout();
     return tileLayout.template GetStrideDim<idx>();
+}
+
+template <int64_t fromTail, typename U>
+INLINE int64_t GetTailShape(const U& tileTensor)
+{
+    constexpr auto shapeSize = Std::tuple_size<typename U::Shape>::value;
+    static_assert(fromTail < static_cast<int64_t>(shapeSize), "fromTail should be less than shape size");
+    return GetShape<static_cast<int64_t>(shapeSize - 1 - fromTail)>(tileTensor);
+}
+
+template <int64_t fromTail, typename U>
+INLINE int64_t GetTailStride(const U& tileTensor)
+{
+    constexpr auto shapeSize = Std::tuple_size<typename U::Stride>::value;
+    static_assert(fromTail < static_cast<int64_t>(shapeSize), "fromTail should be less than stride size");
+    return GetStride<static_cast<int64_t>(shapeSize - 1 - fromTail)>(tileTensor);
+}
+
+// 折叠 batch 轴 offset：sum(coord[i] * stride[i])，i 属于 [0, dim-2)。
+// 仅 TLoad/TStore 等 GM 搬运使用（offset 可能为非 0 的 batch 偏移）；
+// L1/L0 内部搬运的前导 offset 由构图层保证为 0，不走此折叠。
+// dim 上限 5：4D batch 的 MX scale tile 为 {1, 1, m, kScale, 2}
+template <typename Coord, typename U>
+INLINE int64_t GetBatchDimsOffset(const U& tileTensor, const Coord& coord)
+{
+    constexpr auto shapeSize = Std::tuple_size<typename U::Shape>::value;
+    static_assert(
+        shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4 || shapeSize == MX_SCALE_MAX_DIM,
+        "Shape dim size should be 2, 3, 4 or 5");
+    int64_t batchOffset = 0;
+    if constexpr (shapeSize == SHAPE_DIM3) {
+        batchOffset = TileOp::GetTupleElement<Coord, 0, SHAPE_DIM3, 0>(coord) * GetStride<0>(tileTensor);
+    } else if constexpr (shapeSize == SHAPE_DIM4) {
+        batchOffset = TileOp::GetTupleElement<Coord, 0, SHAPE_DIM4, 0>(coord) * GetStride<0>(tileTensor) +
+                      TileOp::GetTupleElement<Coord, 1, SHAPE_DIM4, 0>(coord) * GetStride<1>(tileTensor);
+    } else if constexpr (shapeSize == MX_SCALE_MAX_DIM) {
+        batchOffset = TileOp::GetTupleElement<Coord, 0, MX_SCALE_MAX_DIM, 0>(coord) * GetStride<0>(tileTensor) +
+                      TileOp::GetTupleElement<Coord, 1, MX_SCALE_MAX_DIM, 0>(coord) * GetStride<1>(tileTensor) +
+                      TileOp::GetTupleElement<Coord, SHAPE_DIM2, MX_SCALE_MAX_DIM, 0>(coord) * GetStride<2>(tileTensor);
+    }
+    return batchOffset;
 }
 
 INLINE int64_t CalNZOffset(const int64_t& srcShape0, const int64_t& srcShape1, const int64_t& offset0,
@@ -78,17 +125,36 @@ constexpr INLINE bool CheckIsB4()
 #endif
 }
 
+// 校验 tensor 所有维度 valid shape 非零
+template <typename T>
+INLINE bool CheckTensorDimsNonZero(const T& tensor)
+{
+    constexpr auto shapeSize = Std::tuple_size<typename T::Shape>::value;
+    static_assert(
+        shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4 || shapeSize == MX_SCALE_MAX_DIM,
+        "Shape dim size should be 2, 3, 4 or 5");
+    if constexpr (shapeSize >= SHAPE_DIM3) {
+        if (GetShape<SHAPE_DIM3 - 1>(tensor) == 0) {
+            return false;
+        }
+    }
+    if constexpr (shapeSize >= SHAPE_DIM4) {
+        if (GetShape<SHAPE_DIM4 - 1>(tensor) == 0) {
+            return false;
+        }
+    }
+    if constexpr (shapeSize >= MX_SCALE_MAX_DIM) {
+        if (GetShape<MX_SCALE_MAX_DIM - 1>(tensor) == 0) {
+            return false;
+        }
+    }
+    return GetShape<0>(tensor) != 0 && GetShape<1>(tensor) != 0;
+}
+
 template <typename T, typename U>
 INLINE bool CheckShapeValid(const T& dst, const U& src)
 {
-    int64_t dstShape0 = GetShape<0>(dst);
-    int64_t dstShape1 = GetShape<1>(dst);
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
-    if (dstShape0 == 0 || dstShape1 == 0 || srcShape0 == 0 || srcShape1 == 0) {
-        return false;
-    }
-    return true;
+    return CheckTensorDimsNonZero(dst) && CheckTensorDimsNonZero(src);
 }
 
 template <typename L0TileData>
@@ -103,6 +169,23 @@ INLINE bool CheckBASEMNValid(const L0TileData& l0Tile)
     }
 }
 
+// 折叠 MX scale 的 batch 轴 offset：sum(coord[i] * stride[i])，i 属于 [0, dim-3)。
+template <typename Coord, typename U>
+INLINE int64_t GetBatchDimsOffsetMX(const U& tileTensor, const Coord& coord)
+{
+    constexpr auto shapeSize = Std::tuple_size<typename U::Shape>::value;
+    static_assert(shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4 || shapeSize == MX_SCALE_MAX_DIM,
+                  "Shape dim size should be 3, 4 or 5");
+    int64_t batchOffset = 0;
+    if constexpr (shapeSize == SHAPE_DIM4) {
+        batchOffset = TileOp::GetTupleElement<Coord, 0, SHAPE_DIM4, 0>(coord) * GetStride<0>(tileTensor);
+    } else if constexpr (shapeSize == MX_SCALE_MAX_DIM) {
+        batchOffset = TileOp::GetTupleElement<Coord, 0, MX_SCALE_MAX_DIM, 0>(coord) * GetStride<0>(tileTensor) +
+                      TileOp::GetTupleElement<Coord, 1, MX_SCALE_MAX_DIM, 0>(coord) * GetStride<1>(tileTensor);
+    }
+    return batchOffset;
+}
+
 // create Scale Tile Data
 template <typename FpTileData>
 INLINE auto CreateScaleTileData(FpTileData& fixbuf)
@@ -111,8 +194,8 @@ INLINE auto CreateScaleTileData(FpTileData& fixbuf)
     constexpr int64_t
         scaleTileH = Std::tuple_element<shapeSize - SHAPE_DIM2, typename FpTileData::TileShape>::type::value;
     constexpr int64_t scaleTileW = Std::tuple_element<shapeSize - 1, typename FpTileData::TileShape>::type::value;
-    int64_t scaleShape0 = GetShape<0>(fixbuf);
-    int64_t scaleShape1 = GetShape<1>(fixbuf);
+    int64_t scaleShape0 = GetTailShape<1>(fixbuf);
+    int64_t scaleShape1 = GetTailShape<0>(fixbuf);
     using scaleTileData = pto::Tile<pto::TileType::Scaling, uint64_t, scaleTileH, scaleTileW, pto::BLayout::RowMajor,
                                     -1, -1>;
     return scaleTileData(scaleShape0, scaleShape1);
@@ -140,7 +223,7 @@ template <CopyInMode copyMode, int64_t kIndex, typename TileData>
 INLINE bool HandleZeroKScenario(TileData& dst)
 {
     if constexpr (kIndex != -1) {
-        static_assert(kIndex == 0 || kIndex == 1, "K index should be 0 or 1");
+        static_assert(kIndex >= 0 && kIndex <= SHAPE_DIM4 - 1, "K index should be in [0, SHAPE_DIM4 - 1]");
         if constexpr (copyMode != CopyInMode::ND2ND) {
             int64_t validK = GetShape<kIndex>(dst);
             if (validK == 0) {

@@ -442,14 +442,22 @@ TileShape TileShapeResolver::GetInputTileShape(const Operation& op, int index) c
             }
             const auto& aShape = iOperands[0]->GetShape();
             const auto& bShape = iOperands[1]->GetShape();
-            int64_t m = transA ? aShape[1] : aShape[0];
-            int64_t k = transA ? aShape[0] : aShape[1];
-            int64_t n = transB ? bShape[0] : bShape[1];
+            FE_ASSERT(FeError::INVALID_VAL, aShape.size() >= SHAPE_DIM2 && bShape.size() >= SHAPE_DIM2)
+                << "matmul operand shape dim must be >= 2, aShape dim: " << aShape.size()
+                << ", bShape dim: " << bShape.size();
+            int64_t m = transA ? aShape[aShape.size() - 1] : aShape[aShape.size() - SHAPE_DIM2];
+            int64_t k = transA ? aShape[aShape.size() - SHAPE_DIM2] : aShape[aShape.size() - 1];
+            int64_t n = transB ? bShape[bShape.size() - SHAPE_DIM2] : bShape[bShape.size() - 1];
             auto ceilDiv = [](int64_t x, int64_t a) { return (x + a - 1) / a; };
             if (index == biasIdx || index == scaleIdx) {
                 return MakeTileShapeFromVec({1, std::min(n, cubeTile.n[0])});
             }
             if (hasMX && index == aScaleIdx) {
+                FE_ASSERT(FeError::OUT_OF_RANGE, iOperands.size() > static_cast<size_t>(aScaleIdx))
+                    << "aScale operand index out of range: " << aScaleIdx
+                    << ", input operand size=" << iOperands.size();
+                FE_ASSERT(FeError::INVALID_PTR, iOperands[static_cast<size_t>(aScaleIdx)] != nullptr)
+                    << "aScale operand is nullptr, aScaleIdx: " << aScaleIdx;
                 auto transAScale = op.HasAttr(Matrix::A_MUL_B_SCALE_A_COPY_IN_MODE) &&
                                    op.GetIntAttribute(Matrix::A_MUL_B_SCALE_A_COPY_IN_MODE) ==
                                        static_cast<int64_t>(Matrix::CopyInMode::DN2NZ);
@@ -457,9 +465,18 @@ TileShape TileShapeResolver::GetInputTileShape(const Operation& op, int index) c
                 int64_t kScale = ceilDiv(std::min(k, cubeTile.k[1]), 64);
                 std::vector<int64_t> tile = transAScale ? std::vector<int64_t>{kScale, mL0, 2} :
                                                           std::vector<int64_t>{mL0, kScale, 2};
+                const auto& aScaleShape = iOperands[static_cast<size_t>(aScaleIdx)]->GetShape();
+                FE_ASSERT(FeError::INVALID_VAL, aScaleShape.size() >= SHAPE_DIM3)
+                    << "aScale shape dim must be >= " << SHAPE_DIM3 << ", current dim: " << aScaleShape.size();
+                tile.insert(tile.begin(), aScaleShape.size() - SHAPE_DIM3, 1);
                 return MakeTileShapeFromVec(tile);
             }
             if (hasMX && index == bScaleIdx) {
+                FE_ASSERT(FeError::OUT_OF_RANGE, iOperands.size() > static_cast<size_t>(bScaleIdx))
+                    << "bScale operand index out of range: " << bScaleIdx
+                    << ", input operand size=" << iOperands.size();
+                FE_ASSERT(FeError::INVALID_PTR, iOperands[static_cast<size_t>(bScaleIdx)] != nullptr)
+                    << "bScale operand is nullptr, bScaleIdx: " << bScaleIdx;
                 auto transBScale = op.HasAttr(Matrix::A_MUL_B_SCALE_B_COPY_IN_MODE) &&
                                    op.GetIntAttribute(Matrix::A_MUL_B_SCALE_B_COPY_IN_MODE) ==
                                        static_cast<int64_t>(Matrix::CopyInMode::DN2NZ);
@@ -467,6 +484,10 @@ TileShape TileShapeResolver::GetInputTileShape(const Operation& op, int index) c
                 int64_t kScale = ceilDiv(std::min(k, cubeTile.k[1]), 64);
                 std::vector<int64_t> tile = transBScale ? std::vector<int64_t>{nL0, kScale, 2} :
                                                           std::vector<int64_t>{kScale, nL0, 2};
+                const auto& bScaleShape = iOperands[static_cast<size_t>(bScaleIdx)]->GetShape();
+                FE_ASSERT(FeError::INVALID_VAL, bScaleShape.size() >= SHAPE_DIM3)
+                    << "bScale shape dim must be >= " << SHAPE_DIM3 << ", current dim: " << bScaleShape.size();
+                tile.insert(tile.begin(), bScaleShape.size() - SHAPE_DIM3, 1);
                 return MakeTileShapeFromVec(tile);
             }
             return opTileShape;
@@ -505,8 +526,11 @@ TileShape TileShapeResolver::GetOutputTileShape(const Operation& op, int index) 
             auto transB = op.HasAttr(Matrix::A_MUL_B_TRANS_B) && op.GetBoolAttribute(Matrix::A_MUL_B_TRANS_B);
             const auto& aShape = iOperands[0]->GetShape();
             const auto& bShape = iOperands[1]->GetShape();
-            int64_t m = transA ? aShape[1] : aShape[0];
-            int64_t n = transB ? bShape[0] : bShape[1];
+            FE_ASSERT(FeError::INVALID_VAL, aShape.size() >= SHAPE_DIM2 && bShape.size() >= SHAPE_DIM2)
+                << "matmul operand shape dim must be >= 2, aShape dim: " << aShape.size()
+                << ", bShape dim: " << bShape.size();
+            int64_t m = transA ? aShape[aShape.size() - 1] : aShape[aShape.size() - SHAPE_DIM2];
+            int64_t n = transB ? bShape[bShape.size() - SHAPE_DIM2] : bShape[bShape.size() - 1];
             return MakeTileShapeFromVec({std::min(m, cubeTile.m[0]), std::min(n, cubeTile.n[0])});
         }
         case Opcode::OP_NCHW2NC1HWC0:

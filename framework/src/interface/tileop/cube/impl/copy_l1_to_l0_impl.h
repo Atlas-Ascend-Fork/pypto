@@ -22,14 +22,16 @@ template <bool isTrans, bool isMX, bool isGemv = false, typename DstTileData, ty
 INLINE void TExtractL1ToL0Impl(DstTileData& dst, SrcTileData& src, const int64_t& offset0, const int64_t& offset1)
 {
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
+    static_assert(shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
     constexpr auto staticL1H = Std::tuple_element<shapeSize - SHAPE_DIM2, typename SrcTileData::TileShape>::type::value;
     constexpr auto staticL1W = Std::tuple_element<shapeSize - 1, typename SrcTileData::TileShape>::type::value;
     constexpr auto staticL0H = Std::tuple_element<shapeSize - SHAPE_DIM2, typename DstTileData::TileShape>::type::value;
     constexpr auto staticL0W = Std::tuple_element<shapeSize - 1, typename DstTileData::TileShape>::type::value;
-    int64_t dstShape0 = GetShape<0>(dst);
-    int64_t dstShape1 = GetShape<1>(dst);
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
+    int64_t dstShape0 = GetTailShape<1>(dst);
+    int64_t dstShape1 = GetTailShape<0>(dst);
+    int64_t srcShape0 = GetTailShape<1>(src);
+    int64_t srcShape1 = GetTailShape<0>(src);
     // MX Matmul场景，L0的k轴需要保证64对齐，非对齐输入场景需要对validshapeK对齐到64
     if constexpr (DstTileData::FORMAT == Hardware::L0A) {
         if constexpr (isMX) {

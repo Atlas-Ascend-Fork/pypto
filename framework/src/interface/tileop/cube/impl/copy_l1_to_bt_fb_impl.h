@@ -23,10 +23,12 @@ template <bool isTrans, typename DstTileData, typename SrcTileData>
 INLINE void TExtractL1ToBTOrFBImpl(DstTileData& dst, SrcTileData& src)
 {
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
+    static_assert(shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
     constexpr auto staticL1W = Std::tuple_element<shapeSize - 1, typename SrcTileData::TileShape>::type::value;
     constexpr auto staticL0BW = Std::tuple_element<shapeSize - 1, typename DstTileData::TileShape>::type::value;
-    int64_t nL1 = GetShape<1>(src);
-    int64_t nL0 = GetShape<1>(dst);
+    int64_t nL1 = GetTailShape<0>(src);
+    int64_t nL0 = GetTailShape<0>(dst);
     using tileL1Tensor = pto::Tile<pto::TileType::Mat, typename SrcTileData::Type, 1, staticL1W, pto::BLayout::RowMajor,
                                    -1, -1>;
     using tileBiasOrFbTensor = pto::Tile<DstTileData::FORMAT == Hardware::BIAS ? pto::TileType::Bias :

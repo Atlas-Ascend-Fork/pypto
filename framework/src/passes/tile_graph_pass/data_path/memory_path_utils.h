@@ -126,11 +126,16 @@ public:
 
     static bool HasConvConsumer(const LogicalTensorPtr& tensor);
 
+    static bool AllBatchAxesAreOne(const Shape& shape);
+
     static bool IsL0C2UbSupportedShape(const LogicalTensorPtr& tensor);
 
     static bool CheckUBTileShape(const LogicalTensorPtr& moveTensor);
 
     static bool CheckUBConvTileShape(const LogicalTensorPtr& moveTensor);
+
+    // LiteNPU batch matmul 分形校验 (N轴对齐)
+    static bool CheckUBBatchMatmulTileShapeLiteNPU(const LogicalTensorPtr& moveTensor);
 
     static bool IsDimMultiple(const Shape& shape1, const Shape& shape2);
 

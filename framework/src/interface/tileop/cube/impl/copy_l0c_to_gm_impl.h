@@ -82,20 +82,22 @@ INLINE void TStoreExecute(globalData dstGlobal, tileData srcL0C, FpTileData& fix
 // Copy data from L0C to DDR with NZ -> ND format
 template <typename config, typename GlobalData, typename TileData, typename FpTileData>
 INLINE void TStoreNZ2ND(GlobalData& dst, TileData& src, FpTileData& fixbuf, const int64_t& offset0,
-                        const int64_t& offset1, uint64_t scaleValue = 0)
+                        const int64_t& offset1, const int64_t& batchOffset, uint64_t scaleValue = 0)
 {
     constexpr auto shapeSize = Std::tuple_size<typename GlobalData::Shape>::value;
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
-    int64_t dstShape0 = GetShape<0>(dst);
-    int64_t dstShape1 = GetShape<1>(dst);
-    int64_t dstStride0 = GetStride<0>(dst);
-    int64_t dstStride1 = GetStride<1>(dst);
+    static_assert(shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
+    int64_t srcShape0 = GetTailShape<1>(src);
+    int64_t srcShape1 = GetTailShape<0>(src);
+    int64_t dstShape0 = GetTailShape<1>(dst);
+    int64_t dstShape1 = GetTailShape<0>(dst);
+    int64_t dstStride0 = GetTailStride<1>(dst);
+    int64_t dstStride1 = GetTailStride<0>(dst);
     constexpr auto tileH = Std::tuple_element<shapeSize - SHAPE_DIM2, typename TileData::TileShape>::type::value;
     constexpr auto tileW = Std::tuple_element<shapeSize - 1, typename TileData::TileShape>::type::value;
     using shapeDim2 = pto::Shape<1, 1, 1, -1, -1>;
     using strideDim2 = pto::Stride<1, 1, 1, -1, -1>;
-    int64_t gmOffset = offset1 + offset0 * dstShape1;
+    int64_t gmOffset = batchOffset + offset1 + offset0 * dstShape1;
     using globalData = pto::GlobalTensor<typename GlobalData::Type, shapeDim2, strideDim2, pto::Layout::ND>;
     using tileData = pto::Tile<pto::TileType::Acc, typename TileData::Type, tileH, tileW, pto::BLayout::ColMajor, -1,
                                -1, pto::SLayout::RowMajor, pto::TileConfig::fractalCSize, pto::PadValue::Null,
@@ -111,19 +113,22 @@ INLINE void TStoreNZ2ND(GlobalData& dst, TileData& src, FpTileData& fixbuf, cons
 // Copy data from L0C to DDR with NZ -> NZ format
 template <typename config, typename GlobalData, typename TileData, typename FpTileData>
 INLINE void TStoreNZ2NZ(GlobalData& dst, TileData& src, FpTileData& fixbuf, const int64_t& offset0,
-                        const int64_t& offset1, const int64_t& curH, const int64_t& curW, uint64_t scaleValue = 0)
+                        const int64_t& offset1, const int64_t& batchOffset, const int64_t& curH, const int64_t& curW,
+                        uint64_t scaleValue = 0)
 {
     constexpr auto shapeSize = Std::tuple_size<typename GlobalData::Shape>::value;
+    static_assert(shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
     constexpr int64_t c0Size = std::is_same<typename TileData::Type, int32_t>::value ?
                                    BLOCK_CUBE_M_N :
                                    BLOCK_ALIGN_BYTE / sizeof(typename GlobalData::Type);
     int64_t dstShape0 = curH;
     int64_t dstShape1 = curW;
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
+    int64_t srcShape0 = GetTailShape<1>(src);
+    int64_t srcShape1 = GetTailShape<0>(src);
     constexpr auto tileH = Std::tuple_element<shapeSize - SHAPE_DIM2, typename TileData::TileShape>::type::value;
     constexpr auto tileW = Std::tuple_element<shapeSize - 1, typename TileData::TileShape>::type::value;
-    int64_t gmOffset = CalNZOffset(dstShape0, dstShape1, offset0, offset1, c0Size);
+    int64_t gmOffset = batchOffset + CalNZOffset(dstShape0, dstShape1, offset0, offset1, c0Size);
     using shapeDim2 = pto::Shape<1, -1, -1, BLOCK_CUBE_M_N, c0Size>;
     using strideDim2 = pto::Stride<-1, -1, -1, c0Size, 1>;
     using globalData = pto::GlobalTensor<typename GlobalData::Type, shapeDim2, strideDim2, pto::Layout::NZ>;

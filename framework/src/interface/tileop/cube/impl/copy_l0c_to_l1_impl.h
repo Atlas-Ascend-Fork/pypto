@@ -94,15 +94,17 @@ INLINE void TExtractL0C2L1Impl(DstTileData& dst, SrcTileData& src, FpTileData& f
                                const Coord& l0cCoord, uint64_t scaleValue = 0)
 {
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
+    static_assert(shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
     int64_t l1Offset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(l1Coord);
     int64_t l1Offset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(l1Coord);
     int64_t l0cOffset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(l0cCoord);
     int64_t l0cOffset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(l0cCoord);
     constexpr int64_t c0Size = BLOCK_ALIGN_BYTE / sizeof(typename DstTileData::Type);
-    int64_t dstShape0 = GetShape<0>(dst);
-    int64_t dstShape1 = GetShape<1>(dst);
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
+    int64_t dstShape0 = GetTailShape<1>(dst);
+    int64_t dstShape1 = GetTailShape<0>(dst);
+    int64_t srcShape0 = GetTailShape<1>(src);
+    int64_t srcShape1 = GetTailShape<0>(src);
     constexpr int64_t
         tileL1H = Std::tuple_element<shapeSize - SHAPE_DIM2, typename DstTileData::TileShape>::type::value;
     constexpr int64_t tileL1W = Std::tuple_element<shapeSize - 1, typename DstTileData::TileShape>::type::value;

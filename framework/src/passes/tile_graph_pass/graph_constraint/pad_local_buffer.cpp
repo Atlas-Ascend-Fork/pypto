@@ -28,8 +28,6 @@ constexpr int64_t CUBE_PAD_B8_VALUE = 32;
 constexpr int64_t CUBE_PAD_B4_VALUE = 64;
 constexpr int64_t MX_K_AXIS_PAD_VALUE = 64;
 constexpr int64_t BT_PAD_BASE = 64;
-constexpr int64_t mxHighAxis = 0;
-constexpr int64_t mxLowAxis = 1;
 const std::unordered_set<DataType> b8DataSupport = {DataType::DT_INT8, DataType::DT_FP8E5M2, DataType::DT_FP8E4M3,
                                                     DataType::DT_HF8};
 const std::unordered_set<DataType> b4DataSupport = {DataType::DT_FP4_E2M1X2, DataType::DT_FP4_E1M2X2,
@@ -214,13 +212,23 @@ bool PadLocalBuffer::TryPadMatmulMXScene(Operation& op, LogicalTensorPtr& in)
     if (producers.empty()) {
         return false;
     }
+    // MX scale 主体为 3 维（构图层保证 3~5 维），维数不足时尾维定位会下溢
+    if (in->tensor->rawshape.size() < SHAPE_DIM3) {
+        APASS_LOG_ERROR_F(Elements::Tensor,
+                          "Matmul Op %d %s input %d raw shape size is less than 3; Please check the input size.",
+                          op.opmagic, op.GetOpcodeStr().c_str(), in->magic);
+        return false;
+    }
     auto producerOpcode = (*producers.begin())->GetOpcode();
+    // L0A scale 的 m 恒在倒数第 3 维，L0B scale 的 n 恒在倒数第 2 维
+    const int64_t mxMAxis = static_cast<int64_t>(in->tensor->rawshape.size()) - SHAPE_DIM3;
+    const int64_t mxNAxis = static_cast<int64_t>(in->tensor->rawshape.size()) - SHAPE_DIM2;
     if (op.GetOpcode() == Opcode::OP_L1_TO_L0A_SCALE || producerOpcode == Opcode::OP_L1_TO_L0A_SCALE) {
-        PadForMatMulMX(in, mxHighAxis);
+        PadForMatMulMX(in, mxMAxis);
         return true;
     }
     if (op.GetOpcode() == Opcode::OP_L1_TO_L0B_SCALE || producerOpcode == Opcode::OP_L1_TO_L0B_SCALE) {
-        PadForMatMulMX(in, mxLowAxis);
+        PadForMatMulMX(in, mxNAxis);
         return true;
     }
     return false;

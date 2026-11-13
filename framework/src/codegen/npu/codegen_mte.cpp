@@ -30,6 +30,16 @@ const std::unordered_set<Opcode> RESHAPE_COPY_OP = {
     Opcode::OP_L1_RESHAPE_COPY_IN,
     Opcode::OP_L0C_RESHAPE_COPY_OUT,
 };
+
+// L1->L0 等内部搬运:  batch 轴 offset 恒为 0
+void CheckBatchOffsetZero(const std::vector<SymbolicScalar>& offsets, const std::string& caller)
+{
+    for (int64_t i = 0; i + SHAPE_DIM2 < static_cast<int64_t>(offsets.size()); ++i) {
+        ASSERT(GenCodeErr::TENSOR_OFFSET_INVALID,
+               offsets[i].IsImmediate() && offsets[i].Raw()->GetImmediateValue() == 0)
+            << caller << " only support 0 offset on leading batch dims!";
+    }
+}
 } // namespace
 
 DynamicParamPackMTE CodeGenOpNPU::PrepareDynamicShapeInfoForMTE(int dynShapeIdx, int shapeDim, bool isGmSpill) const
@@ -208,8 +218,8 @@ std::string CodeGenOpNPU::PrintMemL1ToL0TileTensor() const
     size_t coordSize = rawShape[ToUnderlying(MISOIdx::SRC0_IDX)].size();
     std::vector<std::string> l0Offset;
     if (!dynOffset.empty()) {
-        ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, dynOffset.size() == SHAPE_DIM2 || dynOffset.size() == SHAPE_DIM3)
-            << "GenMemL1ToL0 only support 2-dim or 3-dim!";
+        ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, dynOffset.size() >= SHAPE_DIM2 && dynOffset.size() <= SHAPE_DIM5)
+            << "GenMemL1ToL0 only support 2-dim to 5-dim!";
         FillParamWithFullInput(l0Offset, dynOffset);
     } else {
         for (size_t i = 0; i < coordSize; ++i) {
@@ -252,16 +262,23 @@ std::string CodeGenOpNPU::GenMemL1ToL0() const
     SymbolicScalar srcOffset1 = 0;
     auto dynoffset = GetOffsetFromAttr(ID1);
     if (!dynoffset.empty()) {
-        ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, dynoffset.size() == SHAPE_DIM2)
-            << "GenMemL1ToL0 only support 2-dim!";
-        srcOffset0 = dynoffset[ID0];
-        srcOffset1 = dynoffset[ID1];
+        ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, dynoffset.size() >= SHAPE_DIM2 && dynoffset.size() <= SHAPE_DIM4)
+            << "GenMemL1ToL0 only support 2-dim to 4-dim!";
+        CheckBatchOffsetZero(dynoffset, "GenMemL1ToL0");
+        srcOffset0 = dynoffset[dynoffset.size() - SHAPE_DIM2];
+        srcOffset1 = dynoffset[dynoffset.size() - SHAPE_DIM1];
     }
+    ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, l1Shape.size() >= SHAPE_DIM2 && l1Shape.size() <= SHAPE_DIM4)
+        << "GenMemL1ToL0 l1Shape only support 2-dim to 4-dim!";
+    ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, l0Shape.size() >= SHAPE_DIM2 && l0Shape.size() <= SHAPE_DIM4)
+        << "GenMemL1ToL0 l0Shape only support 2-dim to 4-dim!";
 
-    unsigned srcShape0 = l1Shape[ID0];
-    unsigned srcShape1 = l1Shape[ID1];
-    unsigned tileShape0 = l0Shape[ID0];
-    unsigned tileShape1 = l0Shape[ID1];
+    const int64_t l1BatchDims = static_cast<int64_t>(l1Shape.size()) - SHAPE_DIM2;
+    unsigned srcShape0 = l1Shape[l1BatchDims + ID0];
+    unsigned srcShape1 = l1Shape[l1BatchDims + ID1];
+    const int64_t l0BatchDims = static_cast<int64_t>(l0Shape.size()) - SHAPE_DIM2;
+    unsigned tileShape0 = l0Shape[l0BatchDims + ID0];
+    unsigned tileShape1 = l0Shape[l0BatchDims + ID1];
 
     std::string dtypeStr = DataType2CCEStr(operandDtype[ID0]);
     auto l1ShapeDyn = dynamicValidShape[ID1];
@@ -269,12 +286,17 @@ std::string CodeGenOpNPU::GenMemL1ToL0() const
 
     std::ostringstream oss;
     if (isDynamicFunction) {
+        ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, l1ShapeDyn.size() == l1Shape.size())
+            << "GenMemL1ToL0 l1ShapeDyn size must equal l1Shape size!";
+        ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, l0ShapeDyn.size() == l0Shape.size())
+            << "GenMemL1ToL0 l0ShapeDyn size must equal l0Shape size!";
         oss << tileOpName << "<" << dtypeStr << ", " << SymbolicExpressionTable::BuildExpression(srcOffset0) << ", "
             << SymbolicExpressionTable::BuildExpression(srcOffset1) << ">"
-            << "(" << paramStr << ", " << SymbolicExpressionTable::BuildExpression(l0ShapeDyn[ID0]) << ", "
-            << SymbolicExpressionTable::BuildExpression(l0ShapeDyn[ID1]) << ", "
-            << SymbolicExpressionTable::BuildExpression(l1ShapeDyn[ID0]) << ", "
-            << SymbolicExpressionTable::BuildExpression(l1ShapeDyn[ID1]) << ");\n";
+            << "(" << paramStr << ", "
+            << SymbolicExpressionTable::BuildExpression(l0ShapeDyn[l0ShapeDyn.size() - SHAPE_DIM2]) << ", "
+            << SymbolicExpressionTable::BuildExpression(l0ShapeDyn[l0ShapeDyn.size() - SHAPE_DIM1]) << ", "
+            << SymbolicExpressionTable::BuildExpression(l1ShapeDyn[l1ShapeDyn.size() - SHAPE_DIM2]) << ", "
+            << SymbolicExpressionTable::BuildExpression(l1ShapeDyn[l1ShapeDyn.size() - SHAPE_DIM1]) << ");\n";
     } else {
         oss << tileOpName << "<" << dtypeStr << ", " << tileShape0 << ", " << tileShape1 << ", " << srcOffset0 << ", "
             << srcOffset1 << ", " << srcShape0 << ", " << srcShape1 << ">"
@@ -313,16 +335,21 @@ std::string CodeGenOpNPU::GenMemL1ToBt() const
 
     auto dynValidShape = dynamicValidShape[ID0];
     auto dynoffset = GetOffsetFromAttr(ID1);
-    // only support 2-dim shape
-    ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, dynoffset.size() == SHAPE_DIM2) << "GenMemL1ToBt only support 2-dim!";
+    // only support 2-dim to 4-dim
+    ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, dynoffset.size() >= SHAPE_DIM2 && dynoffset.size() <= SHAPE_DIM4)
+        << "GenMemL1ToBt only support 2-dim to 4-dim!";
+    CheckBatchOffsetZero(dynoffset, "GenMemL1ToBt");
+    ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, dynValidShape.size() == dynoffset.size())
+        << "GenMemL1ToBt dynValidShape size must equal dynoffset size!";
 
     std::ostringstream os;
     std::vector<std::string> paramList;
     paramList.emplace_back(srcDtypeStr);
     paramList.emplace_back(dstDtypeStr);
     // only need the valid offset of tail axis
-    ASSERT(GenCodeErr::TENSOR_OFFSET_INVALID, dynoffset[ID1].IsValid()) << "GenMemL1ToBt offset is invalid";
-    paramList.emplace_back(SymbolicExpressionTable::BuildExpression(dynoffset[ID1]));
+    ASSERT(GenCodeErr::TENSOR_OFFSET_INVALID, dynoffset[dynoffset.size() - SHAPE_DIM1].IsValid())
+        << "GenMemL1ToBt offset is invalid";
+    paramList.emplace_back(SymbolicExpressionTable::BuildExpression(dynoffset[dynoffset.size() - SHAPE_DIM1]));
     std::string templateParam = JoinString(paramList, CONN_COMMA);
     paramList.clear();
     std::string dst = "(uint64_t)" + dstVar;
@@ -330,7 +357,7 @@ std::string CodeGenOpNPU::GenMemL1ToBt() const
     src.append(GetAddrTypeByOperandType(BUF_L1)).append(" ").append(srcDtypeStr).append("*)").append(srcVar);
     paramList.insert(paramList.end(), {dst, src});
     // only need the valid shape of tail axis
-    paramList.emplace_back(SymbolicExpressionTable::BuildExpression(dynValidShape[ID1]));
+    paramList.emplace_back(SymbolicExpressionTable::BuildExpression(dynValidShape[dynValidShape.size() - SHAPE_DIM1]));
     std::string tileOpCallParam = JoinString(paramList, CONN_COMMA);
     os << tileOpName << "<" << templateParam << ">"
        << "(" << tileOpCallParam << ");\n";
@@ -1147,21 +1174,26 @@ std::string CodeGenOpNPU::GenMemL1ToFB() const
     std::string srcDtypeStr = DataType2CCEStr(operandDtype[ID1]);
     auto dynValidShape = dynamicValidShape[ID0];
     auto dynoffset = GetOffsetFromAttr(ID1);
-    ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, dynoffset.size() == SHAPE_DIM2) << "GenMemL1ToFB only support 2-dim!";
+    ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, dynoffset.size() >= SHAPE_DIM2 && dynoffset.size() <= SHAPE_DIM4)
+        << "GenMemL1ToFB only support 2-dim to 4-dim!";
+    CheckBatchOffsetZero(dynoffset, "GenMemL1ToFB");
+    ASSERT(GenCodeErr::TENSOR_DIM_UNSUPPORTED, dynValidShape.size() == dynoffset.size())
+        << "GenMemL1ToFB dynValidShape size must equal dynoffset size!";
 
     std::ostringstream os;
     std::vector<std::string> paramList;
     paramList.emplace_back(srcDtypeStr);
     // only need the valid offset of tail axis
-    ASSERT(GenCodeErr::TENSOR_OFFSET_INVALID, dynoffset[ID1].IsValid()) << "GenMemL1ToFB offset is invalid";
-    paramList.emplace_back(SymbolicExpressionTable::BuildExpression(dynoffset[ID1]));
+    ASSERT(GenCodeErr::TENSOR_OFFSET_INVALID, dynoffset[dynoffset.size() - SHAPE_DIM1].IsValid())
+        << "GenMemL1ToFB offset is invalid";
+    paramList.emplace_back(SymbolicExpressionTable::BuildExpression(dynoffset[dynoffset.size() - SHAPE_DIM1]));
     std::string templateParam = JoinString(paramList, CONN_COMMA);
     paramList.clear();
     std::string dst = "(" + GetAddrTypeByOperandType(BUF_FIX) + " " + srcDtypeStr + "*)" + dstVar;
     std::string src = "(" + GetAddrTypeByOperandType(BUF_L1) + " " + srcDtypeStr + "*)" + srcVar;
     paramList.insert(paramList.end(), {dst, src});
     // only need the valid shape of tail axis
-    paramList.emplace_back(SymbolicExpressionTable::BuildExpression(dynValidShape[ID1]));
+    paramList.emplace_back(SymbolicExpressionTable::BuildExpression(dynValidShape[dynValidShape.size() - SHAPE_DIM1]));
     std::string tileOpCallParam = JoinString(paramList, CONN_COMMA);
     os << tileOpName << "<" << templateParam << ">"
        << "(" << tileOpCallParam << ");\n";

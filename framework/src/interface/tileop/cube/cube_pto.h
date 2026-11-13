@@ -49,8 +49,10 @@ TILEOP void TGEMV(TileAcc& c, TileLeft& a, TileRight& b)
     constexpr uint64_t shapeSizeA = Std::tuple_size<typename TileLeft::Shape>::value;
     constexpr uint64_t shapeSizeB = Std::tuple_size<typename TileRight::Shape>::value;
     constexpr uint64_t shapeSizeC = Std::tuple_size<typename TileAcc::Shape>::value;
-    static_assert(shapeSizeA == SHAPE_DIM2 && shapeSizeB == SHAPE_DIM2 && shapeSizeC == SHAPE_DIM2,
-                  "[TGEMV ERROR]: Shape dim size should be 2");
+    static_assert((shapeSizeA == SHAPE_DIM2 || shapeSizeA == SHAPE_DIM3 || shapeSizeA == SHAPE_DIM4) &&
+                      (shapeSizeB == SHAPE_DIM2 || shapeSizeB == SHAPE_DIM3 || shapeSizeB == SHAPE_DIM4) &&
+                      (shapeSizeC == SHAPE_DIM2 || shapeSizeC == SHAPE_DIM3 || shapeSizeC == SHAPE_DIM4),
+                  "[TGEMV ERROR]: Shape dim size should be 2, 3 or 4");
     TMatmulImpl<initMatrixC, transMode, kAlignFlag, true>(c, a, b);
 }
 
@@ -61,8 +63,10 @@ TILEOP void TGEMV(TileAcc& c, TileLeft& a, TileRight& b, TileBias& bias)
     constexpr uint64_t shapeSizeA = Std::tuple_size<typename TileLeft::Shape>::value;
     constexpr uint64_t shapeSizeB = Std::tuple_size<typename TileRight::Shape>::value;
     constexpr uint64_t shapeSizeC = Std::tuple_size<typename TileAcc::Shape>::value;
-    static_assert(shapeSizeA == SHAPE_DIM2 && shapeSizeB == SHAPE_DIM2 && shapeSizeC == SHAPE_DIM2,
-                  "[TGEMV ERROR]: Shape dim size should be 2");
+    static_assert((shapeSizeA == SHAPE_DIM2 || shapeSizeA == SHAPE_DIM3 || shapeSizeA == SHAPE_DIM4) &&
+                      (shapeSizeB == SHAPE_DIM2 || shapeSizeB == SHAPE_DIM3 || shapeSizeB == SHAPE_DIM4) &&
+                      (shapeSizeC == SHAPE_DIM2 || shapeSizeC == SHAPE_DIM3 || shapeSizeC == SHAPE_DIM4),
+                  "[TGEMV ERROR]: Shape dim size should be 2, 3 or 4");
     TMatmulImpl<transMode, kAlignFlag, true>(c, a, b, bias);
 }
 #endif
@@ -77,8 +81,9 @@ TILEOP void TLoadAMX(TileData& dst, GlobalData& src, const Coord& coord)
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename TileData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM3 && Std::tuple_size<Coord>::value == SHAPE_DIM3,
-                  "[TLoadAMX Error]: MXMatmul A Scale Shape Size should be 3 Dim");
+    static_assert((shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4 || shapeSize == MX_SCALE_MAX_DIM) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "[TLoadAMX Error]: MXMatmul A Scale shape size should be 3, 4 or 5 Dim and match Coord size");
     static_assert(TileData::FORMAT == Hardware::L1 && GlobalData::FORMAT == Hardware::GM,
                   "[TLoadAMX Error]: Dst format should be L1 and Src format should be GM");
     TLoadAMXImpl<mode, Coord, TileData, GlobalData>(dst, src, coord);
@@ -92,8 +97,9 @@ TILEOP void TLoadBMX(TileData& dst, GlobalData& src, const Coord& coord)
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename TileData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM3 && Std::tuple_size<Coord>::value == SHAPE_DIM3,
-                  "[TLoadBMX Error]: MXMatmul B Scale Shape Size should be 3 Dim");
+    static_assert((shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4 || shapeSize == MX_SCALE_MAX_DIM) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "[TLoadBMX Error]: MXMatmul B Scale shape size should be 3, 4 or 5 Dim and match Coord size");
     static_assert(TileData::FORMAT == Hardware::L1 && GlobalData::FORMAT == Hardware::GM,
                   "[TLoadBMX Error]: Dst format should be L1 and Src format should be GM");
     TLoadBMXImpl<mode, Coord, TileData, GlobalData>(dst, src, coord);
@@ -104,7 +110,8 @@ template <typename DstTileData, typename SrcTileData>
 TILEOP void TMoveND2NZ(DstTileData& dst, SrcTileData& src)
 {
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2, "Shape Size should be 2 Dim");
+    static_assert(shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4,
+                  "shape size should be 2, 3 or 4 Dim");
     static_assert(DstTileData::FORMAT == Hardware::UB && SrcTileData::FORMAT == Hardware::UB);
     TMoveND2NZImpl<DstTileData, SrcTileData>(dst, src);
 }
@@ -117,7 +124,9 @@ TILEOP void TCopyUB2L1(DstTileData& dst, SrcTileData& src, const Coord& dstCoord
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2, "Shape Size should be 2 Dim");
+    static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "shape size should be 2, 3 or 4 Dim and match Coord size");
     static_assert(DstTileData::FORMAT == Hardware::L1 && SrcTileData::FORMAT == Hardware::UB);
     TCopyUB2L1Impl<mode, false, Coord, DstTileData, SrcTileData>(dst, src, dstCoord, srcCoord);
 }
@@ -131,7 +140,9 @@ TILEOP void TCopyUB2L1ND2ND(DstTileData& dst, SrcTileData& src, const Coord& dst
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2, "Shape Size should be 2 Dim");
+    static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "shape size should be 2, 3 or 4 Dim and match Coord size");
     static_assert(DstTileData::FORMAT == Hardware::L1 && SrcTileData::FORMAT == Hardware::UB);
     TCopyUB2L1Impl<mode, true, Coord, DstTileData, SrcTileData>(dst, src, dstCoord, srcCoord);
 }
@@ -145,8 +156,10 @@ TILEOP void TExtractMX(DstTileData& dst, SrcTileData& src, const Coord& coord)
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM3 && Std::tuple_size<Coord>::value == SHAPE_DIM3,
-                  "[TExtractMX Error]: L0A_MX scale or L0B_MX scale Shape Size should be 3 Dim");
+    static_assert((shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4 || shapeSize == MX_SCALE_MAX_DIM) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "[TExtractMX Error]: L0A_MX scale or L0B_MX scale Shape Size should be 3, 4 or 5 Dim and match Coord "
+                  "size");
     static_assert((DstTileData::FORMAT == Hardware::L0A_MX || DstTileData::FORMAT == Hardware::L0B_MX) &&
                   SrcTileData::FORMAT == Hardware::L1);
     TExtractMXImpl<Coord, DstTileData, SrcTileData>(dst, src, coord);
@@ -162,7 +175,9 @@ TILEOP void TCopyL0C2UB(DstTileTensor& dst, SrcTileTensor& src, FbTileTensor& fi
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileTensor::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2, "Shape Size should be 2 Dim");
+    static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "shape size should be 2, 3 or 4 Dim and match Coord size");
     static_assert(DstTileTensor::FORMAT == Hardware::UB && SrcTileTensor::FORMAT == Hardware::L0C);
     TCopyL0C2UBImpl<config, mode, dualDstMode, Coord, DstTileTensor, SrcTileTensor, FbTileTensor>(
         dst, src, fixbuf, dstCoord, srcCoord, subblockId, scaleValue);
@@ -192,9 +207,14 @@ TILEOP void MatmulMX(TileRes& c, TileLeft& a, TileLeftScale& aScale, TileRight& 
     constexpr uint64_t shapeSizeAScale = Std::tuple_size<typename TileLeftScale::Shape>::value;
     constexpr uint64_t shapeSizeB = Std::tuple_size<typename TileRight::Shape>::value;
     constexpr uint64_t shapeSizeBScale = Std::tuple_size<typename TileRightScale::Shape>::value;
-    static_assert(shapeSizeC == SHAPE_DIM2 && shapeSizeA == SHAPE_DIM2 && shapeSizeAScale == SHAPE_DIM3 &&
-                      shapeSizeB == SHAPE_DIM2 && shapeSizeBScale == SHAPE_DIM3,
-                  "[MatmulMX ERROR]: Tensor Shape dim size should be 2 and Scale Shape dim size should be 3");
+    static_assert(
+        (shapeSizeC == SHAPE_DIM2 || shapeSizeC == SHAPE_DIM3 || shapeSizeC == SHAPE_DIM4) &&
+            (shapeSizeA == SHAPE_DIM2 || shapeSizeA == SHAPE_DIM3 || shapeSizeA == SHAPE_DIM4) &&
+            (shapeSizeAScale == SHAPE_DIM3 || shapeSizeAScale == SHAPE_DIM4 || shapeSizeAScale == MX_SCALE_MAX_DIM) &&
+            (shapeSizeB == SHAPE_DIM2 || shapeSizeB == SHAPE_DIM3 || shapeSizeB == SHAPE_DIM4) &&
+            (shapeSizeBScale == SHAPE_DIM3 || shapeSizeBScale == SHAPE_DIM4 || shapeSizeBScale == MX_SCALE_MAX_DIM),
+        "[MatmulMX ERROR]: Tensor Shape dim size should be 2, 3 or 4 and Scale Shape dim size should be 3, 4 "
+        "or 5");
     MatmulMXImpl<initMatrixC>(c, a, aScale, b, bScale);
 }
 
@@ -208,9 +228,13 @@ TILEOP void MatmulMX(TileRes& c, TileLeft& a, TileLeftScale& aScale, TileRight& 
     constexpr uint64_t shapeSizeAScale = Std::tuple_size<typename TileLeftScale::Shape>::value;
     constexpr uint64_t shapeSizeB = Std::tuple_size<typename TileRight::Shape>::value;
     constexpr uint64_t shapeSizeBScale = Std::tuple_size<typename TileRightScale::Shape>::value;
-    static_assert(shapeSizeC == SHAPE_DIM2 && shapeSizeA == SHAPE_DIM2 && shapeSizeAScale == SHAPE_DIM3 &&
-                      shapeSizeB == SHAPE_DIM2 && shapeSizeBScale == SHAPE_DIM3,
-                  "[MatmulMX ERROR]: Shape dim size should be 2 and Scale Shape dim size should be 3");
+    static_assert(
+        (shapeSizeC == SHAPE_DIM2 || shapeSizeC == SHAPE_DIM3 || shapeSizeC == SHAPE_DIM4) &&
+            (shapeSizeA == SHAPE_DIM2 || shapeSizeA == SHAPE_DIM3 || shapeSizeA == SHAPE_DIM4) &&
+            (shapeSizeAScale == SHAPE_DIM3 || shapeSizeAScale == SHAPE_DIM4 || shapeSizeAScale == MX_SCALE_MAX_DIM) &&
+            (shapeSizeB == SHAPE_DIM2 || shapeSizeB == SHAPE_DIM3 || shapeSizeB == SHAPE_DIM4) &&
+            (shapeSizeBScale == SHAPE_DIM3 || shapeSizeBScale == SHAPE_DIM4 || shapeSizeBScale == MX_SCALE_MAX_DIM),
+        "[MatmulMX ERROR]: Shape dim size should be 2, 3 or 4 and Scale Shape dim size should be 3, 4 or 5");
     MatmulMXImpl(c, a, aScale, b, bScale, bias);
 }
 // End of TileOp Interface Definitions for Ascend 950PR/Ascend 950DT Architecture
@@ -225,7 +249,9 @@ TILEOP void TLoad(TileData& dst, GlobalData& src, const Coord& dstCoord, const C
                   const int64_t& curW)
 {
     constexpr auto shapeSize = Std::tuple_size<typename TileData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2, "Shape Size should be 2 Dim");
+    static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "shape size should be 2, 3 or 4 Dim and match Coord size");
     // Handle K=0 scenario: fill L1 with zero and return early if needed
     if (HandleZeroKScenario<copyMode, kIndex>(dst)) {
         return;
@@ -233,18 +259,19 @@ TILEOP void TLoad(TileData& dst, GlobalData& src, const Coord& dstCoord, const C
     if (!CheckShapeValid(dst, src)) {
         return;
     }
-    int64_t dstOffset0 = TileOp::GetTupleElement<Coord, DIM_1ST, shapeSize, 0>(dstCoord);
-    int64_t dstOffset1 = TileOp::GetTupleElement<Coord, DIM_2ND, shapeSize, 0>(dstCoord);
-    int64_t srcOffset0 = TileOp::GetTupleElement<Coord, DIM_1ST, shapeSize, 0>(srcCoord);
-    int64_t srcOffset1 = TileOp::GetTupleElement<Coord, DIM_2ND, shapeSize, 0>(srcCoord);
+    int64_t dstOffset0 = TileOp::GetTupleElement<Coord, shapeSize - SHAPE_DIM2, shapeSize, 0>(dstCoord);
+    int64_t dstOffset1 = TileOp::GetTupleElement<Coord, shapeSize - 1, shapeSize, 0>(dstCoord);
+    int64_t srcOffset0 = TileOp::GetTupleElement<Coord, shapeSize - SHAPE_DIM2, shapeSize, 0>(srcCoord);
+    int64_t srcOffset1 = TileOp::GetTupleElement<Coord, shapeSize - 1, shapeSize, 0>(srcCoord);
+    int64_t srcBatchOffset = GetBatchDimsOffset(src, srcCoord);
     static_assert(TileData::FORMAT == Hardware::L1 && GlobalData::FORMAT == Hardware::GM,
                   "[TLoad Error]: Dst format shoulde be L1 and Src format shoulde be GM");
     if constexpr (copyMode == CopyInMode::ND2NZ) {
-        TLoadND2NZ<padMode>(dst, src, srcOffset0, srcOffset1);
+        TLoadND2NZ<padMode>(dst, src, srcOffset0, srcOffset1, srcBatchOffset);
     } else if constexpr (copyMode == CopyInMode::NZ2NZ) {
-        TLoadNZ2NZ<padMode>(dst, src, dstOffset0, dstOffset1, srcOffset0, srcOffset1, curH, curW);
+        TLoadNZ2NZ<padMode>(dst, src, dstOffset0, dstOffset1, srcOffset0, srcOffset1, srcBatchOffset, curH, curW);
     } else if constexpr (copyMode == CopyInMode::ND2ND) {
-        TLoadND2ND(dst, src, srcOffset0, srcOffset1);
+        TLoadND2ND(dst, src, srcOffset0, srcOffset1, srcBatchOffset);
     }
     return;
 }
@@ -286,7 +313,9 @@ TILEOP void TExtract(DstTileData& dst, SrcTileData& src, FpTileData& fixbuf, con
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2, "Shape Size should be 2 Dim");
+    static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "shape size should be 2, 3 or 4 Dim and match Coord size");
     static_assert(SrcTileData::FORMAT == Hardware::L0C && DstTileData::FORMAT == Hardware::L1);
     TExtractL0C2L1Impl<config>(dst, src, fixbuf, l1Coord, l0cCoord, scaleValue);
 }
@@ -299,8 +328,9 @@ TILEOP void TExtractL1ToL0(DstTileData& dst, SrcTileData& src, const Coord& coor
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2,
-                  "[TExtractL1ToL0 Error]: Shape Size should be 2 Dim");
+    static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "[TExtractL1ToL0 Error]: shape size should be 2, 3 or 4 Dim and match Coord size");
     int64_t offset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(coord);
     int64_t offset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(coord);
     static_assert(SrcTileData::FORMAT == Hardware::L1 &&
@@ -317,8 +347,9 @@ TILEOP void TExtractL1ToL0ND2ND(DstTileData& dst, SrcTileData& src, const Coord&
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2,
-                  "[TExtractL1ToL0ND2ND Error]: Shape Size should be 2 Dim");
+    static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "[TExtractL1ToL0ND2ND Error]: shape size should be 2, 3 or 4 Dim and match Coord size");
     int64_t offset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(coord);
     int64_t offset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(coord);
     static_assert(SrcTileData::FORMAT == Hardware::L1 &&
@@ -335,8 +366,9 @@ TILEOP void TExtractL1ToBT(DstTileData& dst, SrcTileData& src, const Coord& coor
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2,
-                  "[TExtractL1ToBT Error]: Shape Size should be 2 Dim");
+    static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "[TExtractL1ToBT Error]: shape size should be 2, 3 or 4 Dim and match Coord size");
     int64_t offset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(coord);
     int64_t offset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(coord);
     static_assert(SrcTileData::FORMAT == Hardware::L1 && DstTileData::FORMAT == Hardware::BIAS);
@@ -351,8 +383,9 @@ TILEOP void TExtractL1ToFB(DstTileData& dst, SrcTileData& src, const Coord& coor
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2,
-                  "[TExtractL1ToFB Error]: Shape Size should be 2 Dim");
+    static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "[TExtractL1ToFB Error]: shape size should be 2, 3 or 4 Dim and match Coord size");
     int64_t offset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(coord);
     int64_t offset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(coord);
     static_assert(SrcTileData::FORMAT == Hardware::L1 && DstTileData::FORMAT == Hardware::FIXBUF);
@@ -366,8 +399,10 @@ TILEOP void TMatmul(TileAcc& c, TileLeft& a, TileRight& b)
     constexpr uint64_t shapeSizeA = Std::tuple_size<typename TileLeft::Shape>::value;
     constexpr uint64_t shapeSizeB = Std::tuple_size<typename TileRight::Shape>::value;
     constexpr uint64_t shapeSizeC = Std::tuple_size<typename TileAcc::Shape>::value;
-    static_assert(shapeSizeA == SHAPE_DIM2 && shapeSizeB == SHAPE_DIM2 && shapeSizeC == SHAPE_DIM2,
-                  "[Matmul ERROR]: Shape dim size should be 2");
+    static_assert((shapeSizeA == SHAPE_DIM2 || shapeSizeA == SHAPE_DIM3 || shapeSizeA == SHAPE_DIM4) &&
+                      (shapeSizeB == SHAPE_DIM2 || shapeSizeB == SHAPE_DIM3 || shapeSizeB == SHAPE_DIM4) &&
+                      (shapeSizeC == SHAPE_DIM2 || shapeSizeC == SHAPE_DIM3 || shapeSizeC == SHAPE_DIM4),
+                  "[Matmul ERROR]: Shape dim size should be 2, 3 or 4");
     TMatmulImpl<initMatrixC, transMode, kAlignFlag>(c, a, b);
 }
 
@@ -378,8 +413,10 @@ TILEOP void TMatmul(TileAcc& c, TileLeft& a, TileRight& b, TileBias& bias)
     constexpr uint64_t shapeSizeA = Std::tuple_size<typename TileLeft::Shape>::value;
     constexpr uint64_t shapeSizeB = Std::tuple_size<typename TileRight::Shape>::value;
     constexpr uint64_t shapeSizeC = Std::tuple_size<typename TileAcc::Shape>::value;
-    static_assert(shapeSizeA == SHAPE_DIM2 && shapeSizeB == SHAPE_DIM2 && shapeSizeC == SHAPE_DIM2,
-                  "[Matmul ERROR]: Shape dim size should be 2");
+    static_assert((shapeSizeA == SHAPE_DIM2 || shapeSizeA == SHAPE_DIM3 || shapeSizeA == SHAPE_DIM4) &&
+                      (shapeSizeB == SHAPE_DIM2 || shapeSizeB == SHAPE_DIM3 || shapeSizeB == SHAPE_DIM4) &&
+                      (shapeSizeC == SHAPE_DIM2 || shapeSizeC == SHAPE_DIM3 || shapeSizeC == SHAPE_DIM4),
+                  "[Matmul ERROR]: Shape dim size should be 2, 3 or 4");
     TMatmulImpl<transMode, kAlignFlag>(c, a, b, bias);
 }
 
@@ -392,14 +429,17 @@ TILEOP void TStore(GlobalData& dst, TileData& src, FpTileData& fixbuf, const Coo
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename GlobalData::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2, "Shape Size should be 2 Dim");
-    int64_t offset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(coord);
-    int64_t offset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(coord);
+    static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "shape size should be 2, 3 or 4 Dim and match Coord size");
+    int64_t offset0 = TileOp::GetTupleElement<Coord, shapeSize - SHAPE_DIM2, shapeSize, 0>(coord);
+    int64_t offset1 = TileOp::GetTupleElement<Coord, shapeSize - 1, shapeSize, 0>(coord);
+    int64_t dstBatchOffset = GetBatchDimsOffset(dst, coord);
     if constexpr (TileData::FORMAT == Hardware::L0C && GlobalData::FORMAT == Hardware::GM) {
         if constexpr (config::kMode == CopyOutMode::NZ2ND) {
-            TStoreNZ2ND<config>(dst, src, fixbuf, offset0, offset1, scaleValue);
+            TStoreNZ2ND<config>(dst, src, fixbuf, offset0, offset1, dstBatchOffset, scaleValue);
         } else {
-            TStoreNZ2NZ<config>(dst, src, fixbuf, offset0, offset1, curH, curW, scaleValue);
+            TStoreNZ2NZ<config>(dst, src, fixbuf, offset0, offset1, dstBatchOffset, curH, curW, scaleValue);
         }
     }
 }

@@ -298,6 +298,15 @@ bool MemoryPathUtils::HasConvConsumer(const LogicalTensorPtr& tensor)
     });
 }
 
+// batch matmul 多维 tile 要求 batch 轴均为 1，矩阵语义只读尾两维 (M, N)
+bool MemoryPathUtils::AllBatchAxesAreOne(const Shape& shape)
+{
+    if (shape.size() <= SHAPE_DIM2) {
+        return false;
+    }
+    return std::all_of(shape.begin(), shape.end() - SHAPE_DIM2, [](int64_t dim) { return dim == 1; });
+}
+
 // L0C2UB大于2维场景仅支持卷积
 bool MemoryPathUtils::IsL0C2UbSupportedShape(const LogicalTensorPtr& tensor)
 {
@@ -332,6 +341,29 @@ bool MemoryPathUtils::CheckUBConvTileShape(const LogicalTensorPtr& moveTensor)
     }
     APASS_LOG_DEBUG_F(Elements::Tensor,
                       "Set tensor %d original memory type to DDR since last dim of moved conv tile "
+                      "is not 16-element aligned (int8 requires 32-element).",
+                      moveTensor->magic);
+    return false;
+}
+
+bool MemoryPathUtils::CheckUBBatchMatmulTileShapeLiteNPU(const LogicalTensorPtr& moveTensor)
+{
+    // LiteNPU batch matmul 多维 tile（batch 轴全 1）矩阵语义只读尾两维 (M, N)。LiteNPU 的
+    // L1→UB 与 L0C→UB 直连一致：均为目的端 UB 保持 ND 布局的 fixpipe 写（kirin9050 L1→UB 见
+    // TCopyL12UBImpl：L1 源为 mmad 直出的 NZ Mat，UB 目的为 ND），与 TStore NZ2ND 的 DDR 回退路径
+    // 同语义——fixpipe ND 写仅约束末维 (N) 对齐，M 为有效行数不做 16 对齐约束。
+    // LiteNPU 当前不存在 conv 场景（conv 产品矩阵：Kirin9030/KirinX90/Kirin9050 均不支持），
+    // rank>2 且前导维退化全 1 的 conv tile 不可达，不会误入本分支（若后续放开需回到 conv 双维校验）；
+    // 仅 LiteNPU 直通场景可达（CheckUBTileShapeByRank 分派器带 IsLiteNPU 门控）
+    if (moveTensor == nullptr || moveTensor->GetShape().empty()) {
+        return false;
+    }
+    const int64_t alignElems = (moveTensor->Datatype() == DataType::DT_INT8) ? INT8_ALIGN_SIZE : L0C_TILE_SIZE;
+    if (moveTensor->GetShape().back() % alignElems == 0) {
+        return true;
+    }
+    APASS_LOG_DEBUG_F(Elements::Tensor,
+                      "Set tensor %d original memory type to DDR since last dim of moved batch matmul tile "
                       "is not 16-element aligned (int8 requires 32-element).",
                       moveTensor->magic);
     return false;

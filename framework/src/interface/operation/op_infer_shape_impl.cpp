@@ -869,16 +869,34 @@ void InferFuncGatherInUB(Operation* op, std::vector<std::vector<SymbolicScalar>>
 }
 REGISTER_INFER_SHAPE_FUNC(OP_GATHER_IN_UB, Opcode::OP_GATHER_IN_UB, InferFuncGatherInUB);
 
-// matmul infer shape func
 void MatmulInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
 {
     std::vector<SymbolicScalar> outValidShape;
+    std::vector<SymbolicScalar> aValidShape;
+    std::vector<SymbolicScalar> bValidShape;
     for (auto inputTensor : op->GetIOperands()) {
         auto inputValidShape = inputTensor->GetDynValidShape();
         if (inputTensor->GetMemoryTypeOriginal() == MemoryType::MEM_L0A) {
-            outValidShape.push_back(inputValidShape[0]);
+            aValidShape = inputValidShape;
         } else if (inputTensor->GetMemoryTypeOriginal() == MemoryType::MEM_L0B) {
-            outValidShape.push_back(inputValidShape[1]);
+            bValidShape = inputValidShape;
+        }
+    }
+    if (aValidShape.size() >= SHAPE_DIM2 && aValidShape.size() == bValidShape.size()) {
+        // tiletensor阶段broadcast侧batchValidShape恒为1, 需根据另一侧validshape判断输出是否有效
+        for (int64_t i = 0; i + SHAPE_DIM2 < static_cast<int64_t>(aValidShape.size()); i++) {
+            outValidShape.push_back(aValidShape[i].Min(bValidShape[i]));
+        }
+        outValidShape.push_back(aValidShape[aValidShape.size() - SHAPE_DIM2]); // M
+        outValidShape.push_back(bValidShape.back());                           // N
+    } else {
+        for (auto inputTensor : op->GetIOperands()) {
+            auto inputValidShape = inputTensor->GetDynValidShape();
+            if (inputTensor->GetMemoryTypeOriginal() == MemoryType::MEM_L0A) {
+                outValidShape.push_back(inputValidShape[0]);
+            } else if (inputTensor->GetMemoryTypeOriginal() == MemoryType::MEM_L0B) {
+                outValidShape.push_back(inputValidShape[1]);
+            }
         }
     }
 
@@ -1001,9 +1019,11 @@ REGISTER_INFER_SHAPE_FUNC(OP_UB_COPY_ND2NZ, Opcode::OP_UB_COPY_ND2NZ, Load2L1Inf
 void Load2L1MXScaleInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
 {
     ASSERT(MatmulErrorCode::ERR_RUNTIME_NULLPTR, op != nullptr) << "op should not be nullptr";
+    // batch matmul：MX scale tensor为 3D/4D/5D（batch轴 + {m, kScale, NUM2}）
     ASSERT(MatmulErrorCode::ERR_PARAM_INVALID, !op->GetIOperands().empty() && op->GetIOperands()[0] != nullptr &&
-                                                   op->GetIOperands()[0]->GetDynValidShape().size() == SHAPE_DIM3)
-        << "op->GetIOperands() should not be empty and GetDynValidShape().size() should be SHAPE_DIM3";
+                                                   op->GetIOperands()[0]->GetDynValidShape().size() >= SHAPE_DIM3 &&
+                                                   op->GetIOperands()[0]->GetDynValidShape().size() <= SHAPE_DIM5)
+        << "op->GetIOperands() should not be empty and GetDynValidShape().size() should be 3, 4 or 5";
     auto copyOpAttribute = std::dynamic_pointer_cast<CopyOpAttribute>(op->GetOpAttribute());
     if (op->GetOOperands()[0] != nullptr && !(op->GetOOperands()[0]->GetDynValidShape().empty())) {
         outValidShapes.push_back(op->GetOOperands()[0]->GetDynValidShape());
@@ -1028,19 +1048,21 @@ void LoadL0InferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& ou
         std::vector<SymbolicScalar> tile;
         op->GetAttr(Matrix::L1_TO_L0_OFFSET, offset);
         op->GetAttr(Matrix::L1_TO_L0_TILE, tile);
-        ASSERT(MatmulErrorCode::ERR_CONFIG_TILE, offset.size() == SHAPE_DIM2) << "offset.size() should be SHAPE_DIM2";
-        ASSERT(MatmulErrorCode::ERR_CONFIG_TILE, tile.size() == SHAPE_DIM2) << "tile.size() should be SHAPE_DIM2";
-        ASSERT(MatmulErrorCode::ERR_PARAM_INVALID, !op->GetIOperands().empty() && op->GetIOperands()[0] != nullptr &&
-                                                       op->GetIOperands()[0]->GetDynValidShape().size() == SHAPE_DIM2)
-            << "op->GetIOperands() check failed or GetDynValidShape().size() should be SHAPE_DIM2";
+        ASSERT(MatmulErrorCode::ERR_RUNTIME_NULLPTR, !op->GetIOperands().empty() && op->GetIOperands()[0] != nullptr)
+            << "op->GetIOperands() check failed";
         std::vector<SymbolicScalar> srcValidShape = op->GetIOperands()[0]->GetDynValidShape();
+        ASSERT(MatmulErrorCode::ERR_CONFIG_TILE,
+               offset.size() == srcValidShape.size() && tile.size() == srcValidShape.size() &&
+                   srcValidShape.size() >= SHAPE_DIM2 && srcValidShape.size() <= SHAPE_DIM4)
+            << "offset/tile size should match src valid shape size (2 to 4) and dim must be >= 2. offset size: "
+            << offset.size() << ", tile size: " << tile.size() << ", src valid shape size: " << srcValidShape.size();
         std::vector<SymbolicScalar> dstValidShape = GetViewValidShape(
             srcValidShape, SymbolicScalar::Concrete(offset, 0), offset, SymbolicScalar::Concrete(tile, 0));
-        ASSERT(MatmulErrorCode::ERR_CONFIG_TILE, dstValidShape.size() == SHAPE_DIM2)
-            << "dstValidShape.size() should be SHAPE_DIM2";
+        ASSERT(MatmulErrorCode::ERR_CONFIG_TILE, dstValidShape.size() == srcValidShape.size())
+            << "dstValidShape size should match src valid shape size";
         if constexpr (isTrans) {
             // L0A始终保持(M, K)，L0B始终保持(K, N)
-            std::swap(dstValidShape[0], dstValidShape[1]);
+            std::swap(dstValidShape[dstValidShape.size() - SHAPE_DIM2], dstValidShape[dstValidShape.size() - 1]);
         }
         for (auto output : op->GetOOperands()) {
             outValidShapes.push_back(dstValidShape);
@@ -1053,12 +1075,15 @@ void LoadL0InferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& ou
         ASSERT(MatmulErrorCode::ERR_RUNTIME_NULLPTR, inputTensor != nullptr) << "inputTensor should not be nullptr";
         inputValidShapes.push_back(inputTensor->GetDynValidShape());
     }
-    if (inputValidShapes.empty() || inputValidShapes[0].size() != SHAPE_DIM2) {
+    if (inputValidShapes.empty() || inputValidShapes[0].size() < SHAPE_DIM2) {
         return;
     }
     for (auto output : op->GetOOperands()) {
         if constexpr (isTrans) {
-            outValidShapes.push_back({inputValidShapes[0][1], inputValidShapes[0][0]});
+            auto transValidShape = inputValidShapes[0];
+            std::swap(transValidShape[transValidShape.size() - SHAPE_DIM2],
+                      transValidShape[transValidShape.size() - 1]);
+            outValidShapes.push_back(transValidShape);
         } else {
             outValidShapes.push_back(inputValidShapes[0]);
         }
@@ -1078,16 +1103,20 @@ void LoadL0MXInferFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& 
     std::vector<SymbolicScalar> tile;
     op->GetAttr(Matrix::L1_TO_L0_OFFSET, offset);
     op->GetAttr(Matrix::L1_TO_L0_TILE, tile);
-    ASSERT(MatmulErrorCode::ERR_CONFIG_TILE, offset.size() == SHAPE_DIM3) << "offset.size() should be SHAPE_DIM3";
-    ASSERT(MatmulErrorCode::ERR_CONFIG_TILE, tile.size() == SHAPE_DIM3) << "tile.size() should be SHAPE_DIM3";
-    ASSERT(MatmulErrorCode::ERR_PARAM_INVALID, !op->GetIOperands().empty() && op->GetIOperands()[0] != nullptr &&
-                                                   op->GetIOperands()[0]->GetDynValidShape().size() == SHAPE_DIM3)
-        << "op->GetIOperands() check failed or GetDynValidShape().size() should be SHAPE_DIM3";
+    ASSERT(MatmulErrorCode::ERR_RUNTIME_NULLPTR, !op->GetIOperands().empty() && op->GetIOperands()[0] != nullptr)
+        << "op->GetIOperands() check failed";
     std::vector<SymbolicScalar> srcValidShape = op->GetIOperands()[0]->GetDynValidShape();
+    // batch matmul 去 reshape：MX scale tile 为 3D/4D/5D（batch 前导），offset/tile 与 srcValid 同 dim；
+    // dim 下限必须 >= 3（MX scale 主体 3 维），防止轴下标下溢
+    ASSERT(MatmulErrorCode::ERR_CONFIG_TILE,
+           offset.size() == srcValidShape.size() && tile.size() == srcValidShape.size() &&
+               srcValidShape.size() >= SHAPE_DIM3 && srcValidShape.size() <= SHAPE_DIM5)
+        << "offset/tile size should match src valid shape size (3 to 5) and dim must be >= 3. offset size: "
+        << offset.size() << ", tile size: " << tile.size() << ", src valid shape size: " << srcValidShape.size();
     std::vector<SymbolicScalar> dstValidShape = GetViewValidShape(srcValidShape, SymbolicScalar::Concrete(offset, 0),
                                                                   offset, SymbolicScalar::Concrete(tile, 0));
-    ASSERT(MatmulErrorCode::ERR_CONFIG_TILE, dstValidShape.size() == SHAPE_DIM3)
-        << "dstValidShape.size() should be SHAPE_DIM3";
+    ASSERT(MatmulErrorCode::ERR_CONFIG_TILE, dstValidShape.size() == srcValidShape.size())
+        << "dstValidShape size should match src valid shape size";
     for (auto output : op->GetOOperands()) {
         outValidShapes.push_back(dstValidShape);
     }

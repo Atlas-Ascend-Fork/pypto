@@ -22,12 +22,15 @@ template <CopyInMode mode, typename Coord, typename TileData, typename GlobalDat
 INLINE void TLoadAMXImpl(TileData& dst, GlobalData& src, const Coord& coord)
 {
     constexpr uint64_t shapeSize = Std::tuple_size<typename TileData::Shape>::value;
-    int64_t offset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM3, 0>(coord);
-    int64_t offset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM3, 0>(coord);
-    int64_t dstShape0 = GetShape<0>(dst);
-    int64_t dstShape1 = GetShape<1>(dst);
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
+    static_assert(shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4 || shapeSize == MX_SCALE_MAX_DIM,
+                  "Shape dim size should be 3, 4 or 5");
+    int64_t offset0 = TileOp::GetTupleElement<Coord, shapeSize - SHAPE_DIM3, shapeSize, 0>(coord);
+    int64_t offset1 = TileOp::GetTupleElement<Coord, shapeSize - SHAPE_DIM2, shapeSize, 0>(coord);
+    int64_t batchOffset = GetBatchDimsOffsetMX(src, coord);
+    int64_t dstShape0 = GetTailShape<SHAPE_DIM2>(dst);
+    int64_t dstShape1 = GetTailShape<1>(dst);
+    int64_t srcShape0 = GetTailShape<SHAPE_DIM2>(src);
+    int64_t srcShape1 = GetTailShape<1>(src);
     constexpr auto staticL1H = Std::tuple_element<shapeSize - SHAPE_DIM3, typename TileData::TileShape>::type::value;
     constexpr auto staticL1W = Std::tuple_element<shapeSize - SHAPE_DIM2, typename TileData::TileShape>::type::value *
                                SHAPE_DIM2;
@@ -38,7 +41,7 @@ INLINE void TLoadAMXImpl(TileData& dst, GlobalData& src, const Coord& coord)
     static_assert(mode == CopyInMode::ND2NZ || mode == CopyInMode::DN2NZ,
                   "ScaleA GM->L1 data movement only supports ND2NZ or DN2NZ mode.");
     if constexpr (mode == CopyInMode::ND2NZ) {
-        int64_t gmOffset = offset1 * SHAPE_DIM2 + offset0 * srcShape1 * SHAPE_DIM2;
+        int64_t gmOffset = batchOffset + offset1 * SHAPE_DIM2 + offset0 * srcShape1 * SHAPE_DIM2;
         using globalData = pto::GlobalTensor<typename GlobalData::Type, shapeDim2, strideDim3, pto::Layout::MX_A_ND>;
         globalData src0Global(
             (__gm__ typename GlobalData::Type*)(src.GetAddr() + gmOffset), shapeDim2(dstShape0, dstShape1),
@@ -47,7 +50,7 @@ INLINE void TLoadAMXImpl(TileData& dst, GlobalData& src, const Coord& coord)
         pto::TASSIGN(dstL1, static_cast<uint64_t>(dst.GetAddr()));
         pto::TLOAD(dstL1, src0Global);
     } else if constexpr (mode == CopyInMode::DN2NZ) {
-        int64_t gmOffset = offset1 * SHAPE_DIM2 + offset0 * SHAPE_DIM2 * srcShape1;
+        int64_t gmOffset = batchOffset + offset1 * SHAPE_DIM2 + offset0 * SHAPE_DIM2 * srcShape1;
         using globalData = pto::GlobalTensor<typename GlobalData::Type, shapeDim2, strideDim3, pto::Layout::MX_A_DN>;
         globalData src0Global(
             (__gm__ typename GlobalData::Type*)(src.GetAddr() + gmOffset), shapeDim2(dstShape0, dstShape1),
@@ -62,12 +65,15 @@ template <CopyInMode mode, typename Coord, typename TileData, typename GlobalDat
 INLINE void TLoadBMXImpl(TileData& dst, GlobalData& src, const Coord& coord)
 {
     constexpr uint64_t shapeSize = Std::tuple_size<typename TileData::Shape>::value;
-    int64_t offset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM3, 0>(coord);
-    int64_t offset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM3, 0>(coord);
-    int64_t dstShape0 = GetShape<0>(dst);
-    int64_t dstShape1 = GetShape<1>(dst);
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
+    static_assert(shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4 || shapeSize == MX_SCALE_MAX_DIM,
+                  "Shape dim size should be 3, 4 or 5");
+    int64_t offset0 = TileOp::GetTupleElement<Coord, shapeSize - SHAPE_DIM3, shapeSize, 0>(coord);
+    int64_t offset1 = TileOp::GetTupleElement<Coord, shapeSize - SHAPE_DIM2, shapeSize, 0>(coord);
+    int64_t batchOffset = GetBatchDimsOffsetMX(src, coord);
+    int64_t dstShape0 = GetTailShape<SHAPE_DIM2>(dst);
+    int64_t dstShape1 = GetTailShape<1>(dst);
+    int64_t srcShape0 = GetTailShape<SHAPE_DIM2>(src);
+    int64_t srcShape1 = GetTailShape<1>(src);
     constexpr auto staticL1H = Std::tuple_element<shapeSize - SHAPE_DIM3, typename TileData::TileShape>::type::value *
                                SHAPE_DIM2;
     constexpr auto staticL1W = Std::tuple_element<shapeSize - SHAPE_DIM2, typename TileData::TileShape>::type::value;
@@ -78,7 +84,7 @@ INLINE void TLoadBMXImpl(TileData& dst, GlobalData& src, const Coord& coord)
     static_assert(mode == CopyInMode::ND2NZ || mode == CopyInMode::DN2NZ,
                   "ScaleB GM->L1 data movement only supports ND2NZ or DN2NZ mode.");
     if constexpr (mode == CopyInMode::ND2NZ) {
-        int64_t gmOffset = offset1 * SHAPE_DIM2 + offset0 * SHAPE_DIM2 * srcShape1;
+        int64_t gmOffset = batchOffset + offset1 * SHAPE_DIM2 + offset0 * SHAPE_DIM2 * srcShape1;
         using globalData = pto::GlobalTensor<typename GlobalData::Type, shapeDim2, strideDim3, pto::Layout::MX_B_ND>;
         globalData src0Global(
             (__gm__ typename GlobalData::Type*)(src.GetAddr() + gmOffset), shapeDim2(dstShape0, dstShape1),
@@ -87,7 +93,7 @@ INLINE void TLoadBMXImpl(TileData& dst, GlobalData& src, const Coord& coord)
         pto::TASSIGN(dstL1, static_cast<uint64_t>(dst.GetAddr()));
         pto::TLOAD(dstL1, src0Global);
     } else if constexpr (mode == CopyInMode::DN2NZ) {
-        int64_t gmOffset = offset1 * SHAPE_DIM2 + offset0 * srcShape1 * SHAPE_DIM2;
+        int64_t gmOffset = batchOffset + offset1 * SHAPE_DIM2 + offset0 * srcShape1 * SHAPE_DIM2;
         using globalData = pto::GlobalTensor<typename GlobalData::Type, shapeDim2, strideDim3, pto::Layout::MX_B_DN>;
         globalData src0Global(
             (__gm__ typename GlobalData::Type*)(src.GetAddr() + gmOffset), shapeDim2(dstShape0, dstShape1),

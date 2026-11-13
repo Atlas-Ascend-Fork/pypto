@@ -36,12 +36,19 @@ namespace npu::tile_fwk {
 
 namespace {
 // 二维 matmul tile 用 CheckUBTileShape 分形校验 (前两维 16 对齐)；
-// conv 多维 tile 用末维 (W) 对齐校验，两者分开判断
+// LiteNPU batch matmul 分形校验 (N轴对齐，L1→UB 与 L0C→UB 一致，均为 UB 目的 ND 布局的 fixpipe 写；
+// LiteNPU 当前不存在 conv 场景，rank>2 且前导维全 1 的 conv tile 不可达)；
+// conv 多维 tile 用末维 (W) 对齐校验，分开判断
 bool CheckUBTileShapeByRank(const LogicalTensorPtr& tensor)
 {
-    return (tensor != nullptr && tensor->GetShape().size() > SHAPE_DIM2) ?
-               MemoryPathUtils::CheckUBConvTileShape(tensor) :
-               MemoryPathUtils::CheckUBTileShape(tensor);
+    if (tensor != nullptr && tensor->GetShape().size() > SHAPE_DIM2) {
+        if (IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch()) &&
+            MemoryPathUtils::AllBatchAxesAreOne(tensor->GetShape())) {
+            return MemoryPathUtils::CheckUBBatchMatmulTileShapeLiteNPU(tensor);
+        }
+        return MemoryPathUtils::CheckUBConvTileShape(tensor);
+    }
+    return MemoryPathUtils::CheckUBTileShape(tensor);
 }
 
 // ND 全量元素数: 全部维度乘积
@@ -52,12 +59,6 @@ size_t ShapeNumel(const Shape& shape)
         elems *= static_cast<size_t>(dim);
     }
     return elems;
-}
-
-// UB2L1 允许 rank>2 的 batch matmul tile 时要求 batch 轴 (末两维之前的全部维度) 均为 1
-bool AllBatchAxesAreOne(const Shape& shape)
-{
-    return std::all_of(shape.begin(), shape.end() - SHAPE_DIM2, [](int64_t dim) { return dim == 1; });
 }
 
 // L0C 分形 (外轴, 内轴) 按物理布局取值: 二维 matmul tile 即 (M, N); conv 多维 tile (NCHW/NCDHW)
@@ -665,7 +666,7 @@ bool AssignMemoryType::ShouldSkipUB2L1SmallToLarge(const LogicalTensorPtr& iOper
     // UB2L1 仅支持 batch 轴全 1 的非 conv 多维 tile (batch matmul);
     const bool isConv = MemoryPathUtils::HasConvConsumer(oOperand);
     if (oOperand != nullptr && oOperand->GetShape().size() > SHAPE_DIM2 &&
-        (isConv || !AllBatchAxesAreOne(oOperand->GetShape()))) {
+        (isConv || !MemoryPathUtils::AllBatchAxesAreOne(oOperand->GetShape()))) {
         APASS_LOG_DEBUG_F(Elements::Operation, "Reject UB-to-L1 tensor[%d]: rank>2 conv tile or non-unit batch axes.",
                           oOperand->GetMagic());
         return true;
@@ -683,9 +684,15 @@ bool AssignMemoryType::ShouldSkipUB2L1SmallToLarge(const LogicalTensorPtr& iOper
         if (IsModeMoveIn(mode_, consumerOp->GetOpcode())) {
             int64_t copyInModeValue = 0;
             if (consumerOp->GetAttr<int64_t>("op_attr_copy_in_mode", copyInModeValue) && copyInModeValue == 0) {
-                APASS_LOG_DEBUG_F(Elements::Operation, "Reject UB-to-L1 tensor[%d]: consumer[%d] copy_in_mode is 0.",
-                                  oOperand->GetMagic(), consumerOp->GetOpMagic());
-                return true;
+                // copy_in_mode=ND2ND 标记两类视图：bias/scale（ND 布局仅由 DDR 路径支持）与 GEMV A
+                // （保持 ND 布局走 TCopyUB2L1ND2ND 直连，见 GenerateMoveOp::ProcessUB2L1 的 GEMV 分支）
+                int64_t consumerIsGemv = 0;
+                if (!consumerOp->GetAttr<int64_t>(OpAttributeKey::isGemv, consumerIsGemv) || consumerIsGemv == 0) {
+                    APASS_LOG_DEBUG_F(Elements::Operation,
+                                      "Reject UB-to-L1 tensor[%d]: consumer[%d] copy_in_mode is 0.",
+                                      oOperand->GetMagic(), consumerOp->GetOpMagic());
+                    return true;
+                }
             }
             // MXMatmul场景K轴非64对齐不支持UB2L1直连（MX补齐仅由DDR路径支持），回退DDR
             if (MemoryPathUtils::IsMxPaddingMode(*consumerOp)) {
@@ -919,7 +926,8 @@ Status AssignMemoryType::TryUpgradeSliceContractPath(Operation& sliceOp, MemoryT
             return SUCCESS;
         }
         if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_UB &&
-            (!MemoryPathUtils::IsL0C2UbSupportedShape(input) ||
+            (!(MemoryPathUtils::IsL0C2UbSupportedShape(input) ||
+               (isLiteNpu && MemoryPathUtils::AllBatchAxesAreOne(input->GetShape()))) ||
              !(isLiteNpu ? inserter.IsL0C2UbLiteNPUSupportedDtype(input) : inserter.IsL0C2UbSupportedDtype(input)))) {
             return SUCCESS;
         }
@@ -1010,6 +1018,7 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
                           reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
         return SUCCESS;
     }
+    const bool isLiteNpu = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
     // For large-to-small the middle stays in sourceType after the upgrade; reject when it cannot
     // fit. UB residency holds both the ND original and the NZ copy, L0C residency holds NZ only.
     // The same-memory path is exempt: its caller already checks the middle against the
@@ -1017,7 +1026,7 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
     if (sourceType != targetType && middle->GetShape().size() >= kMatrixShapeDimCount) {
         if (sourceType == MemoryType::MEM_UB) {
             const bool isConv = MemoryPathUtils::HasConvConsumer(middle);
-            if (middleShape.size() > SHAPE_DIM2 && (isConv || !AllBatchAxesAreOne(middleShape))) {
+            if (middleShape.size() > SHAPE_DIM2 && (isConv || !MemoryPathUtils::AllBatchAxesAreOne(middleShape))) {
                 APASS_LOG_DEBUG_F(Elements::Operation,
                                   "Skip %s: op[%d] middle tensor[%d], rank>2 conv tile or non-unit batch axes.",
                                   reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
@@ -1034,8 +1043,10 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
             }
         } else if (sourceType == MemoryType::MEM_L0C) {
             const bool isConv = MemoryPathUtils::HasConvProducer(input);
-            if (middleShape.size() > SHAPE_DIM2 && !isConv) {
-                APASS_LOG_DEBUG_F(Elements::Operation, "Skip %s: op[%d] middle tensor[%d], rank>2 batch matmul tile.",
+            // LiteNPU batch matmul（batch 轴全 1）tile 允许 L0C2UB rank>2 直连；非 LiteNPU 维持 conv-only
+            if (middleShape.size() > SHAPE_DIM2 && !isConv &&
+                !(isLiteNpu && MemoryPathUtils::AllBatchAxesAreOne(middleShape))) {
+                APASS_LOG_DEBUG_F(Elements::Operation, "Skip %s: op[%d] middle tensor[%d], rank>2 non-unit batch axes.",
                                   reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
                 return SUCCESS;
             }
@@ -1065,7 +1076,6 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
                           contractOp.GetOpMagic(), middle->GetMagic());
         return SUCCESS;
     }
-    const bool isLiteNpu = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
     for (auto* producer : middle->GetProducers()) {
         auto producerInput = producer->iOperand.front();
         if (producerInput == nullptr || producerInput->GetMemoryTypeOriginal() != sourceType) {
@@ -1128,9 +1138,15 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
             const size_t ubLimit = static_cast<size_t>(
                 Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) * UB_THRESHOLD_NORMAL);
             int64_t copyInModeValue = 0;
+            int64_t consumerIsGemv = 0;
+            // copy_in_mode=ND2ND 的 GEMV A 视图保持 ND 布局走 TCopyUB2L1ND2ND 直连（见
+            // GenerateMoveOp::ProcessUB2L1 的 GEMV 分支），不作为回退 DDR 的判据；bias/scale 的 ND2ND 仍回退
+            const bool ndCopyInReject = consumer->GetAttr<int64_t>("op_attr_copy_in_mode", copyInModeValue) &&
+                                        copyInModeValue == 0 &&
+                                        !(consumer->GetAttr<int64_t>(OpAttributeKey::isGemv, consumerIsGemv) &&
+                                          consumerIsGemv != 0);
             // MXMatmul场景K轴非64对齐不支持UB2L1直连（MX补齐仅由DDR路径支持），回退DDR
-            if (CalcNZTensorSize(input, MemoryPathUtils::HasConvConsumer(middle)) > ubLimit ||
-                (consumer->GetAttr<int64_t>("op_attr_copy_in_mode", copyInModeValue) && copyInModeValue == 0) ||
+            if (CalcNZTensorSize(input, MemoryPathUtils::HasConvConsumer(middle)) > ubLimit || ndCopyInReject ||
                 MemoryPathUtils::IsMxPaddingMode(*consumer)) {
                 APASS_LOG_DEBUG_F(
                     Elements::Operation,

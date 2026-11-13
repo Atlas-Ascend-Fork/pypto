@@ -27,17 +27,23 @@ template <bool initMatrixC, TransMode transMode, bool kAlignFlag, bool isGemv = 
           typename TileLeft, typename TileRight>
 INLINE void TMatmulImpl(TileAcc& c, TileLeft& a, TileRight& b)
 {
-    int64_t validM = GetShape<0>(a);
-    int64_t validN = GetShape<1>(b);
-    int64_t validK = GetShape<1>(a);
+    constexpr uint64_t shapeSizeA = Std::tuple_size<typename TileLeft::Shape>::value;
+    constexpr uint64_t shapeSizeB = Std::tuple_size<typename TileRight::Shape>::value;
+    constexpr uint64_t shapeSizeC = Std::tuple_size<typename TileAcc::Shape>::value;
+    static_assert(shapeSizeA == SHAPE_DIM2 || shapeSizeA == SHAPE_DIM3 || shapeSizeA == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
+    static_assert(shapeSizeB == SHAPE_DIM2 || shapeSizeB == SHAPE_DIM3 || shapeSizeB == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
+    static_assert(shapeSizeC == SHAPE_DIM2 || shapeSizeC == SHAPE_DIM3 || shapeSizeC == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
+    int64_t validM = GetTailShape<1>(a);
+    int64_t validN = GetTailShape<0>(b);
+    int64_t validK = GetTailShape<0>(a);
     // validK=0场景特殊处理：
     // AMULB需要做MAD产生全0矩阵，AMULACCB跳过MAD
     if (validM == 0 || validN == 0 || (validK == 0 && !initMatrixC)) {
         return;
     }
-    constexpr uint64_t shapeSizeA = Std::tuple_size<typename TileLeft::Shape>::value;
-    constexpr uint64_t shapeSizeB = Std::tuple_size<typename TileRight::Shape>::value;
-    constexpr uint64_t shapeSizeC = Std::tuple_size<typename TileAcc::Shape>::value;
     constexpr auto staticL0AH = Std::tuple_element<shapeSizeA - SHAPE_DIM2, typename TileLeft::TileShape>::type::value;
     constexpr auto staticL0AW = Std::tuple_element<shapeSizeA - 1, typename TileLeft::TileShape>::type::value;
     constexpr auto staticL0BH = Std::tuple_element<shapeSizeB - SHAPE_DIM2, typename TileRight::TileShape>::type::value;
@@ -91,15 +97,21 @@ template <TransMode transMode, bool kAlignFlag, bool isGemv = false, typename Ti
           typename TileRight, typename TileBias>
 INLINE void TMatmulImpl(TileAcc& c, TileLeft& a, TileRight& b, TileBias& bias)
 {
-    int64_t validM = GetShape<0>(a);
-    int64_t validN = GetShape<1>(b);
-    int64_t validK = GetShape<1>(a);
+    constexpr uint64_t shapeSizeA = Std::tuple_size<typename TileLeft::Shape>::value;
+    constexpr uint64_t shapeSizeB = Std::tuple_size<typename TileRight::Shape>::value;
+    constexpr uint64_t shapeSizeC = Std::tuple_size<typename TileAcc::Shape>::value;
+    static_assert(shapeSizeA == SHAPE_DIM2 || shapeSizeA == SHAPE_DIM3 || shapeSizeA == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
+    static_assert(shapeSizeB == SHAPE_DIM2 || shapeSizeB == SHAPE_DIM3 || shapeSizeB == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
+    static_assert(shapeSizeC == SHAPE_DIM2 || shapeSizeC == SHAPE_DIM3 || shapeSizeC == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
+    int64_t validM = GetTailShape<1>(a);
+    int64_t validN = GetTailShape<0>(b);
+    int64_t validK = GetTailShape<0>(a);
     if (validM == 0 || validN == 0 || validK == 0) {
         return;
     }
-    constexpr uint64_t shapeSizeA = Std::tuple_size<typename TileLeft::Shape>::value;
-    constexpr uint64_t shapeSizeC = Std::tuple_size<typename TileAcc::Shape>::value;
-    constexpr uint64_t shapeSizeB = Std::tuple_size<typename TileRight::Shape>::value;
     constexpr auto staticL0AW = Std::tuple_element<shapeSizeA - 1, typename TileLeft::TileShape>::type::value;
     constexpr auto staticL0AH = Std::tuple_element<shapeSizeA - SHAPE_DIM2, typename TileLeft::TileShape>::type::value;
     constexpr auto staticL0BH = Std::tuple_element<shapeSizeB - SHAPE_DIM2, typename TileRight::TileShape>::type::value;

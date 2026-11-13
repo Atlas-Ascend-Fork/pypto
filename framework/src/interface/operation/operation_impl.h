@@ -68,6 +68,12 @@ const std::string A_MUL_B_RELU_ATTR = OP_ATTR_PREFIX + "relu_type";
 const std::string A_MUL_B_TRANS_MODE_ATTR = OP_ATTR_PREFIX + "trans_mode";
 const std::string A_MUL_B_VECTOR_QUANT_FLAG = OP_ATTR_PREFIX + "vector_quant_flag";
 
+// transFlag 时的维度交换模式（按交换的维度对命名，batch 前导维不参与交换）：
+// SWAP_FIRST_TWO_DIMS: 交换第 0/1 维（Matmul 场景，无 batch 前导维）
+// SWAP_LAST_TWO_DIMS: 交换尾两维（batchMatmul 场景，batch + {m, k}）
+// SWAP_3RD_2ND_FROM_END: 交换倒数第 3/2 维（MXMatmul scaleTensor 场景，batch + {m, kScale, NUM2}）
+enum class TransSwapMode : int8_t { SWAP_FIRST_TWO_DIMS = 0, SWAP_LAST_TWO_DIMS = 1, SWAP_3RD_2ND_FROM_END = 2 };
+
 struct MatmulTensorInfo {
     std::string name;
     DataType dtype;
@@ -77,10 +83,12 @@ struct MatmulTensorInfo {
     TileOpFormat format;
     MemoryType memType;
     bool transFlag;
+    TransSwapMode transSwapMode;
 
     MatmulTensorInfo(const std::string& nameIn, DataType dtypeIn, const std::vector<int64_t>& shapeIn,
                      const std::vector<int64_t>& offsetIn, NodeType nodeTypeIn, TileOpFormat formatIn,
-                     MemoryType memTypeIn, bool transFlagIn = false)
+                     MemoryType memTypeIn, bool transFlagIn = false,
+                     TransSwapMode transSwapModeIn = TransSwapMode::SWAP_FIRST_TWO_DIMS)
         : name(nameIn),
           dtype(dtypeIn),
           shape(shapeIn),
@@ -88,7 +96,8 @@ struct MatmulTensorInfo {
           nodeType(nodeTypeIn),
           format(formatIn),
           memType(memTypeIn),
-          transFlag(transFlagIn)
+          transFlag(transFlagIn),
+          transSwapMode(transSwapModeIn)
     {}
 };
 

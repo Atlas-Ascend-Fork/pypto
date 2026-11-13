@@ -37,10 +37,10 @@ template <bool initMatrixC, typename TileRes, typename TileLeft, typename TileLe
           typename TileRightScale>
 INLINE void MatmulMXImpl(TileRes& c, TileLeft& a, TileLeftScale& aScale, TileRight& b, TileRightScale& bScale)
 {
-    int64_t validM = GetShape<0>(a);
-    int64_t validK = GetShape<1>(a);
-    int64_t validN = GetShape<1>(b);
-    int64_t validScaleK = GetShape<1>(aScale) * SHAPE_DIM2;
+    int64_t validM = GetTailShape<1>(a);
+    int64_t validK = GetTailShape<0>(a);
+    int64_t validN = GetTailShape<0>(b);
+    int64_t validScaleK = GetTailShape<1>(aScale) * SHAPE_DIM2;
     // validK=0场景特殊处理：
     // AMULB需要做MAD产生全0矩阵，AMULACCB跳过MAD
     if (validM == 0 || validN == 0 || (validK == 0 && !initMatrixC)) {
@@ -95,10 +95,10 @@ template <typename TileRes, typename TileLeft, typename TileLeftScale, typename 
 INLINE void MatmulMXImpl(TileRes& c, TileLeft& a, TileLeftScale& aScale, TileRight& b, TileRightScale& bScale,
                          TileBias& bias)
 {
-    int64_t validM = GetShape<0>(a);
-    int64_t validK = GetShape<1>(a);
-    int64_t validScaleK = GetShape<1>(aScale) * SHAPE_DIM2;
-    int64_t validN = GetShape<1>(b);
+    int64_t validM = GetTailShape<1>(a);
+    int64_t validK = GetTailShape<0>(a);
+    int64_t validScaleK = GetTailShape<1>(aScale) * SHAPE_DIM2;
+    int64_t validN = GetTailShape<0>(b);
     if (validM == 0 || validN == 0 || validK == 0) {
         return;
     }

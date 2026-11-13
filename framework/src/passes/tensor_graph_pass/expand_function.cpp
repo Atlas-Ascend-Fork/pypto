@@ -126,6 +126,13 @@ bool ShouldSkipViewAssembleExpand(const Operation& op)
         return false;
     }
 
+    // batchmatmul 的 batch VIEW/ASSEMBLE不参与 tile 展开
+    if (op.HasAttribute(OpAttributeKey::isBatchMatmul)) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "ExpandFunction skips VIEW/ASSEMBLE op=%d opcode=%s rule=batch_matmul.",
+                          op.GetOpMagic(), op.GetOpcodeStr().c_str());
+        return true;
+    }
+
     // VIEW 按输出 shape 切分，ASSEMBLE 按输入 shape 切分；对应 shape 含 -1 则跳过展开。
     if (op.GetOpcode() == Opcode::OP_VIEW) {
         if (OperandShapesHaveDynamicDim(op.GetOOperands())) {
@@ -137,7 +144,7 @@ bool ShouldSkipViewAssembleExpand(const Operation& op)
 
     // Materializing an NZ alias through vector copy loses the blocked layout.
     if (op.GetIOperands().front()->Format() == TileOpFormat::TILEOP_NZ) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "ExpandFunction skip VIEW/ASSEMBLE op=%d opcode=%s rule=nz_alias.",
+        APASS_LOG_DEBUG_F(Elements::Operation, "ExpandFunction skips VIEW/ASSEMBLE op=%d opcode=%s rule=nz_alias.",
                           op.GetOpMagic(), op.GetOpcodeStr().c_str());
         return true;
     }
@@ -389,8 +396,8 @@ std::optional<int> GetInputOperandIndex(const Operation& op, const LogicalTensor
     return std::nullopt;
 }
 
-std::vector<int64_t> AlignVecTileToViewRank(const std::vector<int64_t>& matmulVecTile,
-                                            const std::vector<int64_t>& viewShape)
+std::vector<int64_t> AlignVecTileToViewDim(const std::vector<int64_t>& matmulVecTile,
+                                           const std::vector<int64_t>& viewShape)
 {
     if (viewShape.empty()) {
         return matmulVecTile;
@@ -402,9 +409,9 @@ std::vector<int64_t> AlignVecTileToViewRank(const std::vector<int64_t>& matmulVe
         return std::vector<int64_t>(matmulVecTile.end() - viewShape.size(), matmulVecTile.end());
     }
     std::vector<int64_t> aligned;
-    const size_t leadingDims = viewShape.size() - matmulVecTile.size();
+    const int64_t batchDims = static_cast<int64_t>(viewShape.size() - matmulVecTile.size());
     aligned.reserve(viewShape.size());
-    for (size_t i = 0; i < leadingDims; ++i) {
+    for (int64_t i = 0; i < batchDims; ++i) {
         aligned.push_back(viewShape[i]);
     }
     aligned.insert(aligned.end(), matmulVecTile.begin(), matmulVecTile.end());
@@ -427,7 +434,7 @@ TileShape GetEffectiveTileShapeForTraverse(const Operation& op, const LogicalTen
 
     if (resolved.GetVecTile().valid()) {
         if (!viewShape.empty()) {
-            resolved.SetVecTile(AlignVecTileToViewRank(resolved.GetVecTile().tile, viewShape));
+            resolved.SetVecTile(AlignVecTileToViewDim(resolved.GetVecTile().tile, viewShape));
         }
         if (IsMatmulOpcode(op.GetOpcode()) && op.GetTileShape().GetCubeTile().valid()) {
             resolved.GetCubeTile() = op.GetTileShape().GetCubeTile();

@@ -30,10 +30,10 @@ INLINE void TCopyUB2L1Impl(DstTileData& dst, SrcTileData& src, const Coord& dstC
     int64_t srcOffset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(srcCoord);
     int64_t dstOffset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(dstCoord);
     int64_t dstOffset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(dstCoord);
-    int64_t dstShape0 = GetShape<0>(dst);
-    int64_t dstShape1 = GetShape<1>(dst);
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
+    int64_t dstShape0 = GetTailShape<1>(dst);
+    int64_t dstShape1 = GetTailShape<0>(dst);
+    int64_t srcShape0 = GetTailShape<1>(src);
+    int64_t srcShape1 = GetTailShape<0>(src);
     constexpr int64_t
         staticUBH = Std::tuple_element<shapeSize - SHAPE_DIM2, typename SrcTileData::TileShape>::type::value;
     constexpr int64_t staticUBW = Std::tuple_element<shapeSize - 1, typename SrcTileData::TileShape>::type::value;
@@ -56,8 +56,9 @@ INLINE void TCopyUB2L1Impl(DstTileData& dst, SrcTileData& src, const Coord& dstC
         pto::TASSIGN(UBTile, (uint64_t)src.GetAddr());
         pto::TEXTRACT(l1Tile, UBTile, srcOffset0, srcOffset1);
     } else if (mode == CopyMode::INSERT) {
-        using tileUBTensor = pto::Tile<pto::TileType::Vec, typename SrcTileData::Type, staticUBH, staticUBW,
-                                       pto::BLayout::ColMajor, -1, -1, pto::SLayout::RowMajor>;
+        // GEMV A 保持 ND 布局（与 EXTRACT 分支一致），避免 ND 源按 ColMajor 解释导致精度错误
+        using tileUBTensor = pto::Tile<pto::TileType::Vec, typename SrcTileData::Type, staticUBH, staticUBW, ubBLayout,
+                                       -1, -1, ubSLayout>;
         tileUBTensor UBTile(srcShape0, srcShape1);
         pto::TASSIGN(UBTile, (uint64_t)src.GetAddr());
         pto::TINSERT(l1Tile, UBTile, dstOffset0, dstOffset1);

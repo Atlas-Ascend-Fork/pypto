@@ -33,7 +33,6 @@
 namespace npu::tile_fwk {
 constexpr int64_t INNER_PAD_VALUE = 32;
 constexpr int64_t OUTER_PAD_VALUE = 16;
-const Offset ZERO_OFFSET = {0, 0};
 
 int64_t GenerateMoveOp::PadUB(int64_t dim, int64_t padValue)
 {
@@ -260,13 +259,13 @@ Status GenerateMoveOp::ProcessDefault(Function& function, Operation& op, ViewOpA
         return SUCCESS;
     }
     if (op.GetOpcode() == Opcode::OP_L0C_TO_L1) {
-        SetL0C2L1CopyAttr(op, op.GetOOperands()[0]->GetShape(),
-                          OpImmediate::Specified(viewOpAttribute->GetFromTensorOffset()),
-                          OpImmediate::Specified(ZERO_OFFSET), Matrix::CopyMode::EXTRACT);
+        SetL0C2L1CopyAttr(
+            op, op.GetOOperands()[0]->GetShape(), OpImmediate::Specified(viewOpAttribute->GetFromTensorOffset()),
+            OpImmediate::Specified(Offset(op.oOperand.front()->GetShape().size(), 0)), Matrix::CopyMode::EXTRACT);
     } else if (op.GetOpcode() == Opcode::OP_L0C_COPY_UB || op.GetOpcode() == Opcode::OP_L1_COPY_UB) {
-        SetL0C2UBCopyAttr(op, op.GetOOperands()[0]->GetShape(),
-                          OpImmediate::Specified(viewOpAttribute->GetFromTensorOffset()),
-                          OpImmediate::Specified(ZERO_OFFSET), Matrix::CopyMode::EXTRACT);
+        SetL0C2UBCopyAttr(
+            op, op.GetOOperands()[0]->GetShape(), OpImmediate::Specified(viewOpAttribute->GetFromTensorOffset()),
+            OpImmediate::Specified(Offset(op.oOperand.front()->GetShape().size(), 0)), Matrix::CopyMode::EXTRACT);
         op.SetAttribute(OpAttributeKey::isCube, true);
     } else if (op.GetOpcode() == Opcode::OP_L0C_COPY_UB_CONV) {
         // toOffset 全零, 维度随目的 tensor rank: 2D conv (NCHW) 为 4 维, 3D conv (NCDHW) 为 5 维;
@@ -500,19 +499,22 @@ bool GenerateMoveOp::TryInsertModeDispatch(Function& function, Operation& op, As
     }
     if (inputMemtype == MemoryType::MEM_L0C && outputMemtype == MemoryType::MEM_L1) {
         SetOpcodeByMemPath(op, inputMemtype, outputMemtype);
-        SetL0C2L1CopyAttr(op, op.GetIOperands()[0]->GetShape(), OpImmediate::Specified(ZERO_OFFSET),
+        SetL0C2L1CopyAttr(op, op.GetIOperands()[0]->GetShape(),
+                          OpImmediate::Specified(Offset(op.iOperand.front()->GetShape().size(), 0)),
                           OpImmediate::Specified(assembleOpAttribute->GetToTensorOffset()), Matrix::CopyMode::INSERT);
         return true;
     }
     if (inputMemtype == MemoryType::MEM_L0C && outputMemtype == MemoryType::MEM_UB) {
         SetOpcodeByMemPath(op, inputMemtype, outputMemtype);
-        SetL0C2UBCopyAttr(op, op.GetIOperands()[0]->GetShape(), OpImmediate::Specified(ZERO_OFFSET),
+        SetL0C2UBCopyAttr(op, op.GetIOperands()[0]->GetShape(),
+                          OpImmediate::Specified(Offset(op.iOperand.front()->GetShape().size(), 0)),
                           OpImmediate::Specified(assembleOpAttribute->GetToTensorOffset()), Matrix::CopyMode::INSERT);
         return true;
     }
     if (inputMemtype == MemoryType::MEM_L1 && outputMemtype == MemoryType::MEM_UB) {
         SetOpcodeByMemPath(op, inputMemtype, outputMemtype);
-        SetL0C2UBCopyAttr(op, op.GetIOperands()[0]->GetShape(), OpImmediate::Specified(ZERO_OFFSET),
+        SetL0C2UBCopyAttr(op, op.GetIOperands()[0]->GetShape(),
+                          OpImmediate::Specified(Offset(op.iOperand.front()->GetShape().size(), 0)),
                           OpImmediate::Specified(assembleOpAttribute->GetToTensorOffset()), Matrix::CopyMode::INSERT);
         return true;
     }
@@ -746,12 +748,16 @@ Status GenerateMoveOp::CreateMoveOpForConvert(Function& function, Operation& op)
                          Matrix::CopyMode::MOVE);
     }
     if (op.GetOpcode() == Opcode::OP_L0C_TO_L1) {
-        SetL0C2L1CopyAttr(op, op.GetOOperands()[0]->GetShape(), OpImmediate::Specified(ZERO_OFFSET),
-                          OpImmediate::Specified(ZERO_OFFSET), Matrix::CopyMode::MOVE);
+        SetL0C2L1CopyAttr(op, op.GetOOperands()[0]->GetShape(),
+                          OpImmediate::Specified(Offset(op.iOperand.front()->GetShape().size(), 0)),
+                          OpImmediate::Specified(Offset(op.oOperand.front()->GetShape().size(), 0)),
+                          Matrix::CopyMode::MOVE);
     }
     if (op.GetOpcode() == Opcode::OP_L0C_COPY_UB || op.GetOpcode() == Opcode::OP_L1_COPY_UB) {
-        SetL0C2UBCopyAttr(op, op.GetOOperands()[0]->GetShape(), OpImmediate::Specified(ZERO_OFFSET),
-                          OpImmediate::Specified(ZERO_OFFSET), Matrix::CopyMode::MOVE);
+        SetL0C2UBCopyAttr(op, op.GetOOperands()[0]->GetShape(),
+                          OpImmediate::Specified(Offset(op.iOperand.front()->GetShape().size(), 0)),
+                          OpImmediate::Specified(Offset(op.oOperand.front()->GetShape().size(), 0)),
+                          Matrix::CopyMode::MOVE);
         op.SetAttribute(OpAttributeKey::isCube, true);
     }
     if (status != SUCCESS) {

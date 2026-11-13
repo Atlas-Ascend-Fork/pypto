@@ -52,15 +52,18 @@ INLINE void TLoadFillPad(l1TileData& l1Tile, int64_t l1Shape0, int64_t l1Shape1)
 
 // Copy data from DDR to L1 with ND -> NZ format
 template <PaddingMode padMode, typename TileData, typename GlobalData>
-INLINE void TLoadND2NZ(TileData& dst, GlobalData& src, const int64_t& offset0, const int64_t& offset1)
+INLINE void TLoadND2NZ(TileData& dst, GlobalData& src, const int64_t& offset0, const int64_t& offset1,
+                       const int64_t& batchOffset)
 {
     constexpr uint64_t shapeSize = Std::tuple_size<typename TileData::Shape>::value;
-    int64_t dstShape0 = GetShape<0>(dst);
-    int64_t dstShape1 = GetShape<1>(dst);
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
-    int64_t srcStride0 = GetStride<0>(src);
-    int64_t srcStride1 = GetStride<1>(src);
+    static_assert(shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
+    int64_t dstShape0 = GetTailShape<1>(dst);
+    int64_t dstShape1 = GetTailShape<0>(dst);
+    int64_t srcShape0 = GetTailShape<1>(src);
+    int64_t srcShape1 = GetTailShape<0>(src);
+    int64_t srcStride0 = GetTailStride<1>(src);
+    int64_t srcStride1 = GetTailStride<0>(src);
     constexpr auto staticL1H = Std::tuple_element<shapeSize - SHAPE_DIM2, typename TileData::TileShape>::type::value;
     constexpr auto staticL1W = Std::tuple_element<shapeSize - 1, typename TileData::TileShape>::type::value;
     using shapeDim2 = pto::Shape<1, 1, 1, -1, -1>;
@@ -70,7 +73,7 @@ INLINE void TLoadND2NZ(TileData& dst, GlobalData& src, const int64_t& offset0, c
         pto::TileType::Mat, typename TileData::Type, staticL1H, staticL1W, pto::BLayout::ColMajor, -1, -1,
         pto::SLayout::RowMajor, pto::TileConfig::fractalABSize, pto::PadValue::Null,
         padMode == PaddingMode::NORMAL_PADDING_MODE ? pto::CompactMode::RowAlignedPadding : pto::CompactMode::Null>;
-    int64_t gmOffset = offset1 + offset0 * srcShape1;
+    int64_t gmOffset = batchOffset + offset1 + offset0 * srcShape1;
     // FP4数据类型数据宽度减半，地址偏移需要右移1位
     if constexpr (CheckIsB4<TileData>()) {
         gmOffset = gmOffset >> 1;
@@ -89,15 +92,18 @@ INLINE void TLoadND2NZ(TileData& dst, GlobalData& src, const int64_t& offset0, c
 // Copy data from DDR to L1 with NZ -> NZ format
 template <PaddingMode padMode, typename TileData, typename GlobalData>
 INLINE void TLoadNZ2NZ(TileData& dst, GlobalData& src, const int64_t& dstOffset0, const int64_t& dstOffset1,
-                       const int64_t& srcOffset0, const int64_t& srcOffset1, const int64_t& curH, const int64_t& curW)
+                       const int64_t& srcOffset0, const int64_t& srcOffset1, const int64_t& batchOffset,
+                       const int64_t& curH, const int64_t& curW)
 {
     constexpr bool isB4 = CheckIsB4<TileData>();
     constexpr int64_t c0Size = isB4 ? FP4_BLOCK_ALIGN_BYTE : BLOCK_ALIGN_BYTE / sizeof(typename GlobalData::Type);
     constexpr auto shapeSize = Std::tuple_size<typename TileData::Shape>::value;
+    static_assert(shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
     int64_t srcShape0 = curH;
     int64_t srcShape1 = curW;
-    int64_t dstShape0 = GetShape<0>(dst);
-    int64_t dstShape1 = GetShape<1>(dst);
+    int64_t dstShape0 = GetTailShape<1>(dst);
+    int64_t dstShape1 = GetTailShape<0>(dst);
     constexpr auto staticL1H = Std::tuple_element<shapeSize - SHAPE_DIM2, typename TileData::TileShape>::type::value;
     constexpr auto staticL1W = Std::tuple_element<shapeSize - 1, typename TileData::TileShape>::type::value;
     using shapeDim2 = pto::Shape<1, -1, -1, BLOCK_CUBE_M_N, c0Size>;
@@ -105,7 +111,7 @@ INLINE void TLoadNZ2NZ(TileData& dst, GlobalData& src, const int64_t& dstOffset0
     using globalData = pto::GlobalTensor<typename GlobalData::Type, shapeDim2, strideDim2, pto::Layout::NZ>;
     using tileData = pto::Tile<pto::TileType::Mat, typename TileData::Type, staticL1H, staticL1W,
                                pto::BLayout::ColMajor, -1, -1, pto::SLayout::RowMajor>;
-    int64_t gmOffset = CalNZOffset(srcShape0, srcShape1, srcOffset0, srcOffset1, c0Size);
+    int64_t gmOffset = batchOffset + CalNZOffset(srcShape0, srcShape1, srcOffset0, srcOffset1, c0Size);
     int64_t l1Offset = CalNZOffset(dstShape0, dstShape1, dstOffset0, dstOffset1, c0Size);
     // FP4数据类型数据宽度减半，地址偏移需要右移1位
     if constexpr (isB4) {
@@ -125,22 +131,25 @@ INLINE void TLoadNZ2NZ(TileData& dst, GlobalData& src, const int64_t& dstOffset0
 
 // Copy data from DDR to L1 with ND -> ND format
 template <typename TileData, typename GlobalData>
-INLINE void TLoadND2ND(TileData& dst, GlobalData& src, const int64_t& offset0, const int64_t& offset1)
+INLINE void TLoadND2ND(TileData& dst, GlobalData& src, const int64_t& offset0, const int64_t& offset1,
+                       const int64_t& batchOffset)
 {
     constexpr uint64_t shapeSize = Std::tuple_size<typename TileData::Shape>::value;
+    static_assert(shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
     constexpr auto staticL1H = Std::tuple_element<shapeSize - SHAPE_DIM2, typename TileData::TileShape>::type::value;
     constexpr auto staticL1W = Std::tuple_element<shapeSize - 1, typename TileData::TileShape>::type::value;
-    int64_t dstShape0 = GetShape<0>(dst);
-    int64_t dstShape1 = GetShape<1>(dst);
-    int64_t srcStride0 = GetStride<0>(src);
-    int64_t srcStride1 = GetStride<1>(src);
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
+    int64_t dstShape0 = GetTailShape<1>(dst);
+    int64_t dstShape1 = GetTailShape<0>(dst);
+    int64_t srcStride0 = GetTailStride<1>(src);
+    int64_t srcStride1 = GetTailStride<0>(src);
+    int64_t srcShape0 = GetTailShape<1>(src);
+    int64_t srcShape1 = GetTailShape<0>(src);
     using shapeDim2 = pto::Shape<1, 1, 1, -1, -1>;
     using strideDim2 = pto::Stride<1, 1, 1, -1, -1>;
     using globalData = pto::GlobalTensor<typename GlobalData::Type, shapeDim2, strideDim2, pto::Layout::ND>;
     // 目前场景,ND2ND只搬运bias和fixpipe，大小均为1 * N，offset0默认均为0
-    int64_t gmOffset = offset1 + offset0 * srcShape1;
+    int64_t gmOffset = batchOffset + offset1 + offset0 * srcShape1;
     globalData src0Global((__gm__ typename GlobalData::Type*)(src.GetAddr() + gmOffset),
                           shapeDim2(dstShape0, dstShape1), strideDim2(srcStride0, srcStride1));
     using tileData = pto::Tile<pto::TileType::Mat, typename TileData::Type, staticL1H, staticL1W,
