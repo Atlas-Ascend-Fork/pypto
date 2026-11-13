@@ -2769,9 +2769,9 @@ TEST_F(SplitLargeFanoutTensorTest, OverlappingWritesWithHoleKeepOriginalRead)
             pass.CheckOverlapCoverage(largeTensor, {graph.GetTensor("b"), graph.GetTensor("c")}, {16, 16, 16}));
         EXPECT_TRUE(pass.CheckOverlapCoverage(largeTensor, {graph.GetTensor("a"), graph.GetTensor("b")}, {16, 16, 16}));
         pass.SplitLargeTensor(*function);
-        // The valid head split survives. Overlapping [4,12) and [8,16)
-        // cannot cover [4,20), so the unwritten tail must keep its original source.
-        EXPECT_NE(graph.GetOp("head")->GetIOperands().front(), largeTensor);
+        // head 对应的候选区域存在跨边界写入，tail 对应的候选区域未被写入完整覆盖；
+        // 两处读取均应保留与原 largeTensor 的连接。
+        EXPECT_EQ(graph.GetOp("head")->GetIOperands().front(), largeTensor);
         EXPECT_EQ(graph.GetOp("tail")->GetIOperands().front(), largeTensor);
         EXPECT_EQ(pass.RunOnFunction(*function), SUCCESS);
         std::set<LogicalTensorPtr> incasts(function->GetIncast().begin(), function->GetIncast().end());
@@ -2782,6 +2782,38 @@ TEST_F(SplitLargeFanoutTensorTest, OverlappingWritesWithHoleKeepOriginalRead)
             }
         }
     }
+}
+
+TEST_F(SplitLargeFanoutTensorTest, CoveringWriteKeepsOriginalRead)
+{
+    config::SetPassOption("enable_slice", false);
+    ComputationalGraphBuilder graph;
+    AddTensorsWithDDR(graph, {{"base", {8, 16, 16}},
+                              {"cover", {16, 16, 16}},
+                              {"tail", {4, 16, 16}},
+                              {"largeTensor", {20, 16, 16}},
+                              {"read", {4, 16, 16}}});
+    graph.AddOp(Opcode::OP_ASSEMBLE, {"base"}, {"largeTensor"}, "base");
+    graph.GetOp("base")->SetOpAttribute(
+        std::make_shared<AssembleOpAttribute>(MemoryType::MEM_DEVICE_DDR, Offset{0, 0, 0}));
+    graph.AddOp(Opcode::OP_ASSEMBLE, {"cover"}, {"largeTensor"}, "cover");
+    graph.GetOp("cover")->SetOpAttribute(
+        std::make_shared<AssembleOpAttribute>(MemoryType::MEM_DEVICE_DDR, Offset{4, 0, 0}));
+    graph.AddOp(Opcode::OP_ASSEMBLE, {"tail"}, {"largeTensor"}, "tail");
+    graph.GetOp("tail")->SetOpAttribute(
+        std::make_shared<AssembleOpAttribute>(MemoryType::MEM_DEVICE_DDR, Offset{16, 0, 0}));
+    graph.AddOp(Opcode::OP_VIEW, {"largeTensor"}, {"read"}, "read");
+    graph.GetOp("read")->SetOpAttribute(
+        std::make_shared<ViewOpAttribute>(Offset{16, 0, 0}, MemoryType::MEM_DEVICE_DDR));
+    graph.SetInCast({"base", "cover", "tail"});
+    graph.SetOutCast({"read"});
+
+    auto function = graph.GetFunction();
+    auto largeTensor = graph.GetTensor("largeTensor");
+    SplitLargeFanoutTensor pass;
+    ASSERT_EQ(pass.PreCheck(*function), SUCCESS);
+    EXPECT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    EXPECT_EQ(graph.GetOp("read")->GetIOperands().front(), largeTensor);
 }
 
 TEST_F(SplitLargeFanoutTensorTest, DuplicateAssembleInputKeepsOriginalRead)
@@ -2918,6 +2950,80 @@ std::vector<std::pair<LogicalTensorPtr, Offset>> BuildOverlapTensorInfos(
     return tensorInfos;
 }
 } // namespace
+
+TEST_F(SplitLargeFanoutTensorTest, CollectOverlapsRejectsCrossBoundaryWrites)
+{
+    const std::vector<std::pair<Shape, Offset>> extraWrites{
+        {{16, 64}, {0, 0}},  // 写入跨越候选行区间 [8,24) 的起始边界。
+        {{16, 64}, {16, 0}}, // 写入跨越候选行区间 [8,24) 的结束边界。
+        {{32, 64}, {0, 0}},  // 写入完全包含候选区域，并向候选边界外延伸。
+        {{16, 64}, {24, 0}}, // 写入与候选边界相接，但不相交。
+        {{16, 64}, {0, 64}}, // 行区间相交，但列区间不相交。
+    };
+    for (size_t i = 0; i < extraWrites.size(); ++i) {
+        SCOPED_TRACE(i);
+        ComputationalGraphBuilder graph;
+        auto writes = BuildOverlapTensorInfos(graph, {{{16, 64}, {8, 0}}, extraWrites[i]});
+        ASSERT_TRUE(graph.AddTensor(DataType::DT_FP32, {64, 64}, "large"));
+        ASSERT_TRUE(graph.AddTensor(DataType::DT_FP32, {8, 64}, "read"));
+        std::vector<std::pair<LogicalTensorPtr, Offset>> reads{{graph.GetTensor("read"), {8, 0}}};
+        SplitLargeFanoutTensor pass;
+        SplitLargeFanoutTensor::OverlapSearchIndex toIndex, fromIndex;
+        pass.BuildOverlapSearchIndex(writes, toIndex);
+        pass.BuildOverlapSearchIndex(reads, fromIndex);
+        LogicalTensors overlaps, dualOverlaps;
+        EXPECT_EQ(pass.CollectOverlaps(graph.GetTensor("large"), {16, 64}, {8, 0}, toIndex, fromIndex, overlaps,
+                                       dualOverlaps),
+                  i >= 3);
+        if (i >= 3) {
+            ASSERT_EQ(overlaps.size(), 1U);
+            EXPECT_EQ(overlaps.front(), writes.front().first);
+            ASSERT_EQ(dualOverlaps.size(), 1U);
+            EXPECT_EQ(dualOverlaps.front(), reads.front().first);
+        }
+    }
+}
+
+TEST_F(SplitLargeFanoutTensorTest, IndexedOverlapsMatchFullScan)
+{
+    ComputationalGraphBuilder graph;
+    std::vector<std::pair<Shape, Offset>> shapeOffsets;
+    for (int64_t i = 0; i < 48; ++i) {
+        shapeOffsets.push_back({{2 + i % 9, 2 + i % 7}, {(i * 7) % 64, (i * 13) % 64}});
+    }
+    auto writes = BuildOverlapTensorInfos(graph, shapeOffsets);
+    ASSERT_TRUE(graph.AddTensor(DataType::DT_FP32, {80, 80}, "large"));
+    SplitLargeFanoutTensor pass;
+    SplitLargeFanoutTensor::OverlapSearchIndex toIndex, fromIndex;
+    pass.BuildOverlapSearchIndex(writes, toIndex);
+    std::vector<std::pair<LogicalTensorPtr, Offset>> reads;
+    pass.BuildOverlapSearchIndex(reads, fromIndex);
+    const Shape tileShape{8, 8};
+    for (int64_t row = 0; row < 72; row += 3) {
+        for (int64_t col = 0; col < 72; col += 3) {
+            Offset tileOffset{row, col};
+            SCOPED_TRACE(CommonUtils::ContainerToStr(tileOffset));
+            bool expected = true;
+            LogicalTensors expectedWrites;
+            for (const auto& [tensor, offset] : writes) {
+                auto status = CalcOverlapByOffsetShape(offset, tensor->shape, tileOffset, tileShape);
+                if (status == OverlapStatus::PARTIAL_OVERLAP || status == OverlapStatus::COVERED) {
+                    expected = false;
+                }
+                if (status == OverlapStatus::BE_COVERED || status == OverlapStatus::PERFECTLY_MATCH) {
+                    expectedWrites.push_back(tensor);
+                }
+            }
+            LogicalTensors overlaps, dualOverlaps;
+            EXPECT_EQ(pass.CollectOverlaps(graph.GetTensor("large"), tileShape, tileOffset, toIndex, fromIndex,
+                                           overlaps, dualOverlaps),
+                      expected);
+            if (expected) {
+                EXPECT_EQ(overlaps, expectedWrites);
+            }
+        }
+    }
+}
 
 // 直接覆盖 IsTensorCoveredByTile 的覆盖判断语义（含维度不匹配、完美匹配、被覆盖、部分超出）
 TEST_F(SplitLargeFanoutTensorTest, IsTensorCoveredByTileDirect)

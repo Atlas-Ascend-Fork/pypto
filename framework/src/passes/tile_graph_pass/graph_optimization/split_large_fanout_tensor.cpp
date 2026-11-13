@@ -225,13 +225,78 @@ void SplitLargeFanoutTensor::GenerateOffset(const Shape& maxs, const Shape& step
     }
 }
 
-// 收集BE_COVERED/PERFECTLY_MATCH lcmTile 的那些tile们, 分别更新到overlaps和dualOverlaps
-void SplitLargeFanoutTensor::CollectOverlaps(const Shape& lcmTileShape, const Offset& lcmTileOffset,
-                                             const OverlapSearchIndex& toIndex, const OverlapSearchIndex& fromIndex,
-                                             LogicalTensors& overlaps, LogicalTensors& dualOverlaps)
+// 按各维起点排序索引二分查询，返回候选 tensor 数量最少的索引区间。
+// 包含查询的起点范围为 [tileStart, tileEnd)；
+// 相交查询将下界向前扩展该维最大跨度，并限制为非负，以涵盖起点在 tile 之前的相交 tensor。
+// 返回区间仅用于筛选候选，调用方仍需执行多维精确判断；调用前须保证索引非空。
+std::pair<SplitLargeFanoutTensor::CandidateIterator, SplitLargeFanoutTensor::CandidateIterator>
+SplitLargeFanoutTensor::FindSmallestCandidateRange(const Shape& tileShape, const Offset& tileOffset,
+                                                   const OverlapSearchIndex& index, bool extendStartByMaxSpan) const
 {
-    CollectCoveredTensors(lcmTileShape, lcmTileOffset, toIndex, overlaps);
+    const auto& tensorInfos = *index.tensorInfos;
+    auto bestLower = index.orderByDim.front().begin();
+    auto bestUpper = index.orderByDim.front().end();
+    size_t bestCandidateCount = tensorInfos.size();
+    for (size_t dim = 0; dim < index.orderByDim.size(); ++dim) {
+        const auto& order = index.orderByDim[dim];
+        int64_t tileStart = tileOffset[dim];
+        int64_t tileEnd = tileStart + tileShape[dim];
+        int64_t candidateStart = extendStartByMaxSpan ? std::max<int64_t>(0, tileStart - index.maxSpanByDim[dim]) :
+                                                        tileStart;
+        auto lower = std::lower_bound(
+            order.begin(), order.end(), candidateStart,
+            [&](size_t tensorIndex, int64_t start) { return tensorInfos[tensorIndex].second[dim] < start; });
+        auto upper = std::lower_bound(lower, order.end(), tileEnd, [&](size_t tensorIndex, int64_t end) {
+            return tensorInfos[tensorIndex].second[dim] < end;
+        });
+        auto candidateCount = static_cast<size_t>(std::distance(lower, upper));
+        if (candidateCount < bestCandidateCount) {
+            bestCandidateCount = candidateCount;
+            bestLower = lower;
+            bestUpper = upper;
+        }
+    }
+    return {bestLower, bestUpper};
+}
+
+// 收集完全位于候选 lcmTile 内或与其完全匹配的写入、读取 tensor，
+// 分别追加到 overlaps 和 dualOverlaps，保持各侧 tensorInfos 的原始顺序。
+// 若存在与候选相交且超出其边界的写入，则返回 false，放弃该候选的拆分。
+bool SplitLargeFanoutTensor::CollectOverlaps(const LogicalTensorPtr& largeTensor, const Shape& lcmTileShape,
+                                             const Offset& lcmTileOffset, const OverlapSearchIndex& toIndex,
+                                             const OverlapSearchIndex& fromIndex, LogicalTensors& overlaps,
+                                             LogicalTensors& dualOverlaps)
+{
+    if (toIndex.tensorInfos == nullptr || toIndex.tensorInfos->empty() || toIndex.orderByDim.empty()) {
+        return false;
+    }
+    const auto& tensorInfos = *toIndex.tensorInfos;
+    auto [lower, upper] = FindSmallestCandidateRange(lcmTileShape, lcmTileOffset, toIndex, true);
+    std::vector<size_t> coveredIndexes;
+    coveredIndexes.reserve(static_cast<size_t>(std::distance(lower, upper)));
+    for (auto iter = lower; iter != upper; ++iter) {
+        const auto& [tensor, offset] = tensorInfos[*iter];
+        auto status = CalcOverlapByOffsetShape(offset, tensor->shape, lcmTileOffset, lcmTileShape);
+        if (status == OverlapStatus::PARTIAL_OVERLAP || status == OverlapStatus::COVERED) {
+            // 部分重叠和覆盖候选的写入均超出候选边界，不能将完整写入直接重定向到候选尺寸的新 tensor；
+            // 仅收集候选内的写入又会遗漏这些相交写入，因此放弃整个候选。
+            const char* statusName = status == OverlapStatus::PARTIAL_OVERLAP ? "PARTIAL_OVERLAP" : "COVERED";
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "Skip lcmTile(shape %s, offset %s) for raw tensor[%d]: write tensor[%d] has %s.",
+                CommonUtils::ContainerToStr(lcmTileShape).c_str(), CommonUtils::ContainerToStr(lcmTileOffset).c_str(),
+                largeTensor->GetRawMagic(), tensor->GetMagic(), statusName);
+            return false;
+        }
+        if (status == OverlapStatus::BE_COVERED || status == OverlapStatus::PERFECTLY_MATCH) {
+            coveredIndexes.push_back(*iter);
+        }
+    }
+    std::sort(coveredIndexes.begin(), coveredIndexes.end());
+    for (auto tensorIndex : coveredIndexes) {
+        overlaps.push_back(tensorInfos[tensorIndex].first);
+    }
     CollectCoveredTensors(lcmTileShape, lcmTileOffset, fromIndex, dualOverlaps);
+    return true;
 }
 
 void SplitLargeFanoutTensor::BuildOverlapSearchIndex(
@@ -239,11 +304,18 @@ void SplitLargeFanoutTensor::BuildOverlapSearchIndex(
 {
     index.tensorInfos = &tensorInfos;
     index.orderByDim.clear();
+    index.maxSpanByDim.clear();
     if (tensorInfos.empty() || tensorInfos.front().second.empty()) {
         return;
     }
     size_t ndim = tensorInfos.front().second.size();
     index.orderByDim.resize(ndim);
+    index.maxSpanByDim.resize(ndim, 0);
+    for (const auto& tensorInfo : tensorInfos) {
+        for (size_t dim = 0; dim < ndim; ++dim) {
+            index.maxSpanByDim[dim] = std::max(index.maxSpanByDim[dim], tensorInfo.first->shape[dim]);
+        }
+    }
     for (auto& order : index.orderByDim) {
         order.resize(tensorInfos.size());
         std::iota(order.begin(), order.end(), 0);
@@ -291,33 +363,7 @@ void SplitLargeFanoutTensor::CollectCoveredTensors(const Shape& lcmTileShape, co
         return;
     }
     const auto& tensorInfos = *index.tensorInfos;
-    size_t bestDim = 0;
-    size_t bestCandidateCount = tensorInfos.size();
-    for (size_t dim = 0; dim < index.orderByDim.size(); ++dim) {
-        const auto& order = index.orderByDim[dim];
-        int64_t tileStart = lcmTileOffset[dim];
-        int64_t tileEnd = lcmTileOffset[dim] + lcmTileShape[dim];
-        auto lower = std::lower_bound(order.begin(), order.end(), tileStart, [&](size_t tensorIndex, int64_t start) {
-            return tensorInfos[tensorIndex].second[dim] < start;
-        });
-        auto upper = std::lower_bound(lower, order.end(), tileEnd, [&](size_t tensorIndex, int64_t end) {
-            return tensorInfos[tensorIndex].second[dim] < end;
-        });
-        size_t candidateCount = static_cast<size_t>(std::distance(lower, upper));
-        if (candidateCount < bestCandidateCount) {
-            bestCandidateCount = candidateCount;
-            bestDim = dim;
-        }
-    }
-    const auto& bestOrder = index.orderByDim[bestDim];
-    int64_t tileStart = lcmTileOffset[bestDim];
-    int64_t tileEnd = lcmTileOffset[bestDim] + lcmTileShape[bestDim];
-    auto lower = std::lower_bound(
-        bestOrder.begin(), bestOrder.end(), tileStart,
-        [&](size_t tensorIndex, int64_t start) { return tensorInfos[tensorIndex].second[bestDim] < start; });
-    auto upper = std::lower_bound(lower, bestOrder.end(), tileEnd, [&](size_t tensorIndex, int64_t end) {
-        return tensorInfos[tensorIndex].second[bestDim] < end;
-    });
+    auto [lower, upper] = FindSmallestCandidateRange(lcmTileShape, lcmTileOffset, index, false);
     std::vector<size_t> coveredIndexes;
     coveredIndexes.reserve(static_cast<size_t>(std::distance(lower, upper)));
     for (auto iter = lower; iter != upper; ++iter) {
@@ -1251,7 +1297,9 @@ void SplitLargeFanoutTensor::ProcessTileSplit(Function& function, const LogicalT
                                               const OverlapSearchIndex& toIndex, const OverlapSearchIndex& fromIndex,
                                               LogicalTensors& overlaps, LogicalTensors& dualOverlaps)
 {
-    CollectOverlaps(lcmTileShape, tileOffset, toIndex, fromIndex, overlaps, dualOverlaps);
+    if (!CollectOverlaps(largeTensor, lcmTileShape, tileOffset, toIndex, fromIndex, overlaps, dualOverlaps)) {
+        return;
+    }
     if (overlaps.size() == 0 || dualOverlaps.size() == 0) {
         APASS_LOG_DEBUG_F(Elements::Tensor,
                           "Split large tensor miss, this lcmTile does NOT have both overlaps([%zu]) "

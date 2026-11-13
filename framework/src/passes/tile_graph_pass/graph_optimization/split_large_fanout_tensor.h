@@ -63,7 +63,14 @@ private:
     struct OverlapSearchIndex {
         const std::vector<std::pair<LogicalTensorPtr, Offset>>* tensorInfos = nullptr;
         std::vector<std::vector<size_t>> orderByDim;
+        std::vector<int64_t> maxSpanByDim;
     };
+
+    using CandidateIterator = std::vector<size_t>::const_iterator;
+    std::pair<CandidateIterator, CandidateIterator> FindSmallestCandidateRange(const Shape& tileShape,
+                                                                               const Offset& tileOffset,
+                                                                               const OverlapSearchIndex& index,
+                                                                               bool extendStartByMaxSpan) const;
 
     Status RunOnFunction(Function& function) override;
     void Init();
@@ -79,8 +86,9 @@ private:
     void GenerateOffset(const Shape& maxs, const Shape& steps, Shape& current, std::vector<Shape>& result, size_t dim);
     void CollectLargeTensorToInfo(const LogicalTensorPtr& largeTensor);
     void CollectLargeTensorFromInfo(const LogicalTensorPtr& largeTensor);
-    void CollectOverlaps(const Shape& lcmTileShape, const Offset& lcmTileOffset, const OverlapSearchIndex& toIndex,
-                         const OverlapSearchIndex& fromIndex, LogicalTensors& overlaps, LogicalTensors& dualOverlaps);
+    bool CollectOverlaps(const LogicalTensorPtr& largeTensor, const Shape& lcmTileShape, const Offset& lcmTileOffset,
+                         const OverlapSearchIndex& toIndex, const OverlapSearchIndex& fromIndex,
+                         LogicalTensors& overlaps, LogicalTensors& dualOverlaps);
     void BuildOverlapSearchIndex(const std::vector<std::pair<LogicalTensorPtr, Offset>>& tensorInfos,
                                  OverlapSearchIndex& index) const;
     void CollectCoveredTensors(const Shape& lcmTileShape, const Offset& lcmTileOffset, const OverlapSearchIndex& index,
