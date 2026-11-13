@@ -28,6 +28,7 @@
 #include "ir/expr.h"
 #include "ir/kind_traits.h"
 #include "ir/memref.h"
+#include "ir/op/op_common.h"
 #include "ir/op_attr_types.h"
 #include "ir/op_registry.h"
 #include "ir/scalar_expr.h"
@@ -262,18 +263,12 @@ TypePtr DeduceSimtAtomicType(const std::string& opName, size_t operandCount, std
         << opName << " requires container, offset, and " << operandCount << " scalar operand(s)";
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << opName << " does not accept keyword arguments";
 
+    ValidateScalarAccessIndex(args[0], args[1], opName);
     auto tileType = As<TileType>(args[0]->GetType());
     auto tensorType = As<TensorType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tileType || tensorType)
-        << opName << " container must be a Tile or Tensor";
     DataType dtype = tileType ? tileType->dtype_ : tensorType->dtype_;
     PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsDtypeInList(dtype, tileType ? ubDtypes : gmDtypes))
         << opName << " does not support dtype " << dtype.ToString() << " on " << (tileType ? "UB Tile" : "GM Tensor");
-
-    auto offsetType = As<ScalarType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType && offsetType->dtype_ != DataType::BOOL &&
-                                                  (offsetType->dtype_.IsInt() || offsetType->dtype_ == DataType::INDEX))
-        << opName << " offset must be a non-bool integer scalar";
 
     for (size_t i = 0; i < operandCount; ++i) {
         auto operandType = As<ScalarType>(args[i + 2]->GetType());
@@ -512,8 +507,9 @@ TypePtr DeduceSimtLaunchType(const std::vector<ExprPtr>& args,
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<Var>(args[i]) != nullptr)
                 << "simt.launch Tensor argument must be a Var";
         } else {
-            PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, As<ScalarType>(argType))
-                << "simt.launch supports only Tile, Tensor, and scalar arguments";
+            // Compiler passes may append internal GM pointers (e.g. sanitizer logs).
+            PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, As<ScalarType>(argType) || As<PtrType>(argType))
+                << "simt.launch supports only Tile, Tensor, pointer, and scalar arguments";
         }
     }
     return GetUnknownType();
@@ -1254,7 +1250,7 @@ REGISTER_OP("simt.atomic_add")
     .set_op_category("SimtOp")
     .set_description("Atomically add to one UB Tile or GM Tensor element; FP16/BF16 return no value")
     .add_argument("container", "Destination Tile or Tensor")
-    .add_argument("offset", "Linear element offset")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .add_argument("value", "Scalar addend")
     .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceSimtAtomicType("simt.atomic_add", 1,
@@ -1268,7 +1264,7 @@ REGISTER_OP("simt.atomic_sub")
     .set_op_category("SimtOp")
     .set_description("Atomically subtract from one UB Tile or GM Tensor element and return its old value")
     .add_argument("container", "Destination Tile or Tensor")
-    .add_argument("offset", "Linear element offset")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .add_argument("value", "Scalar subtrahend")
     .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceSimtAtomicType(
@@ -1280,7 +1276,7 @@ REGISTER_OP("simt.atomic_exch")
     .set_op_category("SimtOp")
     .set_description("Atomically exchange one UB Tile or GM Tensor element and return its old value")
     .add_argument("container", "Destination Tile or Tensor")
-    .add_argument("offset", "Linear element offset")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .add_argument("value", "Replacement scalar")
     .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceSimtAtomicType(
@@ -1292,7 +1288,7 @@ REGISTER_OP("simt.atomic_max")
     .set_op_category("SimtOp")
     .set_description("Atomically maximize one UB Tile or GM Tensor element; FP16/BF16 return no value")
     .add_argument("container", "Destination Tile or Tensor")
-    .add_argument("offset", "Linear element offset")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .add_argument("value", "Candidate scalar")
     .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceSimtAtomicType("simt.atomic_max", 1,
@@ -1306,7 +1302,7 @@ REGISTER_OP("simt.atomic_min")
     .set_op_category("SimtOp")
     .set_description("Atomically minimize one UB Tile or GM Tensor element; FP16/BF16 return no value")
     .add_argument("container", "Destination Tile or Tensor")
-    .add_argument("offset", "Linear element offset")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .add_argument("value", "Candidate scalar")
     .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceSimtAtomicType("simt.atomic_min", 1,
@@ -1320,7 +1316,7 @@ REGISTER_OP("simt.atomic_inc")
     .set_op_category("SimtOp")
     .set_description("Atomically increment one wrapping counter element and return its old value")
     .add_argument("container", "Destination Tile or Tensor")
-    .add_argument("offset", "Linear element offset")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .add_argument("limit", "Inclusive wrap limit")
     .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceSimtAtomicType("simt.atomic_inc", 1, {DataType::UINT32}, {DataType::UINT32, DataType::UINT64},
@@ -1331,7 +1327,7 @@ REGISTER_OP("simt.atomic_dec")
     .set_op_category("SimtOp")
     .set_description("Atomically decrement one wrapping counter element and return its old value")
     .add_argument("container", "Destination Tile or Tensor")
-    .add_argument("offset", "Linear element offset")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .add_argument("limit", "Inclusive wrap limit")
     .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceSimtAtomicType("simt.atomic_dec", 1, {DataType::UINT32}, {DataType::UINT32, DataType::UINT64},
@@ -1342,7 +1338,7 @@ REGISTER_OP("simt.atomic_cas")
     .set_op_category("SimtOp")
     .set_description("Atomically compare and exchange one UB Tile or GM Tensor element and return its old value")
     .add_argument("container", "Destination Tile or Tensor")
-    .add_argument("offset", "Linear element offset")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .add_argument("compare", "Expected scalar")
     .add_argument("value", "Replacement scalar")
     .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
@@ -1355,7 +1351,7 @@ REGISTER_OP("simt.atomic_and")
     .set_op_category("SimtOp")
     .set_description("Atomically apply bitwise AND to one UB Tile or GM Tensor element and return its old value")
     .add_argument("container", "Destination Tile or Tensor")
-    .add_argument("offset", "Linear element offset")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .add_argument("value", "Scalar bit mask")
     .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceSimtAtomicType("simt.atomic_and", 1, {DataType::INT32, DataType::UINT32},
@@ -1367,7 +1363,7 @@ REGISTER_OP("simt.atomic_or")
     .set_op_category("SimtOp")
     .set_description("Atomically apply bitwise OR to one UB Tile or GM Tensor element and return its old value")
     .add_argument("container", "Destination Tile or Tensor")
-    .add_argument("offset", "Linear element offset")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .add_argument("value", "Scalar bit mask")
     .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceSimtAtomicType("simt.atomic_or", 1, {DataType::INT32, DataType::UINT32},
@@ -1379,7 +1375,7 @@ REGISTER_OP("simt.atomic_xor")
     .set_op_category("SimtOp")
     .set_description("Atomically apply bitwise XOR to one UB Tile or GM Tensor element and return its old value")
     .add_argument("container", "Destination Tile or Tensor")
-    .add_argument("offset", "Linear element offset")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .add_argument("value", "Scalar bit mask")
     .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceSimtAtomicType("simt.atomic_xor", 1, {DataType::INT32, DataType::UINT32},

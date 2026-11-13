@@ -1385,48 +1385,20 @@ REGISTER_BACKEND_OP(BackendCCE, "debug.trap")
 // records.
 // ============================================================================
 
-namespace {
-
-void EmitSanitizerLogPrologue(codegen::CCECodegen& codegen, const std::string& log, const std::string& capacity)
-{
-    // Region addressing. A mixed kernel runs the Cube part on the AICs and
-    // the Vector part on the AIVs of the SAME launch, so both parts share
-    // one log buffer and their region indices must never overlap (the
-    // append counter is a plain read-modify-write; two writers on one
-    // region silently drop records). The Vector part is therefore offset by
-    // the block count: Cube covers [0, block_num), Vector covers
-    // [block_num, block_num + block_num * subblockdim) = at most [N, 3N)
-    // with the 3510 1:2 C/V pairing, which the host allocation's configured
-    // region envelope holds exactly. A
-    // vector-only kernel wastes the first block_num regions, which is safe.
-    // Sub-block addressing follows the established get_block_idx() backend-op
-    // contract: the Vector target computes the global AIV index, so each
-    // sub-block gets its own region even when several AIVs run under one
-    // AIC block.
-    std::string blockIdx;
-    if (codegen.GetTarget() == ir::SectionKind::Vector) {
-        blockIdx = "(int32_t)(__pypto_block_num_value() + __pypto_block_idx_value())";
-    } else {
-        blockIdx = "(int32_t)(__pypto_block_idx_value())";
-    }
-
-    // Append-mode logging, no atomics: each executing sub-block targets its own
-    // region (independently addressable via the global block index above), so
-    // the leading counter is only written by this single writer. This keeps
-    // every loop iteration's record (no overwrite) without relying on a GM
-    // atomic instruction. Region layout: [ctr u32, records...], ctr is the
-    // u32-word offset of the first free record (read, incremented, written
-    // back); buffer size = sub_block_count * (capacity + 1) * 4 bytes.
-    codegen.Emit("if (" + log + " != 0) {");
-    codegen.Emit("  int32_t __log_block = " + blockIdx + ";");
-    codegen.Emit("  __gm__ uint32_t* __log_base = reinterpret_cast<__gm__ uint32_t*>(" + log +
-                 ") + "
-                 "static_cast<uint64_t>(__log_block) * (static_cast<uint64_t>(" +
-                 capacity + ") + 1u);");
-    codegen.Emit("  uint32_t __log_off = __log_base[0];");
-}
-
-} // namespace
+REGISTER_BACKEND_OP(BackendCCE, "block.sanitizer_log_region")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
+        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+        const auto log = cce::GetOperandAsCode(codegen, op->args_[0]);
+        const auto capacity = cce::GetOperandAsCode(codegen, op->args_[1]);
+        // AIV regions follow the AIC range. Scalar and SIMT share the AIV region.
+        std::string region = "__pypto_block_idx_value()";
+        if (codegen.GetTarget() == ir::SectionKind::Vector) {
+            region = "__pypto_block_num_value() + " + region;
+        }
+        return "(" + log + " != 0 ? " + log + " + static_cast<uint64_t>(" + region + ") * (static_cast<uint64_t>(" +
+               capacity + ") + 1u) * sizeof(uint32_t) : " + log + ")";
+    });
 
 static std::string MakeSanitizerLogCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
@@ -1446,26 +1418,30 @@ static std::string MakeSanitizerLogCodegenCCE(const ir::CallPtr& op, codegen::Co
     // hidden log/capacity parameters).
     const uint32_t recU32 = static_cast<uint32_t>(n) - 2u;
 
-    EmitSanitizerLogPrologue(codegen, log, capacity);
-    codegen.Emit("  if (__log_off + " + std::to_string(recU32) + "u <= static_cast<uint32_t>(" + capacity + ")) {");
+    codegen.Emit("if (" + log + " != 0) {");
+    codegen.Emit("  __gm__ uint32_t* __log_base = reinterpret_cast<__gm__ uint32_t*>(" + log + ");");
+    // All writers CAS-reserve whole records; rejected records advance nothing.
+    codegen.Emit("  uint32_t __log_off = atomicCAS(__log_base, 0u, 0u);");
+    codegen.Emit("  while (__log_off <= static_cast<uint32_t>(" + capacity + ") && " + std::to_string(recU32) +
+                 "u <= static_cast<uint32_t>(" + capacity + ") - __log_off) {");
+    codegen.Emit("    uint32_t __log_seen = atomicCAS(__log_base, __log_off, __log_off + " + std::to_string(recU32) +
+                 "u);");
+    codegen.Emit("    if (__log_seen == __log_off) break;");
+    codegen.Emit("    __log_off = __log_seen;");
+    codegen.Emit("  }");
+    codegen.Emit("  if (__log_off <= static_cast<uint32_t>(" + capacity + ") && " + std::to_string(recU32) +
+                 "u <= static_cast<uint32_t>(" + capacity + ") - __log_off) {");
     codegen.Emit("    __gm__ uint32_t* __log_rec = __log_base + 1u + __log_off;");
-    codegen.Emit("    __log_rec[0] = static_cast<uint32_t>(" + detId + ");  // det_id");
+    // Word atomics bypass Scalar DCache: adjacent records may share a cache line.
+    codegen.Emit("    atomicExch(__log_rec + 0, static_cast<uint32_t>(" + detId + "));  // det_id");
     for (size_t i = 1; i + 3 < n; ++i) {
-        codegen.Emit("    __log_rec[" + std::to_string(i) + "] = static_cast<int32_t>(" +
-                     cce::GetOperandAsCode(codegen, op->args_[i]) + ");");
+        codegen.Emit("    atomicExch(__log_rec + " + std::to_string(i) + ", static_cast<uint32_t>(" +
+                     cce::GetOperandAsCode(codegen, op->args_[i]) + "));");
     }
-    codegen.Emit("    __log_rec[" + std::to_string(recU32 - 1u) + "] = static_cast<uint32_t>(" + spanId + ");");
-    codegen.Emit("    __log_base[0] = __log_off + " + std::to_string(recU32) + "u;");
-    // Flush the record (and the counter update) to DDR before the next
-    // instruction executes.  The instrumentation record is written by the S
-    // pipe as a posted GM write; without a barrier the record can sit in the
-    // write buffer while the actual op runs on a different pipe (MTE2/V/M).
-    // When that op crashes the device (e.g. an extreme out-of-bounds load
-    // triggers a hardware trap like 507015), the unflushed writes are lost
-    // and the host-side rescue reads an empty log buffer.  dsb(DSB_DDR)
-    // guarantees each record reaches main memory before any subsequent op,
-    // at the cost of one barrier per instrumented record (debug-only cost).
-    codegen.Emit("    dsb(DSB_DDR);");
+    codegen.Emit("    atomicExch(__log_rec + " + std::to_string(recU32 - 1u) + ", static_cast<uint32_t>(" + spanId +
+                 "));");
+    // Preserve the GM ordering primitive for this execution context.
+    codegen.Emit(codegen.IsInSimtContext() ? "    __threadfence();" : "    dsb(DSB_DDR);");
     codegen.Emit("  }");
     codegen.Emit("}");
     return "";
@@ -1545,7 +1521,7 @@ static std::string MakeGetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
 
     auto firstType = op->args_[0]->GetType();
     if (auto tileType = ir::As<ir::TileType>(firstType)) {
-        std::string offset = codegen.GetExprAsCode(op->args_[1]);
+        std::string offset = cce::GetScalarAccessOffset(codegen, op->args_[0], op->args_[1]);
         if (codegen.IsInSimtContext()) {
             std::string tile = codegen.GetExprAsCode(op->args_[0]);
             return castResultIfDtypeChanged(tile + "[" + offset + "]", resultType->dtype_, tileType->dtype_);
@@ -1561,7 +1537,7 @@ static std::string MakeGetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensorType)
         << "getval requires TensorType";
     std::string tensorName = codegen.GetVarName(tensorVar);
-    std::string offset = codegen.GetExprAsCode(op->args_[1]);
+    std::string offset = cce::GetScalarAccessOffset(codegen, op->args_[0], op->args_[1]);
     std::string dtypeStr = codegen.GetTypeString(tensorType->dtype_);
 
     std::string tensorPtr = codegen.GetPointer(tensorName);
@@ -1613,7 +1589,7 @@ static std::string MakeSetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
         return codegen.ScalarCast(value, type->dtype_, destination);
     };
     if (auto tileType = ir::As<ir::TileType>(firstType)) {
-        std::string offset = codegen.GetExprAsCode(op->args_[1]);
+        std::string offset = cce::GetScalarAccessOffset(codegen, op->args_[0], op->args_[1]);
         std::string value = scalarValue(tileType->dtype_);
         if (codegen.IsInSimtContext()) {
             std::string tile = codegen.GetExprAsCode(op->args_[0]);
@@ -1632,7 +1608,7 @@ static std::string MakeSetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensorType)
         << "setval requires TensorType";
     std::string tensorName = codegen.GetVarName(tensorVar);
-    std::string offset = codegen.GetExprAsCode(op->args_[1]);
+    std::string offset = cce::GetScalarAccessOffset(codegen, op->args_[0], op->args_[1]);
     std::string value = scalarValue(tensorType->dtype_);
     std::string dtypeStr = codegen.GetTypeString(tensorType->dtype_);
 

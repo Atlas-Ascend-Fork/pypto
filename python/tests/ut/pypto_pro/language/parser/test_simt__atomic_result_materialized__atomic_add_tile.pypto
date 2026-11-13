@@ -1,0 +1,7 @@
+function _atomic_add_tile incast(mutex_tile<tile<1 x 32, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %dst_0, mutex_tile<tile<1 x 32, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %old_values_0, int32_t %value_0) outcast() #entry(false) #type(SimtVF) {
+    uint32_t %tid_0 = simt.linear_thread_idx();
+    tuple<int64_t, int64_t> %_tuple_anchor_0_0 = tuple(0, 0);
+    int32_t %_expr_tmp_1_0 = simt.atomic_add(%dst_0, tuple(0, 0), %value_0);
+    block.setval(%old_values_0, tuple(0, %tid_0), %_expr_tmp_1_0);
+    return;
+}

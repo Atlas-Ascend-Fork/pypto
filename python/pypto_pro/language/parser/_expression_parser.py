@@ -34,7 +34,7 @@ from ..._errors import (
 )
 from ._expr_evaluator import ExprEvaluator
 from ._tuple_type_registry import TupleTypeInfo
-from ._utils import _is_const_expr
+from ._utils import _is_const_expr, _is_simt_func_type
 from .diagnostics import (
     check_fits_dtype,
     make_const_int,
@@ -883,12 +883,10 @@ class ExpressionParserMixin:
             )
             if has_slice:
                 return self._parse_slice_subscript(value_expr, subscript.slice, span)
-            # All-integer index: A[i, j] → getval(A, i*cols+j)
+            # Retain logical coordinates until backend address lowering.
             index_expr = self._parse_scalar_subscript_index(value_expr, subscript.slice, span)
             from pypto_pro.ir.op.block_ops import _ir_getval
-            is_simt = self._current_func_type in (
-                ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee, ir.FunctionType.SimtKernel
-            )
+            is_simt = _is_simt_func_type(self._current_func_type)
             result = _ir_getval(value_expr, index_expr, preserve_dtype=is_simt, span=span)
             self._record_op_access("getval", [(0, None, value_expr)], (), span)
             result = self._materialize_nested_expr(result, span)
@@ -1235,19 +1233,15 @@ class ExpressionParserMixin:
     def _parse_scalar_subscript_index(
         self,
         container_expr: ir.Expr,
-        slice_node: ast.expr,
+        index_node: ast.expr,
         span: ir.Span,
     ) -> ir.Expr:
-        """Parse A[i, j, ...] into a linear offset expression for getval/setval.
-
-        Multi-index: A[i, j] → i * N + j (row-major linearization).
-        Single index: A[i] → i (only valid for 1D containers).
-        """
+        """Validate scalar coordinates and preserve their axes until codegen."""
         container_type = container_expr.type
         shape = container_type.shape
 
         # Single index A[x]: only valid for 1D containers (rank 1)
-        if not isinstance(slice_node, ast.Tuple):
+        if not isinstance(index_node, ast.Tuple):
             if len(shape) != 1:
                 if self._in_vf_body():
                     raise NotSupported(
@@ -1261,12 +1255,12 @@ class ExpressionParserMixin:
                     span=span,
                     hint="Use A[i, j] for scalar access or A[x:, :] for sub-view",
                 )
-            index = self.parse_expression(slice_node)
+            index = self.parse_expression(index_node)
             self._validate_subscript_value(index, "Subscript index", 0, shape[0])
-            return index
+            return ir.MakeTuple([index], span)
 
         # A[i, j, ...] — multi-dimensional coordinate
-        elts = slice_node.elts
+        elts = index_node.elts
 
         if len(elts) != len(shape):
             raise InvalidShape(
@@ -1280,24 +1274,7 @@ class ExpressionParserMixin:
         for axis, index in enumerate(indices):
             self._validate_subscript_value(index, "Subscript index", axis, shape[axis])
 
-        offset = indices[-1]
-        stride = shape[-1]
-        for dim in range(len(indices) - 2, -1, -1):
-            # Fold constant stride into a single ConstInt to avoid mul IR nodes
-            stride_val = _const_int_value(stride)
-            if stride_val == 1:
-                product = indices[dim]
-            else:
-                product = indices[dim] * stride
-            offset = product + offset
-            if dim > 0:
-                next_shape_val = _const_int_value(shape[dim])
-                cur_stride_val = _const_int_value(stride)
-                if next_shape_val is not None and cur_stride_val is not None:
-                    stride = ir.ConstInt(next_shape_val * cur_stride_val, DataType.INT64, span)
-                else:
-                    stride = shape[dim] * stride
-        return offset
+        return ir.MakeTuple(indices, span)
 
     def _parse_slice_subscript(
         self,
@@ -1325,11 +1302,7 @@ class ExpressionParserMixin:
                 hint="Use pl.load/pl.store with offset lists for tensor access",
             )
 
-        if self._current_func_type in (
-            ir.FunctionType.SimtVF,
-            ir.FunctionType.SimtCallee,
-            ir.FunctionType.SimtKernel,
-        ):
+        if _is_simt_func_type(self._current_func_type):
             raise InvalidOperation(
                 "Tile subview is not supported inside a SIMT function",
                 span=span,

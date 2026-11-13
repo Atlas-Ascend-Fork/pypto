@@ -94,27 +94,8 @@ KERNEL_HEADER_SIMT = """\
 # pl DataType -> accepted torch storage dtypes for a tensor parameter.
 _PL_DTYPE_TO_TORCH: dict[str, tuple["torch.dtype", ...]] = {}
 
-# Sanitizer GM log budget for one launch (~1GB by default). The environment
-# override is intentionally in MiB so the value is easy to audit in launch logs.
+# Sanitizer GM log budget for one launch (~1GB), split across all regions.
 KSANITIZER_LOG_BUDGET_BYTES = 1 * 1024**3
-_SANITIZER_LOG_BUDGET_ENV = "PYPTO_SANITIZER_LOG_BUDGET_MB"
-
-
-def _sanitizer_log_budget_bytes() -> int:
-    raw = os.getenv(_SANITIZER_LOG_BUDGET_ENV)
-    if raw is None:
-        return KSANITIZER_LOG_BUDGET_BYTES
-    try:
-        budget_mb = int(raw)
-    except ValueError as exc:
-        raise RuntimeFailure(
-            f"{_SANITIZER_LOG_BUDGET_ENV} must be a positive integer MiB value"
-        ) from exc
-    if budget_mb <= 0:
-        raise RuntimeFailure(
-            f"{_SANITIZER_LOG_BUDGET_ENV} must be a positive integer MiB value"
-        )
-    return budget_mb * 1024**2
 
 
 def _sanitizer_sub_blocks(compiled: "CompiledKernel") -> int:
@@ -2237,6 +2218,16 @@ def _format_findings(findings) -> str:
     return "".join(lines)
 
 
+def _summarize_regions(region_indices, limit=8):
+    """Render region indices compactly: the first few plus a total count."""
+    if not region_indices:
+        return ""
+    shown = ", ".join(str(idx) for idx in region_indices[:limit])
+    if len(region_indices) > limit:
+        shown += f", ... ({len(region_indices)} total)"
+    return shown
+
+
 def _replay_sanitizer(log_buffer, capacity_u32, block_dim, build_dir, kernel_name, source_file):
     """Wait for the launch, read the written part of the device log buffer
     back, merge it with the compile-time metadata into one
@@ -2253,7 +2244,12 @@ def _replay_sanitizer(log_buffer, capacity_u32, block_dim, build_dir, kernel_nam
     decode or check must surface instead of silently producing a "clean"
     result.
     """
-    from pypto_pro.runtime.sanitizer_replay import SanitizerReplayError, build_report_file, scan_report_file
+    from pypto_pro.runtime.sanitizer_replay import (
+        MAX_RECORD_WORDS,
+        SanitizerReplayError,
+        build_report_file,
+        scan_report_file,
+    )
 
     torch.npu.synchronize()
     words_per_region = capacity_u32 + 1
@@ -2263,13 +2259,17 @@ def _replay_sanitizer(log_buffer, capacity_u32, block_dim, build_dir, kernel_nam
     # Stage 2: for each region copy back just the ctr word and the records
     # actually written (a region that never executed copies one word).
     region_chunks = []
+    capacity_limited_regions = []
     for region_idx, ctr in enumerate(ctrs):
-        ctr = int(ctr)
-        if ctr < 0:
+        ctr = int(ctr) & 0xFFFFFFFF  # torch.int32 carries the device's unsigned counter.
+        if ctr > capacity_u32:
             from pypto_pro.runtime.sanitizer_replay import SanitizerReportError
             raise SanitizerReportError(
-                f"region {region_idx}: counter is not a valid unsigned value")
-        written = min(ctr, capacity_u32)
+                f"region {region_idx}: counter {ctr} exceeds capacity {capacity_u32}")
+        written = ctr
+        # The counter has no drop count; warn when one more record might not fit.
+        if capacity_u32 - written < MAX_RECORD_WORDS:
+            capacity_limited_regions.append(region_idx)
         start = region_idx * words_per_region
         region_chunks.append(flat[start:start + 1 + written].cpu().numpy().tobytes())
     launch_id = uuid.uuid4().hex
@@ -2279,13 +2279,28 @@ def _replay_sanitizer(log_buffer, capacity_u32, block_dim, build_dir, kernel_nam
     # Each launch owns a unique binary report.  Serialize only the human-readable
     # aggregate so concurrent launches cannot interleave their text blocks.
     report_file = os.path.join(build_dir, "pypto_sanitizer_report.txt")
+    limited_summary = _summarize_regions(capacity_limited_regions)
     with _SANITIZER_REPORT_LOCK:
         with open(report_file, "a", encoding="utf-8") as f:
             f.write(f"===== kernel '{kernel_name}' launch {launch_id} ({build_dir}) =====\n")
-            f.write(_format_findings(findings))
+            if capacity_limited_regions:
+                f.write("WARNING: sanitizer log capacity is nearly exhausted in regions "
+                        f"{limited_summary}; records may have been dropped. "
+                        "Full coverage is not guaranteed, especially for SIMT loops.\n")
+            if capacity_limited_regions and not findings:
+                f.write("no issues detected in captured records; full coverage is not guaranteed\n")
+            else:
+                f.write(_format_findings(findings))
             f.write("\n")
     if findings:
         raise SanitizerReplayError(findings)
+    if capacity_limited_regions:
+        import warnings
+        warnings.warn(
+            "Sanitizer log capacity is nearly exhausted in regions "
+            f"{limited_summary}; records may have been dropped. "
+            f"Full coverage is not guaranteed. See {report_file}", RuntimeWarning, stacklevel=2,
+        )
 
 
 def _validate_block_dim(block_dim):
@@ -2355,9 +2370,10 @@ def _build_sanitizer_entry(compiled: "CompiledKernel", build_dir: str):
         # while the launch itself still carries the sentinel.
         sized_dim = _auto_block_upper_bound(compiled) if block_dim == _AUTO_BLOCK_DIM else block_dim
         sub_blocks = _sanitizer_sub_blocks(compiled)
-        regions = sub_blocks * sized_dim
-        budget_bytes = _sanitizer_log_budget_bytes()
-        words_per_region = budget_bytes // (4 * regions)
+        # One region per core: AIC i uses i; AIV i uses N+i for both Scalar and SIMT.
+        # Vector launches retain the leading AIC range in the existing mixed envelope.
+        regions = sized_dim if compiled.target.aiv_per_block == 0 else sub_blocks * sized_dim
+        words_per_region = KSANITIZER_LOG_BUDGET_BYTES // (4 * regions)
         if words_per_region <= 1:
             raise RuntimeFailure(
                 "Sanitizer log budget is too small for the launch region count"

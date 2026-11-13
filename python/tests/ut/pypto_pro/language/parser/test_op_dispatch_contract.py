@@ -277,6 +277,9 @@ def runtime(monkeypatch):
     namespace = {
         "ast": ast, "ir": ir, "inspect": inspect, "_argument_checker": checker,
         "_const_int_value": utils._const_int_value,
+        "_is_simt_func_type": lambda func_type: func_type in (
+            ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee, ir.FunctionType.SimtKernel
+        ),
         "_OP_REGISTRY": registry._OP_REGISTRY, "_AST_OP_REGISTRY": registry._AST_OP_REGISTRY,
         "ExprEvaluator": types.SimpleNamespace(ir_to_python_value=_constant_value),
         **errors.__dict__,
@@ -843,7 +846,7 @@ def test_atomic_impl_receives_parsed_coordinates_and_types_constants(runtime, so
     tile = _Expr(_TileType(_DType.INT32))
     parser = runtime.Parser(source, {"tile": tile})
     container, offset, value = parser.run("simt.atomic_example")
-    assert container is tile and offset.value == 0
+    assert container is tile and offset.elements[0].value == 0
     assert value.value == 1 and value.type.dtype == _DType.INT32
     assert len(parser.evaluated) == 4 and set(parser.evaluated) == {"tile", "[0]", "0", "1"}
 
@@ -986,7 +989,7 @@ def test_production_atomic_builder_receives_reference_and_typed_value(runtime, o
     parser = runtime.Parser(f"pl.simt.{operation}({arguments})", {"tile": tile})
     name, args, attrs = parser.run(f"simt.{operation}")
     assert name == f"simt.{operation}" and args[0] is tile
-    assert args[1].value == 0 and args[2].type.dtype == _DType.INT32
+    assert args[1].elements[0].value == 0 and args[2].type.dtype == _DType.INT32
     assert len(parser.evaluated) == 4 and set(parser.evaluated) == {"tile", "[0]", "0", "1"}
 
 

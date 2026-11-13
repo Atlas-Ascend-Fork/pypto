@@ -121,6 +121,32 @@ def test_expands_literal_forms_keep_the_same_ir_dtype():
     assert expands[0].args[1].type.dtype == expands[1].args[1].type.dtype == pl.DT_INT64
 
 
+def test_simd_subscript_store_materializes_rhs_call():
+    @pl.jit(auto_mutex=False)
+    def kernel(data: pl.Tensor[[1, 32], pl.DT_INT32]):
+        with pl.section_vector():
+            data[0, 1] = pl.getval(data, 0)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    statements = list(program.get_function("kernel").body.stmts)
+    loads = [
+        (index, stmt) for index, stmt in enumerate(statements)
+        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.getval"
+    ]
+    stores = [
+        (index, stmt.value) for index, stmt in enumerate(statements)
+        if isinstance(stmt, ir.AssignStmt) and not stmt.targets and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.setval"
+    ]
+    assert len(loads) == len(stores) == 1
+    load_index, assignment = loads[0]
+    store_index, store = stores[0]
+    assert load_index < store_index
+    assert assignment.targets[0].type.dtype == pl.DT_INT64
+    assert isinstance(store.args[2], ir.Var)
+    assert ir.structural_equal(store.args[2], assignment.targets[0], enable_auto_mapping=False)
+
 def test_simd_integer_reads_merge_as_int64_across_branches():
     @pl.jit(auto_mutex=False)
     def kernel(

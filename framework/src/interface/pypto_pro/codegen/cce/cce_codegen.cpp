@@ -507,6 +507,8 @@ std::string CCECodegen::BuildVfFunctionSignature(const ir::FunctionPtr& func)
         std::string paramName = context_.SanitizeName(param);
         if (auto scalarType = ir::As<ir::ScalarType>(param->GetType())) {
             sig << scalarType->dtype_.ToCTypeString() << " " << paramName;
+        } else if (auto ptrType = ir::As<ir::PtrType>(param->GetType())) {
+            sig << GetGeneratedType(ptrType) << " " << paramName;
         } else if (auto tensorType = ir::As<ir::TensorType>(param->GetType())) {
             if (GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL) {
                 sig << tensorType->dtype_.ToCTypeString() << "* " << paramName;
@@ -531,8 +533,8 @@ std::string CCECodegen::BuildVfFunctionSignature(const ir::FunctionPtr& func)
         } else {
             PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, false)
                 << (isSimt ? "SIMT function '" : "SIMD VF function '") << func->name_
-                << (isSimt ? "' supports only TensorType, TileType, and ScalarType parameters" :
-                             "' supports only TensorType, TileType, ScalarType, and RegType parameters");
+                << (isSimt ? "' supports only TensorType, TileType, PtrType, and ScalarType parameters" :
+                             "' supports only TensorType, TileType, ScalarType, PtrType, and RegType parameters");
         }
         context_.RegisterVar(param, paramName);
     }

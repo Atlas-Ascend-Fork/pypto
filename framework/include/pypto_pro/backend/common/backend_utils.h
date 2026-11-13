@@ -53,6 +53,9 @@ namespace cce {
 /// Tile expressions must denote wrappers; SIMD/SIMT pointer operands use GetExprAsCode instead.
 std::string GetOperandAsCode(codegen::CCECodegen& codegen, const ir::ExprPtr& expr);
 
+/// Lower a scalar access offset or coordinate tuple to its row-major element offset.
+std::string GetScalarAccessOffset(codegen::CCECodegen& codegen, const ir::ExprPtr& container, const ir::ExprPtr& index);
+
 /// Positions of the operands of a GM access op (tile <-> tensor transfer:
 /// block.load / block.store). tensor/tile name the GM-side tensor and the tile
 /// operand; offsets names the offset-tuple position.

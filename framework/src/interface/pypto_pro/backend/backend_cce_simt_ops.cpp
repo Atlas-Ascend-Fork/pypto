@@ -1784,7 +1784,7 @@ std::string MakeSimtAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
             << op->name_ << " Tensor container must be a Var";
         base = codegen.GetPointer(codegen.GetVarName(tensorVar));
     }
-    std::string offset = codegen.GetExprAsCode(op->args_[1]);
+    std::string offset = cce::GetScalarAccessOffset(codegen, op->args_[0], op->args_[1]);
     std::stringstream call;
     call << (simtKernel ? kernelIntrinsic : intrinsic) << "(" << base << " + (" << offset << ")";
     for (size_t i = 2; i < op->args_.size(); ++i) {

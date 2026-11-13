@@ -10,6 +10,7 @@
 
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <utility>
 
 #include "backend/common/backend_utils.h"
@@ -30,7 +31,7 @@ namespace ir {
 
 namespace {
 
-// det_id values live in ir/transforms/sanitizer_layout.h together with the
+// detId values live in ir/transforms/sanitizer_layout.h together with the
 // record layouts -- the single wire-contract source shared with the pybind
 // export and the Python replay.
 
@@ -170,6 +171,17 @@ public:
             {"block.setval", scalarBounds},
             {"block.atomic_rmw", scalarBounds},
             {"block.atomic_cas", scalarBounds},
+            {"simt.atomic_add", scalarBounds},
+            {"simt.atomic_sub", scalarBounds},
+            {"simt.atomic_exch", scalarBounds},
+            {"simt.atomic_max", scalarBounds},
+            {"simt.atomic_min", scalarBounds},
+            {"simt.atomic_inc", scalarBounds},
+            {"simt.atomic_dec", scalarBounds},
+            {"simt.atomic_cas", scalarBounds},
+            {"simt.atomic_and", scalarBounds},
+            {"simt.atomic_or", scalarBounds},
+            {"simt.atomic_xor", scalarBounds},
             {"block.set_validshape", validshapeBounds},
             {"system.mutex_lock_dyn", mutexPairing},
             {"system.mutex_unlock_dyn", mutexPairing},
@@ -187,6 +199,7 @@ public:
 
 private:
     // -- Layer 1: traversal hooks -------------------------------------------
+    ExprPtr VisitExpr_(const CallPtr& op) override;
     StmtPtr VisitStmt_(const AssignStmtPtr& op) override;
     // ------------------------------------------------------------------------
 
@@ -237,20 +250,36 @@ private:
     // dynamic dims alike travel in the record).
     ExprPtr ShapeProduct(const ShapedTypePtr& type, const Span& span);
 
-    // Unified exit of every record function: assembles the block.sanitizer_log
-    // call (det_id + fields + hidden log params + source line).
     StmtPtr MakeLogStmt(uint32_t detId, std::vector<ExprPtr> fields, const Span& span);
 
-    // Hidden log-buffer parameters, appended to the entry signature; passed
-    // as Var references so codegen resolves their final (SSA-suffixed) names.
-    ExprPtr logParam_;
+    // Selected log region and capacity for the function currently being visited.
+    ExprPtr logRegion_;
     ExprPtr capacityParam_;
+    std::unordered_set<std::string> simtVfCalleeNames_;
     // Type of the current AssignStmt target (set by the hook, read by the
     // make_tile builder; empty for result-discarding assignments).
     TypePtr targetType_;
     // Frontend let/SSA bindings needed to resolve TileGroup tuple fields while
     // building sanitizer-only address expressions.
 };
+
+ExprPtr SanitizerInstrumenter::VisitExpr_(const CallPtr& op)
+{
+    auto call = As<Call>(IRMutator::VisitExpr_(op));
+    const bool is_launch = call->name_ == "simt.launch";
+    if (!is_launch && simtVfCalleeNames_.count(call->name_) == 0) {
+        return call;
+    }
+
+    auto args = call->args_;
+    args.push_back(logRegion_);
+    args.push_back(capacityParam_);
+    if (is_launch) {
+        return OpRegistry::GetInstance().Create(call->name_, args, call->kwargs_, call->span_);
+    }
+    // User SIMT callees are functions, not registered operators.
+    return std::make_shared<Call>(call->name_, std::move(args), call->kwargs_, call->GetType(), call->span_);
+}
 
 StmtPtr SanitizerInstrumenter::RecordForCall(const CallPtr& call)
 {
@@ -316,7 +345,7 @@ ExprPtr SanitizerInstrumenter::ShapeProduct(const ShapedTypePtr& type, const Spa
 }
 
 // Unified exit of every record function: assembles the block.sanitizer_log
-// call (det_id + fields + hidden log params + source line). The field
+// call (detId + fields + hidden log params + source line). The field
 // count is checked against the shared wire layout (sanitizer_layout.h) so
 // an encoder/replay drift fails the build here, not as a decode error.
 StmtPtr SanitizerInstrumenter::MakeLogStmt(uint32_t detId, std::vector<ExprPtr> fields, const Span& span)
@@ -327,27 +356,52 @@ StmtPtr SanitizerInstrumenter::MakeLogStmt(uint32_t detId, std::vector<ExprPtr> 
         << "sanitizer: det " << detId << " record fields (" << fields.size() << ") do not match the wire layout ("
         << (desc != nullptr ? desc->wire_count - 1 : 0) << " expected)";
     std::vector<ExprPtr> args;
-    // Record head: magic in the high 16 bits, det_id in the low 16 -- the
-    // decoder dispatches on the det_id half and self-verifies the magic.
+    // Record head: magic in the high 16 bits, detId in the low 16 -- the
+    // decoder dispatches on the detId half and self-verifies the magic.
     args.push_back(Int64Const(SanitizerRecordHead(detId)));
     args.insert(args.end(), std::make_move_iterator(fields.begin()), std::make_move_iterator(fields.end()));
-    args.push_back(logParam_);
+    args.push_back(logRegion_);
     args.push_back(capacityParam_);
     // Source line for the replay report; the file comes from the Python
     // side, which knows the kernel's source path.
     args.push_back(Int64Const(static_cast<int64_t>(span.BeginLine())));
-    auto call = std::make_shared<Call>("block.sanitizer_log", std::move(args), Span::Unknown());
+    auto call = OpRegistry::GetInstance().Create("block.sanitizer_log", args, span);
     return std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, Span::Unknown());
 }
 
-// getval/setval: args = [container, index]. A Tensor container becomes a
-// linear GM record (ndim = 0, acc_row = element count); a Tile container a
-// tile-count record.
+// All function modes record coordinate bounds per axis; explicit scalar offsets retain linear records.
 StmtPtr SanitizerInstrumenter::RecordScalarAccess(const CallPtr& call)
 {
     PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, call->args_.size() >= 0x2)
         << "sanitizer: " << call->name_ << " requires (container, offset)";
     const auto& container = call->args_[0];
+    if (const auto& coordinates = As<MakeTuple>(call->args_[1])) {
+        const bool is_tile = As<TileType>(container->GetType()) != nullptr;
+        auto tensor_type = As<TensorType>(container->GetType());
+        std::vector<StmtPtr> records;
+        for (size_t axis = 0; axis < coordinates->elements_.size(); ++axis) {
+            const auto& index = coordinates->elements_[axis];
+            ExprPtr bound = is_tile ? TileDim(container, static_cast<int>(axis)) : tensor_type->shape_[axis];
+            auto index_scalar = As<ScalarType>(index->GetType());
+            PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, index_scalar != nullptr)
+                << "sanitizer: scalar coordinate must be an integer scalar";
+            std::vector<ExprPtr> fields = {
+                Int64Const(is_tile),
+                Int64Const(axis),
+                Int64Const(index_scalar->dtype_.IsUnsignedInt()),
+            };
+            for (const auto& value : {index, bound}) {
+                auto bits = MakeCast(value, DataType::UINT64, call->span_);
+                auto mask = std::make_shared<ConstInt>(0xFFFFFFFFLL, DataType::UINT64, call->span_);
+                auto shift = std::make_shared<ConstInt>(32, DataType::UINT64, call->span_);
+                fields.push_back(MakeBitAnd(bits, mask, call->span_));
+                fields.push_back(MakeBitShiftRight(bits, shift, call->span_));
+            }
+            records.push_back(
+                MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::ScalarAxis), std::move(fields), call->span_));
+        }
+        return SeqStmts::Flatten(std::move(records), call->span_);
+    }
     auto [tileDim0, tileDim1] = TileDims(container);
     if (tileDim0 >= 0) {
         std::vector<ExprPtr> fields;
@@ -756,22 +810,21 @@ StmtPtr SanitizerInstrumenter::CollectMakeTensor(const CallPtr& call)
 
 ProgramPtr SanitizerInstrumenter::Instrument(ProgramPtr program)
 {
-    // Instrument the entry function only, appending the hidden
-    // sanitizer_log (ptr) + sanitizer_log_capacity (scalar) parameters.
-    //    The entry is identified structurally, as the Opaque function the
-    //    frontend builds for the kernel body (the same criterion the host
-    //    side uses to locate the kernel entry), never by name: the program
-    //    name (e.g. from @pl.jit(name=...)) may differ from the entry
-    //    function name, and a name match would silently skip instrumentation
-    //    then, breaking the launch ABI.
-    //    SIMT functions (SIMT_VF / SIMT_CALLEE) are outside the detection
-    //    scope: excluded by function type (the codegen's own criterion), not
-    //    only by name -- a same-named SIMT function can never be mistaken
-    //    for the entry.
+    // Reuse the statement hooks inside SIMT to preserve branches and evaluation order.
+    for (const auto& [name, func] : program->functions_) {
+        PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, func)
+            << "sanitizer: null function \"" << name << "\"";
+        if (func->funcType_ == FunctionType::SIMT_VF || func->funcType_ == FunctionType::SIMT_CALLEE) {
+            simtVfCalleeNames_.insert(func->name_);
+        }
+    }
+    // Instrument the structural Opaque entry plus the SIMT callees, appending hidden log params; never match the entry
+    // by name.
     std::map<std::string, FunctionPtr> newFunctions;
     uint32_t entryCount = 0;
     for (const auto& [name, func] : program->functions_) {
-        if (func == nullptr || func->funcType_ != FunctionType::OPAQUE) {
+        if (func->funcType_ != FunctionType::OPAQUE && func->funcType_ != FunctionType::SIMT_VF &&
+            func->funcType_ != FunctionType::SIMT_CALLEE) {
             newFunctions[name] = func;
             continue;
         }
@@ -779,18 +832,30 @@ ProgramPtr SanitizerInstrumenter::Instrument(ProgramPtr program)
                                             Span::Unknown());
         auto capacityVar = std::make_shared<Var>("sanitizer_log_capacity",
                                                  std::make_shared<ScalarType>(DataType::INT64), Span::Unknown());
-        logParam_ = logVar;
+        const bool isEntry = func->funcType_ == FunctionType::OPAQUE;
+        logRegion_ = logVar;
         capacityParam_ = capacityVar;
+        StmtPtr selectRegion;
+        if (isEntry) {
+            // Entry receives the whole buffer; both writers use this core's region.
+            auto region = OpRegistry::GetInstance().Create("block.sanitizer_log_region", {logVar, capacityVar},
+                                                           Span::Unknown());
+            auto regionVar = std::make_shared<Var>("sanitizer_log_region", region->GetType(), Span::Unknown());
+            selectRegion = std::make_shared<AssignStmt>(std::vector<VarPtr>{regionVar}, region, Span::Unknown());
+            logRegion_ = regionVar;
+        }
 
-        auto newBody = VisitStmt(func->body_);
-        StmtPtr body = (newBody != func->body_) ? newBody : func->body_;
+        auto body = VisitStmt(func->body_);
+        if (isEntry) {
+            body = SeqStmts::Flatten({selectRegion, body}, func->span_);
+            ++entryCount;
+        }
 
         auto params = func->params_;
         params.push_back(logVar);
         params.push_back(capacityVar);
         newFunctions[name] = std::make_shared<Function>(func->name_, std::move(params), func->returnTypes_, body,
-                                                        func->span_, func->funcType_, func->entry_);
-        ++entryCount;
+                                                        func->span_, func->funcType_, func->entry_, func->attrs_);
     }
     PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, entryCount == 1)
         << "sanitizer: expected exactly one Opaque entry function, found " << entryCount;

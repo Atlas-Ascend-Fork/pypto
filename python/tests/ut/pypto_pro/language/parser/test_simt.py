@@ -12,6 +12,7 @@
 """Parser tests for the Tile-first 3510 SIMT frontend."""
 
 import ast
+from pathlib import Path
 
 from pypto_pro._errors import (
     InvalidArgument,
@@ -1211,6 +1212,40 @@ def test_atomic_add_uses_tile_coordinates_and_returns_old_value():
     assert "block.getval" not in function_ir
     assert "block.setval" in function_ir
     assert "simt.launch" in str(program)
+
+
+@pytest.mark.parametrize(
+    ("kernel", "function_name"),
+    ((_atomic_add_tile_kernel, "_atomic_add_tile"), (_atomic_add_tensor_kernel, "_atomic_add_tensor")),
+)
+def test_atomic_result_is_materialized_before_subscript_write(kernel, function_name):
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function(function_name)
+    statements = list(function.body.stmts)
+    atomics = [
+        (index, stmt) for index, stmt in enumerate(statements)
+        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "simt.atomic_add"
+    ]
+    stores = [
+        (index, stmt.value) for index, stmt in enumerate(statements)
+        if isinstance(stmt, ir.AssignStmt) and not stmt.targets and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.setval"
+    ]
+    assert len(atomics) == len(stores) == 1
+    atomic_index, assignment = atomics[0]
+    store_index, store = stores[0]
+    assert atomic_index < store_index
+    assert len(assignment.value.args) == 3  # container, offset, value; no target load.
+    assert isinstance(store.args[2], ir.Var)
+    assert ir.structural_equal(store.args[2], assignment.targets[0], enable_auto_mapping=False)
+    printed = str(function)
+    golden = Path(__file__).with_name(
+        f"test_simt__atomic_result_materialized_{function_name}.pypto"
+    ).read_text(encoding="utf-8")
+    assert printed.rstrip("\n") == golden.rstrip("\n")
+    assert printed.count("simt.atomic_add") == 1
+    assert "block.getval" not in printed
 
 
 def test_atomic_add_supports_gm_int64_tensor():

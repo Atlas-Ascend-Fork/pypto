@@ -36,6 +36,7 @@ enum class SanitizerDetection : uint32_t {
     TileDecl = 6,    // make_tile declaration: addr, size, space, numel
     PhaseAccess = 7, // unit_flag phase and accumulator address/valid_shape identity
     SyncAccess = 8,  // sync_src/sync_dst: event_id, set_pipe, wait_pipe, is_src
+    ScalarAxis = 9,  // scalar coordinate: space, axis, signedness, 64-bit index/bound
 };
 
 /// One wire field: its name (the record/report vocabulary) and its decode
@@ -112,6 +113,12 @@ constexpr SanitizerFieldLayout kSyncAccessWire[] = {
     {"event_id", 's'}, {"set_pipe", 'u'}, {"wait_pipe", 'u'}, {"is_src", 'u'}, {"line", 'u'},
 };
 
+// One coordinate per record; 64-bit payloads split into lo/hi u32 words.
+constexpr SanitizerFieldLayout kScalarAxisWire[] = {
+    {"is_tile", 'u'},  {"axis", 'u'},     {"is_unsigned", 'u'}, {"index_lo", 'u'},
+    {"index_hi", 'u'}, {"bound_lo", 'u'}, {"bound_hi", 'u'},    {"line", 'u'},
+};
+
 constexpr SanitizerRecordLayout kSanitizerRecordLayouts[] = {
     {SanitizerDetection::GmAccess, "GmAccess", kGmAccessWire, sizeof(kGmAccessWire) / sizeof(kGmAccessWire[0])},
     {SanitizerDetection::TileAccess, "TileAccess", kTileAccessWire,
@@ -126,6 +133,8 @@ constexpr SanitizerRecordLayout kSanitizerRecordLayouts[] = {
      sizeof(kPhaseAccessWire) / sizeof(kPhaseAccessWire[0])},
     {SanitizerDetection::SyncAccess, "SyncAccess", kSyncAccessWire,
      sizeof(kSyncAccessWire) / sizeof(kSyncAccessWire[0])},
+    {SanitizerDetection::ScalarAxis, "ScalarAxis", kScalarAxisWire,
+     sizeof(kScalarAxisWire) / sizeof(kScalarAxisWire[0])},
 };
 
 /// Layout lookup by wire det_id; nullptr when the id is unknown (a newer

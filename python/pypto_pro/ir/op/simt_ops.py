@@ -31,7 +31,7 @@ from ..._errors import (
     error_class_of_spec_message,
 )
 from .._limits import from_storage_int
-from .._utils import _const_int_value, _get_span_or_capture, _to_make_tuple
+from .._utils import _get_span_or_capture, _to_make_tuple
 from ._op_registry import op_impl
 
 _DIM3_FIELDS = ("x", "y", "z")
@@ -111,24 +111,15 @@ def _build_atomic_call(self, builder, target: Expr, offset: Expr, operands, span
     for axis, index in enumerate(indices):
         self._validate_subscript_value(index, "Subscript index", axis, shape[axis])
 
-    linear_offset = indices[-1]
-    stride = shape[-1]
-    for dim in range(len(indices) - 2, -1, -1):
-        stride_val = _const_int_value(stride)
-        product = indices[dim] if stride_val == 1 else indices[dim] * stride
-        linear_offset = product + linear_offset
-        if dim > 0:
-            dim_size = _const_int_value(shape[dim])
-            if dim_size is not None and stride_val is not None:
-                stride = _ir_core.ConstInt(dim_size * stride_val, _ir_core.DataType.INT64, span)
-            else:
-                stride = shape[dim] * stride
+    # Like getval/setval subscripts, keep axes for sanitizer checks and lower
+    # coordinates only in the backend's GetScalarAccessOffset.
+    coordinate_offset = _ir_core.MakeTuple(indices, span)
 
     values = [
         _adapt_simt_constant(self, op_name, name, value, target_type.dtype)
         for name, value in operands
     ]
-    return _simt_builder(builder, target, linear_offset, *values, span=span)
+    return _simt_builder(builder, target, coordinate_offset, *values, span=span)
 
 
 def _parse_simt_launch(parser: Any, call: ast.Call, local_name: str, callee_template: Callable) -> Expr:

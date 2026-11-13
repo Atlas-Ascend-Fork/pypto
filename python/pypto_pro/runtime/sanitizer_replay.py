@@ -38,6 +38,7 @@ Detections:
     6  TileDecl    TILE_OVERLAP        tile address ranges must not intersect
     7  PhaseAccess PHASE_*             unit_flag state machine (K chains)
     8  SyncAccess  SYNC_*              sync_src/sync_dst alternation
+    9  ScalarAxis  GM/TILE_OUT_OF_BOUNDS  scalar coordinate vs logical/valid bound
 """
 
 from __future__ import annotations
@@ -157,6 +158,9 @@ RECORD_TYPES: dict[int, type] = {
     det_id: _record_type(det_id, f"{name}Record", [f for f, _ in fields], "".join(k for _, k in fields))
     for det_id, (name, fields) in _LAYOUTS.items()
 }
+# Used by the launcher to warn conservatively without changing the legacy wire format.
+MAX_RECORD_WORDS = max(cls.STRUCT.size // 4 for cls in RECORD_TYPES.values())
+
 GmAccessRecord = RECORD_TYPES[1]
 TileAccessRecord = RECORD_TYPES[2]
 MutexAccessRecord = RECORD_TYPES[3]
@@ -165,6 +169,7 @@ TileScalarRecord = RECORD_TYPES[5]
 TileDeclRecord = RECORD_TYPES[6]
 PhaseAccessRecord = RECORD_TYPES[7]
 SyncAccessRecord = RECORD_TYPES[8]
+ScalarAxisRecord = RECORD_TYPES[9]
 
 # Field semantics, mirroring the C++ builders in sanitizer_pass.cpp:
 #   1 GmAccess   RecordGmAccess: ndim = 0 marks a linear scalar access
@@ -195,6 +200,30 @@ SyncAccessRecord = RECORD_TYPES[8]
 #     for the in-place contract (-1 for non-accumulating operations).
 #   8 SyncAccess RecordSync: event_id is the runtime args[0] expression,
 #     set_pipe/wait_pipe the enum kwargs, is_src marks the signal direction.
+#   9 ScalarAxis RecordScalarAccess: one coordinate per record vs its per-axis bound.
+
+
+def check_scalar_axis_bounds(records: list[ScalarAxisRecord], ctx: ReplayContext) -> list[Finding]:
+    findings: list[Finding] = []
+    for rec in records:
+        index = rec.index_lo | (rec.index_hi << 32)
+        if not rec.is_unsigned and index >= 1 << 63:
+            index -= 1 << 64
+        bound = rec.bound_lo | (rec.bound_hi << 32)
+        if bound >= 1 << 63:
+            bound -= 1 << 64
+        if 0 <= index < bound:
+            continue
+        kind = "TILE_OUT_OF_BOUNDS" if rec.is_tile else "GM_OUT_OF_BOUNDS"
+        region = "Tile runtime valid_shape" if rec.is_tile else "Tensor logical shape"
+        findings.append(Finding(
+            kind,
+            f"scalar access dim{rec.axis}: index {index} is outside [0, {bound}) "
+            f"of {region}; this is a logical bound, not the backing allocation size",
+            ctx.location(rec.line),
+            hint=f"Keep scalar index for dim{rec.axis} within the {region}",
+        ))
+    return findings
 
 
 # ===========================================================================
@@ -874,7 +903,7 @@ def check_sync_pairing(records: list[SyncAccessRecord], ctx: ReplayContext) -> l
             if not rec.is_src:
                 findings.append(Finding(
                     "SYNC_UNPAIRED_DST",
-                    f"sync_dst on region {rec.region}, {rec.set_pipe} -> {rec.wait_pipe}, "
+                    f"sync_dst on region {rec.region}, {pipe_name(rec.set_pipe)} -> {pipe_name(rec.wait_pipe)}, "
                     f"event_id {rec.event_id} waits for a flag no sync_src has set "
                     f"(deadlock: the wait never completes)",
                     ctx.location(rec.line),
@@ -889,7 +918,7 @@ def check_sync_pairing(records: list[SyncAccessRecord], ctx: ReplayContext) -> l
             if rec.is_src:
                 findings.append(Finding(
                     "SYNC_EVENT_REUSE",
-                    f"sync_src on region {rec.region}, {rec.set_pipe} -> {rec.wait_pipe}, "
+                    f"sync_src on region {rec.region}, {pipe_name(rec.set_pipe)} -> {pipe_name(rec.wait_pipe)}, "
                     f"event_id {rec.event_id} fires again before the previous sync_dst "
                     f"consumed the event (the pending flag is overwritten)",
                     ctx.location(rec.line),
@@ -903,7 +932,7 @@ def check_sync_pairing(records: list[SyncAccessRecord], ctx: ReplayContext) -> l
         if not expecting_src:
             findings.append(Finding(
                 "SYNC_UNPAIRED_SRC",
-                f"sync_src on region {region}, {set_pipe} -> {wait_pipe}, "
+                f"sync_src on region {region}, {pipe_name(set_pipe)} -> {pipe_name(wait_pipe)}, "
                 f"event_id {event_id} sets a flag no sync_dst waits for "
                 f"(data race: the consumer runs unordered against the producer)",
                 ctx.location(pending_src_line),
@@ -933,6 +962,7 @@ DETECTIONS: list[Detection] = [
     Detection(GmAccessRecord, "ERROR", check_gm_bounds),
     Detection(TileAccessRecord, "ERROR", check_tile_bounds),
     Detection(TileScalarRecord, "ERROR", check_tile_scalar_bounds),
+    Detection(ScalarAxisRecord, "ERROR", check_scalar_axis_bounds),
     Detection(ViewShapeRecord, "ERROR", check_view_over_source),
     Detection(MutexAccessRecord, "ERROR", check_mutex_pairing),
     Detection(TileDeclRecord, "WARNING", check_tile_overlap),

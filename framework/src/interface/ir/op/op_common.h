@@ -10,11 +10,13 @@
 
 /**
  * @file op/op_common.h
- * \brief Shared TileType argument validation for block explicit-output operators.
+ * \brief Shared argument validation helpers for IR operators.
  *
  * The block explicit-output op families (elementwise, reduction, matmul)
  * validate their tile arguments one by one via CheckTileArg, passing each
- * argument's allowed memory spaces as a list.
+ * argument's allowed memory spaces as a list. Scalar-access operators
+ * (getval/setval, SIMT atomics) validate their (container, index) pair via
+ * ValidateScalarAccessIndex.
  */
 
 #ifndef PYPTO_IR_OP_OP_COMMON_H_
@@ -88,6 +90,42 @@ inline void CheckTileArg(const std::vector<ExprPtr>& args, size_t idx, const std
                  space == std::nullopt || std::find(spaces.begin(), spaces.end(), *space) != spaces.end())
         << "The operator " << opName << " requires argument " << idx << " to be a " << MemorySpacesToString(spaces)
         << " tile, but got " << MemorySpaceToString(space.value_or(MemorySpace::DDR));
+}
+
+/**
+ * \brief Validate the (container, index) argument pair of a scalar-access operator
+ *
+ * The container must be a Tile or Tensor; the index must be an integer
+ * scalar offset or a coordinate tuple whose element count matches the
+ * container rank (getval/setval and SIMT atomics share this contract).
+ *
+ * \param container Container expression (Tile or Tensor)
+ * \param index Scalar offset or coordinate tuple expression
+ * \param opName Operator name for diagnostics
+ */
+inline void ValidateScalarAccessIndex(const ExprPtr& container, const ExprPtr& index, const std::string& opName)
+{
+    using npu::tile_fwk::ExternalError; // Block-scoped: short enum names without leaking to includers
+    auto tileType = As<TileType>(container->GetType());
+    auto tensorType = As<TensorType>(container->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tileType || tensorType)
+        << opName << " container must be a Tile or Tensor";
+    auto checkInteger = [&](const ExprPtr& value) {
+        auto scalar = As<ScalarType>(value->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar && scalar->dtype_.IsInt())
+            << opName << " index must be a non-bool integer scalar";
+    };
+    if (auto coordinates = As<MakeTuple>(index)) {
+        const auto rank = tileType ? tileType->shape_.size() : tensorType->shape_.size();
+        PRO_IR_CHECK(ExternalError::INVALID_SHAPE,
+                     !coordinates->elements_.empty() && coordinates->elements_.size() == rank)
+            << opName << " coordinate count must match container rank " << rank;
+        for (const auto& coordinate : coordinates->elements_) {
+            checkInteger(coordinate);
+        }
+    } else {
+        checkInteger(index);
+    }
 }
 
 } // namespace ir

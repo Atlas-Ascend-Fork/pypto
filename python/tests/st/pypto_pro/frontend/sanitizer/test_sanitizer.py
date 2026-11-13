@@ -2909,3 +2909,153 @@ if __name__ == "__main__":
     import sys
 
     sys.exit(pytest.main([__file__, "-v", "-s", "--tb=short", "--no-header"]))
+
+
+@pl.jit(sanitizer=True, auto_mutex=False)
+def scalar_coordinate_gm_kernel(
+    data: pl.Tensor[[4, 4], pl.DT_INT32],
+    out: pl.Tensor[[1], pl.DT_INT32],
+    row: pl.DT_INT64, col: pl.DT_INT64, write: pl.DT_INT64,
+):
+    with pl.section_vector():
+        if write:
+            data[row, col] = 73
+        else:
+            pl.setval(out, 0, data[row, col])
+
+
+@pytest.mark.soc("950", "960")
+@pytest.mark.parametrize("write", (0, 1), ids=("getval", "setval"))
+@pytest.mark.parametrize("row,col,bad_axes", [
+    (1, 3, ()), (1, 5, (1,)), (1, -1, (1,)), (-1, 5, (0, 1)),
+])
+def test_non_simt_scalar_coordinates_detect_compensated_oob(write, row, col, bad_axes):
+    _require_3510_or_9201(ST_DEVICE)
+    # Every physical access stays in the allocation; only per-axis checks reject the bad cases.
+    offset = row * 4 + col
+    assert 0 <= offset < 16
+    data = torch.arange(16, device=ST_DEVICE, dtype=torch.int32).reshape(4, 4)
+    out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
+    if bad_axes:
+        with pytest.raises(SanitizerReplayError) as error:
+            scalar_coordinate_gm_kernel[None, 1](data, out, row, col, write)
+        findings = error.value.findings
+        assert len(findings) == len(bad_axes)
+        assert all(f.kind == "GM_OUT_OF_BOUNDS" for f in findings)
+        for axis in bad_axes:
+            assert any(f"dim{axis}:" in f.message for f in findings)
+    else:
+        scalar_coordinate_gm_kernel[None, 1](data, out, row, col, write)
+        torch.npu.synchronize()
+        if write:
+            expected = torch.arange(16, dtype=torch.int32).reshape(4, 4)
+            expected[row, col] = 73
+            torch.testing.assert_close(data.cpu(), expected)
+        else:
+            assert out.cpu().item() == offset
+
+
+@pl.jit(sanitizer=True, auto_mutex=False)
+def scalar_coordinate_tile_kernel(
+    out: pl.Tensor[[1], pl.DT_INT32], col: pl.DT_INT64, valid_cols: pl.DT_INT64,
+    write: pl.DT_INT64,
+):
+    tile_type = pl.TileType(
+        shape=[4, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec,
+        valid_shape=[-1, -1],
+    )
+    tile = pl.make_tile(tile_type, addr=0)
+    with pl.section_vector():
+        pl.set_validshape(tile, [1, valid_cols])
+        pl.setval(tile, 6, 17)
+        if write:
+            tile[0, col] = 23
+            pl.setval(out, 0, pl.getval(tile, 6))
+        else:
+            pl.setval(out, 0, tile[0, col])
+
+
+@pytest.mark.soc("950", "960")
+@pytest.mark.parametrize("write", (0, 1), ids=("getval", "setval"))
+@pytest.mark.parametrize("valid_cols", (4, 8))
+def test_non_simt_scalar_coordinates_check_runtime_tile_valid_shape(write, valid_cols):
+    _require_3510_or_9201(ST_DEVICE)
+    out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
+    if valid_cols == 4:
+        # Column 6 is inside declared shape [4,8], but outside runtime valid_shape [1,4].
+        with pytest.raises(SanitizerReplayError) as error:
+            scalar_coordinate_tile_kernel[None, 1](out, 6, valid_cols, write)
+        findings = error.value.findings
+        assert len(findings) == 1
+        assert findings[0].kind == "TILE_OUT_OF_BOUNDS"
+        assert "dim1:" in findings[0].message
+        assert "runtime valid_shape" in findings[0].message
+    else:
+        scalar_coordinate_tile_kernel[None, 1](out, 6, valid_cols, write)
+        torch.npu.synchronize()
+        assert out.cpu().item() == (23 if write else 17)
+
+
+@pl.jit(sanitizer=True, auto_mutex=False)
+def scalar_coordinate_cube_gm_kernel(
+    data: pl.Tensor[[4, 8], pl.DT_INT32], out: pl.Tensor[[1], pl.DT_INT32],
+    row: pl.DT_INT64, col: pl.DT_INT64,
+):
+    with pl.section_cube():
+        out[0] = data[row, col]
+
+
+@pytest.mark.soc("950", "960")
+@pytest.mark.parametrize("row,col,dim", [(1, 6, None), (1, 10, "dim1:")])
+def test_non_simt_cube_gm_coordinates_detect_compensated_oob(row, col, dim):
+    _require_3510_or_9201(ST_DEVICE)
+    data = torch.arange(32, device=ST_DEVICE, dtype=torch.int32).reshape(4, 8)
+    out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
+    if dim is None:
+        scalar_coordinate_cube_gm_kernel[None, 1](data, out, row, col)
+        torch.npu.synchronize()
+        assert out.cpu().item() == int(data.cpu()[row, col])
+    else:
+        # (1,10): linear 18 stays inside the 32 elements, only the per-axis check rejects it.
+        with pytest.raises(SanitizerReplayError) as error:
+            scalar_coordinate_cube_gm_kernel[None, 1](data, out, row, col)
+        findings = error.value.findings
+        assert len(findings) == 1
+        assert findings[0].kind == "GM_OUT_OF_BOUNDS"
+        assert dim in findings[0].message
+
+
+@pl.jit(sanitizer=True, auto_mutex=False)
+def scalar_coordinate_tile_group_kernel(
+    out: pl.Tensor[[1], pl.DT_INT32], index: pl.DT_INT64, col: pl.DT_INT64,
+):
+    tile_type = pl.TileType(
+        shape=[4, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec,
+        valid_shape=[-1, -1],
+    )
+    group = pl.make_tile_group(type=tile_type, addrs=[0, 256], depth=2)
+    with pl.section_vector():
+        tile = group[index]
+        pl.set_validshape(tile, [1, 4])
+        pl.setval(tile, 2, 17)
+        pl.setval(out, 0, tile[0, col])
+
+
+@pytest.mark.soc("950", "960")
+@pytest.mark.parametrize("col,violates", [(2, False), (6, True)])
+def test_non_simt_tile_group_coordinates_use_selected_slot_valid_shape(col, violates):
+    _require_3510_or_9201(ST_DEVICE)
+    out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int32)
+    if violates:
+        # Column 6 is inside declared shape [4,8], but outside the slot's runtime valid_shape [1,4].
+        with pytest.raises(SanitizerReplayError) as error:
+            scalar_coordinate_tile_group_kernel[None, 1](out, 1, col)
+        findings = error.value.findings
+        assert len(findings) == 1
+        assert findings[0].kind == "TILE_OUT_OF_BOUNDS"
+        assert "dim1:" in findings[0].message
+        assert "runtime valid_shape" in findings[0].message
+    else:
+        scalar_coordinate_tile_group_kernel[None, 1](out, 1, col)
+        torch.npu.synchronize()
+        assert out.cpu().item() == 17

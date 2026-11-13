@@ -31,10 +31,12 @@
 #include "ir/expr.h"
 #include "ir/kind_traits.h"
 #include "ir/memref.h"
+#include "ir/op/op_common.h"
 #include "ir/op_registry.h"
 #include "ir/scalar_expr.h"
 #include "ir/span.h"
 #include "ir/type.h"
+#include "ir/transforms/sanitizer_layout.h"
 #include "ir/type_inference.h"
 #include "pypto_pro/error.h"
 
@@ -178,11 +180,7 @@ TypePtr DeduceGetValType([[maybe_unused]] const std::vector<ExprPtr>& args,
         << "getval requires exactly 2 arguments, but got " << args.size();
 
     auto firstType = args[0]->GetType();
-    auto offsetType = As<ScalarType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType)
-        << "getval requires offset to be ScalarType, but got " << args[1]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType->dtype_.IsInt())
-        << "getval offset must have integer dtype, but got " << offsetType->dtype_.ToString();
+    ValidateScalarAccessIndex(args[0], args[1], "getval");
 
     // SIMT element reads preserve their storage dtype; SIMD scalar reads retain integer widening.
     const bool preserveDtype = GetOpKwarg<bool>(kwargs, "preserve_dtype", false);
@@ -190,8 +188,6 @@ TypePtr DeduceGetValType([[maybe_unused]] const std::vector<ExprPtr>& args,
         return std::make_shared<ScalarType>(GetValResultDtype(tileType->dtype_, preserveDtype));
     }
     auto tensorType = As<TensorType>(firstType);
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensorType)
-        << "getval requires first argument to be TileType or TensorType, but got " << firstType->TypeName();
     return std::make_shared<ScalarType>(GetValResultDtype(tensorType->dtype_, preserveDtype));
 }
 
@@ -223,20 +219,64 @@ TypePtr DeduceSetValType([[maybe_unused]] const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3)
         << "setval requires exactly 3 arguments, but got " << args.size();
 
-    auto firstType = args[0]->GetType();
-    auto offsetType = As<ScalarType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType)
-        << "setval requires offset to be ScalarType, but got " << args[1]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType->dtype_.IsInt())
-        << "setval offset must have integer dtype, but got " << offsetType->dtype_.ToString();
+    ValidateScalarAccessIndex(args[0], args[1], "setval");
     auto valueType = As<ScalarType>(args[2]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, valueType)
         << "setval requires value to be ScalarType, but got " << args[2]->GetType()->TypeName();
 
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TileType>(firstType) || As<TensorType>(firstType))
-        << "setval requires first argument to be TileType or TensorType, but got " << firstType->TypeName();
     return GetNoneType();
 }
+
+REGISTER_OP("block.sanitizer_log_region")
+    .set_op_category("BlockOp")
+    .set_description("Select the current core's region in a sanitizer log buffer")
+    .add_argument("log", "Byte pointer to the whole log buffer")
+    .add_argument("capacity", "Per-region payload capacity in uint32 words")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) -> TypePtr {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+            << "block.sanitizer_log_region requires (log, capacity)";
+        auto ptr = As<PtrType>(args[0]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, ptr && ptr->dtype_ == DataType(DataType::INT8))
+            << "block.sanitizer_log_region requires an int8 log pointer";
+        auto capacity = As<ScalarType>(args[1]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, capacity && capacity->dtype_.IsInt())
+            << "block.sanitizer_log_region capacity must be an integer scalar";
+        return std::make_shared<PtrType>(ptr->dtype_);
+    });
+
+// The variadic record payload is checked against the shared wire contract.
+TypePtr DeduceSanitizerLogType(const std::vector<ExprPtr>& args,
+                               [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() >= 4)
+        << "block.sanitizer_log requires (record_head, fields..., log_ptr, capacity, line)";
+    auto head = As<ConstInt>(args[0]);
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT,
+                 head && head->value_ >= 0 && (static_cast<uint64_t>(head->value_) >> 16U) == kSanitizerRecordMagic)
+        << "block.sanitizer_log requires a constant record head with sanitizer magic";
+    const auto* layout = FindSanitizerRecordLayout(static_cast<uint32_t>(head->value_) & 0xffffU);
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, layout && args.size() == layout->wire_count + 3U)
+        << "block.sanitizer_log record fields do not match the wire layout";
+    const size_t log_index = args.size() - 3;
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<PtrType>(args[log_index]->GetType()))
+        << "block.sanitizer_log log buffer must be a pointer";
+    for (size_t i = 1; i < args.size(); ++i) {
+        if (i == log_index) {
+            continue;
+        }
+        auto scalar = As<ScalarType>(args[i]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar && scalar->dtype_.IsInt())
+            << "block.sanitizer_log fields, capacity and line must be integer scalars";
+    }
+    return GetNoneType();
+}
+
+REGISTER_OP("block.sanitizer_log")
+    .set_op_category("BlockOp")
+    .set_description("Append a sanitizer record to the selected log region")
+    .add_argument("record", "Record head, variadic integer fields, log pointer, capacity and source line")
+    .f_deduce_type(DeduceSanitizerLogType);
 
 // ============================================================================
 // Registration Function for Block Memory Operations
@@ -430,7 +470,7 @@ REGISTER_OP("block.getval")
     .set_op_category("BlockOp")
     .set_description("Read a scalar value from a tile or tensor at offset")
     .add_argument("container", "Input tile (TileType) or tensor (TensorType)")
-    .add_argument("offset", "Element offset (ScalarType with integer dtype)")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .set_attr<bool>("preserve_dtype")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
@@ -454,7 +494,7 @@ REGISTER_OP("block.setval")
     .set_op_category("BlockOp")
     .set_description("Write a scalar value to a tile or tensor at offset")
     .add_argument("container", "Input tile (TileType) or tensor (TensorType)")
-    .add_argument("offset", "Element offset (ScalarType with integer dtype)")
+    .add_argument("offset", "Integer element offset or tuple of integer coordinates")
     .add_argument("value", "Scalar value to write (ScalarType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {

@@ -40,6 +40,7 @@ from .._vf_api import Vf
 from . import _argument_checker
 from ._control_flow_parser import _is_bare_return
 from ._span_tracker import SpanTracker
+from ._utils import _is_simt_func_type
 from .diagnostics import check_in_range
 
 # Largest thread count a SIMT function may declare.
@@ -723,11 +724,7 @@ class CallParserMixin:
                 parser_retry=True,
             )
 
-        is_simt_function = self._current_func_type in (
-            ir.FunctionType.SimtVF,
-            ir.FunctionType.SimtCallee,
-            ir.FunctionType.SimtKernel,
-        )
+        is_simt_function = _is_simt_func_type(self._current_func_type)
         if is_simt_function and not op_name.startswith("simt."):
             raise NotSupported(
                 f"Operation '{op_name}' is not supported inside a SIMT function",
@@ -1253,9 +1250,7 @@ class CallParserMixin:
         from .decorator import get_simt_max_threads, is_simt_function, is_vector_function
 
         if is_simt_function(fn):
-            if self._current_func_type in (
-                ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee, ir.FunctionType.SimtKernel
-            ):
+            if _is_simt_func_type(self._current_func_type):
                 if get_simt_max_threads(fn) is not None:
                     raise InvalidVal(
                         f"SIMT helper '{func_name}' must omit max_threads in "

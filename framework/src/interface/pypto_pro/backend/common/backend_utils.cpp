@@ -12,6 +12,7 @@
 
 #include <any>
 #include <cctype>
+#include <limits>
 #include <sstream>
 
 #include "core/error.h"
@@ -20,6 +21,7 @@
 #include "ir/kind_traits.h"
 #include "ir/memref.h"
 #include "ir/scalar_expr.h"
+#include "ir/scalar_expr_ops.h"
 #include "ir/type_inference.h"
 #include "pypto_pro/error.h"
 #include "tilefwk/error.h"
@@ -71,6 +73,43 @@ std::string GetOperandAsCode(codegen::CCECodegen& codegen, const ir::ExprPtr& ex
         value += ".tile";
     }
     return value;
+}
+
+std::string GetScalarAccessOffset(codegen::CCECodegen& codegen, const ir::ExprPtr& container, const ir::ExprPtr& index)
+{
+    auto coordinates = ir::As<ir::MakeTuple>(index);
+    if (!coordinates) {
+        // Explicit getval/setval offsets are already linear.
+        return codegen.GetExprAsCode(index);
+    }
+    // Lower coordinates for getval/setval and atomics in every function mode.
+    // Preserve MakeMul/MakeAdd promotion and unit-stride omission for unsigned offsets.
+    auto tile_type = ir::As<ir::TileType>(container->GetType());
+    const auto& shape = tile_type ? tile_type->shape_ : ir::As<ir::TensorType>(container->GetType())->shape_;
+    ir::ExprPtr offset = coordinates->elements_.back();
+    ir::ExprPtr stride = shape.back();
+    for (size_t axis = coordinates->elements_.size() - 1; axis > 0; --axis) {
+        auto constant_stride = ir::As<ir::ConstInt>(stride);
+        auto coordinate = coordinates->elements_[axis - 1];
+        auto product = constant_stride && constant_stride->value_ == 1 ? coordinate :
+                                                                         ir::MakeMul(coordinate, stride, index->span_);
+        offset = ir::MakeAdd(product, offset, index->span_);
+        if (axis > 1) {
+            auto dimension = ir::As<ir::ConstInt>(shape[axis - 1]);
+            if (dimension && constant_stride && dimension->value_ >= 0 && constant_stride->value_ >= 0) {
+                PRO_CODEGEN_CHECK(
+                    ExternalError::INVALID_SHAPE,
+                    constant_stride->value_ == 0 ||
+                        dimension->value_ <= std::numeric_limits<int64_t>::max() / constant_stride->value_)
+                    << "Scalar access stride exceeds INT64 range";
+                stride = std::make_shared<ir::ConstInt>(dimension->value_ * constant_stride->value_,
+                                                        ir::DataType::INT64, index->span_);
+            } else {
+                stride = ir::MakeMul(shape[axis - 1], stride, index->span_);
+            }
+        }
+    }
+    return codegen.GetExprAsCode(offset);
 }
 
 std::optional<ir::Layout> GetTileTensorLayout(const ir::HardwareInfo& hardwareInfo)

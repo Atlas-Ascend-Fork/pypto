@@ -10,8 +10,8 @@ program #entry() {
         uint32_t %tid_0 = (%_expr_tmp_4_0 add %_expr_tmp_6_0);
         bool %_expr_tmp_7_0 = (%tid_0 lt %count_0);
         if %_expr_tmp_7_0 then {
-            float %_expr_tmp_8_0 = block.getval(%src_0, %tid_0, preserve_dtype=true);
-            block.setval(%out_0, %tid_0, %_expr_tmp_8_0);
+            float %_expr_tmp_8_0 = block.getval(%src_0, tuple(%tid_0), preserve_dtype=true);
+            block.setval(%out_0, tuple(%tid_0), %_expr_tmp_8_0);
             yield;
         } else {
             yield;

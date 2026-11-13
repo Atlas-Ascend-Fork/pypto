@@ -12,22 +12,87 @@
 """Representative DSL-to-CCE integration tests for the 3510 SIMT path.
 
 Exhaustive dtype contracts and operation-to-intrinsic mappings belong to the
-native tests. This module covers representative frontend-to-backend behavior.
+native tests. Device coverage lives in the sanitizer ST test_sanitizer_simt.py.
 """
 
+from pathlib import Path
 import re
+import struct
 
-from pypto_pro._errors import NotSupported
+from pypto_pro._errors import DynamicShapeUnsupported, NotSupported
 import pypto_pro.language as pl
+from pypto_pro.runtime.sanitizer_replay import (
+    RECORD_MAGIC,
+    ReplayContext,
+    ScalarAxisRecord,
+    decode_regions,
+    run_replay,
+)
 import pytest
 
+from pypto.pypto_impl import ir
 
-def _compile_to_cce(kernel, arch: str = "3510") -> str:
+
+def _compile_to_cce(kernel, arch: str = "3510", *, sanitizer: bool = False) -> str:
     from pypto_pro.runtime.jit import _add_kernel_header, _assemble_cv_source, _parse_and_codegen_targets
     from pypto_pro.runtime.platform import normalize_arch
 
-    cube, vector = _parse_and_codegen_targets(kernel.to_kernel_def(), normalize_arch(arch), "")
+    cube, vector = _parse_and_codegen_targets(
+        kernel.to_kernel_def(), normalize_arch(arch), "", sanitizer=sanitizer,
+    )
     return _add_kernel_header(_assemble_cv_source(cube, vector)).content
+
+
+def _assert_cpp_golden(cpp, name):
+    golden = Path(__file__).with_name(f"test_cce_simt__{name}.pypto").read_text(encoding="utf-8")
+    assert cpp.rstrip("\n") == golden.rstrip("\n")
+
+
+def _statement_calls(stmt):
+    # Same structural traversal used by ir/test_insert_sync.py; no text matching.
+    if isinstance(stmt, ir.SeqStmts):
+        for child in stmt.stmts:
+            yield from _statement_calls(child)
+    elif isinstance(stmt, (ir.ForStmt, ir.WhileStmt, ir.SectionStmt)):
+        yield from _statement_calls(stmt.body)
+    elif isinstance(stmt, ir.IfStmt):
+        yield from _statement_calls(stmt.then_body)
+        if stmt.else_body is not None:
+            yield from _statement_calls(stmt.else_body)
+    elif isinstance(stmt, ir.AssignStmt):
+        call = stmt.value
+        if isinstance(call, ir.Call):
+            yield call
+
+
+def _sanitized_program(kernel):
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    return ir.Pass.sanitizer()(program)
+
+
+def _assert_axis_records_before_accesses(function, access_count):
+    from pypto.pypto_impl.ir import SANITIZER_RECORD_MAGIC
+
+    calls = list(_statement_calls(function.body))
+    accesses = [i for i, call in enumerate(calls)
+                if call.name in ("block.getval", "block.setval") or call.name.startswith("simt.atomic_")]
+    assert len(accesses) == access_count
+    axis_head = (SANITIZER_RECORD_MAGIC << 16) | 9
+    expected_records = 0
+    for position in accesses:
+        access = calls[position]
+        assert isinstance(access.args[1], ir.MakeTuple)
+        rank = len(access.args[0].type.shape)
+        assert len(access.args[1].elements) == rank
+        expected_records += rank
+        assert position >= rank
+        for axis, record in enumerate(calls[position - rank:position]):
+            assert record.name == "block.sanitizer_log"
+            assert record.args[0].value == (SANITIZER_RECORD_MAGIC << 16) | 9
+            assert record.args[2].value == axis
+            assert record.args[-1].value == access.span.begin_line
+    assert sum(call.name == "block.sanitizer_log" and call.args[0].value == axis_head
+               for call in calls) == expected_records
 
 
 @pl.vector_function(mode="simt", max_threads=256)
@@ -356,6 +421,246 @@ def test_simt_gm_tensor_codegen_uses_native_gm_pointers():
     assert ".SetValue(" not in function
     assert launch_line.count("(__gm__ float*)") == 2
     assert ".data()" not in launch_line
+
+
+# ---------------------------------------------------------------------------
+# UT: sanitizer instrumentation, helper forwarding and backend generation.
+# ---------------------------------------------------------------------------
+
+@pytest.mark.parametrize(
+    ("kernel", "function_name"),
+    ((_simt_gm_codegen_kernel, "_gm_add"), (_simt_tile_codegen_kernel, "_tile_add")),
+)
+def test_sanitizer_simt_logs_read_and_write_axes_once(kernel, function_name):
+    _compile_to_cce(kernel, sanitizer=True)  # Also exercises the backend lowering.
+    function = _sanitized_program(kernel).get_function(function_name)
+    assert [param.name for param in function.params[-2:]] == ["sanitizer_log", "sanitizer_log_capacity"]
+    _assert_axis_records_before_accesses(function, 2)
+
+
+def test_sanitizer_simt_preserves_nested_helper_calls_and_return_access():
+    _compile_to_cce(_simt_callee_codegen_kernel, sanitizer=True)
+    program = _sanitized_program(_simt_callee_codegen_kernel)
+    calls = []
+    for name in ("_callee_add", "_callee_load", "_callee_store", "_callee_apply", "_callee_entry"):
+        function = program.get_function(name)
+        assert [param.name for param in function.params[-2:]] == ["sanitizer_log", "sanitizer_log_capacity"]
+        calls.extend(call for call in _statement_calls(function.body)
+                     if call.name in ("_callee_load", "_callee_store", "_callee_apply", "_callee_add"))
+    for name in ("_callee_load", "_callee_store"):
+        _assert_axis_records_before_accesses(program.get_function(name), 1)
+    assert len(calls) == 4
+    assert all([arg.name for arg in call.args[-2:]] == ["sanitizer_log", "sanitizer_log_capacity"] for call in calls)
+
+
+@pytest.mark.parametrize(
+    ("kernel", "function_name", "records"),
+    ((_atomic_add_gm_codegen_kernel, "_atomic_add_gm", 2),
+     (_atomic_add_ub_codegen_kernel, "_atomic_add_ub", 2),
+     (_atomic_add_discard_codegen_kernel, "_atomic_add_discard", 1),
+     (_atomic_half_discard_codegen_kernel, "_atomic_half_discard", 6)),
+)
+def test_sanitizer_simt_checks_atomic_addresses_even_when_result_is_discarded(kernel, function_name, records):
+    _compile_to_cce(kernel, sanitizer=True)
+    function = _sanitized_program(kernel).get_function(function_name)
+    _assert_axis_records_before_accesses(function, records)
+    if records == 2:
+        accesses = [call for call in _statement_calls(function.body) if call.name != "block.sanitizer_log"]
+        accesses = [call for call in accesses if call.name in ("simt.atomic_add", "block.setval")]
+        assert [call.name for call in accesses] == ["simt.atomic_add", "block.setval"]
+
+
+def test_sanitizer_simt_and_scalar_share_atomic_log_regions():
+    cpp = _compile_to_cce(_simt_tile_codegen_kernel, sanitizer=True)
+    _assert_cpp_golden(cpp, "sanitizer_counters")
+    function = _simt_function_source(cpp, "_tile_add")
+    # The entry selects the AIV region once and passes it to the SIMT function.
+    region_index = "__pypto_block_num_value() + __pypto_block_idx_value()"
+    assert cpp.count(region_index) == 1
+    assert region_index not in function
+    assert "if (sanitizer_log_region != 0)" in cpp
+    assert "delta_0, sanitizer_log_region, sanitizer_log_capacity);" in cpp
+    assert "if (sanitizer_log != 0)" in function
+    assert "__log_base[0] =" not in cpp
+    assert "__log_off = __log_base[0]" not in cpp
+    assert "__log_rec[" not in cpp
+    assert "atomicExch(__log_rec" in cpp
+    # Failed reservations cannot make the counter claim an unwritten tail.
+    assert re.search(r"while \(__log_off <=.*&&.*<=.*- __log_off\)", function)
+
+
+@pytest.mark.parametrize(
+    ("kernel", "golden_name"),
+    ((_simt_gm_codegen_kernel, "sanitizer_disabled_gm"),
+     (_simt_tile_codegen_kernel, "sanitizer_disabled_tile"),
+     (_simt_callee_codegen_kernel, "sanitizer_disabled_callee")),
+)
+def test_sanitizer_disabled_keeps_simt_abi_unchanged(kernel, golden_name):
+    cpp = _compile_to_cce(kernel)
+    _assert_cpp_golden(cpp, golden_name)
+    assert "sanitizer_log" not in cpp
+    assert "__log_rec" not in cpp
+
+
+def _scalar_offset_paths_kernel(index_dtype, columns):
+    @pl.vector_function(mode="simt", max_threads=1)
+    def simt_read(data, out, row, col):
+        out[1] = data[row, col]
+
+    if index_dtype == pl.DT_UINT32:
+        @pl.jit
+        def kernel(
+            data: pl.Tensor[[2, columns], pl.DT_INT32],
+            out: pl.Tensor[[2], pl.DT_INT32], row: pl.DT_UINT32, col: pl.DT_UINT32,
+        ):
+            with pl.section_vector():
+                out[0] = data[row, col]
+                simt_read[1](data, out, row, col)
+    else:
+        @pl.jit
+        def kernel(
+            data: pl.Tensor[[2, columns], pl.DT_INT32],
+            out: pl.Tensor[[2], pl.DT_INT32], row: pl.DT_UINT64, col: pl.DT_UINT64,
+        ):
+            with pl.section_vector():
+                out[0] = data[row, col]
+                simt_read[1](data, out, row, col)
+
+    return kernel
+
+
+@pytest.mark.parametrize(
+    ("index_dtype", "columns", "golden_name"),
+    [(pl.DT_UINT32, 1, "scalar_offset_uint32_unit_stride"),
+     (pl.DT_UINT64, 2, "scalar_offset_uint64")],
+)
+def test_scalar_coordinate_lowering_agrees_across_simd_and_simt(index_dtype, columns, golden_name):
+    # Both function modes retain tuples until the same backend lowering.
+    # The complete source pins integer promotion and unit-stride behavior.
+    cpp = _compile_to_cce(_scalar_offset_paths_kernel(index_dtype, columns))
+    _assert_cpp_golden(cpp, golden_name)
+
+
+
+@pytest.mark.parametrize("index_dtype,columns", [(pl.DT_UINT32, 1), (pl.DT_UINT64, 2)])
+def test_scalar_subscripts_preserve_axes_in_both_function_modes(index_dtype, columns):
+    kernel = _scalar_offset_paths_kernel(index_dtype, columns)
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    for name, result_dtype in (("kernel", pl.DT_INT64), ("simt_read", pl.DT_INT32)):
+        calls = [call for call in _statement_calls(program.get_function(name).body)
+                 if call.name in ("block.getval", "block.setval")]
+        assert [call.name for call in calls] == ["block.getval", "block.setval"]
+        read, write = calls
+        assert isinstance(read.args[1], ir.MakeTuple)
+        assert len(read.args[1].elements) == 2
+        assert [index.type.dtype for index in read.args[1].elements] == [index_dtype] * 2
+        assert all(isinstance(index, ir.Var) for index in read.args[1].elements)
+        assert read.type.dtype == result_dtype
+        assert isinstance(write.args[1], ir.MakeTuple)
+        assert len(write.args[1].elements) == 1
+        assert write.args[1].elements[0].value == int(name == "simt_read")
+
+    instrumented = ir.Pass.sanitizer()(program)
+    for name in ("kernel", "simt_read"):
+        _assert_axis_records_before_accesses(instrumented.get_function(name), 2)
+
+
+def test_non_simt_tile_coordinates_use_runtime_valid_shape():
+    @pl.jit(auto_mutex=False)
+    def kernel(row: pl.DT_INT64, col: pl.DT_UINT64, rows: pl.DT_INT64, cols: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[4, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec,
+            valid_shape=[-1, -1],
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            pl.set_validshape(tile, [rows, cols])
+            tile[row, col] = tile[row, col] + 1
+
+    _compile_to_cce(kernel, sanitizer=True)
+    function = _sanitized_program(kernel).get_function("kernel")
+    _assert_axis_records_before_accesses(function, 2)
+    calls = list(_statement_calls(function.body))
+    for position, call in enumerate(calls):
+        if call.name not in ("block.getval", "block.setval"):
+            continue
+        for axis, record in enumerate(calls[position - 2:position]):
+            assert record.args[1].value == 1
+            assert record.args[3].value == int(axis == 1)
+            bound = record.args[6].left.operand
+            assert bound.name == "block.tile_valid_shape"
+            assert bound.args[0].same_as(call.args[0])
+            assert bound.kwargs["axis"] == axis
+
+
+def test_non_simt_coordinates_preserve_dynamic_tensor_dimensions():
+    @pl.jit(auto_mutex=False)
+    def kernel(
+        data: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_INT32],
+        plane: pl.DT_INT64, row: pl.DT_INT64, col: pl.DT_INT64,
+    ):
+        with pl.section_vector():
+            data[plane, row, col] = data[plane, row, col] + 1
+
+    _compile_to_cce(kernel, sanitizer=False)
+    _compile_to_cce(kernel, sanitizer=True)
+    function = _sanitized_program(kernel).get_function("kernel")
+    _assert_axis_records_before_accesses(function, 2)
+    calls = list(_statement_calls(function.body))
+    for position, call in enumerate(calls):
+        if call.name not in ("block.getval", "block.setval"):
+            continue
+        for axis, record in enumerate(calls[position - 3:position]):
+            assert record.args[1].value == 0
+            bound = record.args[6].left.operand
+            assert isinstance(bound, ir.Var)
+            assert bound.same_as(call.args[0].type.shape[axis])
+
+
+def test_explicit_getval_setval_keep_linear_offsets():
+    from pypto.pypto_impl.ir import SANITIZER_RECORD_MAGIC
+
+    @pl.jit(auto_mutex=False)
+    def kernel(data: pl.Tensor[[4, 4], pl.DT_INT32], offset: pl.DT_INT64):
+        with pl.section_vector():
+            pl.setval(data, offset, pl.getval(data, offset))
+
+    _compile_to_cce(kernel, sanitizer=False)
+    _compile_to_cce(kernel, sanitizer=True)
+    program = _sanitized_program(kernel)
+    calls = list(_statement_calls(program.get_function("kernel").body))
+    accesses = [i for i, call in enumerate(calls) if call.name in ("block.getval", "block.setval")]
+    assert len(accesses) == 2
+    for position in accesses:
+        assert isinstance(calls[position].args[1], ir.Var)
+        record = calls[position - 1]
+        assert record.name == "block.sanitizer_log"
+        assert record.args[0].value == (SANITIZER_RECORD_MAGIC << 16) | 1
+        assert record.args[1].value == 0  # GmAccess linear-offset form.
+
+
+def test_all_atomic_frontends_preserve_coordinates_for_sanitizer():
+    @pl.vector_function(mode="simt", max_threads=1)
+    def atomics(data, row, col):
+        pl.simt.atomic_add(data, [row, col], 1)
+        pl.simt.atomic_sub(data, [row, col], 1)
+        pl.simt.atomic_exch(data, [row, col], 1)
+        pl.simt.atomic_max(data, [row, col], 1)
+        pl.simt.atomic_min(data, [row, col], 1)
+        pl.simt.atomic_inc(data, [row, col], 1)
+        pl.simt.atomic_dec(data, [row, col], 1)
+        pl.simt.atomic_cas(data, [row, col], 0, 1)
+        pl.simt.atomic_and(data, [row, col], 1)
+        pl.simt.atomic_or(data, [row, col], 1)
+        pl.simt.atomic_xor(data, [row, col], 1)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(data: pl.Tensor[[4, 4], pl.DT_UINT32], row: pl.DT_INT64, col: pl.DT_INT64):
+        with pl.section_vector():
+            atomics[1](data, row, col)
+
+    _compile_to_cce(kernel, sanitizer=True)
+    _assert_axis_records_before_accesses(_sanitized_program(kernel).get_function("atomics"), 11)
 
 
 def test_simt_launch_passes_runtime_tile_valid_shape_to_native_function():
@@ -1420,3 +1725,222 @@ def test_fp32_binary_math_codegen_is_self_contained():
     assert "__fma(" in function
     for wrapper in ("hypotf", "rhypotf", "fdimf", "remainderf", "powf"):
         assert f"{wrapper}(" not in function
+
+
+# ---------------------------------------------------------------------------
+# UT: scalar op type deduction and Sanitizer Pass, without NPU execution.
+# ---------------------------------------------------------------------------
+
+
+def _sanitizer_log_args(detection=9):
+    span = ir.Span("sanitizer_record.py", 42, 1)
+    _, fields = ir.sanitizer_record_layouts()[detection]
+    zero = ir.ConstInt(0, pl.DT_INT64, span)
+    head = ir.ConstInt((RECORD_MAGIC << 16) | detection, pl.DT_INT64, span)
+    log = ir.Var("log", ir.PtrType(pl.DT_INT8), span)
+    capacity = ir.Var("capacity", ir.ScalarType(pl.DT_UINT32), span)
+    line = ir.ConstInt(42, pl.DT_INT64, span)
+    return [head, *([zero] * (len(fields) - 1)), log, capacity, line], span
+
+
+@pytest.mark.parametrize("detection", range(1, 10))
+def test_sanitizer_log_public_construction_has_no_result(detection):
+    args, span = _sanitizer_log_args(detection)
+    call = ir.create_op_call("block.sanitizer_log", args, {}, span)
+    assert call.name == "block.sanitizer_log"
+    assert isinstance(call.type, ir.NoneType)
+
+
+@pytest.mark.parametrize("invalid", [
+    "short", "field_count", "dynamic_head", "negative_head", "bad_magic", "unknown_detection",
+    "log_type", "field_type", "capacity_type", "line_type",
+])
+def test_sanitizer_log_public_construction_rejects_invalid_record(invalid):
+    args, span = _sanitizer_log_args()
+    if invalid == "short":
+        args = args[:3]
+    elif invalid == "field_count":
+        del args[1]
+    elif invalid == "dynamic_head":
+        args[0] = ir.Var("head", ir.ScalarType(pl.DT_INT64), span)
+    elif invalid == "negative_head":
+        args[0] = ir.ConstInt(-1, pl.DT_INT64, span)
+    elif invalid == "bad_magic":
+        args[0] = ir.ConstInt(9, pl.DT_INT64, span)
+    elif invalid == "unknown_detection":
+        args[0] = ir.ConstInt((RECORD_MAGIC << 16) | 0xffff, pl.DT_INT64, span)
+    elif invalid == "log_type":
+        args[-3] = ir.ConstInt(0, pl.DT_INT64, span)
+    else:
+        index = {"field_type": 1, "capacity_type": -2, "line_type": -1}[invalid]
+        args[index] = ir.Var("floating", ir.ScalarType(pl.DT_FP32), span)
+    with pytest.raises(RuntimeError, match="block.sanitizer_log"):
+        ir.create_op_call("block.sanitizer_log", args, {}, span)
+
+
+def _instrument_scalar_access(call, params):
+    span = call.span
+    access = ir.AssignStmt([], call, span)
+    function = ir.Function("access", params, [], access, span, ir.FunctionType.SimtVF)
+    entry = ir.Function("entry", [], [], ir.ReturnStmt([], span), span, ir.FunctionType.Opaque, True)
+    program = ir.Program([entry, function], "scalar_axes", span)
+    return ir.Pass.sanitizer()(program).get_function("access"), access
+
+
+@pytest.mark.parametrize("op_name", ["block.getval", "block.setval", "simt.atomic_add"])
+@pytest.mark.parametrize("invalid_index", ["empty", "short", "long", "float", "bool"])
+def test_sanitizer_scalar_coordinate_validation(op_name, invalid_index):
+    span = ir.Span("scalar_axes.py", 42, 1)
+    data = ir.Var("data", ir.TensorType([2, 8], pl.DT_UINT32), span)
+    value = ir.Var("value", ir.ScalarType(pl.DT_UINT32), span)
+    zero = ir.ConstInt(0, pl.DT_INT64, span)
+    invalid = {
+        "empty": [], "short": [zero], "long": [zero, zero, zero],
+        "float": [ir.Var("floating", ir.ScalarType(pl.DT_FP32), span), value],
+        "bool": [value, ir.Var("boolean", ir.ScalarType(pl.DT_BOOL), span)],
+    }
+    args = [data, ir.MakeTuple(invalid[invalid_index], span)]
+    if op_name != "block.getval":
+        args.append(value)
+    # PRO_IR_CHECK raises tile_fwk::Error, translated to RuntimeError by the binding.
+    with pytest.raises(RuntimeError):
+        ir.create_op_call(op_name, args, {}, span)
+    args[1] = ir.MakeTuple([zero, zero], span)
+    assert isinstance(ir.create_op_call(op_name, args, {}, span), ir.Call)
+
+
+@pytest.mark.parametrize("tile", [False, True], ids=["gm", "tile"])
+@pytest.mark.parametrize("op_name", [
+    "block.getval", "block.setval", "simt.atomic_add", "simt.atomic_sub", "simt.atomic_exch",
+    "simt.atomic_max", "simt.atomic_min", "simt.atomic_inc", "simt.atomic_dec", "simt.atomic_cas",
+    "simt.atomic_and", "simt.atomic_or", "simt.atomic_xor",
+])
+def test_sanitizer_scalar_accesses_record_runtime_bounds(op_name, tile):
+    from pypto.pypto_impl.ir import SANITIZER_RECORD_MAGIC
+
+    span = ir.Span("scalar_axes.py", 42, 1)
+    container_type = ir.TileType([2, 8], pl.DT_UINT32) if tile else ir.TensorType([2, 8], pl.DT_UINT32)
+    data = ir.Var("data", container_type, span)
+    row = ir.Var("row", ir.ScalarType(pl.DT_INT64), span)
+    col = ir.Var("col", ir.ScalarType(pl.DT_UINT64), span)
+    coordinates = ir.MakeTuple([row, col], span)
+    value = ir.ConstInt(1, pl.DT_UINT32, span)
+    args = [data, coordinates]
+    if op_name != "block.getval":
+        args.append(value)
+    if op_name == "simt.atomic_cas":
+        args.append(value)
+    call = ir.create_op_call(op_name, args, {}, span)
+    function, access = _instrument_scalar_access(call, [data, row, col])
+    statements = list(function.body.stmts)
+    assert len(statements) == 3
+    assert statements[-1].same_as(access)
+    for axis, statement in enumerate(statements[:-1]):
+        record = statement.value
+        assert record.name == "block.sanitizer_log"
+        assert record.args[0].value == (SANITIZER_RECORD_MAGIC << 16) | 9
+        assert record.args[1].value == int(tile)
+        assert record.args[2].value == axis
+        assert record.args[3].value == int(axis == 1)
+        assert record.args[4].left.operand.same_as(coordinates.elements[axis])
+        bound = record.args[6].left.operand
+        if tile:
+            assert isinstance(bound, ir.Call)
+            assert bound.name == "block.tile_valid_shape"
+            assert bound.args[0].same_as(data)
+            assert bound.kwargs["axis"] == axis
+        else:
+            assert bound.same_as(container_type.shape[axis])
+        assert record.args[-1].value == span.begin_line
+
+
+def test_sanitizer_scalar_coordinates_have_no_five_dimension_limit():
+    span = ir.Span("six_axes.py", 42, 1)
+    data = ir.Var("data", ir.TensorType([1, 1, 1, 1, 1, 8], pl.DT_INT32), span)
+    index = ir.Var("index", ir.ScalarType(pl.DT_INT64), span)
+    coordinates = ir.MakeTuple([ir.ConstInt(0, pl.DT_INT64, span)] * 5 + [index], span)
+    call = ir.create_op_call("block.getval", [data, coordinates], {}, span)
+    function, access = _instrument_scalar_access(call, [data, index])
+    statements = list(function.body.stmts)
+    assert len(statements) == 7
+    assert statements[-1].same_as(access)
+    assert [statement.value.args[2].value for statement in statements[:-1]] == list(range(6))
+
+
+# ---------------------------------------------------------------------------
+# UT: 64-bit wire/replay, compensated coordinates, zero bounds and per-axis hits.
+# ---------------------------------------------------------------------------
+
+def _axis(index, bound, *, axis=0, tile=False, unsigned=False, line=42):
+    mask = (1 << 32) - 1
+    return ScalarAxisRecord(
+        is_tile=int(tile), axis=axis, is_unsigned=int(unsigned),
+        index_lo=index & mask, index_hi=(index >> 32) & mask,
+        bound_lo=bound & mask, bound_hi=(bound >> 32) & mask, line=line,
+    )
+
+
+@pytest.mark.parametrize("tile", (False, True))
+@pytest.mark.parametrize(
+    "index,bound,unsigned,invalid",
+    [(0, 4, False, False), (3, 4, False, False), (4, 4, False, True),
+     (-1, 4, False, True), (0, 0, False, True), (0, -1, False, True),
+     ((1 << 32) + 3, 4, False, True), (-(1 << 40), 4, False, True),
+     ((1 << 40) - 1, 1 << 40, False, False),
+     ((1 << 64) - 1, 4, True, True)],
+)
+def test_scalar_axis_bounds_preserve_width_and_zero_bounds(tile, index, bound, unsigned, invalid):
+    findings = run_replay([_axis(index, bound, tile=tile, unsigned=unsigned)], ReplayContext("kernel.py"))
+    assert len(findings) == int(invalid)
+    if invalid:
+        finding = findings[0]
+        assert finding.kind == ("TILE_OUT_OF_BOUNDS" if tile else "GM_OUT_OF_BOUNDS")
+        assert finding.location == "kernel.py:42"
+        assert str(index) in finding.message
+        assert ("runtime valid_shape" if tile else "logical shape") in finding.message
+
+
+@pytest.mark.parametrize("row,col,bad_axis", [(1, 5, 1), (1, -1, 1), (-1, 5, 0)])
+def test_compensated_coordinates_are_checked_before_flattening(row, col, bad_axis):
+    # Flattening alone would accept every example, including the negative indices.
+    assert 0 <= row * 4 + col < 16
+    records = [_axis(row, 4, axis=0), _axis(col, 4, axis=1)]
+    findings = run_replay(records, ReplayContext("kernel.py"))
+    expected_axes = [axis for axis, value in enumerate((row, col)) if not 0 <= value < 4]
+    assert len(findings) == len(expected_axes)
+    assert any(f"dim{bad_axis}" in finding.hint for finding in findings)
+
+
+def test_scalar_axis_wire_roundtrip_and_axis_specific_hits():
+    records = [_axis(-1, 4, axis=0), _axis(5, 4, axis=1), _axis(6, 4, axis=1)]
+    payload = b"".join(ScalarAxisRecord.STRUCT.pack((RECORD_MAGIC << 16) | 9, *rec[:-1]) for rec in records)
+    decoded = decode_regions([struct.pack("<I", len(payload) // 4) + payload])
+    assert decoded == records
+    findings = run_replay(decoded, ReplayContext("kernel.py"))
+    assert len(findings) == 2
+    assert [finding.hits for finding in findings] == [1, 2]
+
+
+def test_tile_valid_shape_reports_effective_region_instead_of_allocation():
+    # Declared [2,8], valid [1,4]: index [0,6] is physically inside the Tile.
+    assert 0 <= 0 * 8 + 6 < 2 * 8
+    findings = run_replay([_axis(0, 1, tile=True), _axis(6, 4, axis=1, tile=True)], ReplayContext("kernel.py"))
+    assert len(findings) == 1
+    assert "dim1" in findings[0].message
+    assert "runtime valid_shape" in findings[0].message
+
+
+# Host: simt.launch retains the existing static Tensor shape contract.
+@pytest.mark.parametrize("sanitizer", [False, True])
+def test_simt_launch_rejects_dynamic_tensor_shape(sanitizer):
+    @pl.vector_function(mode="simt", max_threads=1)
+    def dynamic_access(data):
+        pl.simt.atomic_add(data, [0, 0, 0], 1)
+
+    @pl.jit(sanitizer=sanitizer)
+    def kernel(data: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC, pl.DYNAMIC], pl.DT_INT32]):
+        with pl.section_vector():
+            dynamic_access[1](data)
+
+    with pytest.raises(DynamicShapeUnsupported, match="must have a static shape"):
+        _compile_to_cce(kernel, sanitizer=sanitizer)
