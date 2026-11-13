@@ -36,6 +36,7 @@ constexpr uint32_t PAD_STRIDE_H = 0;
 constexpr uint32_t PAD_STRIDE_W = 1;
 constexpr uint32_t PAD_STRIDE_D = 2;
 constexpr int64_t MKN_N_VAL = 16;
+constexpr int64_t FZ_MERGE_LAST_AXES_LIMIT = 169;
 
 inline size_t GetUbLimit()
 {
@@ -59,6 +60,36 @@ inline void GrowDim(std::vector<int64_t>& tile, size_t dimIdx, int64_t step, int
         std::vector<int64_t> tmp = tile;
         tmp[dimIdx] += step;
         if (VecTileBytes(tmp, dtypeSize) > static_cast<int64_t>(ubLimit)) {
+            break;
+        }
+        tile = tmp;
+    }
+}
+
+inline int64_t Fz3dWeightTransdataBytes(const std::vector<int64_t>& tile, int64_t dtypeSize)
+{
+    int64_t c0 = ALIGN_SIZE_32 / dtypeSize;
+    int64_t n = tile[0];
+    int64_t c = tile[1];
+    int64_t d = tile[NCDHW_D_IDX];
+    int64_t h = tile[NCDHW_H_IDX];
+    int64_t w = tile[NCDHW_W_IDX];
+    int64_t c1 = (c + c0 - 1) / c0;
+    int64_t wPad = (w + c0 - 1) / c0 * c0;
+    int64_t inputElems = n * c1 * c0 * d * h * w;
+    int64_t tmp1 = n * c1 * c0 * h * wPad;
+    int64_t yTileSizeElem = (dtypeSize == 1) ? NUM_VALUE_32 : NUM_VALUE_16;
+    int64_t tmp2 = h * wPad * ((c0 + yTileSizeElem - 1) / yTileSizeElem * yTileSizeElem);
+    return (NUM_VALUE_2 * inputElems + tmp1 + std::max(tmp1, tmp2)) * dtypeSize;
+}
+
+inline void GrowDimByTransdataBytes(std::vector<int64_t>& tile, size_t dimIdx, int64_t step, int64_t maxVal,
+                                    int64_t dtypeSize, int64_t ubSize)
+{
+    while (tile[dimIdx] + step <= maxVal) {
+        std::vector<int64_t> tmp = tile;
+        tmp[dimIdx] += step;
+        if (Fz3dWeightTransdataBytes(tmp, dtypeSize) > ubSize) {
             break;
         }
         tile = tmp;
@@ -139,9 +170,7 @@ VecTile InferFmapVecTile(const ConvInferContext& ctx, int64_t dtypeSize, size_t 
     return vecTile;
 }
 
-// A5 keeps the pre-Fz weight tile: the last dim stays on the C0 block, which is what the A5 transdata
-// vec-tile split expects.
-VecTile InferWeightVecTileForA5(const ConvInferContext& ctx, int64_t dtypeSize, size_t ubLimit)
+VecTile InferWeightVecTileLegacy(const ConvInferContext& ctx, int64_t dtypeSize, size_t ubLimit)
 {
     int64_t c0 = ALIGN_SIZE_32 / dtypeSize;
     int64_t n0 = MKN_N_VAL;
@@ -165,11 +194,10 @@ VecTile InferWeightVecTileForA5(const ConvInferContext& ctx, int64_t dtypeSize, 
     return vecTile;
 }
 
-// A2/A3 follow the kernel extent (kd/kh/kw) of the weight and grow the C dim instead.
 VecTile InferWeightVecTile(const ConvInferContext& ctx, int64_t dtypeSize, size_t ubLimit)
 {
     if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) {
-        return InferWeightVecTileForA5(ctx, dtypeSize, ubLimit);
+        return InferWeightVecTileLegacy(ctx, dtypeSize, ubLimit);
     }
 
     int64_t c0 = ALIGN_SIZE_32 / dtypeSize;
@@ -183,13 +211,19 @@ VecTile InferWeightVecTile(const ConvInferContext& ctx, int64_t dtypeSize, size_
     int64_t coutPerGroup = ctx.oriWeightShape[0] / ctx.groups;
     int64_t nMax = std::min(coutPerGroup, ctx.tileL1Info.tileN);
 
+    int64_t lastAxesExtent = isConv3D ? kd * kh * kw : kh * kw;
+    if (lastAxesExtent > FZ_MERGE_LAST_AXES_LIMIT) {
+        return InferWeightVecTileLegacy(ctx, dtypeSize, ubLimit);
+    }
+
     int64_t coutMax = ctx.oriWeightShape[1];
 
     VecTile vecTile;
     if (isConv3D) {
+        int64_t ubSize = static_cast<int64_t>(Platform::Instance().GetAIVCore().GetMemorySize(MemoryType::MEM_UB));
         vecTile.tile = {n0, c0, kd, kh, kw};
-        GrowDim(vecTile.tile, 1, c0, coutMax, dtypeSize, ubLimit);
-        GrowDim(vecTile.tile, 0, n0, nMax, dtypeSize, ubLimit);
+        GrowDimByTransdataBytes(vecTile.tile, 1, c0, coutMax, dtypeSize, ubSize);
+        GrowDimByTransdataBytes(vecTile.tile, 0, n0, nMax, dtypeSize, ubSize);
     } else {
         vecTile.tile = {n0, c0, kh, kw};
         GrowDim(vecTile.tile, 1, c0, coutMax, dtypeSize, ubLimit);
