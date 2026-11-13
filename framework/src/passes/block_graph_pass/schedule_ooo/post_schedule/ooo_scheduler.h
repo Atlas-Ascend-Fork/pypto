@@ -128,7 +128,7 @@ private:
     Status QueryAllocPlacement(Operation* op, bool& hasMatchedOffset, uint64_t& matchedOffset,
                                std::vector<std::pair<uint64_t, uint64_t>>& avoidRanges);
 
-    void AllocWorkspaceGM(const std::vector<Operation*>& opList);
+    Status AllocWorkspaceGM(const std::vector<Operation*>& opList);
     void UpdateDualDstL0MXRange();
     Status FinalizeScheduleResult(const std::vector<Operation*>& opList);
     Status SeqSchedule();

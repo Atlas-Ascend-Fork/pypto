@@ -1396,7 +1396,10 @@ Status OoOScheduler::Schedule(const std::vector<Operation*>& opList,
         APASS_LOG_ERROR_F(Elements::Operation, "Init failed!");
         return FAILED;
     }
-    AllocWorkspaceGM(opList);
+    if (AllocWorkspaceGM(opList) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Tensor, "AllocWorkspaceGM failed!");
+        return FAILED;
+    }
     UpdateIssueExecOrder();
     if (dualDstEngine_.RunDualDstFuse(state_.orderedOps) != SUCCESS) {
         APASS_LOG_ERROR_F(Elements::Operation, "RunDualDstFuse failed!");
@@ -1421,7 +1424,7 @@ Status OoOScheduler::Schedule(const std::vector<Operation*>& opList,
     return SUCCESS;
 }
 
-void OoOScheduler::AllocWorkspaceGM(const std::vector<Operation*>& opList)
+Status OoOScheduler::AllocWorkspaceGM(const std::vector<Operation*>& opList)
 {
     std::set<int> allocedRawmagic;
     for (auto& inCast : function_.GetIncast()) {
@@ -1433,43 +1436,36 @@ void OoOScheduler::AllocWorkspaceGM(const std::vector<Operation*>& opList)
     std::map<int, TileRange> rawMagicRange;
     std::map<int, int64_t> rawMagicOffset;
     for (auto& op : opList) {
-        for (auto& iOperand : op->GetIOperands()) {
-            if (allocedRawmagic.count(iOperand->tensor->GetRawMagic()) &&
-                rawMagicRange.count(iOperand->tensor->GetRawMagic())) {
-                iOperand->memoryrange = rawMagicRange[iOperand->tensor->GetRawMagic()];
-                iOperand->SetAttr(OpAttributeKey::workspaceBaseOffset, rawMagicOffset[iOperand->tensor->GetRawMagic()]);
-            } else if (iOperand->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR &&
-                       !allocedRawmagic.count(iOperand->tensor->GetRawMagic())) {
-                allocedRawmagic.insert(iOperand->tensor->GetRawMagic());
-                iOperand->SetAttr(OpAttributeKey::workspaceBaseOffset, state_.workspaceOffset);
-                iOperand->memoryrange = TileRange(state_.workspaceOffset,
-                                                  state_.workspaceOffset + iOperand->tensor->GetRawDataSize(),
-                                                  iOperand->tensor->GetRawMagic());
-                rawMagicOffset[iOperand->tensor->GetRawMagic()] = state_.workspaceOffset;
-                state_.workspaceOffset += iOperand->tensor->GetRawDataSize();
-                rawMagicRange[iOperand->tensor->GetRawMagic()] = iOperand->memoryrange;
-                ddrKindMap_[iOperand->memoryrange.memId] = DDRBufferKind::FUNCTION_TEMP;
-            }
-        }
-        for (auto& oOperand : op->GetOOperands()) {
-            if (allocedRawmagic.count(oOperand->tensor->GetRawMagic()) &&
-                rawMagicRange.count(oOperand->tensor->GetRawMagic())) {
-                oOperand->memoryrange = rawMagicRange[oOperand->tensor->GetRawMagic()];
-                oOperand->SetAttr(OpAttributeKey::workspaceBaseOffset, rawMagicOffset[oOperand->tensor->GetRawMagic()]);
-            } else if (oOperand->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR &&
-                       !allocedRawmagic.count(oOperand->tensor->GetRawMagic())) {
-                allocedRawmagic.insert(oOperand->tensor->GetRawMagic());
-                oOperand->SetAttr(OpAttributeKey::workspaceBaseOffset, state_.workspaceOffset);
-                oOperand->memoryrange = TileRange(state_.workspaceOffset,
-                                                  state_.workspaceOffset + oOperand->tensor->GetRawDataSize(),
-                                                  oOperand->tensor->GetRawMagic());
-                rawMagicOffset[oOperand->tensor->GetRawMagic()] = state_.workspaceOffset;
-                state_.workspaceOffset += oOperand->tensor->GetRawDataSize();
-                rawMagicRange[oOperand->tensor->GetRawMagic()] = oOperand->memoryrange;
-                ddrKindMap_[oOperand->memoryrange.memId] = DDRBufferKind::FUNCTION_TEMP;
+        for (auto* operands : {&op->GetIOperands(), &op->GetOOperands()}) {
+            for (auto& operand : *operands) {
+                if (allocedRawmagic.count(operand->tensor->GetRawMagic()) &&
+                    rawMagicRange.count(operand->tensor->GetRawMagic())) {
+                    operand->memoryrange = rawMagicRange[operand->tensor->GetRawMagic()];
+                    operand->SetAttr(OpAttributeKey::workspaceBaseOffset,
+                                     rawMagicOffset[operand->tensor->GetRawMagic()]);
+                } else if (operand->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR &&
+                           !allocedRawmagic.count(operand->tensor->GetRawMagic())) {
+                    if (HasNegativeNum<int64_t>(operand->tensor->GetRawShape())) {
+                        APASS_LOG_ERROR_F(Elements::Tensor,
+                                          "Dynamic axis detected in %s, "
+                                          "OoOSchedule requires static rawShape for GM workspace allocation!",
+                                          operand->tensor->Dump().c_str());
+                        return FAILED;
+                    }
+                    allocedRawmagic.insert(operand->tensor->GetRawMagic());
+                    operand->SetAttr(OpAttributeKey::workspaceBaseOffset, state_.workspaceOffset);
+                    operand->memoryrange = TileRange(state_.workspaceOffset,
+                                                     state_.workspaceOffset + operand->tensor->GetRawDataSize(),
+                                                     operand->tensor->GetRawMagic());
+                    rawMagicOffset[operand->tensor->GetRawMagic()] = state_.workspaceOffset;
+                    state_.workspaceOffset += operand->tensor->GetRawDataSize();
+                    rawMagicRange[operand->tensor->GetRawMagic()] = operand->memoryrange;
+                    ddrKindMap_[operand->memoryrange.memId] = DDRBufferKind::FUNCTION_TEMP;
+                }
             }
         }
     }
+    return SUCCESS;
 }
 
 bool OoOScheduler::HasEnoughBuffer(Operation* allocOp, MemoryType memType)

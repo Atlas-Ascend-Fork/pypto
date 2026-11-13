@@ -2079,6 +2079,30 @@ TEST_F(ScheduleOoOTest, TestInitLocalBufferFailed)
     OoOScheduler ooOScheduler(*function);
     Status res = ooOScheduler.Init(function->Operations().DuplicatedOpList());
     EXPECT_EQ(res, SUCCESS);
+    auto opList = function->Operations().DuplicatedOpList();
+    EXPECT_EQ(ooOScheduler.AllocWorkspaceGM(opList), SUCCESS);
+
+    // Static tiles may alias dynamic raw GM tensors in either operand path.
+    for (const auto& tensorName : {"t1", "t7"}) {
+        SCOPED_TRACE(tensorName);
+        auto tensor = subGraph.GetTensor(tensorName);
+        tensor->tensor->UpdateRawShape({62, -1});
+        OoOScheduler allocationChecker(*function);
+        EXPECT_EQ(allocationChecker.AllocWorkspaceGM(opList), FAILED);
+        OoOScheduler dynamicScheduler(*function);
+        EXPECT_EQ(dynamicScheduler.Schedule(opList), FAILED);
+        tensor->tensor->UpdateRawShape({62, 69});
+    }
+
+    // Function inputs/outputs already have storage and need no workspace allocation.
+    auto input = subGraph.GetTensor("t1");
+    auto output = subGraph.GetTensor("t7");
+    input->tensor->UpdateRawShape({62, -1});
+    output->tensor->UpdateRawShape({62, -1});
+    function->AppendIncast(input, subGraph.GetOp("Copyin1")->GetOpMagic(), 0);
+    function->AppendOutcast(output, subGraph.GetOp("Copyout1")->GetOpMagic(), 0);
+    OoOScheduler externalScheduler(*function);
+    EXPECT_EQ(externalScheduler.AllocWorkspaceGM(opList), SUCCESS);
 }
 
 TEST_F(ScheduleOoOTest, TestCheckAllocBufferSize)
