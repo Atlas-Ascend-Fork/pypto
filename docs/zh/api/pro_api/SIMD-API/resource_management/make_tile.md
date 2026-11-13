@@ -46,6 +46,8 @@ pypto_pro.language.make_tile(
 
 多个Tile的地址范围不得发生非预期重叠；需要有意复用同一块Buffer时，调用方必须自行保证访存时序正确。
 
+UB空间的物理大小为256KB。纯SIMD Kernel下，Tile地址区间须在0~248KB内，高地址端8KB为内部保留区，不得占用；含SIMT的混合Kernel还受静态与动态共享空间合计不超过216KB的用户UB额度限制。
+
 ## 返回值说明
 
 返回绑定到指定片上地址的Tile。
