@@ -651,11 +651,16 @@ void ExpandFunction::RefreshViewAssembleTileShapes(const std::vector<OperationPt
             continue;
         }
 
+        if ((!refreshedTileShape.has_value() || !refreshedTileShape->GetVecTile().valid()) &&
+            op.GetTileShape().GetVecTile().valid()) {
+            refreshedTileShape = op.GetTileShape();
+        }
+
         TileShape tileShape;
         if (refreshedTileShape.has_value() && refreshedTileShape->GetVecTile().valid()) {
             tileShape = *refreshedTileShape;
         } else {
-            // 未找到可继承的计算 op tile，或结果无效：用自身 shape，避免回退 Current() 被污染。
+            // 计算 op 和当前 op 都没有有效 tile 时，使用自身 shape，避免回退到可能已变化的 Current()。
             tileShape.GetVecTile().tile = *ownShape;
         }
         op.GetTileShapeForSetting() = tileShape;

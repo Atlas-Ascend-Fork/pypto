@@ -155,6 +155,7 @@ def ctrl_perf_kernel(
                 qi = pypto.view(q_2d, [_G_TILE, _D], [b_idx * n1 + n1g_ofs, 0])
                 kj_assemble = pypto.tensor([_S2_TILE, _D], pypto.DT_FP16, "kj_assemble")
                 vj_assemble = pypto.tensor([_S2_TILE, _D], pypto.DT_FP16, "vj_assemble")
+                pypto.set_vec_tile_shapes(_BLOCK, _D)
                 for i in range(_BLOCK_NUM):
                     block_idx = block_table[b_idx, idx + i].max(0)
                     kj_assemble[i * _BLOCK:(i + 1) * _BLOCK, 0:] = pypto.view(
@@ -163,6 +164,7 @@ def ctrl_perf_kernel(
                     vj_assemble[i * _BLOCK:(i + 1) * _BLOCK, 0:] = pypto.view(
                         v_cache_2d, [_BLOCK, _D], [block_idx * _BLOCK, 0]
                     )
+                pypto.set_vec_tile_shapes(_G_TILE, _D)
                 kj_assemble = pypto.view(kj_assemble, [_S2_TILE, _D], [0, 0],
                                          valid_shape=[actual_s2, _D])
                 vj_assemble = pypto.view(vj_assemble, [_S2_TILE, _D], [0, 0],

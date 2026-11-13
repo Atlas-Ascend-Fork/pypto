@@ -279,6 +279,46 @@ TEST_F(TestExpandFunction, AssembleDerivesVecTileFromCubeMatmulProducer)
     EXPECT_EQ(CountSliceOpsOnInputWithShape(*func, matmulOut, {kCubeM, kCubeM}), 0);
 }
 
+// 没有计算 op 可继承时，保留 VIEW/ASSEMBLE 自己的 vec tile，而不是 Current()。
+TEST_F(TestExpandFunction, ViewAssembleKeepOwnVecTileWithoutComputeOp)
+{
+    constexpr int64_t kRows = 64;
+    constexpr int64_t kCols = 128;
+    const std::vector<int64_t> shape = {kRows, kCols};
+    const std::vector<int64_t> offset0 = {0, 0};
+
+    TileShape::Current().SetVecTile(16, 16);
+
+    auto viewFunc = std::make_shared<Function>(Program::GetInstance(), "ViewOwnTile", "ViewOwnTile", nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("ViewOwnTile", viewFunc);
+    viewFunc->SetGraphType(GraphType::TENSOR_GRAPH);
+    auto viewInput = IRBuilder().CreateTensorVar(DT_FP32, shape, SymbolicScalar::FromConcrete(shape));
+    auto viewOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, SymbolicScalar::FromConcrete(shape));
+    auto& view = IRBuilder().CreateTensorOpStmt(*viewFunc, Opcode::OP_VIEW, {viewInput}, {viewOutput});
+    SetViewOpAttribute(view, offset0, shape);
+    view.GetTileShapeForSetting().SetVecTile(32, 64);
+
+    auto assembleFunc = std::make_shared<Function>(Program::GetInstance(), "AssembleOwnTile", "AssembleOwnTile",
+                                                   nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("AssembleOwnTile", assembleFunc);
+    assembleFunc->SetGraphType(GraphType::TENSOR_GRAPH);
+    auto assembleInput = IRBuilder().CreateTensorVar(DT_FP32, shape, SymbolicScalar::FromConcrete(shape));
+    auto assembleOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, SymbolicScalar::FromConcrete(shape));
+    auto& assemble = IRBuilder().CreateTensorOpStmt(*assembleFunc, Opcode::OP_ASSEMBLE, {assembleInput},
+                                                    {assembleOutput});
+    assemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(offset0));
+    assemble.GetTileShapeForSetting().SetVecTile(64, 64);
+
+    TileShape::Current().SetVecTile(16, 16);
+
+    ExpandFunction expandFunction;
+    ASSERT_EQ(expandFunction.RunOnFunction(*viewFunc), SUCCESS);
+    ASSERT_EQ(expandFunction.RunOnFunction(*assembleFunc), SUCCESS);
+
+    EXPECT_EQ(CountSliceOpsOnInputWithShape(*viewFunc, viewInput, {32, 64}), 4);
+    EXPECT_EQ(CountSliceOpsOnInputWithShape(*assembleFunc, assembleInput, {64, 64}), 2);
+}
+
 TEST_F(TestExpandFunction, ExpandedOperationsPreserveTokenContract)
 {
     std::vector<int64_t> shape{64, 64};
@@ -464,6 +504,6 @@ TEST_F(TestExpandFunction, AssembleWaitsForInplaceIndexAddCompletion)
             EXPECT_EQ(producer->GetOpcode(), Opcode::OP_INDEX_ADD);
         }
     }
-    EXPECT_EQ(waitingContractCount, 1UL);
+    EXPECT_EQ(waitingContractCount, 2UL);
 }
 } // namespace npu::tile_fwk
