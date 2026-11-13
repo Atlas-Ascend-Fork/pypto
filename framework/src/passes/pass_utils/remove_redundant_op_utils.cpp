@@ -1029,6 +1029,45 @@ void TransferL1CopyAttrs(const Operation& l1Slice, Operation& precedingSlice)
     }
 }
 
+bool TryFoldMultiContractSingleSlice(Operation& sliceOp)
+{
+    auto producers = sliceOp.GetIOperands().front()->GetProducers();
+    for (auto* producer : producers) {
+        if (producer == nullptr || producer->GetOpcode() != Opcode::OP_CONTRACT ||
+            producer->GetIOperands().size() != 1 || GetAssembleAttr(*producer) == nullptr ||
+            !IsTensorOffset32BAligned(producer->GetIOperands().front())) {
+            return false;
+        }
+        // SplitLargeFanoutTensor may materialize a matmul result as contract-slice before this fan-in.
+        // Folding the outer chain would transfer its copy-out requirement across that L0C boundary.
+        if (IsMatmulBackedContractInput(producer->GetIOperands().front())) {
+            return false;
+        }
+    }
+    std::set<Operation*> precedingSlices;
+    if (!CollectPrecedingSlicesForL1Transfer(sliceOp, producers, precedingSlices)) {
+        return false;
+    }
+    TransferL1Requirement(precedingSlices);
+    auto sliceOutput = sliceOp.GetOOperands().front();
+    for (auto* producer : producers) {
+        if (SliceRequiresL1(sliceOp)) {
+            auto contractInput = producer->GetIOperands().front();
+            if (contractInput != nullptr && contractInput->GetProducers().size() == 1) {
+                TransferL1CopyAttrs(sliceOp, **contractInput->GetProducers().begin());
+            }
+            auto contractAttr = GetAssembleAttr(*producer);
+            auto newAttr = std::dynamic_pointer_cast<AssembleOpAttribute>(contractAttr->Clone());
+            newAttr->SetFromType(MemoryType::MEM_L1);
+            producer->SetOpAttribute(newAttr);
+        }
+        producer->SetOpCode(Opcode::OP_ASSEMBLE);
+        producer->ReplaceOOperand(0, sliceOutput);
+    }
+    sliceOp.SetAsDeleted();
+    return true;
+}
+
 bool IsContractInputEqualSliceOutput(const Operation& contractOp, const Operation& sliceOp)
 {
     if (contractOp.GetOpcode() != Opcode::OP_CONTRACT || contractOp.GetIOperands().empty() ||
@@ -2421,13 +2460,15 @@ Status RemoveRedundantOpUtils::ProcessMultiContractSingleSlice(Function& functio
             continue;
         }
         auto sliceInput = op->GetIOperands().front();
-        auto sliceOutput = op->GetOOperands().front();
+        // Keep writes to output storage, including other logical versions of the same raw tensor.
+        if (function.IsFromOutCast(sliceInput)) {
+            continue;
+        }
         auto sliceInputConsumers = sliceInput->GetConsumers();
         if (sliceInputConsumers.size() != 1 || *sliceInputConsumers.begin() != op) {
             continue;
         }
-        auto producers = sliceInput->GetProducers();
-        if (producers.size() <= 1) {
+        if (sliceInput->GetProducers().size() <= 1) {
             continue;
         }
         if (SliceRequiresL1(*op)) {
@@ -2440,45 +2481,9 @@ Status RemoveRedundantOpUtils::ProcessMultiContractSingleSlice(Function& functio
             HasAnyToken(*op)) {
             continue;
         }
-        bool canProcess = true;
-        std::set<Operation*> precedingSlices;
-        for (auto* producer : producers) {
-            if (producer == nullptr || producer->GetOpcode() != Opcode::OP_CONTRACT ||
-                producer->GetIOperands().size() != 1 || GetAssembleAttr(*producer) == nullptr ||
-                !IsTensorOffset32BAligned(producer->GetIOperands().front())) {
-                canProcess = false;
-                break;
-            }
-            // SplitLargeFanoutTensor may materialize a matmul result as contract-slice before this fan-in.
-            // Folding the outer chain would transfer its copy-out requirement across that L0C boundary.
-            if (IsMatmulBackedContractInput(producer->GetIOperands().front())) {
-                canProcess = false;
-                break;
-            }
+        if (TryFoldMultiContractSingleSlice(*op)) {
+            operationUpdated = true;
         }
-        if (canProcess) {
-            canProcess = CollectPrecedingSlicesForL1Transfer(*op, producers, precedingSlices);
-        }
-        if (!canProcess) {
-            continue;
-        }
-        TransferL1Requirement(precedingSlices);
-        for (auto* producer : producers) {
-            if (SliceRequiresL1(*op)) {
-                auto contractInput = producer->GetIOperands().front();
-                if (contractInput != nullptr && contractInput->GetProducers().size() == 1) {
-                    TransferL1CopyAttrs(*op, **contractInput->GetProducers().begin());
-                }
-                auto contractAttr = GetAssembleAttr(*producer);
-                auto newAttr = std::dynamic_pointer_cast<AssembleOpAttribute>(contractAttr->Clone());
-                newAttr->SetFromType(MemoryType::MEM_L1);
-                producer->SetOpAttribute(newAttr);
-            }
-            producer->SetOpCode(Opcode::OP_ASSEMBLE);
-            producer->ReplaceOOperand(0, sliceOutput);
-        }
-        op->SetAsDeleted();
-        operationUpdated = true;
     }
     return SUCCESS;
 }

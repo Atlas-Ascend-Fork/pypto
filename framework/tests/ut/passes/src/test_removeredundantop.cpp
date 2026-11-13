@@ -2115,6 +2115,57 @@ TEST_F(TestRemoveRedundantOpPass, MultiContractSingleSliceShouldBecomeAssemble)
     }
 }
 
+TEST_F(TestRemoveRedundantOpPass, MultiContractSingleSlicePreservesOutputWrite)
+{
+    for (bool splitRows : {false, true}) {
+        for (bool aliasOutcast : {false, true}) {
+            auto function = std::make_shared<Function>(Program::GetInstance(), "MultiContractOutcast",
+                                                       "MultiContractOutcast", nullptr);
+            const Shape fullShape{8, 32};
+            const Shape partShape = splitRows ? Shape{4, 32} : Shape{8, 16};
+            const Offset zeroOffset{0, 0};
+            const Offset secondOffset = splitRows ? Offset{4, 0} : Offset{0, 16};
+            auto fullValid = CreateTestConstIntVector(fullShape);
+            auto input0 = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+            auto input1 = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+            auto computed0 = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+            auto computed1 = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+            auto middle = IRBuilder().CreateTensorVar(DT_FP32, fullShape, fullValid);
+            auto sliced = IRBuilder().CreateTensorVar(DT_FP32, fullShape, fullValid);
+            auto result = IRBuilder().CreateTensorVar(DT_FP32, fullShape, fullValid);
+            auto outcast = aliasOutcast ?
+                               IRBuilder().CreateTensorVar(middle->GetRawTensor(), zeroOffset, fullShape, fullValid) :
+                               middle;
+            PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {input0}, {computed0});
+            PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {input1}, {computed1});
+            PassOperationUtils::AddOperation(
+                *function, Opcode::OP_CONTRACT, {computed0}, {middle},
+                [&zeroOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset)); });
+            auto& contract1 = PassOperationUtils::AddOperation(
+                *function, Opcode::OP_CONTRACT, {computed1}, {middle}, [&secondOffset](Operation& op) {
+                    op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(secondOffset));
+                });
+            PassOperationUtils::AddOperation(*function, Opcode::OP_SLICE, {middle}, {sliced},
+                                             [&zeroOffset, &fullValid](Operation& op) {
+                                                 op.SetOpAttribute(std::make_shared<ViewOpAttribute>(
+                                                     zeroOffset, SymbolicScalar::FromConcrete(zeroOffset), fullValid));
+                                             });
+            auto& consumer = PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {sliced}, {result});
+            function->inCasts_ = {input0, input1};
+            function->outCasts_ = {outcast, result};
+            std::vector<Operation*> newOps;
+            bool updated = false;
+            ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, updated), SUCCESS);
+            EXPECT_EQ(contract1.GetOOperands().front(), middle);
+            for (auto* producer : sliced->GetProducers()) {
+                EXPECT_EQ(producer->GetOpcode(), Opcode::OP_SLICE);
+                EXPECT_EQ(producer->GetIOperands().front(), middle);
+            }
+            EXPECT_EQ(consumer.GetInputOperand(kSizeZero), sliced);
+        }
+    }
+}
+
 TEST_F(TestRemoveRedundantOpPass, MultiContractSingleSliceWithMaterializedMatmulInputShouldNotFold)
 {
     auto function = std::make_shared<Function>(Program::GetInstance(), "TestMultiContractMatmulInput",
