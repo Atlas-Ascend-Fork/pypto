@@ -1094,28 +1094,56 @@ TEST_F(TorchAdaptorTest, QuantizeDequantizeRoundTrip)
 
 TEST_F(TorchAdaptorTest, QuantMXFp32)
 {
-    constexpr int64_t cols = 64;
-    std::vector<float> inputData(cols, 1.0f);
-    std::vector<uint8_t> quantData(cols, 0x78);
-    std::vector<uint8_t> expData = {119, 119};
-    std::vector<float> maxData = {1.0f, 1.0f};
-    std::vector<float> scalingData = {256.0f, 256.0f, 256.0f, 256.0f};
+    constexpr int64_t rows = 2;
+    constexpr int64_t groupSize = 32;
+    for (int64_t cols : {31, 32, 64}) {
+        SCOPED_TRACE(cols);
+        const int64_t groupsPerRow = (cols + groupSize - 1) / groupSize;
+        const int64_t groups = rows * groupsPerRow;
+        std::vector<float> inputData(rows * cols, 1.0f);
+        std::vector<uint8_t> quantData(rows * cols, 0x78);
+        std::vector<uint8_t> expData(groups, 119);
+        std::vector<float> maxData(groups, 1.0f);
+        std::vector<float> scalingData(2 * groups, 256.0f);
 
-    auto input = makeTensorData(DT_FP32, {1, cols}, inputData);
-    auto out = makeTensorData(DT_FP8E4M3, {1, cols}, static_cast<uint8_t>(0));
-    auto exp = makeTensorData(DT_FP8E8M0, {1, 2}, static_cast<uint8_t>(0));
-    auto max = makeTensorData(DT_FP32, {1, 2}, 0.0f);
-    auto scaling = makeTensorData(DT_FP32, {1, 4}, 0.0f);
-    auto quantGolden = makeTensorData(DT_FP8E4M3, {1, cols}, quantData);
-    auto expGolden = makeTensorData(DT_FP8E8M0, {1, 2}, expData);
-    auto maxGolden = makeTensorData(DT_FP32, {1, 2}, maxData);
-    auto scalingGolden = makeTensorData(DT_FP32, {1, 4}, scalingData);
+        auto input = makeTensorData(DT_FP32, {rows, cols}, inputData);
+        auto out = makeTensorData(DT_FP8E4M3, {rows, cols}, static_cast<uint8_t>(0));
+        auto exp = makeTensorData(DT_FP8E8M0, {rows, groupsPerRow}, static_cast<uint8_t>(0));
+        auto max = makeTensorData(DT_FP32, {groups}, 0.0f);
+        auto scaling = makeTensorData(DT_FP32, {2 * groups}, 0.0f);
+        auto quantGolden = makeTensorData(DT_FP8E4M3, {rows, cols}, quantData);
+        auto expGolden = makeTensorData(DT_FP8E8M0, {rows, groupsPerRow}, expData);
+        auto maxGolden = makeTensorData(DT_FP32, {groups}, maxData);
+        auto scalingGolden = makeTensorData(DT_FP32, {2 * groups}, scalingData);
 
-    calc::QuantMX(out, exp, max, scaling, input, false);
-    ASSERT_ALLCLOSE(out, quantGolden);
-    ASSERT_ALLCLOSE(exp, expGolden);
-    ASSERT_ALLCLOSE(max, maxGolden);
-    ASSERT_ALLCLOSE(scaling, scalingGolden);
+        calc::QuantMX(out, exp, max, scaling, input, false);
+        ASSERT_ALLCLOSE(out, quantGolden);
+        ASSERT_ALLCLOSE(exp, expGolden);
+        ASSERT_ALLCLOSE(max, maxGolden);
+        ASSERT_ALLCLOSE(scaling, scalingGolden);
+    }
+}
+
+TEST_F(TorchAdaptorTest, QuantMXEmptyTail)
+{
+    auto input = makeTensorData(DT_FP32, {2, 32}, 1.0f)->View({2, 0}, {0, 0});
+    auto out = makeTensorData(DT_FP8E4M3, {2, 32}, static_cast<uint8_t>(0x78));
+    auto exp = makeTensorData(DT_FP8E8M0, {2, 1}, static_cast<uint8_t>(119));
+    auto max = makeTensorData(DT_FP32, {2}, 1.0f);
+    auto scaling = makeTensorData(DT_FP32, {4}, 256.0f);
+    auto quantGolden = makeTensorData(DT_FP8E4M3, {2, 32}, static_cast<uint8_t>(0x78));
+    auto expGolden = makeTensorData(DT_FP8E8M0, {2, 1}, static_cast<uint8_t>(119));
+    auto maxGolden = makeTensorData(DT_FP32, {2}, 1.0f);
+    auto scalingGolden = makeTensorData(DT_FP32, {4}, 256.0f);
+
+    for (int64_t axis : {-1, 1}) {
+        SCOPED_TRACE(axis);
+        calc::QuantMX(out, exp, max, scaling, input, false, 1, axis);
+        ASSERT_ALLCLOSE(out, quantGolden);
+        ASSERT_ALLCLOSE(exp, expGolden);
+        ASSERT_ALLCLOSE(max, maxGolden);
+        ASSERT_ALLCLOSE(scaling, scalingGolden);
+    }
 }
 
 TEST_F(TorchAdaptorTest, QuantHiF4Bf16)

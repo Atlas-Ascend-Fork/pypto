@@ -3858,11 +3858,6 @@ static QuantMXShapes BuildQuantMXShapes(const torch::Tensor& input, DataType src
     shapes.cols = shapes.groupedShape.back();
     ASSERT(CalculatorErrorScene::QUANTMX_RANK_INVALID, shapes.cols != 0)
         << "QuantMX input last dimension must not be zero.";
-    if (!performanceMode) {
-        ASSERT(CalculatorErrorScene::QUANTMX_RANK_INVALID, shapes.cols % 0x40 == 0)
-            << "QuantMX non-performance mode requires input last dimension to be a multiple of 64. Current last dim: "
-            << shapes.cols;
-    }
     if (quantDtype == DT_FP4_E2M1) {
         shapes.quantShape.back() = LastDimPackedCount(shapes.cols, quantDtype);
     }
@@ -3909,7 +3904,7 @@ static void CopyQuantMXOutputs(const std::pair<torch::Tensor, torch::Tensor>& to
     tout.first.copy_(quantRaw);
     const bool tailPerformanceMode = performanceMode && !shapes.isDnAxis;
     texp.first.copy_(tailPerformanceMode ? expRaw.reshape(shapes.performanceGroupedShape) : expRaw);
-    tmax.second.copy_(tailPerformanceMode ? maxTemp.reshape(shapes.performanceGroupedShape) : maxTemp);
+    tmax.second.copy_(shapes.isDnAxis ? maxTemp : maxTemp.reshape(shapes.performanceGroupedShape));
     tscaling.second.copy_(scalingTemp);
 }
 
@@ -3925,6 +3920,10 @@ static void QuantMX(const TensorData& out, const TensorData& exp, const TensorDa
     auto input = tself.second.to(torch::kFloat32).contiguous();
     ASSERT(CalculatorErrorScene::QUANTMX_RANK_INVALID, input.dim() >= 1 && input.dim() <= 0x4)
         << "QuantMX interpreter only supports 1D to 4D input.";
+    const int64_t normalizedAxis = axis < 0 ? axis + input.dim() : axis;
+    if (!performanceMode && normalizedAxis == input.dim() - 1 && input.size(-1) == 0) {
+        return;
+    }
 
     const QuantMXShapes shapes = BuildQuantMXShapes(input, self.dtype, out.dtype, performanceMode, axis);
     auto quantRaw = CreateQuantMXQuantRaw(shapes.quantShape, out.dtype);
