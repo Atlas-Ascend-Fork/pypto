@@ -1403,28 +1403,21 @@ def test_transfer_builders_forward_l2_cache_mode(runtime, operation, explicit_hi
     assert attributes["span"] is span
 
 
-@pytest.mark.parametrize("operation", ["notify", "notify_all"])
 @pytest.mark.parametrize("flag", ["default", "true", "false", "dynamic"])
-def test_notify_flush_store_keeps_default_and_requires_ir_boolean(runtime, monkeypatch, operation, flag):
-    class Signal:
-        window = _Expr()
-        slot = 0
-
+def test_notify_flush_store_keeps_default_and_requires_ir_boolean(runtime, monkeypatch, flag):
     distribute = sys.modules["pypto_pro.language.distribute"]
-    monkeypatch.setattr(distribute, "Signal", Signal, raising=False)
     monkeypatch.setattr(distribute, "NotifyOp", enum.IntEnum("NotifyOp", {"SET": 0, "ATOMIC_ADD": 1}), raising=False)
     runtime.ir.create_op_call = lambda name, args, attrs, span: attrs
     helpers = runtime.load_functions(
-        "ir/op/dist_ops.py", (f"_build_{operation}", "_enum_kwarg_to_int", "_none_value"),
+        "ir/op/dist_ops.py", ("_build_notify", "_enum_kwarg_to_int", "_none_value"),
+        _signal_ptr_operand=lambda value, api, name, span, *, allow_tensor: value,
         _int_operand=lambda value, api, name: value, __package__="pypto_pro.ir.op",
     )
-    operands = [Signal(), _ConstInt(1)]
-    if operation == "notify":
-        operands.append(_ConstInt(2))
+    operands = [_Expr(_ScalarType(_DType.INT64)), _ConstInt(1)]
     kwargs = {} if flag == "default" else {"flush_store": (
         _Expr(_ScalarType(_DType.BOOL)) if flag == "dynamic" else _ConstBool(flag == "true")
     )}
-    builder = getattr(helpers, f"_build_{operation}")
+    builder = helpers._build_notify
     with runtime.errors.current_span(_Span()):
         if flag == "dynamic":
             with pytest.raises(runtime.errors.InvalidType, match="compile-time bool"):

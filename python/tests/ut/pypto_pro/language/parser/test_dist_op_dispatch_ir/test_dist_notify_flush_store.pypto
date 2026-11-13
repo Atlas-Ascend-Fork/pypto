@@ -1,0 +1,4 @@
+function kernel incast( %win_0, tensor<16, int64_t, tensor_view<, , ND, %sig_ptr>> %sig_0) outcast() #entry(false) #type(pro) {
+    dist.notify(ptr.make_ptr(%sig_0), 7, notify_op=0, flush_store=false);
+    return;
+}

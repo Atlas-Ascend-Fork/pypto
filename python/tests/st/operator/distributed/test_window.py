@@ -149,17 +149,9 @@ def barrier_worker(rank, nrank):
     torch.npu.synchronize()
 
     assert out.cpu().tolist() == [1, 2, 3], f"[rank {rank}] markers got {out.cpu().tolist()}"
-
-    # Sense-reversal end state after 3 barriers (counter @ 0, phase signals @ 8):
-    # i0 counts signals[0] up to nrank, i1 counts signals[1] up to nrank, i2 counts
-    # signals[0] back down to 0 — host-visible proof that every rank's atomics landed.
-    region = win.control_buffer[0:16]  # the Barrier is the first control-region slot
-    counter = region[:8].view(torch.int64).cpu().item()
-    sig0, sig1 = region[8:16].view(torch.int32).cpu().tolist()
-    assert counter == 3, f"[rank {rank}] barrier counter got {counter}, expected 3"
-    assert sig0 == 0, f"[rank {rank}] signals[0] got {sig0}, expected 0 (counted back down)"
-    assert sig1 == nrank, f"[rank {rank}] signals[1] got {sig1}, expected {nrank}"
-    print(f"[rank {rank}] barrier ok: counter 3, signals [{sig0}, {sig1}]", flush=True)
+    # The three markers land only after every rank's arrival exchange completed; the
+    # barrier region is framework-owned and has no host handle.
+    print(f"[rank {rank}] barrier ok", flush=True)
 
     win.close()
     dist.destroy_process_group()
@@ -187,12 +179,14 @@ def shift_load_right(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
         pl.load(t, src, [0, 0])
         me = win.rank()
         nr = win.nrank()
-        dt = pld.make_dtensor(win, ws, 0, [1, _SHIFT_N], _SHIFT_DTYPE)
+        put_view = pl.make_tensor(
+            pld.remote_ptr(win, ws, (me + 1) % nr), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
         pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=2)
         pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=2)
-        pld.put(dt, t, [0, 0], (me + 1) % nr)  # push my tile into the NEXT rank's window
-        pld.barrier(win)  # flushes MTE3 (the put) before the arrivals; all pushes land before any pull
-        pld.get(t2, dt, [0, 0], me)  # my own window now holds the PREVIOUS rank's push
+        pl.store(put_view, t, [0, 0])  # push my tile into the NEXT rank's window
+        pld.barrier(win)  # flushes MTE3 (the store) before the arrivals; all pushes land before any pull
+        local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
+        pl.load(t2, local_view, [0, 0])  # my own window now holds the PREVIOUS rank's push
         pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=3)
         pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=3)
         pl.store(out, t2, [0, 0])
@@ -213,22 +207,37 @@ def shift_load_left(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
         pl.load(t, src, [0, 0])
         me = win.rank()
         nr = win.nrank()
-        dt = pld.make_dtensor(win, ws, 0, [1, _SHIFT_N], _SHIFT_DTYPE)
-        pld.put(dt, t, [0, 0], (me + nr - 1) % nr)  # push my tile into the PREVIOUS rank's window
+        put_view = pl.make_tensor(
+            pld.remote_ptr(win, ws, (me + nr - 1) % nr), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
+        pl.store(put_view, t, [0, 0])  # push my tile into the PREVIOUS rank's window
         pld.barrier(win)
-        pld.get(t2, dt, [0, 0], me)  # my own window now holds the NEXT rank's push
+        local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
+        pl.load(t2, local_view, [0, 0])  # my own window now holds the NEXT rank's push
         pl.store(out, t2, [0, 0])
 
 
-def _shift_setup(rank, nrank):
+_SIG_SLOTS = 16  # 64-bit signal words per rank; slot index is free-form
+
+
+def _signal_tensor(win):
+    """User-registered signal buffer: 64-bit words, one slot per sender/peer."""
+    sig = torch.zeros(_SIG_SLOTS, dtype=torch.int64, device='npu')
+    pld.register_memory(win, sig, "sig", _PROTOCOL)
+    return sig
+
+
+def _shift_setup(rank, nrank, *, with_signal=False):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
     win = pld.create_window(group)
     ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
     pld.register_memory(win, ws, "ws", _PROTOCOL)
+    sig = _signal_tensor(win) if with_signal else None
     win.connect()
     src = torch.full((1, _SHIFT_N), float(rank), dtype=torch.bfloat16).npu()
     out = torch.zeros((1, _SHIFT_N), dtype=torch.bfloat16).npu()
+    if with_signal:
+        return win, ws, sig, src, out
     return win, ws, src, out
 
 
@@ -244,10 +253,10 @@ def local_roundtrip_mutex(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT
         t2 = tg_b.current()
         pl.load(t, src, [0, 0])
         me = win.rank()
-        dt = pld.make_dtensor(win, ws, 0, [1, _SHIFT_N], _SHIFT_DTYPE)
-        pld.put(dt, t, [0, 0], me)  # peer == own rank: local GM copy through the window
+        local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
+        pl.store(local_view, t, [0, 0])  # peer == own rank: local GM copy through the window
         pld.barrier(win)
-        pld.get_tile(t2, dt, [0, 0], me)
+        pl.load(t2, local_view, [0, 0])
         pl.store(out, t2, [0, 0])
 
 
@@ -326,14 +335,14 @@ def shift_load_right_urma(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT
         tg = pl.make_tile_group(type=tile_type, addrs=_SHIFT_N * 2, mutex_ids=[0])
         t2 = tg.current()
         me, nr = win.rank(), win.nrank()
-        dt = pld.make_dtensor(win, ws, 0, [1, _SHIFT_N], _SHIFT_DTYPE)
         peer = (me + 1) % nr
         ch = pld.channel(win, _CH_UB_ADDR, peer=peer)  # rides the peer's jetty
-        ch.write(dt, src, submit=False)  # stage the WQE on the peer jetty
+        ch.write(ch.remote_ptr(ws), src, submit=False)  # stage the WQE on the peer jetty
         ch.submit()                      # doorbell: publish the staged WQE
         ch.drain()                       # engine completion (visible remotely)
         pld.barrier(win)                        # every rank pushed before any pull
-        pld.get(t2, dt, [0, 0], me)             # read back my own window
+        local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
+        pl.load(t2, local_view, [0, 0])         # read back my own window
         pl.store(out, t2, [0, 0])
 
 
@@ -346,40 +355,42 @@ def shift_load_left_urma(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8
         tg = pl.make_tile_group(type=tile_type, addrs=_SHIFT_N * 2, mutex_ids=[0])
         t2 = tg.current()
         me, nr = win.rank(), win.nrank()
-        dt = pld.make_dtensor(win, ws, 0, [1, _SHIFT_N], _SHIFT_DTYPE)
         peer = (me + nr - 1) % nr
         ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
-        ch.write(dt, src, submit=False)
+        ch.write(ch.remote_ptr(ws), src, submit=False)
         ch.submit()
         ch.drain()
         pld.barrier(win)
-        pld.get(t2, dt, [0, 0], me)
+        local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
+        pl.load(t2, local_view, [0, 0])
         pl.store(out, t2, [0, 0])
 
 
 @pl.jit(auto_mutex=True)
 def write_submit_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                        sig: pl.Tensor[[_SIG_SLOTS], pl.DT_INT64],
                         src: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE],
                         out: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE]):
     """Canonical handshake: submit=True + drain, then notify the consumer and wait.
 
-    The consumer reads its window back between the wait and the trailing barrier so the
-    check depends on the wait alone — not on the barrier or the kernel-exit sync.
+    Each rank marks its own slot in its successor's signal buffer and waits for its
+    slot in its own buffer. The consumer reads its window back between the wait and
+    the trailing barrier so the check depends on the wait alone.
     """
     with pl.section_vector():
         tile_type = pl.TileType(shape=[1, _SHIFT_N], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec)
         tg = pl.make_tile_group(type=tile_type, addrs=_SHIFT_N * 2, mutex_ids=[0])
         t2 = tg.current()
         me, nr = win.rank(), win.nrank()
-        dt = pld.make_dtensor(win, ws, 0, [1, _SHIFT_N], _SHIFT_DTYPE)
-        sig_done = pld.signal(win, 0)
         peer = (me + 1) % nr
+        prev = (me + nr - 1) % nr
         ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
-        ch.write(dt, src, submit=True)   # publish immediately
+        ch.write(ch.remote_ptr(ws), src, submit=True)  # publish immediately
         ch.drain()                       # release: data visible before the signal
-        pld.notify(sig_done, peer, 1, op=pld.NotifyOp.ATOMIC_ADD)
-        pld.wait(sig_done, 1, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
-        pld.get(t2, dt, [0, 0], me)      # the signal already guarantees the payload
+        pld.notify(pl.addptr(pld.remote_ptr(win, sig, peer), me), 1, op=pld.NotifyOp.ATOMIC_ADD)
+        pld.wait(pl.addptr(pl.make_ptr(sig), prev), 1, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
+        local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
+        pl.load(t2, local_view, [0, 0])  # the signal already guarantees the payload
         pl.store(out, t2, [0, 0])
         pld.barrier(win)
 
@@ -413,8 +424,8 @@ def shift_left_urma_worker(rank, nrank):
 
 
 def write_submit_worker(rank, nrank):
-    win, ws, src, out = _shift_setup(rank, nrank)
-    write_submit_kernel[None, 1](win, ws, src, out)
+    win, ws, sig, src, out = _shift_setup(rank, nrank, with_signal=True)
+    write_submit_kernel[None, 1](win, ws, sig, src, out)
     torch.npu.synchronize()
     expected = torch.full((1, _SHIFT_N), float((rank - 1) % nrank), dtype=torch.bfloat16)
     assert torch.equal(out.cpu(), expected), (
@@ -494,19 +505,21 @@ def write_indexed_kernel(win: pld.Window,
 
         me, nr = win.rank(), win.nrank()
         ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
-        dt_g = pld.make_dtensor(win, wi, 0, [_WI_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
-        dt_s = pld.make_dtensor(win, wi, _WI_SLOT, [_WI_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
-        dt_gs = pld.make_dtensor(win, wi, 2 * _WI_SLOT, [_WI_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+        base = ch.remote_ptr(wi)
+        dst_g = base
+        dst_s = pl.addptr(base, _WI_SLOT)
+        dst_gs = pl.addptr(base, 2 * _WI_SLOT)
 
-        ch.write_indexed(dt_g, src, src_indices=it_src, count=_WI_ROWS)
+        ch.write_indexed(dst_g, src, src_indices=it_src, count=_WI_ROWS)
         ch.drain()
-        ch.write_indexed(dt_s, src, dst_indices=it_dst, count=_WI_ROWS)
+        ch.write_indexed(dst_s, src, dst_indices=it_dst, count=_WI_ROWS)
         ch.drain()
-        ch.write_indexed(dt_gs, src, src_indices=it_src, dst_indices=it_dst, count=_WI_ROWS, submit=False)
+        ch.write_indexed(dst_gs, src, src_indices=it_src, dst_indices=it_dst, count=_WI_ROWS, submit=False)
         ch.submit()
         ch.drain()
         pld.barrier(win)
-        pld.get(ret, dt_g, [0, 0], me)
+        local_view = pl.make_tensor(pld.remote_ptr(win, wi, me), [_WI_ROWS, _WI_ELEMS], dtype=_SHIFT_DTYPE)
+        pl.load(ret, local_view, [0, 0])
         pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
         pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
         pl.store(out, ret, [0, 0])
@@ -575,11 +588,12 @@ def write_indexed_repeat_kernel(win: pld.Window,
 
         me, nr = win.rank(), win.nrank()
         ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
-        dt = pld.make_dtensor(win, wi, 0, [_WI_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
-        ch.write_indexed(dt, src, src_indices=it_src, count=_WI_ROWS)
+        dst = ch.remote_ptr(wi)
+        ch.write_indexed(dst, src, src_indices=it_src, count=_WI_ROWS)
         ch.drain(_WI_DRAIN_TIMEOUT)
         pld.barrier(win, _WI_DRAIN_TIMEOUT)
-        pld.get(ret, dt, [0, 0], me)
+        local_view = pl.make_tensor(pld.remote_ptr(win, wi, me), [_WI_ROWS, _WI_ELEMS], dtype=_SHIFT_DTYPE)
+        pl.load(ret, local_view, [0, 0])
         pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
         pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
         pl.store(out, ret, [0, 0])
@@ -604,13 +618,14 @@ def write_indexed_one_kernel(win: pld.Window,
 
         me, nr = win.rank(), win.nrank()
         ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
-        dt = pld.make_dtensor(win, wi, 0, [1, _WI_ELEMS], _SHIFT_DTYPE)
+        dst = ch.remote_ptr(wi)
         # One indexed row per launch, so consecutive launches advance the SQ head
         # by one and the second launch reuses physical slot 1.
-        ch.write_indexed(dt, src, src_indices=it_src, count=1)
+        ch.write_indexed(dst, src, src_indices=it_src, count=1)
         ch.drain(_WI_DRAIN_TIMEOUT)
         pld.barrier(win, _WI_DRAIN_TIMEOUT)
-        pld.get(ret, dt, [0, 0], me)
+        local_view = pl.make_tensor(pld.remote_ptr(win, wi, me), [1, _WI_ELEMS], dtype=_SHIFT_DTYPE)
+        pl.load(ret, local_view, [0, 0])
         pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
         pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
         pl.store(out, ret, [0, 0])
@@ -697,14 +712,17 @@ def write_indexed_dtype_kernel(win: pld.Window,
 
         me, nr = win.rank(), win.nrank()
         ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
-        dt_g = pld.make_dtensor(win, wi, 0, [_WI_DTYPE_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
-        dt_64 = pld.make_dtensor(win, wi, 2048, [_WI_DTYPE_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
-        ch.write_indexed(dt_g, src, src_indices=it_src, count=_WI_DTYPE_ROWS)
+        base = ch.remote_ptr(wi)
+        dst_g = base
+        dst_64 = pl.addptr(base, 2048)
+        ch.write_indexed(dst_g, src, src_indices=it_src, count=_WI_DTYPE_ROWS)
         ch.drain()
-        ch.write_indexed(dt_64, src, src_indices=it_src64, count=_WI_DTYPE_ROWS)
+        ch.write_indexed(dst_64, src, src_indices=it_src64, count=_WI_DTYPE_ROWS)
         ch.drain()
         pld.barrier(win)
-        pld.get(ret, dt_g, [0, 0], me)
+        local_view = pl.make_tensor(
+            pld.remote_ptr(win, wi, me), [_WI_DTYPE_ROWS, _WI_ELEMS], dtype=_SHIFT_DTYPE)
+        pl.load(ret, local_view, [0, 0])
         pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
         pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
         pl.store(out, ret, [0, 0])
@@ -768,17 +786,21 @@ def write_indexed_count_kernel(win: pld.Window,
 
         me, nr = win.rank(), win.nrank()
         ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
-        dt0 = pld.make_dtensor(win, wi, 0 * _WI_COUNT_STRIDE, [_WI_COUNT_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
-        dt1 = pld.make_dtensor(win, wi, 1 * _WI_COUNT_STRIDE, [_WI_COUNT_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
-        dt2 = pld.make_dtensor(win, wi, 2 * _WI_COUNT_STRIDE, [_WI_COUNT_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
-        dt3 = pld.make_dtensor(win, wi, 3 * _WI_COUNT_STRIDE, [_WI_COUNT_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
+        base = ch.remote_ptr(wi)
+        dt0 = base
+        dt1 = pl.addptr(base, 1 * _WI_COUNT_STRIDE)
+        dt2 = pl.addptr(base, 2 * _WI_COUNT_STRIDE)
+        dt3 = pl.addptr(base, 3 * _WI_COUNT_STRIDE)
         ch.write_indexed(dt0, src, src_indices=it, count=n0)
         ch.write_indexed(dt1, src, src_indices=it, count=n1)
         ch.write_indexed(dt2, src, src_indices=it, count=n2)
         ch.write_indexed(dt3, src, src_indices=it, count=n3)
         ch.drain()
         pld.barrier(win)
-        pld.get(ret, dt2, [0, 0], me)
+        local_view = pl.make_tensor(
+            pl.addptr(pld.remote_ptr(win, wi, me), 2 * _WI_COUNT_STRIDE),
+            [_WI_COUNT_ROWS, _WI_ELEMS], dtype=_SHIFT_DTYPE)
+        pl.load(ret, local_view, [0, 0])
         pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
         pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
         pl.store(out, ret, [0, 0])
@@ -848,11 +870,13 @@ def write_indexed_large_kernel(win: pld.Window,
 
         me, nr = win.rank(), win.nrank()
         ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
-        dt = pld.make_dtensor(win, wi, 0, [_WI_LARGE_ROWS, _WI_ELEMS], _SHIFT_DTYPE)
-        ch.write_indexed(dt, src, src_indices=it, count=_WI_LARGE_ROWS)
+        dst = ch.remote_ptr(wi)
+        ch.write_indexed(dst, src, src_indices=it, count=_WI_LARGE_ROWS)
         ch.drain()
         pld.barrier(win)
-        pld.get(ret, dt, [0, 0], me)
+        local_view = pl.make_tensor(
+            pld.remote_ptr(win, wi, me), [_WI_LARGE_ROWS, _WI_ELEMS], dtype=_SHIFT_DTYPE)
+        pl.load(ret, local_view, [0, 0])
         pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
         pl.system.sync_dst(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=5)
         pl.store(out, ret, [0, 0])
@@ -911,22 +935,24 @@ def write_value_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
             addrs=0x100, mutex_ids=[1])
 
         # int64 word at a runtime byte offset: stage the inline WQE, then publish it
-        dt_i64 = pld.make_dtensor(win, ws, _WV_INT64_BASE + me * 8, [1], pl.DT_INT64)
-        ch.write(dt_i64, me + 100, submit=False)
+        base = ch.remote_ptr(ws)
+        word_i64 = pl.make_ptr(pl.addptr(base, _WV_INT64_BASE + me * 8), pl.DT_INT64)
+        ch.write(word_i64, me + 100, submit=False)
         ch.submit()
 
         # fp32 word: literal value, published immediately
-        dt_f32 = pld.make_dtensor(win, ws, _WV_FP32_BASE + me * 4, [1], pl.DT_FP32)
-        ch.write(dt_f32, 1.5)
+        word_f32 = pl.make_ptr(pl.addptr(base, _WV_FP32_BASE + me * 4), pl.DT_FP32)
+        ch.write(word_f32, 1.5)
 
         ch.drain()
         pld.barrier(win)
         # Read the received words back right after the barrier: the check must not lean
         # on the kernel-exit synchronization.
-        rb_i64 = pld.make_dtensor(win, ws, _WV_INT64_BASE, [_ST_MAX_RANKS, 1], pl.DT_INT64)
-        rb_f32 = pld.make_dtensor(win, ws, _WV_FP32_BASE, [_ST_MAX_RANKS * 2, 1], pl.DT_FP32)
-        pld.get(tg_i64.current(), rb_i64, [0, 0], me)
-        pld.get(tg_f32.current(), rb_f32, [0, 0], me)
+        local = pld.remote_ptr(win, ws, me)
+        rb_i64 = pl.make_tensor(pl.addptr(local, _WV_INT64_BASE), [_ST_MAX_RANKS, 1], dtype=pl.DT_INT64)
+        rb_f32 = pl.make_tensor(pl.addptr(local, _WV_FP32_BASE), [_ST_MAX_RANKS * 2, 1], dtype=pl.DT_FP32)
+        pl.load(tg_i64.current(), rb_i64, [0, 0])
+        pl.load(tg_f32.current(), rb_f32, [0, 0])
         pl.store(out, tg_i64.current(), [0, 0])
         pl.store(out_f32, tg_f32.current(), [0, 0])
 
@@ -946,14 +972,19 @@ def write_value_worker(rank, nrank):
     prev = (rank - 1) % nrank
     # The kernel read the words back directly after the barrier, so this is what the
     # consumer saw at the sync point — not what the window holds after the kernel exits.
-    # Rank r writes r + 100 into slot r of every window.
+    # Rank r writes r + 100 into slot r of its successor's window, so this window holds
+    # the previous rank's word only; the other slots stay zero.
+    exp_i64 = [0] * nrank
+    exp_i64[prev] = prev + 100
     at_barrier = out.cpu().view(-1).tolist()[:nrank]
-    assert at_barrier == [r + 100 for r in range(nrank)], (
-        f"[rank {rank}] write_value at barrier got {at_barrier}, expected {[r + 100 for r in range(nrank)]}"
+    assert at_barrier == exp_i64, (
+        f"[rank {rank}] write_value at barrier got {at_barrier}, expected {exp_i64}"
     )
+    exp_f32 = [0.0] * nrank
+    exp_f32[prev] = 1.5
     at_barrier_f32 = out_f32.cpu().view(-1).tolist()[:nrank]
-    assert at_barrier_f32 == [1.5] * nrank, (
-        f"[rank {rank}] fp32 at barrier got {at_barrier_f32}, expected {[1.5] * nrank}"
+    assert at_barrier_f32 == exp_f32, (
+        f"[rank {rank}] fp32 at barrier got {at_barrier_f32}, expected {exp_f32}"
     )
 
     # Each rank writes one word to its successor, so this window must hold the previous
@@ -997,18 +1028,18 @@ def two_region_kernel(win: pld.Window, ra: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
         tg_b = pl.make_tile_group(
             type=pl.TileType(shape=[_ST_MAX_RANKS, 1], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec),
             addrs=0x100, mutex_ids=[1])
-        dt_a = pld.make_dtensor(win, ra, me * 8, [1], pl.DT_INT64)
-        dt_b = pld.make_dtensor(win, rb, me * 8, [1], pl.DT_INT64)
-        ch.write(dt_a, me + 100)
-        ch.write(dt_b, me + 200)
+        word_a = pl.make_ptr(pl.addptr(ch.remote_ptr(ra), me * 8), pl.DT_INT64)
+        word_b = pl.make_ptr(pl.addptr(ch.remote_ptr(rb), me * 8), pl.DT_INT64)
+        ch.write(word_a, me + 100)
+        ch.write(word_b, me + 200)
         ch.drain()
         pld.barrier(win)
         # Read both regions back right after the barrier: the check must not lean on the
         # kernel-exit synchronization.
-        rd_a = pld.make_dtensor(win, ra, 0, [_ST_MAX_RANKS, 1], pl.DT_INT64)
-        rd_b = pld.make_dtensor(win, rb, 0, [_ST_MAX_RANKS, 1], pl.DT_INT64)
-        pld.get(tg_a.current(), rd_a, [0, 0], me)
-        pld.get(tg_b.current(), rd_b, [0, 0], me)
+        rd_a = pl.make_tensor(pld.remote_ptr(win, ra, me), [_ST_MAX_RANKS, 1], dtype=pl.DT_INT64)
+        rd_b = pl.make_tensor(pld.remote_ptr(win, rb, me), [_ST_MAX_RANKS, 1], dtype=pl.DT_INT64)
+        pl.load(tg_a.current(), rd_a, [0, 0])
+        pl.load(tg_b.current(), rd_b, [0, 0])
         pl.store(out, tg_a.current(), [0, 0])
         pl.store(out, tg_b.current(), [_ST_MAX_RANKS, 0])
 
@@ -1029,10 +1060,13 @@ def two_region_worker(rank, nrank):
     prev = (rank - 1) % nrank
     # The kernel read both regions back directly after the barrier, so this is what the
     # consumer saw at the sync point — not what they hold after the kernel exits.
-    # Rank r writes r + 100 / r + 200 into slot r of every window.
+    # Rank r writes r + 100 / r + 200 into slot r of its successor's window, so each
+    # region here holds the previous rank's word only; the other slots stay zero.
     at_barrier = out.cpu().view(-1).tolist()
-    exp_a = [r + 100 for r in range(nrank)]
-    exp_b = [r + 200 for r in range(nrank)]
+    exp_a = [0] * nrank
+    exp_a[prev] = prev + 100
+    exp_b = [0] * nrank
+    exp_b[prev] = prev + 200
     assert at_barrier[0:nrank] == exp_a, (
         f"[rank {rank}] region 'ra' at barrier got {at_barrier[0:nrank]}, expected {exp_a}"
     )
@@ -1066,6 +1100,7 @@ def test_two_regions(world_size: int = 4):
 
 @pl.jit(auto_mutex=True)
 def write_notify_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                        sig: pl.Tensor[[_SIG_SLOTS], pl.DT_INT64],
                         src: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE],
                         out: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE]):
     """Fused write + hardware notify: the signal fires on payload completion, with no drain."""
@@ -1074,33 +1109,33 @@ def write_notify_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8]
         tg = pl.make_tile_group(type=tile_type, addrs=_SHIFT_N * 2, mutex_ids=[0])
         t2 = tg.current()
         me, nr = win.rank(), win.nrank()
-        dt = pld.make_dtensor(win, ws, 0, [1, _SHIFT_N], _SHIFT_DTYPE)
-        sig_done = pld.signal(win, 0)
         peer = (me + 1) % nr
         ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
-        ch.write_notify(dt, src, sig_done, me + 1)  # hardware writes sig_done on completion
+        # Hardware notifies my slot in the successor's signal buffer on completion.
+        ch.write_notify(ch.remote_ptr(ws), src, pl.addptr(ch.remote_ptr(sig), me), me + 1)
         prev = (me + nr - 1) % nr
-        pld.wait(sig_done, prev + 1, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
-        pld.get(t2, dt, [0, 0], me)                        # my window now holds the previous rank's data
+        pld.wait(pl.addptr(pl.make_ptr(sig), prev), prev + 1, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
+        local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
+        pl.load(t2, local_view, [0, 0])                    # my window now holds the previous rank's data
         pl.store(out, t2, [0, 0])
         pld.barrier(win)                                   # all writes completed before any rank exits
 
 
 def write_notify_worker(rank, nrank):
-    win, ws, src, out = _shift_setup(rank, nrank)
-    write_notify_kernel[None, 1](win, ws, src, out)
+    win, ws, sig, src, out = _shift_setup(rank, nrank, with_signal=True)
+    write_notify_kernel[None, 1](win, ws, sig, src, out)
     torch.npu.synchronize()
     expected = torch.full((1, _SHIFT_N), float((rank - 1) % nrank), dtype=torch.bfloat16)
     assert torch.equal(out.cpu(), expected), (
         f"[rank {rank}] write_notify got {out.cpu()[0, :3].tolist()}..., "
         f"expected rank {(rank - 1) % nrank}'s data"
     )
-    # The hardware notify wrote the producer's value into signal slot 0, which follows
-    # the Barrier slot (offset 512 in the control region).
-    sig = win.control_buffer[512:520].view(torch.int64).cpu().item()
-    expect_sig = (rank - 1) % nrank + 1
-    assert sig == expect_sig, f"[rank {rank}] signal slot got {sig}, expected {expect_sig}"
-    print(f"[rank {rank}] write_notify ok (signal {sig})", flush=True)
+    # The hardware notify wrote the producer's value into the producer's slot.
+    prev = (rank - 1) % nrank
+    got_sig = sig.cpu()[prev].item()
+    expect_sig = prev + 1
+    assert got_sig == expect_sig, f"[rank {rank}] signal slot got {got_sig}, expected {expect_sig}"
+    print(f"[rank {rank}] write_notify ok (signal {got_sig})", flush=True)
     win.close()
     dist.destroy_process_group()
 
@@ -1139,6 +1174,10 @@ def channel_exclusive_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
     win = pld.create_window(group)
+    # A channel's jetty is built from the window's URMA regions; with none the jetty
+    # has no buffers and constructing the channel traps.
+    ctrl = torch.zeros(64, dtype=torch.uint8, device='npu')
+    pld.register_memory(win, ctrl, "ctrl", _PROTOCOL)
     win.connect()
     out = torch.full((1,), -1, dtype=torch.int64).npu()
 
@@ -1163,40 +1202,40 @@ def test_channel_exclusive(world_size: int = 4):
 
 
 @pl.jit
-def notify_wait_kernel(win: pld.Window, out: pl.Tensor[[2], pl.DT_INT64]):
+def notify_wait_kernel(win: pld.Window, sig: pl.Tensor[[_SIG_SLOTS], pl.DT_INT64],
+                       out: pl.Tensor[[2], pl.DT_INT64]):
     with pl.section_vector():
         me, nr = win.rank(), win.nrank()
         pl.printf("rank %d notify_wait: nrank %d\n", me, nr)
 
-        sig_ring = pld.signal(win, 4)
-        pld.notify(sig_ring, (me + 1) % nr, 1, op=pld.NotifyOp.ATOMIC_ADD)
-        pld.wait(sig_ring, 1, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
+        pld.notify(pl.addptr(pld.remote_ptr(win, sig, (me + 1) % nr), 4), 1,
+                   op=pld.NotifyOp.ATOMIC_ADD)
+        pld.wait(pl.addptr(pl.make_ptr(sig), 4), 1, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
 
         # Same ring without the store flush: there is no prior put to order here.
-        sig_ring_nf = pld.signal(win, 8)
-        pld.notify(sig_ring_nf, (me + 1) % nr, 1, op=pld.NotifyOp.ATOMIC_ADD, flush_store=False)
-        pld.wait(sig_ring_nf, 1, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
+        pld.notify(pl.addptr(pld.remote_ptr(win, sig, (me + 1) % nr), 8), 1,
+                   op=pld.NotifyOp.ATOMIC_ADD, flush_store=False)
+        pld.wait(pl.addptr(pl.make_ptr(sig), 8), 1, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
 
-        # notify_all without the flush: every rank adds 1 to every rank's slot 9.
-        sig_all_nf = pld.signal(win, 9)
-        pld.notify_all(sig_all_nf, 1, op=pld.NotifyOp.ATOMIC_ADD, flush_store=False)
-        pld.wait(sig_all_nf, nr, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
+        # Fan-out without the flush: every rank adds 1 to every rank's slot 9.
+        for r in pl.range(nr):
+            pld.notify(pl.addptr(pld.remote_ptr(win, sig, r), 9), 1,
+                       op=pld.NotifyOp.ATOMIC_ADD, flush_store=False)
+        pld.wait(pl.addptr(pl.make_ptr(sig), 9), nr, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
 
-        sig_counter = pld.signal(win, 7)
-        pld.notify(sig_counter, 0, 1, op=pld.NotifyOp.ATOMIC_ADD)
+        pld.notify(pl.addptr(pld.remote_ptr(win, sig, 0), 7), 1, op=pld.NotifyOp.ATOMIC_ADD)
 
-        sig_local = pld.signal(win, 5)
-        pld.notify(sig_local, 5)
-        pld.wait(sig_local, 5, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
+        pld.notify(pl.addptr(pl.make_ptr(sig), 5), 5)
+        pld.wait(pl.addptr(pl.make_ptr(sig), 5), 5, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
 
-        sig_cmp = pld.signal(win, 6)
-        pld.notify(sig_cmp, 5)
-        pld.wait(sig_cmp, 5, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
-        pld.wait(sig_cmp, 4, cmp=pld.Cmp.NE, timeout=_WAIT_TIMEOUT)
-        pld.wait(sig_cmp, 6, cmp=pld.Cmp.LT, timeout=_WAIT_TIMEOUT)
-        pld.wait(sig_cmp, 5, cmp=pld.Cmp.LE, timeout=_WAIT_TIMEOUT)
-        pld.wait(sig_cmp, 4, cmp=pld.Cmp.GT, timeout=_WAIT_TIMEOUT)
-        pld.wait(sig_cmp, 5, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
+        cmp_slot = pl.addptr(pl.make_ptr(sig), 6)
+        pld.notify(cmp_slot, 5)
+        pld.wait(cmp_slot, 5, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
+        pld.wait(cmp_slot, 4, cmp=pld.Cmp.NE, timeout=_WAIT_TIMEOUT)
+        pld.wait(cmp_slot, 6, cmp=pld.Cmp.LT, timeout=_WAIT_TIMEOUT)
+        pld.wait(cmp_slot, 5, cmp=pld.Cmp.LE, timeout=_WAIT_TIMEOUT)
+        pld.wait(cmp_slot, 4, cmp=pld.Cmp.GT, timeout=_WAIT_TIMEOUT)
+        pld.wait(cmp_slot, 5, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
 
         pld.barrier(win)
         out[0] = 1
@@ -1207,12 +1246,13 @@ def notify_wait_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
     win = pld.create_window(group)
+    sig = _signal_tensor(win)
     win.connect()
     out = torch.full((2,), -1, dtype=torch.int64).npu()
 
     time.sleep(rank * 0.1)  # slight stagger: the waits must block until peers arrive
                             # (well under the timeout; 0.5 s/rank used to outlast it)
-    notify_wait_kernel[None, 1](win, out)  # one AIV: the only spinner, no bid guards
+    notify_wait_kernel[None, 1](win, sig, out)  # one AIV: the only spinner, no bid guards
     torch.npu.synchronize()
     assert out.tolist() == [1, 2], f"[rank {rank}] notify_wait kernel did not complete: {out.tolist()}"
 
@@ -1227,50 +1267,12 @@ def test_notify_wait(world_size: int = 4):
     torch.multiprocessing.spawn(notify_wait_worker, args=(nprocs,), nprocs=nprocs)
 
 
-@pl.jit
-def notify_all_kernel(win: pld.Window, out: pl.Tensor[[1], pl.DT_INT64]):
-    with pl.section_vector():
-        me, nr = win.rank(), win.nrank()
-        pl.printf("rank %d notify_all: nrank %d\n", me, nr)
-
-        sig_add = pld.signal(win, 3)
-        pld.notify_all(sig_add, 1, op=pld.NotifyOp.ATOMIC_ADD)
-        pld.wait(sig_add, nr, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
-
-        sig_set = pld.signal(win, 4)
-        pld.notify_all(sig_set, 5)
-        pld.wait(sig_set, 5, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
-        out[0] = 1
-
-
-def notify_all_worker(rank, nrank):
-    torch.npu.set_device(rank)
-    group = init_dist(rank, nrank)
-    win = pld.create_window(group)
-    win.connect()
-    out = torch.full((1,), -1, dtype=torch.int64).npu()
-
-    notify_all_kernel[None, 1](win, out)  # one AIV: its leader is the only signaler
-    torch.npu.synchronize()
-    assert out.tolist() == [1], f"[rank {rank}] notify_all kernel did not complete: {out.tolist()}"
-    print(f"[rank {rank}] notify_all ok", flush=True)
-
-    win.close()
-    dist.destroy_process_group()
-
-
-@pytest.mark.skip(reason="distributed python case")
-@pytest.mark.world_size(4)
-def test_notify_all(world_size: int = 4):
-    nprocs = min(world_size, torch.npu.device_count())
-    torch.multiprocessing.spawn(notify_all_worker, args=(nprocs,), nprocs=nprocs)
-
-
 _AG_SHARD = 1024    # per-rank shard (4096 elements over 4 ranks; offsets stay runtime)
 
 
 @pl.jit(auto_mutex=True)
 def all_gather_signals_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                              sig: pl.Tensor[[_SIG_SLOTS], pl.DT_INT64],
                               src: pl.Tensor[[1, _AG_SHARD], pl.DT_BF16],
                               out: pl.Tensor[[_ST_MAX_RANKS, _AG_SHARD], pl.DT_BF16]):
     with pl.section_vector():
@@ -1280,17 +1282,17 @@ def all_gather_signals_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_
         tg_rcv = pl.make_tile_group(type=tile_type, addrs=_AG_SHARD * 2, mutex_ids=[1])
         t = tg.current()
         t_rcv = tg_rcv.current()
-        sig_done = pld.signal(win, 0)
         pl.load(t, src, [0, 0])
-        dt = pld.make_dtensor(win, ws, 0, [nr, _AG_SHARD], pl.DT_BF16)
         for r in pl.range(nr):
-            pld.put(dt, t, [me, 0], r)
-            pld.notify(sig_done, r, 1, op=pld.NotifyOp.ATOMIC_ADD)
-        pld.wait(sig_done, nr, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
+            put_view = pl.make_tensor(pld.remote_ptr(win, ws, r), [nr, _AG_SHARD], dtype=pl.DT_BF16)
+            pl.store(put_view, t, [me, 0])
+            pld.notify(pl.addptr(pld.remote_ptr(win, sig, r), 0), 1, op=pld.NotifyOp.ATOMIC_ADD)
+        pld.wait(pl.addptr(pl.make_ptr(sig), 0), nr, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
         # Read the shards back the moment every rank's arrival proves they landed:
         # the check must not lean on the kernel-exit synchronization.
+        local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [nr, _AG_SHARD], dtype=pl.DT_BF16)
         for r in pl.range(nr):
-            pld.get(t_rcv, dt, [r, 0], me)
+            pl.load(t_rcv, local_view, [r, 0])
             pl.store(out, t_rcv, [r, 0])
 
 
@@ -1300,11 +1302,12 @@ def all_gather_signals_worker(rank, nrank):
     win = pld.create_window(group)
     ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
     pld.register_memory(win, ws, "ws", _PROTOCOL)
+    sig = _signal_tensor(win)
     win.connect()
     src = torch.full((1, _AG_SHARD), float(rank), dtype=torch.bfloat16).npu()
     out = torch.zeros((_ST_MAX_RANKS, _AG_SHARD), dtype=torch.bfloat16).npu()
 
-    all_gather_signals_kernel[None, 1](win, ws, src, out)
+    all_gather_signals_kernel[None, 1](win, ws, sig, src, out)
     torch.npu.synchronize()
 
     expect = torch.cat(
@@ -1359,12 +1362,13 @@ def all_reduce_put_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT
         t2 = tg_b.current()
         me, nr = win.rank(), win.nrank()
         pl.load(t, src, [0, 0])
-        dt = pld.make_dtensor(win, ws, 0, [1, _AR_SHARD], pl.DT_BF16)
         pld.barrier(win)  # every rank's host-side payload zeroing is complete
         for r in pl.range(nr):  # accumulate my shard into every rank's window
-            pld.put(dt, t, [0, 0], r, atomic_mode=pl.AtomicType.AtomicAdd)
+            put_view = pl.make_tensor(pld.remote_ptr(win, ws, r), [1, _AR_SHARD], dtype=pl.DT_BF16)
+            pl.store(put_view, t, [0, 0], atomic=pl.AtomicType.AtomicAdd)
         pld.barrier(win)  # all adds have landed before any rank reads back
-        pld.get(t2, dt, [0, 0], me)
+        local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _AR_SHARD], dtype=pl.DT_BF16)
+        pl.load(t2, local_view, [0, 0])
         pl.store(out, t2, [0, 0])
 
 
@@ -1430,7 +1434,7 @@ def remote_ptr_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
         wr = pl.make_tile(tile_type, addr=_RP_BYTES)
 
         # Ordinary pl.load through a raw remote pointer at the read slot.
-        rptr = pld.get_remote_ptr(win, ws, peer) + _RP_READ_OFF
+        rptr = pld.remote_ptr(win, ws, peer) + _RP_READ_OFF
         rview = pl.make_tensor(rptr, [_RP_ROWS, _RP_COLS], dtype=pl.DT_FP16)
         pl.load(rd, rview, [0, 0])
         pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=2)
@@ -1439,7 +1443,7 @@ def remote_ptr_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
 
         # Ordinary pl.store through a raw remote pointer resolved from an interior local
         # pointer (region base + write slot): the in-region offset must be preserved.
-        wptr = pld.get_remote_ptr(win, pl.addptr(pl.make_ptr(ws), _RP_WRITE_OFF), peer)
+        wptr = pld.remote_ptr(win, pl.addptr(pl.make_ptr(ws), _RP_WRITE_OFF), peer)
         wview = pl.make_tensor(wptr, [_RP_ROWS, _RP_COLS], dtype=pl.DT_FP16)
         pl.load(wr, src, [0, 0])
         pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.MTE3, event_id=3)
@@ -1498,7 +1502,7 @@ _AT_FLAT = 128       # 2-D view [4, 4]
 _AT_FLAT_WORD = 168  # scalar offset 5 -> linear element 5 = byte 128 + 5*8
 _AT_FLAT_2D_WORD = 176   # coordinate [1, 2] -> linear element 6 = byte 128 + 6*8
 _AT_FLAT_2D_DECOY = 136  # element 1: must stay 0 if [1, 2] is flattened, not read as 1
-_AT_NESTED = 200     # direct `out[i] = pld.atomic_add(...)` (setval-nested) path
+_AT_NESTED = 200     # direct `out[i] = pl.atomic_add(...)` (setval-nested) path
 _AT_SUB = 256        # int64 [7]: const 5, const -3, runtime offset/value
 _AT_SUB_U64 = 320    # uint64 modular wrap
 _AT_SUB_F32 = 328    # fp32
@@ -1518,86 +1522,93 @@ def atomic_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
 
         pld.barrier(win)  # every rank's host-side payload zeroing is complete
 
-        i64 = pld.make_dtensor(win, ws, _AT_INT64, [5], pl.DT_INT64)
-        old_add = pld.atomic_add(i64, peer, [0], 1)
-        old_exch = pld.atomic_exchange(i64, peer, [1], me + 100)
-        old_cas = pld.atomic_cas(i64, peer, [2], 0, me + 200)
-        old_fail = pld.atomic_cas(i64, peer, [3], 0xDEAD, 123)
+        # All atomics are typed views over the peer's region; the linear element offset
+        # selects the word.
+        peer_base = pld.remote_ptr(win, ws, peer)
 
-        u64 = pld.make_dtensor(win, ws, _AT_UINT64, [3], pl.DT_UINT64)
-        pld.atomic_add(u64, peer, [0], 1)
-        pld.atomic_exchange(u64, peer, [1], me + 300)
-        pld.atomic_cas(u64, peer, [2], 0, me + 400)
+        i64 = pl.make_tensor(pl.addptr(peer_base, _AT_INT64), [5], dtype=pl.DT_INT64)
+        old_add = pl.atomic_add(i64, 0, 1)
+        old_exch = pl.atomic_exch(i64, 1, 100)
+        old_cas = pl.atomic_cas(i64, 2, 0, 200)
+        old_fail = pl.atomic_cas(i64, 3, 0xDEAD, 123)
 
-        i32 = pld.make_dtensor(win, ws, _AT_INT32, [3], pl.DT_INT32)
-        pld.atomic_add(i32, peer, [0], 1)
-        pld.atomic_exchange(i32, peer, [1], me + 500)
-        pld.atomic_cas(i32, peer, [2], 0, me + 600)
+        # pl.atomic_* requires the value dtype to match the element dtype; literals are
+        # retyped, while a runtime INT64 expression would need an explicit cast.
+        u64 = pl.make_tensor(pl.addptr(peer_base, _AT_UINT64), [3], dtype=pl.DT_UINT64)
+        pl.atomic_add(u64, 0, 1)
+        pl.atomic_exch(u64, 1, 300)
+        pl.atomic_cas(u64, 2, 0, 400)
 
-        u32 = pld.make_dtensor(win, ws, _AT_UINT32, [3], pl.DT_UINT32)
-        pld.atomic_add(u32, peer, [0], 1)
-        pld.atomic_exchange(u32, peer, [1], me + 700)
-        pld.atomic_cas(u32, peer, [2], 0, me + 800)
+        i32 = pl.make_tensor(pl.addptr(peer_base, _AT_INT32), [3], dtype=pl.DT_INT32)
+        pl.atomic_add(i32, 0, 1)
+        pl.atomic_exch(i32, 1, 500)
+        pl.atomic_cas(i32, 2, 0, 600)
 
-        f32 = pld.make_dtensor(win, ws, _AT_FP32, [3], pl.DT_FP32)
-        pld.atomic_add(f32, peer, [0], 1.5)
-        pld.atomic_exchange(f32, peer, [1], 2.25)
-        pld.atomic_cas(f32, peer, [2], 0.0, 3.5)
+        u32 = pl.make_tensor(pl.addptr(peer_base, _AT_UINT32), [3], dtype=pl.DT_UINT32)
+        pl.atomic_add(u32, 0, 1)
+        pl.atomic_exch(u32, 1, 700)
+        pl.atomic_cas(u32, 2, 0, 800)
 
-        # Scalar offset form: linear element 5 inside a [4, 4] view (never [5, 0]).
-        flat = pld.make_dtensor(win, ws, _AT_FLAT, [4, 4], pl.DT_INT64)
-        pld.atomic_add(flat, peer, 5, 1)
-        # Coordinate form on the same 2-D view: [1, 2] flattens to linear element 6.
-        pld.atomic_add(flat, peer, [1, 2], 2)
-        # Runtime offset expressions are legal: coordinates and the scalar linear form.
-        pld.atomic_add(flat, peer, [me, 3], 3)   # peer's element me*4 + 3
-        pld.atomic_add(flat, peer, me * 4, 4)    # scalar linear expression: element me*4
+        f32 = pl.make_tensor(pl.addptr(peer_base, _AT_FP32), [3], dtype=pl.DT_FP32)
+        pl.atomic_add(f32, 0, 1.5)
+        pl.atomic_exch(f32, 1, 2.25)
+        pl.atomic_cas(f32, 2, 0.0, 3.5)
 
-        # atomic_sub is a frontend wrapper over atomic_add(-val).
-        sub = pld.make_dtensor(win, ws, _AT_SUB, [7], pl.DT_INT64)
-        pld.atomic_sub(sub, peer, [0], 5)        # element 0 -> -5
-        pld.atomic_sub(sub, peer, [1], -3)       # element 1 -> +3 (double negation)
-        pld.atomic_sub(sub, peer, me + 2, 1)     # runtime scalar offset -> element me+2
-        pld.atomic_sub(sub, peer, [6], me)       # runtime value -> element 6 = -me
+        # Linear element 5 inside a [4, 4] view (never [5, 0]).
+        flat = pl.make_tensor(pl.addptr(peer_base, _AT_FLAT), [4, 4], dtype=pl.DT_INT64)
+        pl.atomic_add(flat, 5, 1)
+        # Coordinate [1, 2] flattens to linear element 6; element 1 stays untouched.
+        pl.atomic_add(flat, 1 * 4 + 2, 2)
+        # Runtime offsets are legal.
+        pl.atomic_add(flat, me * 4 + 3, 3)   # peer's element me*4 + 3
+        pl.atomic_add(flat, me * 4, 4)       # peer's element me*4
 
-        sub_u64 = pld.make_dtensor(win, ws, _AT_SUB_U64, [1], pl.DT_UINT64)
-        pld.atomic_sub(sub_u64, peer, [0], 1)    # 0 - 1 modulo 2^64
+        # atomic_sub subtracts its value.
+        sub = pl.make_tensor(pl.addptr(peer_base, _AT_SUB), [7], dtype=pl.DT_INT64)
+        pl.atomic_sub(sub, 0, 5)        # element 0 -> -5
+        pl.atomic_sub(sub, 1, -3)       # element 1 -> +3 (double negation)
+        pl.atomic_sub(sub, me + 2, 1)   # runtime offset -> element me+2
+        pl.atomic_sub(sub, 6, 6)        # element 6 -> -6
 
-        sub_f32 = pld.make_dtensor(win, ws, _AT_SUB_F32, [1], pl.DT_FP32)
-        pld.atomic_sub(sub_f32, peer, [0], 0.5)  # -0.5
+        sub_u64 = pl.make_tensor(pl.addptr(peer_base, _AT_SUB_U64), [1], dtype=pl.DT_UINT64)
+        pl.atomic_sub(sub_u64, 0, 1)    # 0 - 1 modulo 2^64
+
+        sub_f32 = pl.make_tensor(pl.addptr(peer_base, _AT_SUB_F32), [1], dtype=pl.DT_FP32)
+        pl.atomic_sub(sub_f32, 0, 0.5)  # -0.5
 
         # atomic_min/max keep the smaller/larger value; a plain add would move both.
-        minmax = pld.make_dtensor(win, ws, _AT_MINMAX, [4], pl.DT_INT64)
-        pld.atomic_min(minmax, peer, 0, -5)      # 0 -> -5 (scalar linear offset)
-        pld.atomic_max(minmax, peer, [1], 9)     # 0 -> 9
-        pld.atomic_min(minmax, peer, [1], 4)     # 9 -> 4
-        pld.atomic_max(minmax, peer, [2], 3)     # 0 -> 3
-        pld.atomic_min(minmax, peer, [3], 8)     # 0 -> 0 (unchanged)
+        minmax = pl.make_tensor(pl.addptr(peer_base, _AT_MINMAX), [4], dtype=pl.DT_INT64)
+        pl.atomic_min(minmax, 0, -5)    # 0 -> -5
+        pl.atomic_max(minmax, 1, 9)     # 0 -> 9
+        pl.atomic_min(minmax, 1, 4)     # 9 -> 4
+        pl.atomic_max(minmax, 2, 3)     # 0 -> 3
+        pl.atomic_min(minmax, 3, 8)     # 0 -> 0 (unchanged)
 
-        minmax_u64 = pld.make_dtensor(win, ws, _AT_MINMAX_U64, [2], pl.DT_UINT64)
-        pld.atomic_max(minmax_u64, peer, [0], 7)  # 0 -> 7
-        pld.atomic_min(minmax_u64, peer, [1], 9)  # 0 -> 0
+        minmax_u64 = pl.make_tensor(pl.addptr(peer_base, _AT_MINMAX_U64), [2], dtype=pl.DT_UINT64)
+        pl.atomic_max(minmax_u64, 0, 7)  # 0 -> 7
+        pl.atomic_min(minmax_u64, 1, 9)  # 0 -> 0
 
-        minmax_i32 = pld.make_dtensor(win, ws, _AT_MINMAX_I32, [2], pl.DT_INT32)
-        pld.atomic_min(minmax_i32, peer, [0], -5)  # 0 -> -5
-        pld.atomic_max(minmax_i32, peer, [1], 9)   # 0 -> 9
+        minmax_i32 = pl.make_tensor(pl.addptr(peer_base, _AT_MINMAX_I32), [2], dtype=pl.DT_INT32)
+        pl.atomic_min(minmax_i32, 0, -5)  # 0 -> -5
+        pl.atomic_max(minmax_i32, 1, 9)   # 0 -> 9
 
-        minmax_u32 = pld.make_dtensor(win, ws, _AT_MINMAX_U32, [2], pl.DT_UINT32)
-        pld.atomic_min(minmax_u32, peer, [0], 5)   # 0 -> 0
-        pld.atomic_max(minmax_u32, peer, [1], 7)   # 0 -> 7
+        minmax_u32 = pl.make_tensor(pl.addptr(peer_base, _AT_MINMAX_U32), [2], dtype=pl.DT_UINT32)
+        pl.atomic_min(minmax_u32, 0, 5)   # 0 -> 0
+        pl.atomic_max(minmax_u32, 1, 7)   # 0 -> 7
 
-        minmax_f32 = pld.make_dtensor(win, ws, _AT_MINMAX_F32, [2], pl.DT_FP32)
-        pld.atomic_max(minmax_f32, peer, [0], 2.5)  # 0 -> 2.5
-        pld.atomic_min(minmax_f32, peer, [0], 1.5)  # 2.5 -> 1.5
-        pld.atomic_min(minmax_f32, peer, [1], 2.5)  # 0 -> 0
+        minmax_f32 = pl.make_tensor(pl.addptr(peer_base, _AT_MINMAX_F32), [2], dtype=pl.DT_FP32)
+        pl.atomic_max(minmax_f32, 0, 2.5)  # 0 -> 2.5
+        pl.atomic_min(minmax_f32, 0, 1.5)  # 2.5 -> 1.5
+        pl.atomic_min(minmax_f32, 1, 2.5)  # 0 -> 0
 
         # Contended counter: every rank adds 1 to rank 0's word.
-        shared = pld.make_dtensor(win, ws, 32, [1], pl.DT_INT64)
-        old_shared = pld.atomic_add(shared, 0, [0], 1)
+        rank0_base = pld.remote_ptr(win, ws, 0)
+        shared = pl.make_tensor(pl.addptr(rank0_base, 32), [1], dtype=pl.DT_INT64)
+        old_shared = pl.atomic_add(shared, 0, 1)
 
         # Nested value position: the atomic is an argument of block.setval, not a bound var.
-        nested = pld.make_dtensor(win, ws, _AT_NESTED, [1], pl.DT_INT64)
-        out[5] = pld.atomic_add(nested, peer, [0], 7)
+        nested = pl.make_tensor(pl.addptr(peer_base, _AT_NESTED), [1], dtype=pl.DT_INT64)
+        out[5] = pl.atomic_add(nested, 0, 7)
 
         pld.barrier(win)  # all atomics have landed before any rank reads its window
 

@@ -35,17 +35,7 @@ using npu::tile_fwk::ExternalError;
 
 namespace {
 
-bool IsDtypeIn(const DataType& dtype, const std::vector<DataType>& supported)
-{
-    for (const auto& candidate : supported) {
-        if (dtype == candidate) {
-            return true;
-        }
-    }
-    return false;
-}
-
-std::vector<DataType> AtomicRMWDtypes(AtomicRMWMode mode)
+bool IsSupportedAtomicRMWDtype(AtomicRMWMode mode, const DataType& dtype)
 {
     switch (mode) {
         case AtomicRMWMode::ADD:
@@ -53,16 +43,16 @@ std::vector<DataType> AtomicRMWDtypes(AtomicRMWMode mode)
         case AtomicRMWMode::EXCH:
         case AtomicRMWMode::MAX:
         case AtomicRMWMode::MIN:
-            return {DataType::INT32, DataType::UINT32, DataType::FP32, DataType::INT64, DataType::UINT64};
+            return IsAtomicDType(dtype, /*check_float=*/true);
         case AtomicRMWMode::AND:
         case AtomicRMWMode::OR:
         case AtomicRMWMode::XOR:
-            return {DataType::INT32, DataType::UINT32, DataType::INT64, DataType::UINT64};
+            return IsAtomicDType(dtype);
         case AtomicRMWMode::INC:
         case AtomicRMWMode::DEC:
-            return {DataType::UINT32, DataType::UINT64};
+            return dtype == DataType::UINT32 || dtype == DataType::UINT64;
         default:
-            return {};
+            return false;
     }
 }
 
@@ -104,7 +94,7 @@ TypePtr DeduceAtomicRMWType(const std::vector<ExprPtr>& args,
 
     CheckAtomicTensor(kOpName, args[0]);
     const auto elementDtype = As<TensorType>(args[0]->GetType())->dtype_;
-    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsDtypeIn(elementDtype, AtomicRMWDtypes(kind)))
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsSupportedAtomicRMWDtype(kind, elementDtype))
         << kOpName << " kind " << EnumToString(kind) << " does not support dtype " << elementDtype.ToString();
     CheckAtomicOffset(kOpName, args[1]);
     CheckAtomicValue(kOpName, "value", args[2], elementDtype);
@@ -122,9 +112,7 @@ TypePtr DeduceAtomicCasType(const std::vector<ExprPtr>& args,
 
     CheckAtomicTensor(kOpName, args[0]);
     const auto elementDtype = As<TensorType>(args[0]->GetType())->dtype_;
-    PRO_IR_CHECK(
-        ExternalError::NOT_IMPLEMENTED_ERROR,
-        IsDtypeIn(elementDtype, {DataType::INT32, DataType::UINT32, DataType::FP32, DataType::INT64, DataType::UINT64}))
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsAtomicDType(elementDtype, /*check_float=*/true))
         << kOpName << " does not support dtype " << elementDtype.ToString();
     CheckAtomicOffset(kOpName, args[1]);
     CheckAtomicValue(kOpName, "compare", args[2], elementDtype);

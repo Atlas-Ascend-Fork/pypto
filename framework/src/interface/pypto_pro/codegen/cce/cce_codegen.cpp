@@ -2870,36 +2870,6 @@ std::string CCECodegen::BindGlobalTensor(const ir::VarPtr& tensorVar, const ir::
     return declName;
 }
 
-std::string CCECodegen::BindDistGlobalTensor(const ir::TensorTypePtr& viewType, const ir::MakeTuplePtr& offsets,
-                                             const std::optional<std::vector<int>>& tileDims, bool isTranspose,
-                                             const std::vector<ir::ExprPtr>& tileShape, const std::string& remoteBase,
-                                             const std::string& tile)
-{
-    // Offset flattening and stride construction are the block.load/block.store helpers over
-    // the synthetic view type, so addressing follows the local ops exactly.
-    const std::string elemOff = ComputeTensorOffset(viewType, offsets);
-    const std::string strideArgs = BuildAccessStrideArgs(viewType, tileDims, isTranspose, false);
-    const std::string dtypeStr = viewType->dtype_.ToCTypeString();
-    const bool isDn = IsDNAccessLayout(ExtractShapeDimensions(tileShape), isTranspose);
-    const std::string layout = isDn ? "pto::Layout::DN" : "pto::Layout::ND";
-
-    // Per-call-site declaration (window views have no prescan entry) + instance over the
-    // peer payload, resized to the tile's runtime valid window.
-    const int counter = GetTileOffsetCounter();
-    const std::string decl = "pypto_dist_gt" + std::to_string(counter);
-    const std::string inst = "pypto_dist_g" + std::to_string(counter);
-    emitter_.EmitLine("using " + decl + "ShapeDim5 = pto::TileShape2D<" + dtypeStr + ", pto::DYNAMIC, pto::DYNAMIC, " +
-                      layout + ">;");
-    emitter_.EmitLine("using " + decl + "StrideDim5 = pto::Stride<-1, -1, -1, -1, -1>;");
-    emitter_.EmitLine("using " + decl + "Type = pto::GlobalTensor<" + dtypeStr + ", " + decl + "ShapeDim5, " + decl +
-                      "StrideDim5, " + layout + ">;");
-    EmitGlobalTensorInstance(inst, decl, remoteBase + " + " + elemOff, "", strideArgs);
-    emitter_.EmitLine(inst + ".SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(" +
-                      "static_cast<int64_t>(" + tile + ".GetValidRow()), static_cast<int64_t>(" + tile +
-                      ".GetValidCol()));");
-    return inst;
-}
-
 void CCECodegen::EmitGlobalTensorInstance(const std::string& instanceName, const std::string& declName,
                                           const std::string& pointerExpr, const std::string& shapeArgs,
                                           const std::string& strideArgs)

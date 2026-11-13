@@ -1,0 +1,5 @@
+function kernel incast( %win_0, ptr<int32_t> %workspace_0) outcast() #entry(false) #type(pro) {
+    ptr<int32_t> %ptr_0 = dist.remote_ptr(%win_0, %workspace_0, 1);
+    debug.printf(%ptr_0, format="%p\n", show_location=false);
+    return;
+}

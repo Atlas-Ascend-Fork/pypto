@@ -1,0 +1,5 @@
+function kernel incast( %win_0) outcast() #entry(false) #type(pro) {
+    int64_t %ch_0 = dist.channel(%win_0, -1, ub_addr=64);
+    dist.channel_is_exclusive(%ch_0);
+    return;
+}

@@ -1,0 +1,8 @@
+function kernel incast( %win_0, tensor<16, int64_t, tensor_view<, , ND, %sig_ptr>> %sig_0, int64_t %peer_0) outcast() #entry(false) #type(pro) {
+    ptr<int64_t> %remote_0 = dist.remote_ptr(%win_0, ptr.make_ptr(%sig_0), %peer_0);
+    ptr<int64_t> %slot_0 = ptr.addptr(%remote_0, 3);
+    dist.notify(%slot_0, 7, notify_op=0, flush_store=true);
+    dist.notify(%slot_0, 8, notify_op=1, flush_store=true);
+    dist.notify(ptr.make_ptr(%sig_0), 5, notify_op=0, flush_store=true);
+    return;
+}

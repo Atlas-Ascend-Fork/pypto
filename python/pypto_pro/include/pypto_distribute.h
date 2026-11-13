@@ -12,6 +12,18 @@
 #pragma once
 #include <cstdint>
 #include <type_traits>
+
+// The CANN device headers must come before pypto_assert.h: both CANN and PyPTO's
+// vendored debug headers define the same debug globals, and only the PyPTO copy defers
+// to the CANN include guards, so CANN has to be seen first.
+#if defined(__DAV_VEC__)
+#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#include "kernel_operator_sys_var_intf.h"
+#include "jetty/hcomm_jetty.h"
+#define PYPTO_DIST_HAVE_JETTY 1
+#endif
+#endif
+
 #include <pypto_assert.h>
 // The descriptor is a plain POD shared with the host writer; the helpers below run on
 // the vector core only.
@@ -19,39 +31,20 @@
 
 #if defined(__DAV_VEC__)
 
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
-#include "kernel_operator_sys_var_intf.h"
-#include "jetty/hcomm_jetty.h"
-#define PYPTO_DIST_HAVE_JETTY 1
-#endif
-
 namespace pypto::dist {
 constexpr int32_t kControlRegion = 0;
 
-__aicore__ inline __gm__ RegionEntry* region_entry(__gm__ Window* win, int32_t region)
+__aicore__ inline __gm__ RegionEntry* GetRegionEntry(__gm__ Window* win, int32_t region)
 {
     pypto_assert(region >= 0 && region < win->num_regions, "dist: region %d out of range [0, %d)\n", region,
                  win->num_regions);
     return reinterpret_cast<__gm__ RegionEntry*>(win->region_table) + region;
 }
 
-__aicore__ inline int32_t region_of(__gm__ Window* win, int64_t local_base)
-{
-    __gm__ RegionEntry* table = reinterpret_cast<__gm__ RegionEntry*>(win->region_table);
-    for (int32_t i = 0; i < win->num_regions; ++i) {
-        if (table[i].remote_ptrs[win->rank] == local_base) {
-            return i;
-        }
-    }
-    pypto_panic("dist: memory 0x%llx is not a registered region of this window\n",
-                static_cast<unsigned long long>(local_base));
-    return -1;
-}
-
 // Region containing `local_ptr`, with its byte offset from the region base. The pointer
 // may sit anywhere inside a region, not only at its base; region sizes match across
 // ranks, so the same offset locates the byte in a peer's copy.
-__aicore__ inline int32_t region_of_ptr(__gm__ Window* win, int64_t local_ptr, int64_t* offset)
+__aicore__ inline int32_t RegionOfPtr(__gm__ Window* win, int64_t local_ptr, int64_t* offset)
 {
     __gm__ RegionEntry* table = reinterpret_cast<__gm__ RegionEntry*>(win->region_table);
     for (int32_t i = 0; i < win->num_regions; ++i) {
@@ -66,46 +59,32 @@ __aicore__ inline int32_t region_of_ptr(__gm__ Window* win, int64_t local_ptr, i
     return -1;
 }
 
-template <typename T>
-__aicore__ inline __gm__ T* remote_ptr(__gm__ Window* win, int32_t region, int32_t peer)
-{
-    pypto_assert(peer >= 0 && peer < win->nrank, "dist: peer %d out of range [0, %d)\n", peer, win->nrank);
-    return reinterpret_cast<__gm__ T*>(region_entry(win, region)->remote_ptrs[peer]);
-}
-
-// Byte pointer to `local_ptr`'s byte in the peer's copy of its region. The region and
-// in-region offset are resolved from the pointer at runtime; only the UB_MEM plane has
-// a direct peer-VA.
-__aicore__ inline __gm__ uint8_t* remote_ub_ptr(__gm__ Window* win, int64_t local_ptr, int32_t peer)
+// Byte pointer to `local_ptr`'s byte in the peer's UB_MEM copy of its region. The region
+// and in-region offset are resolved from the pointer at runtime; only the UB_MEM plane has
+// a direct peer-VA suitable for pl.load/pl.store.
+__aicore__ inline __gm__ uint8_t* RemotePtr(__gm__ Window* win, int64_t local_ptr, int32_t peer)
 {
     int64_t offset = 0;
-    const int32_t region = region_of_ptr(win, local_ptr, &offset);
-    __gm__ RegionEntry* entry = region_entry(win, region);
-    pypto_assert((entry->policy & kPolicyUbMem) != 0,
-                 "dist.get_remote_ptr: region %d is not registered on the UB_MEM plane\n", region);
+    const int32_t region = RegionOfPtr(win, local_ptr, &offset);
+    __gm__ RegionEntry* entry = GetRegionEntry(win, region);
     pypto_assert(peer >= 0 && peer < win->nrank, "dist: peer %d out of range [0, %d)\n", peer, win->nrank);
     const int64_t base = entry->remote_ptrs[peer];
-    pypto_assert(base != 0, "dist.get_remote_ptr: region %d has no UB_MEM address for peer %d\n", region, peer);
+    if (base == 0) {
+        pypto_panic("dist.remote_ptr: region %d has no UB_MEM address for peer %d "
+                    "(register it with Protocol.UB_MEM)\n",
+                    region, peer);
+    }
     return reinterpret_cast<__gm__ uint8_t*>(base + offset);
 }
 
-__aicore__ inline __gm__ uint8_t* remote_control_ptr(__gm__ Window* win, int32_t peer)
+__aicore__ inline __gm__ uint8_t* RemoteControlPtr(__gm__ Window* win, int32_t peer)
 {
-    return remote_ptr<uint8_t>(win, kControlRegion, peer);
+    const int64_t localBase = GetRegionEntry(win, kControlRegion)->remote_ptrs[win->rank];
+    return RemotePtr(win, localBase, peer);
 }
 
-__aicore__ inline int64_t signal_slots(__gm__ Window* win)
-{
-    return region_entry(win, kControlRegion)->size / kL2CacheLineSize - 1;
-}
-
-// Address of signal slot `slot` on `peer`; slot 0 of the control region is the Barrier.
-__aicore__ inline __gm__ uint64_t* signal_addr(__gm__ Window* win, int32_t peer, int64_t slot)
-{
-    return reinterpret_cast<__gm__ uint64_t*>(remote_control_ptr(win, peer) + (slot + 1) * kL2CacheLineSize);
-}
-
-__simt_vf__ __launch_bounds__(kNumMaxRanks) inline void signal(__gm__ Window* win, int64_t slot_off, int32_t delta)
+__simt_vf__ __launch_bounds__(kNumMaxRanks) inline void BarrierSignal(__gm__ Window* win, int64_t slot_off,
+                                                                      int32_t delta)
 {
     int32_t peer = static_cast<int32_t>(threadIdx.x);
     if (peer < win->nrank) {
@@ -114,23 +93,7 @@ __simt_vf__ __launch_bounds__(kNumMaxRanks) inline void signal(__gm__ Window* wi
     }
 }
 
-template <bool kAtomicAdd>
-__simt_vf__ __launch_bounds__(kNumMaxRanks) inline void notify_all_signal(__gm__ Window* win, int64_t slot_off,
-                                                                          int64_t val)
-{
-    int32_t peer = static_cast<int32_t>(threadIdx.x);
-    if (peer < win->nrank) {
-        __gm__ RegionEntry* entry = reinterpret_cast<__gm__ RegionEntry*>(win->region_table) + kControlRegion;
-        auto* addr = reinterpret_cast<__gm__ uint64_t*>(entry->remote_ptrs[peer] + slot_off);
-        if constexpr (kAtomicAdd) {
-            (void)atomicAdd(reinterpret_cast<__gm__ int64_t*>(addr), val);
-        } else {
-            (void)atomicExch(addr, static_cast<uint64_t>(val));
-        }
-    }
-}
-
-__aicore__ inline void cpu_relax()
+__aicore__ inline void CpuRelax()
 {
 #pragma unroll 1
     for (int32_t i = 0; i < 300; ++i) {
@@ -164,12 +127,12 @@ __aicore__ inline void StoreDev(__gm__ T* addr, T value)
     st_dev(value, addr, 0);
 }
 
-template <int32_t kNotifyOp, bool kFlushStore = true>
-__aicore__ inline void notify(__gm__ Window* win, int64_t slot, int64_t val, int32_t peer)
+template <typename T, int32_t kNotifyOp, bool kFlushStore = true>
+__aicore__ inline void Notify(__gm__ T* addr, int64_t val)
 {
+    static_assert(std::is_integral<T>::value && (sizeof(T) == 4 || sizeof(T) == 8),
+                  "signal words must be 32/64-bit integers");
     static_assert(kNotifyOp == 0 || kNotifyOp == 1, "notify_op must be 0 (SET) or 1 (ATOMIC_ADD)");
-    pypto_assert(slot >= 0 && slot < signal_slots(win), "dist.notify: slot %lld out of range\n",
-                 static_cast<long long>(slot));
     if constexpr (kFlushStore) {
         // Drain this AIV's outstanding MTE3 stores into the scalar pipe before the
         // signal write. Event id 0 is hardcoded — do not keep an MTE3 event 0 in flight.
@@ -180,18 +143,17 @@ __aicore__ inline void notify(__gm__ Window* win, int64_t slot, int64_t val, int
     // Flush the store buffer so prior stores are visible before the signal write.
     dsb(DSB_DDR);
 
-    __gm__ uint64_t* addr = signal_addr(win, peer, slot);
     if constexpr (kNotifyOp != 0) {
-        (void)atomicAdd(reinterpret_cast<__gm__ int64_t*>(addr), val);
+        (void)atomicAdd(addr, static_cast<T>(val));
     } else {
-        (void)atomicExch(addr, static_cast<uint64_t>(val));
+        (void)atomicExch(addr, static_cast<T>(val));
     }
 }
 
 template <int32_t kCmp>
-__aicore__ inline constexpr bool cmp(int64_t sig, int64_t val)
+__aicore__ inline constexpr bool Cmp(int64_t sig, int64_t val)
 {
-    static_assert(kCmp >= 0 && kCmp <= 5, "cmp must be a CmpMode value (0..5)");
+    static_assert(kCmp >= 0 && kCmp <= 5, "Cmp must be a CmpMode value (0..5)");
     if constexpr (kCmp == 0) {
         return sig == val;
     } else if constexpr (kCmp == 1) {
@@ -207,55 +169,33 @@ __aicore__ inline constexpr bool cmp(int64_t sig, int64_t val)
     }
 }
 
-// The wait always polls the LOCAL window's slot (LD_DEV bypasses the DCache).
-template <int32_t kCmp>
-__aicore__ inline void wait(__gm__ Window* win, int64_t slot, int64_t val, int64_t timeout_cycles)
+template <typename T, int32_t kCmp>
+__aicore__ inline void Wait(__gm__ T* addr, int64_t val, int64_t timeout_cycles)
 {
-    static_assert(kCmp >= 0 && kCmp <= 5, "cmp must be a CmpMode value (0..5)");
-    pypto_assert(slot >= 0 && slot < signal_slots(win), "dist.wait: slot %lld out of range\n",
-                 static_cast<long long>(slot));
-    __gm__ uint64_t* addr = signal_addr(win, win->rank, slot);
+    static_assert(std::is_integral<T>::value && (sizeof(T) == 4 || sizeof(T) == 8),
+                  "signal words must be 32/64-bit integers");
+    static_assert(kCmp >= 0 && kCmp <= 5, "Cmp must be a CmpMode value (0..5)");
     const int64_t t0 = get_sys_cnt();
     while (true) {
         const int64_t sig = static_cast<int64_t>(LoadDev(addr));
-        if (cmp<kCmp>(sig, val)) {
+        if (Cmp<kCmp>(sig, val)) {
             break;
         }
         if (timeout_cycles > 0 && get_sys_cnt() - t0 >= timeout_cycles) {
-            pypto_panic("dist.wait timeout: slot %lld, signal %lld, val %lld, cmp %d, elapsed %lld cycles, timeout "
+            pypto_panic("dist.Wait timeout: signal %lld, val %lld, Cmp %d, elapsed %lld cycles, timeout "
                         "%lld cycles\n",
-                        static_cast<long long>(slot), static_cast<long long>(sig), static_cast<long long>(val), kCmp,
+                        static_cast<long long>(sig), static_cast<long long>(val), kCmp,
                         static_cast<long long>(get_sys_cnt() - t0), static_cast<long long>(timeout_cycles));
         }
-        cpu_relax();
+        CpuRelax();
     }
-}
-
-template <int32_t kNotifyOp, bool kFlushStore = true>
-__aicore__ inline void notify_all(__gm__ Window* win, int64_t slot, int64_t val)
-{
-    static_assert(kNotifyOp == 0 || kNotifyOp == 1, "notify_op must be 0 (SET) or 1 (ATOMIC_ADD)");
-    pypto_assert(slot >= 0 && slot < signal_slots(win), "dist.notify_all: slot %lld out of range\n",
-                 static_cast<long long>(slot));
-    if constexpr (kFlushStore) {
-        // Drain this AIV's outstanding MTE3 stores into the vector pipe before the
-        // fan-out. Event id 0 is hardcoded — do not keep an MTE3->V event 0 in flight.
-        set_flag(PIPE_MTE3, PIPE_V, 0);
-        wait_flag(PIPE_MTE3, PIPE_V, 0);
-    }
-
-    // Flush the store buffer so prior stores are visible before the signals.
-    dsb(DSB_DDR);
-
-    const int64_t slot_off = (slot + 1) * kL2CacheLineSize;
-    cce::async_invoke<notify_all_signal<kNotifyOp == 1>>(cce::dim3{kNumMaxRanks, 1, 1}, win, slot_off, val);
 }
 
 template <int64_t kTimeoutCycles, bool kSyncLocal = true, bool kFlushStore = true>
-__aicore__ inline void barrier(__gm__ Window* win)
+__aicore__ inline void BarrierSync(__gm__ Window* win)
 {
     if constexpr (kFlushStore) {
-        // Store flush: drain this AIV's outstanding MTE3 stores (e.g. a preceding dist.put
+        // Store flush: drain this AIV's outstanding MTE3 stores (e.g. a preceding pl.store
         // TSTORE) into the vector pipe before the arrival exchange. Event id 0 is hardcoded
         // — the barrier owns the MTE3->V event-0 slot, so a kernel must not keep its own
         // MTE3->V event 0 in flight across a barrier call.
@@ -270,7 +210,7 @@ __aicore__ inline void barrier(__gm__ Window* win)
     }
 
     if (get_block_idx() * get_subblockdim() + get_subblockid() == 0) {
-        __gm__ Barrier* bar = reinterpret_cast<__gm__ Barrier*>(remote_control_ptr(win, win->rank));
+        __gm__ Barrier* bar = reinterpret_cast<__gm__ Barrier*>(RemoteControlPtr(win, win->rank));
         __gm__ uint64_t* counter = reinterpret_cast<__gm__ uint64_t*>(&bar->barrier_counter);
         const int64_t cnt = static_cast<int64_t>(LoadDev(counter));
         int32_t phase = static_cast<int32_t>(cnt & 1);
@@ -281,7 +221,7 @@ __aicore__ inline void barrier(__gm__ Window* win)
 
         __gm__ uint32_t* sig_addr = reinterpret_cast<__gm__ uint32_t*>(&bar->barrier_signals[phase]);
         const int64_t slot_off = reinterpret_cast<int64_t>(sig_addr) - reinterpret_cast<int64_t>(bar);
-        cce::async_invoke<signal>(cce::dim3{kNumMaxRanks, 1, 1}, win, slot_off, delta);
+        cce::async_invoke<BarrierSignal>(cce::dim3{kNumMaxRanks, 1, 1}, win, slot_off, delta);
 
         const int64_t t0 = get_sys_cnt();
         while (true) {
@@ -290,67 +230,16 @@ __aicore__ inline void barrier(__gm__ Window* win)
                 break;
             }
             if (kTimeoutCycles > 0 && get_sys_cnt() - t0 >= kTimeoutCycles) {
-                pypto_panic("dist.barrier timeout: nrank %d, signal %d, target %d, phase %d, counter %lld\n",
+                pypto_panic("dist.barrier timeout: nrank %d, Signal %d, target %d, phase %d, counter %lld\n",
                             win->nrank, sig, target, phase, static_cast<long long>(cnt));
             }
-            cpu_relax();
+            CpuRelax();
         }
     }
 
     if constexpr (kSyncLocal) {
         AscendC::SyncAll();
     }
-}
-
-template <typename T>
-__aicore__ inline constexpr bool atomic_supported()
-{
-    return std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t> || std::is_same_v<T, float> ||
-           std::is_same_v<T, int64_t> || std::is_same_v<T, uint64_t>;
-}
-
-template <typename T>
-__aicore__ inline __gm__ T* atomic_addr(__gm__ Window* win, int32_t region, int32_t peer, int64_t base_bytes,
-                                        int64_t elem_offset)
-{
-    static_assert(atomic_supported<T>(), "dist atomics support int32_t/uint32_t/float/int64_t/uint64_t only");
-    auto* base = reinterpret_cast<__gm__ uint8_t*>(remote_ptr<T>(win, region, peer)) + base_bytes;
-    return reinterpret_cast<__gm__ T*>(base) + elem_offset;
-}
-
-template <typename T>
-__aicore__ inline T atomic_add(__gm__ Window* win, int32_t region, int32_t peer, int64_t base_bytes,
-                               int64_t elem_offset, T val)
-{
-    return atomicAdd(atomic_addr<T>(win, region, peer, base_bytes, elem_offset), val);
-}
-
-template <typename T>
-__aicore__ inline T atomic_exchange(__gm__ Window* win, int32_t region, int32_t peer, int64_t base_bytes,
-                                    int64_t elem_offset, T val)
-{
-    return atomicExch(atomic_addr<T>(win, region, peer, base_bytes, elem_offset), val);
-}
-
-template <typename T>
-__aicore__ inline T atomic_cas(__gm__ Window* win, int32_t region, int32_t peer, int64_t base_bytes,
-                               int64_t elem_offset, T expect, T desired)
-{
-    return atomicCAS(atomic_addr<T>(win, region, peer, base_bytes, elem_offset), expect, desired);
-}
-
-template <typename T>
-__aicore__ inline T atomic_min(__gm__ Window* win, int32_t region, int32_t peer, int64_t base_bytes,
-                               int64_t elem_offset, T val)
-{
-    return atomicMin(atomic_addr<T>(win, region, peer, base_bytes, elem_offset), val);
-}
-
-template <typename T>
-__aicore__ inline T atomic_max(__gm__ Window* win, int32_t region, int32_t peer, int64_t base_bytes,
-                               int64_t elem_offset, T val)
-{
-    return atomicMax(atomic_addr<T>(win, region, peer, base_bytes, elem_offset), val);
 }
 
 #if defined(PYPTO_DIST_HAVE_JETTY)
@@ -399,11 +288,11 @@ struct WriteIndexedParams {
 static_assert(sizeof(Wqebb) <= kDistWqebbBytes, "SQE header must fit one WQEBB");
 
 template <typename IndexT, bool kHasSrcIndex, bool kHasDstIndex>
-__simt_vf__ __launch_bounds__(kDistSimtThreads) inline void write_indexed_simt(__gm__ uint64_t* sq,
-                                                                               __ubuf__ const Wqebb* hdr,
-                                                                               __ubuf__ const IndexT* src_indices,
-                                                                               __ubuf__ const IndexT* dst_indices,
-                                                                               WriteIndexedParams args)
+__simt_vf__ __launch_bounds__(kDistSimtThreads) inline void WriteIndexedSimt(__gm__ uint64_t* sq,
+                                                                             __ubuf__ const Wqebb* hdr,
+                                                                             __ubuf__ const IndexT* src_indices,
+                                                                             __ubuf__ const IndexT* dst_indices,
+                                                                             WriteIndexedParams args)
 {
     uint32_t tid = threadIdx.y * 32U + threadIdx.x;
     uint32_t lane = tid & (kDistWqebbWords - 1U);
@@ -468,11 +357,20 @@ struct Channel {
         }
     }
 
+    // URMA-plane byte pointer to the peer's copy of the byte at `local_ptr` (anywhere inside
+    // a region registered on this channel). The channel entity carries the exchanged local
+    // and remote buffer descriptors in the same order, so the local base identifies the
+    // region without a window-side index. Resolve once, then pass the result to Write/... .
+    template <typename T>
+    __aicore__ inline __gm__ T* RemoteAddr(int64_t local_ptr) const
+    {
+        return reinterpret_cast<__gm__ T*>(RemoteAddrOf(local_ptr));
+    }
+
     template <int64_t kTimeoutCycles, bool kSubmit>
-    __aicore__ inline void Write(int32_t region, int64_t base_bytes, __gm__ uint8_t* src, int64_t num_bytes)
+    __aicore__ inline void Write(GM_ADDR dst, __gm__ uint8_t* src, int64_t num_bytes)
     {
         constexpr int64_t kMaxChunkBytes = static_cast<int64_t>(kDistMaxTransferBytes);
-        GM_ADDR dst = RemoteOf(region) + base_bytes;
 
         for (int64_t offset = 0; offset < num_bytes;) {
             int64_t bytes = num_bytes - offset;
@@ -492,9 +390,8 @@ struct Channel {
     }
 
     template <int64_t kTimeoutCycles, typename T, bool kSubmit>
-    __aicore__ inline void WriteValue(int32_t region, int64_t base_bytes, T value)
+    __aicore__ inline void WriteValue(GM_ADDR dst, T value)
     {
-        GM_ADDR dst = RemoteOf(region) + base_bytes;
         int32_t ret = jetty_.WriteValue<kTimeoutCycles, T, false>(peer_, dst, value);
         if (ret != AscendC::HCOMM_SUCCESS) {
             pypto_panic("dist.channel.write_value failed, ret %d\n", ret);
@@ -505,16 +402,11 @@ struct Channel {
     }
 
     template <int64_t kTimeoutCycles>
-    __aicore__ inline void WriteNotify(int32_t region, int64_t base_bytes, __gm__ uint8_t* src, int64_t num_bytes,
-                                       int64_t signal_slot, int64_t val)
+    __aicore__ inline void WriteNotify(GM_ADDR dst, __gm__ uint8_t* src, int64_t num_bytes, __gm__ uint8_t* notify_addr,
+                                       uint64_t val)
     {
-        pypto_assert(signal_slot >= 0 && signal_slot < signal_slots(win_),
-                     "dist.channel.write_notify: slot %lld out of range\n", static_cast<long long>(signal_slot));
-
-        GM_ADDR dst = RemoteOf(region) + base_bytes;
-        GM_ADDR notify_addr = RemoteOf(kControlRegion) + (signal_slot + 1) * kL2CacheLineSize;
         int32_t ret = jetty_.WriteWithNotify<kTimeoutCycles>(peer_, dst, src, static_cast<uint64_t>(num_bytes),
-                                                             notify_addr, static_cast<uint64_t>(val));
+                                                             notify_addr, val);
         if (ret != AscendC::HCOMM_SUCCESS) {
             pypto_panic("dist.channel.write_notify failed, ret %d\n", ret);
         }
@@ -522,9 +414,9 @@ struct Channel {
     }
 
     template <typename IndexT, bool kHasSrcIndex, bool kHasDstIndex, int64_t kTimeoutCycles, bool kSubmit>
-    __aicore__ inline void WriteIndexed(int32_t region, int64_t base_bytes, GM_ADDR src_base,
-                                        __ubuf__ IndexT* src_indices, __ubuf__ IndexT* dst_indices, uint64_t row_bytes,
-                                        uint64_t src_stride, uint64_t dst_stride, uint64_t count)
+    __aicore__ inline void WriteIndexed(GM_ADDR dst_base, GM_ADDR src_base, __ubuf__ IndexT* src_indices,
+                                        __ubuf__ IndexT* dst_indices, uint64_t row_bytes, uint64_t src_stride,
+                                        uint64_t dst_stride, uint64_t count)
     {
         static_assert(std::is_same_v<IndexT, int32_t> || std::is_same_v<IndexT, int64_t> ||
                           std::is_same_v<IndexT, uint32_t> || std::is_same_v<IndexT, uint64_t>,
@@ -557,12 +449,11 @@ struct Channel {
 
         if constexpr (!kHasSrcIndex && !kHasDstIndex) {
             if (src_stride == row_bytes && dst_stride == row_bytes) {
-                Write<kTimeoutCycles, kSubmit>(region, base_bytes, src_base, static_cast<int64_t>(count * row_bytes));
+                Write<kTimeoutCycles, kSubmit>(dst_base, src_base, static_cast<int64_t>(count * row_bytes));
                 return;
             }
         }
 
-        GM_ADDR dst_base = RemoteOf(region) + base_bytes;
         WriteIndexedSimt<IndexT, kHasSrcIndex, kHasDstIndex, kTimeoutCycles, kSubmit>(
             src_base, dst_base, src_indices, dst_indices, row_bytes, src_stride, dst_stride,
             static_cast<uint32_t>(count));
@@ -608,7 +499,7 @@ private:
                         pypto_panic("dist.channel PollCq timeout, tail %u, target %u\n", tail, target);
                     }
                 }
-                cpu_relax();
+                CpuRelax();
             } while (true);
 
             if ((header >> 16U) != 0U) {
@@ -674,22 +565,43 @@ private:
 
     __aicore__ inline static uint32_t JettyOf(__gm__ Window* win, int32_t peer)
     {
+        uint32_t idx = 0;
         if (peer >= 0) {
-            return static_cast<uint32_t>(peer < win->rank ? peer : peer - 1);
+            pypto_assert(peer < win->nrank, "dist.channel: peer %d out of range [0, %d)\n", peer, win->nrank);
+            idx = static_cast<uint32_t>(peer < win->rank ? peer : peer - 1);
+        } else {
+            idx = static_cast<uint32_t>(get_block_idx() * get_subblockdim() + get_subblockid());
         }
-        return static_cast<uint32_t>(get_block_idx() * get_subblockdim() + get_subblockid());
+        pypto_assert(idx < static_cast<uint32_t>(win->num_jetties), "dist.channel: jetty %u out of range [0, %d)\n",
+                     idx, win->num_jetties);
+        return idx;
     }
 
-    __aicore__ inline static GM_ADDR RemoteOf(__gm__ Window* win, uint32_t jettyIdx, int32_t region)
+    // URMA-plane address of the byte at `local_ptr`: find the channel buffer containing the
+    // local address, then apply the same offset to its exchanged remote address.
+    __aicore__ inline GM_ADDR RemoteAddrOf(int64_t local_ptr) const
     {
-        uint64_t entry = reinterpret_cast<__gm__ uint64_t*>(win->jetty_ptrs)[jettyIdx];
-        pypto_assert(entry != 0, "dist.channel: jetty table entry %u is null\n", jettyIdx);
+        uint64_t entry = reinterpret_cast<__gm__ uint64_t*>(win_->jetty_ptrs)[jetty_idx_];
+        if (entry == 0) {
+            pypto_panic("dist.channel: jetty table entry %u is null\n", jetty_idx_);
+        }
         auto* channel = reinterpret_cast<__gm__ AscendC::ChannelEntity*>(entry);
-        int32_t urma_index = region_entry(win, region)->urma_index;
-        pypto_assert(urma_index >= 0 && urma_index < static_cast<int32_t>(channel->remoteBufferNum),
-                     "dist.channel: urma_index %d out of range\n", urma_index);
-        auto* remote_buf = channel->remoteBufferAddr + urma_index;
-        return reinterpret_cast<GM_ADDR>(remote_buf->bufferInfo.rma.addr);
+        if (channel->localBufferAddr == nullptr || channel->remoteBufferAddr == nullptr) {
+            pypto_panic("dist.channel.remote_ptr: channel has no buffer descriptors\n");
+        }
+        const uint32_t numBuffers = channel->localBufferNum < channel->remoteBufferNum ? channel->localBufferNum :
+                                                                                         channel->remoteBufferNum;
+        for (uint32_t i = 0; i < numBuffers; ++i) {
+            const int64_t base = static_cast<int64_t>(channel->localBufferAddr[i].bufferInfo.rma.addr);
+            const int64_t size = static_cast<int64_t>(channel->localBufferAddr[i].bufferInfo.rma.size);
+            if (base != 0 && local_ptr >= base && local_ptr - base < size) {
+                return reinterpret_cast<GM_ADDR>(channel->remoteBufferAddr[i].bufferInfo.rma.addr +
+                                                 static_cast<uint64_t>(local_ptr - base));
+            }
+        }
+        pypto_panic("dist.channel.remote_ptr: pointer 0x%llx is not in a region registered on this channel\n",
+                    static_cast<unsigned long long>(local_ptr));
+        return nullptr;
     }
 
     // Every index form: the worker writes the WQEs into the GM SQ, the scalar side
@@ -741,9 +653,9 @@ private:
             __ubuf__ IndexT* src_chunk = kHasSrcIndex ? src_indices + done : nullptr;
             __ubuf__ IndexT* dst_chunk = kHasDstIndex ? dst_indices + done : nullptr;
 
-            cce::async_invoke<write_indexed_simt<IndexT, kHasSrcIndex, kHasDstIndex>>(
+            cce::async_invoke<pypto::dist::WriteIndexedSimt<IndexT, kHasSrcIndex, kHasDstIndex>>(
                 cce::dim3{32, kDistSimtWarps}, sq_base, hdr, src_chunk, dst_chunk, args);
-            // The V-pipe marker is queued behind the worker, so this wait fires when
+            // The V-pipe marker is queued behind the worker, so this Wait fires when
             // every lane store has completed.
             set_flag(PIPE_V, PIPE_S, EVENT_ID0);
             wait_flag(PIPE_V, PIPE_S, EVENT_ID0);
@@ -757,8 +669,6 @@ private:
     }
 
 private:
-    __aicore__ inline GM_ADDR RemoteOf(int32_t region) const { return RemoteOf(win_, jetty_idx_, region); }
-
     __aicore__ inline static __ubuf__ AscendC::HcommJettyPeerInfo* JettyPeerInfo(__ubuf__ uint8_t* base)
     {
         return reinterpret_cast<__ubuf__ AscendC::HcommJettyPeerInfo*>(base);

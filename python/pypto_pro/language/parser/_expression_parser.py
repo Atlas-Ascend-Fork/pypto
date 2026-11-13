@@ -1601,7 +1601,9 @@ class ExpressionParserMixin:
                 return ir.create_op_call("dist.window_get", [obj, field], {}, span)
         return None
 
-    _CHANNEL_METHODS = frozenset({"write", "write_indexed", "write_notify", "submit", "drain", "is_exclusive"})
+    _CHANNEL_METHODS = frozenset(
+        {"remote_ptr", "write", "write_indexed", "write_notify", "submit", "drain", "is_exclusive"}
+    )
 
     def _route_channel_method(self, node: ast.Call):
         """Route ``ch.<method>(...)`` when ``ch`` resolves to a pld.Channel handle.
@@ -1614,7 +1616,13 @@ class ExpressionParserMixin:
             return None
         from ..distribute import Channel
 
-        receiver = self.parse_expression(node.func.value)
+        if isinstance(node.func.value, ast.Name):
+            binding = self.local_binding(node.func.value.id)
+            if binding is None:
+                return None
+            receiver = binding[1]
+        else:
+            receiver = self.parse_expression(node.func.value)
         if not isinstance(receiver, Channel):
             return None
         span = self.span_tracker.get_span(node)

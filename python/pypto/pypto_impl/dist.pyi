@@ -6,14 +6,8 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 
-from typing import Any
-
-
 class Window:
     """Symmetric window registered on an HCCL comm (host-side handle)."""
-
-    # torch uint8 tensor backing the control region; set by pld.create_window.
-    control_buffer: Any
 
     def rank(self) -> int: ...
     def nrank(self) -> int: ...

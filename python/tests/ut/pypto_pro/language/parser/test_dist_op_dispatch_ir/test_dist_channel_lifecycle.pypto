@@ -1,0 +1,11 @@
+function kernel incast( %win_0, tensor<1 x 8, int32_t, tensor_view<, , ND, %dst_ptr>> %dst_0, tensor<1 x 8, int32_t, tensor_view<, , ND, %src_ptr>> %src_0, tensor<16, int64_t, tensor_view<, , ND, %sig_ptr>> %sig_0) outcast() #entry(false) #type(pro) {
+    int64_t %ch_0 = dist.channel(%win_0, 1, ub_addr=64);
+    ptr<int32_t> %rptr_0 = dist.channel_remote_ptr(%ch_0, ptr.make_ptr(%dst_0));
+    dist.channel_write(%ch_0, %rptr_0, (((32 mul 1) mul 8) div 8), %src_0, submit=false, timeout_cycles=0);
+    dist.channel_submit(%ch_0);
+    dist.channel_drain(%ch_0, timeout_cycles=0);
+    ptr<int64_t> %_expr_tmp_0_0 = ptr.make_ptr(%sig_0);
+    ptr<int64_t> %_expr_tmp_1_0 = ptr.addptr(%_expr_tmp_0_0, 1);
+    dist.notify(%_expr_tmp_1_0, 1, notify_op=0, flush_store=true);
+    return;
+}

@@ -1,0 +1,10 @@
+function kernel incast( %win_0, tensor<1 x 8, int32_t, tensor_view<, , ND, %buf_ptr>> %buf_0) outcast() #entry(false) #type(pro) {
+    ptr<int32_t> %_expr_tmp_0_0 = dist.remote_ptr(%win_0, ptr.make_ptr(%buf_0), 1);
+    ptr<int32_t> %off_0 = ptr.addptr(%_expr_tmp_0_0, 4);
+    tuple<int64_t, int64_t> %_tuple_anchor_1_0 = tuple(1, 8);
+    tensor<1 x 8, int32_t, tensor_view<, , ND, %off_0>> %view_0 = ptr.make_tensor(%off_0, tuple(1, 8), tuple(), dtype=int32_t);
+    mutex_tile<tile<1 x 8, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %tile_0 = block.make_mutex_tile(tuple(1, 8), tuple(), tuple(), dtype=int32_t, target_memory=Vec, compact=1, memref_addr=0, memref_size=32, memref_id=<id>);
+    tuple<int64_t, int64_t> %_tuple_anchor_2_0 = tuple(0, 0);
+    block.load(%tile_0, %view_0, tuple(0, 0));
+    return;
+}

@@ -1,0 +1,6 @@
+function kernel incast( %win_0, tensor<16, int64_t, tensor_view<, , ND, %sig_ptr>> %sig_0) outcast() #entry(false) #type(pro) {
+    ptr<int64_t> %_expr_tmp_0_0 = ptr.make_ptr(%sig_0);
+    ptr<int64_t> %local_0 = ptr.addptr(%_expr_tmp_0_0, 2);
+    dist.wait(%local_0, 1, cmp=5, timeout_cycles=0);
+    return;
+}

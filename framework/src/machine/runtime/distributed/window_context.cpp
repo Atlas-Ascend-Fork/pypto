@@ -366,7 +366,7 @@ struct WindowContext::Impl {
 
     void RegisterMemory(int64_t tensorPtr, int64_t size, const std::string& regionName, int32_t protocol);
     void Connect();
-    void AcquireUlbmemChannels(); // resolve every peer's region bases (regionBases_)
+    void AcquireUlbmemChannels(); // resolve every peer's UB_MEM region bases (regionBases_)
     void AcquireJettyChannels();  // multi-issuer: per-AIV jetties; else one jetty per peer
     void WriteDeviceWindow();     // fill region table + pypto::dist::Window and copy them to device
     void Close();                 // all-rank collective teardown; best-effort, never throws
@@ -381,9 +381,7 @@ struct WindowContext::Impl {
     State state_{State::Created};
 
     std::vector<MemoryRegion> regions_;             // regions_[0] = control; index == region id
-    std::vector<int32_t> ubmemRegionIds_;           // regions_ indices on the UB_MEM plane
-    std::vector<int32_t> urmaRegionIds_;            // regions_ indices on the URMA plane
-    std::vector<int32_t> urmaIndex_;                // per region: position in urmaRegionIds_, -1 = absent
+    std::vector<MemoryRegion> urmaRegions_;         // URMA-plane subset in registration (channel buffer) order
     std::vector<std::vector<int64_t>> regionBases_; // [region][rank]; [r][rank_] = local base
 
     void* comm_{nullptr};
@@ -397,6 +395,7 @@ struct WindowContext::Impl {
     void* windowDevPtr_{nullptr};                         // device copy of the pypto::dist::Window descriptor
     void* regionTableDevPtr_{nullptr};                    // device copy of RegionEntry[num_regions]
     void* jettyTableDevPtr_{nullptr};                     // device copy of the channel table (Window::jetty_ptrs)
+    void* barrierBuf_{nullptr};                           // barrier region
     int32_t netLayer_{-1};                                // requested layer at create; resolved at connect
 };
 
@@ -406,8 +405,15 @@ WindowContext::Impl::Impl(int32_t rank, int32_t nrank, void* stream, const std::
 {
     DIST_CHECK(nrank > 1 && rank >= 0 && rank < nrank) << "invalid rank/nrank: " << rank << "/" << nrank;
     DIST_CHECK(nrank <= pypto::dist::kNumMaxRanks)
-        << "nrank " << nrank << " exceeds supported max " << pypto::dist::kNumMaxRanks << " (remote_ptrs table size)";
+        << "nrank " << nrank << " exceeds supported max " << pypto::dist::kNumMaxRanks << " (region table size)";
     DIST_CHECK(!hcclGroupName_.empty()) << "hccl group name is empty";
+
+    constexpr int64_t kBarrierBytes = pypto::dist::kL2CacheLineSize;
+    DIST_CHECK(AclRtMalloc(&barrierBuf_, kBarrierBytes, AclRtMemMallocPolicy::HUGE_FIRST) == 0)
+        << "barrier region allocation failed";
+    DIST_CHECK(AclRtMemset(barrierBuf_, kBarrierBytes, 0, kBarrierBytes) == 0) << "barrier region zeroing failed";
+    RegisterMemory(reinterpret_cast<int64_t>(barrierBuf_), kBarrierBytes,
+                   (name_.empty() ? hcclGroupName_ : name_) + "_barrier", pypto::dist::kPolicyUbMem);
 }
 
 void WindowContext::Impl::RegisterMemory(int64_t tensorPtr, int64_t size, const std::string& regionName,
@@ -430,6 +436,10 @@ void WindowContext::Impl::RegisterMemory(int64_t tensorPtr, int64_t size, const 
     reg.ptr = tensorPtr;
     reg.size = size;
     reg.protocol = protocol;
+    if ((protocol & pypto::dist::kPolicyUrma) != 0) {
+        // urmaRegions_ order defines the channel's remote-buffer order.
+        urmaRegions_.push_back(reg);
+    }
     regions_.push_back(reg);
 }
 
@@ -530,20 +540,14 @@ void WindowContext::Impl::Connect()
     netLayer_ = static_cast<int32_t>(SelectNetLayer(comm_, netLayer_));
 
     regionBases_.assign(regions_.size(), std::vector<int64_t>(static_cast<size_t>(nrank_), 0));
-    urmaIndex_.assign(regions_.size(), -1);
     for (size_t id = 0; id < regions_.size(); ++id) {
         regionBases_[id][rank_] = regions_[id].ptr;
-        if ((regions_[id].protocol & pypto::dist::kPolicyUbMem) != 0) {
-            ubmemRegionIds_.push_back(static_cast<int32_t>(id));
-        }
-        if ((regions_[id].protocol & pypto::dist::kPolicyUrma) != 0) {
-            urmaIndex_[id] = static_cast<int32_t>(urmaRegionIds_.size());
-            urmaRegionIds_.push_back(static_cast<int32_t>(id));
-        }
     }
 
-    for (const auto id : ubmemRegionIds_) {
-        auto& reg = regions_[id];
+    for (auto& reg : regions_) {
+        if ((reg.protocol & pypto::dist::kPolicyUbMem) == 0) {
+            continue;
+        }
         CommMem mem{};
         mem.type = COMM_MEM_TYPE_DEVICE;
         mem.addr = reinterpret_cast<void*>(reg.ptr);
@@ -568,9 +572,10 @@ void WindowContext::Impl::Connect()
 void WindowContext::Impl::AcquireUlbmemChannels()
 {
     std::vector<HcclMemHandle> handles;
-    handles.reserve(ubmemRegionIds_.size());
-    for (const auto id : ubmemRegionIds_) {
-        handles.push_back(regions_[id].commHandle);
+    for (const auto& reg : regions_) {
+        if ((reg.protocol & pypto::dist::kPolicyUbMem) != 0) {
+            handles.push_back(reg.commHandle);
+        }
     }
     auto descs = BuildPeerDescs(comm_, netLayer_, rank_, nrank_, COMM_PROTOCOL_UB_MEM, handles);
     std::vector<ChannelHandle> channels(descs.size(), 0);
@@ -597,8 +602,11 @@ void WindowContext::Impl::AcquireUlbmemChannels()
         }
 
         // Every local region must exist on the peer with the same size.
-        for (const auto id : ubmemRegionIds_) {
+        for (size_t id = 0; id < regions_.size(); ++id) {
             const auto& reg = regions_[id];
+            if ((reg.protocol & pypto::dist::kPolicyUbMem) == 0) {
+                continue;
+            }
             const auto it = peerRegions.find(reg.name);
             DIST_CHECK(it != peerRegions.end()) << "peer " << peer << " did not register region '" << reg.name << "'";
             DIST_CHECK(it->second->size == static_cast<uint64_t>(reg.size))
@@ -619,9 +627,10 @@ void WindowContext::Impl::AcquireJettyChannels()
     numJetties_ = static_cast<int32_t>(aivNum); // one jetty per AIV (DeepEP: num_jetties = num_vec_cores)
 
     std::vector<HcclMemHandle> commHandles;
-    commHandles.reserve(ubmemRegionIds_.size());
-    for (const auto id : ubmemRegionIds_) {
-        commHandles.push_back(regions_[id].commHandle);
+    for (const auto& reg : regions_) {
+        if ((reg.protocol & pypto::dist::kPolicyUbMem) != 0) {
+            commHandles.push_back(reg.commHandle);
+        }
     }
 
     auto ubcDescs = BuildPeerDescs(comm_, netLayer_, rank_, nrank_, COMM_PROTOCOL_UBC_CTP, commHandles);
@@ -631,7 +640,7 @@ void WindowContext::Impl::AcquireJettyChannels()
     // Per-peer: one jetty per peer on that peer's link endpoint; only its issuer AIV posts.
     const auto numEndpoints = multiIssuer_ ? static_cast<size_t>(numJetties_) : ubcDescs.size();
     jettyEndpoints_.resize(numEndpoints);
-    for (auto& reg : regions_) {
+    for (auto& reg : urmaRegions_) {
         reg.endpointHandles.assign(numEndpoints, nullptr);
     }
     for (size_t j = 0; j < numEndpoints; ++j) {
@@ -639,8 +648,7 @@ void WindowContext::Impl::AcquireJettyChannels()
         auto ret = tile_fwk::HcommEndpointCreate(&endpointDesc, &jettyEndpoints_[j]);
         DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclEndpointCreate(jetty " << j << ") failed, ret " << ret;
         // Every URMA-plane region is registered on every jetty endpoint.
-        for (const auto id : urmaRegionIds_) {
-            auto& reg = regions_[id];
+        for (auto& reg : urmaRegions_) {
             CommMem jettyMem{};
             jettyMem.type = COMM_MEM_TYPE_DEVICE;
             jettyMem.addr = reinterpret_cast<void*>(reg.ptr);
@@ -683,16 +691,16 @@ void WindowContext::Impl::AcquireJettyChannels()
         name = (name_.empty() ? hcclGroupName_ : name_) + "/" + std::to_string(std::min(rank_, peerRank)) + "-" +
                std::to_string(std::max(rank_, peerRank)) + "/" + std::to_string(plan.pairIdx);
         DIST_CHECK(name.size() <= HCOMM_CHANNEL_NAME_MAX_LEN) << "channel name exceeds HCOMM_CHANNEL_NAME_MAX_LEN";
-        // Attach the URMA-plane regions of this jetty's endpoint in urma-index order, so
-        // the peer's remoteBufferAddr[urma_index] is the region's remote range.
+        // Attach the URMA-plane regions of this jetty's endpoint in registration order; the
+        // device matches a local region base to the channel's local/remote buffer lists.
         HcommChannelDesc desc;
         HcommChannelDescInit(&desc, 1);
         desc.remoteEndpoint = ubcDescs[peerRank < rank_ ? peerRank : peerRank - 1].remoteEndpoint;
         desc.notifyNum = kNotifyNum;
         std::vector<HcommMemHandle> endpointRegionHandles;
-        endpointRegionHandles.reserve(urmaRegionIds_.size());
-        for (const auto id : urmaRegionIds_) {
-            endpointRegionHandles.push_back(regions_[id].endpointHandles[plan.jettyIdx]);
+        endpointRegionHandles.reserve(urmaRegions_.size());
+        for (const auto& reg : urmaRegions_) {
+            endpointRegionHandles.push_back(reg.endpointHandles[plan.jettyIdx]);
         }
         desc.memHandles = endpointRegionHandles.data();
         desc.memHandleNum = static_cast<uint32_t>(endpointRegionHandles.size());
@@ -723,9 +731,8 @@ void WindowContext::Impl::WriteDeviceWindow()
         auto& entry = regionEntries_[id];
         const auto& reg = regions_[id];
         entry.size = reg.size;
-        entry.policy = reg.protocol;
-        entry.urma_index = urmaIndex_[id];
-        // The local base identifies the region on device (region_of) on every plane.
+        // [rank] is the local base for every region, so region_of_ptr resolves a local
+        // pointer on any plane; the remaining entries are UB_MEM peer mappings only.
         entry.remote_ptrs[rank_] = regionBases_[id][rank_];
         if ((reg.protocol & pypto::dist::kPolicyUbMem) != 0) {
             for (int32_t r = 0; r < nrank_; ++r) {
@@ -794,7 +801,7 @@ void WindowContext::Impl::Close()
     // The comm-level HcclCommMemReg handles have no unreg wrapper in the vendor API; they
     // are released with the comm itself (DeepEP carries the same TODO).
     for (size_t j = 0; j < jettyEndpoints_.size(); ++j) {
-        for (auto& reg : regions_) {
+        for (auto& reg : urmaRegions_) {
             if (reg.endpointHandles.size() != jettyEndpoints_.size() || reg.endpointHandles[j] == nullptr) {
                 continue;
             }
@@ -812,6 +819,10 @@ void WindowContext::Impl::Close()
         }
     }
     jettyEndpoints_.clear();
+    if (barrierBuf_ != nullptr) {
+        (void)AclRtFree(barrierBuf_);
+        barrierBuf_ = nullptr;
+    }
 }
 
 WindowContext::Impl::~Impl() { Close(); }
@@ -829,15 +840,10 @@ std::string WindowContext::Impl::ToString() const
     for (size_t id = 0; id < regions_.size(); ++id) {
         const auto& reg = regions_[id];
         const auto& entry = id < regionEntries_.size() ? regionEntries_[id] : pypto::dist::RegionEntry{};
-        info << "\n  region[" << id << "] '" << reg.name << "' size " << reg.size << " policy "
-             << ((reg.protocol & pypto::dist::kPolicyUbMem) != 0 ? "UB_MEM" : "");
-        if ((reg.protocol & pypto::dist::kPolicyUrma) != 0) {
-            info << (reg.protocol & pypto::dist::kPolicyUbMem ? "|URMA" : "URMA");
-        }
-        info << " local 0x" << std::hex << static_cast<uint64_t>(reg.ptr) << std::dec << " urma_index "
-             << (id < urmaIndex_.size() ? urmaIndex_[id] : -1) << ":";
+        info << "\n  region[" << id << "] '" << reg.name << "' size " << reg.size;
+        info << " local 0x" << std::hex << static_cast<uint64_t>(reg.ptr) << std::dec << ":";
         for (int32_t r = 0; r < nrank_; ++r) {
-            info << " [r" << r << "] 0x" << std::hex << entry.remote_ptrs[r];
+            info << " [r" << r << "] 0x" << std::hex << static_cast<uint64_t>(entry.remote_ptrs[r]);
         }
     }
     info << "\n  jetty_ptrs (table 0x" << std::hex << reinterpret_cast<uintptr_t>(jettyTableDevPtr_) << "):";

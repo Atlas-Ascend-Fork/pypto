@@ -21,10 +21,8 @@ constexpr int32_t kPolicyUbMem = 1; // direct peer-VA memory-semantic tier
 constexpr int32_t kPolicyUrma = 2;  // jetty / WQE remote-memory-access tier
 
 struct RegionEntry {
-    int64_t remote_ptrs[kNumMaxRanks]; // per-rank UB_MEM base; 0 if the region is not on that plane
-    int64_t size;                      // bytes; identical on every rank
-    int32_t policy;                    // kPolicyUbMem | kPolicyUrma bitmask
-    int32_t urma_index;                // position in the channel remote-handle list; -1 = not URMA
+    int64_t remote_ptrs[kNumMaxRanks];
+    int64_t size; // bytes; identical on every rank
 };
 
 struct Window {
@@ -38,8 +36,6 @@ struct Window {
     int64_t jetty_ptrs;   // GM address of the channel table
 };
 
-// Control-region layout (relative to region 0's base): the Barrier is the first 512B
-// slot (offset 0); signal slot i follows at (i + 1) * 512B.
 struct Barrier {
     alignas(kL2CacheLineSize) int64_t barrier_counter; // offset 0
     int32_t barrier_signals[2];                        // offsets 8, 12

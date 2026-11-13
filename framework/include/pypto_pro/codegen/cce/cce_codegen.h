@@ -293,11 +293,6 @@ public:
                                                const std::string& pointerExpr, const std::string& validRows,
                                                const std::string& validCols, const std::string& matrixCount = "");
 
-    [[nodiscard]] std::string BindDistGlobalTensor(const ir::TensorTypePtr& viewType, const ir::MakeTuplePtr& offsets,
-                                                   const std::optional<std::vector<int>>& tileDims, bool isTranspose,
-                                                   const std::vector<ir::ExprPtr>& tileShape,
-                                                   const std::string& remoteBase, const std::string& tile);
-
     /// Resolve a call name to the SIMT/SIMD callee or SIMD VF function callable
     /// from the current context; null when it is not a VF-family call.
     [[nodiscard]] ir::FunctionPtr FindCallableCallee(const std::string& name) const;

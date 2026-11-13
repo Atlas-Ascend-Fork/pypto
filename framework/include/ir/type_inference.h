@@ -237,6 +237,18 @@ bool IsBroadcastable(const ExprPtr& sourceDim, const ExprPtr& targetDim);
  */
 std::string FormatShape(const std::vector<ExprPtr>& shape);
 
+/**
+ * \brief Whether \p dtype is an element dtype the device atomics support.
+ */
+inline bool IsAtomicDType(const DataType& dtype, bool check_float = false)
+{
+    if (dtype == DataType::INT32 || dtype == DataType::UINT32 || dtype == DataType::INT64 ||
+        dtype == DataType::UINT64) {
+        return true;
+    }
+    return check_float && dtype == DataType::FP32;
+}
+
 } // namespace ir
 } // namespace pypto
 

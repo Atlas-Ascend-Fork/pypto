@@ -1541,93 +1541,6 @@ static std::string MakeBlockOutGatherMaskCodegenCCE(const ir::CallPtr& op, codeg
     return "";
 }
 
-static std::string MakeDistTransferCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase, bool isGet)
-{
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 7)
-        << op->name_ << " requires 7 arguments: window, memory, base_bytes, offsets, shape, tile, peer";
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
-        << op->name_ << " requires the Vector target";
-
-    auto windowVar = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, windowVar != nullptr) << op->name_ << " window must be a Var";
-    auto memVar = ir::As<ir::Var>(op->args_[1]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, memVar != nullptr)
-        << op->name_ << " memory must be a tensor Var (a registered region)";
-    auto offsetsTuple = ir::As<ir::MakeTuple>(op->args_[3]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, offsetsTuple != nullptr)
-        << op->name_ << " offsets must be a tuple of element coordinates";
-    auto shapeTuple = ir::As<ir::MakeTuple>(op->args_[4]);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, shapeTuple != nullptr && !shapeTuple->elements_.empty())
-        << op->name_ << " shape must be a tuple of view dimensions";
-    auto tileType = ir::As<ir::TileType>(op->args_[5]->GetType());
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tileType != nullptr) << op->name_ << " tile must be a TileType";
-    const bool isFractal = tileType->hardwareInfo_.has_value() &&
-                           tileType->hardwareInfo_->slayout != ir::TileLayout::none_box;
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, !isFractal)
-        << op->name_ << " tile must be an ND/DN tile; fractal layouts are not supported";
-
-    // The DTensor view as a synthetic contiguous tensor — BindDistGlobalTensor then reuses
-    // the block.load/block.store offset/stride helpers over it. Shape dims stay symbolic so
-    // a runtime extent (e.g. win.nrank()) works: the stride expressions are emitted from them.
-    const auto viewType = std::make_shared<const ir::TensorType>(shapeTuple->elements_, tileType->dtype_, std::nullopt);
-    const bool isTranspose = op->HasKwarg("is_transpose") && op->GetKwarg<bool>("is_transpose");
-    std::optional<std::vector<int>> tileDims;
-    if (op->HasKwarg("tile_dims")) {
-        tileDims = op->GetKwarg<std::vector<int>>("tile_dims");
-    }
-
-    const std::string baseBytes = codegen.GetExprAsCode(op->args_[2]);
-    const std::string tile = cce::GetOperandAsCode(codegen, op->args_[5]);
-    const std::string peer = codegen.GetExprAsCode(op->args_[6]);
-    const std::string winPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
-    const std::string dtypeStr = tileType->dtype_.ToCTypeString();
-    // DTensor base: the peer's payload base + the view's scalar byte offset; the
-    // element-coordinate offsets below are then applied as typed pointer arithmetic.
-    // The device resolves the region from the memory tensor parameter the kernel holds.
-    const std::string memPtr = codegen.GetPointer(codegen.GetVarName(memVar));
-    const std::string remoteBase = "reinterpret_cast<__gm__ " + dtypeStr +
-                                   "*>(reinterpret_cast<__gm__ uint8_t*>(pypto::dist::remote_ptr<" + dtypeStr +
-                                   ">(reinterpret_cast<__gm__ pypto::dist::Window*>(" + winPtr +
-                                   "), pypto::dist::region_of(reinterpret_cast<__gm__ pypto::dist::Window*>(" + winPtr +
-                                   "), reinterpret_cast<int64_t>(" + memPtr + ")), " + peer + ")) + " + baseBytes + ")";
-
-    const std::string inst = codegen.BindDistGlobalTensor(viewType, offsetsTuple, tileDims, isTranspose,
-                                                          tileType->shape_, remoteBase, tile);
-    const bool atomicAdd = !isGet && op->HasKwarg("atomic") &&
-                           op->GetKwarg<int>("atomic") == static_cast<int>(ir::AtomicType::AtomicAdd);
-    if (atomicAdd) {
-        const DataType& dtype = tileType->dtype_;
-        if (dtype == DataType::FP32) {
-            codegen.Emit("set_atomic_f32();");
-        } else if (dtype == DataType::FP16) {
-            codegen.Emit("set_atomic_f16();");
-        } else if (dtype == DataType::BF16) {
-            codegen.Emit("set_atomic_bf16();");
-        } else if (dtype == DataType::INT32) {
-            codegen.Emit("set_atomic_s32();");
-        } else if (dtype == DataType::INT16) {
-            codegen.Emit("set_atomic_s16();");
-        } else if (dtype == DataType::INT8) {
-            codegen.Emit("set_atomic_s8();");
-        } else {
-            PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, false)
-                << op->name_ << " atomic add does not support dtype " << dtype.ToString()
-                << "; supported: FP32/FP16/BF16/INT32/INT16/INT8";
-        }
-        codegen.Emit("set_atomic_add();");
-    }
-    if (isGet) {
-        codegen.Emit("TLOAD(" + tile + ", " + inst + ");");
-    } else {
-        codegen.Emit("TSTORE(" + inst + ", " + tile + ");");
-    }
-    if (atomicAdd) {
-        codegen.Emit("set_atomic_none();");
-    }
-    return "";
-}
-
 // ============================================================================
 // Op registrations  - Memory
 // ============================================================================
@@ -1641,18 +1554,6 @@ REGISTER_BACKEND_OP(BackendCCE, "block.load")
 REGISTER_BACKEND_OP(BackendCCE, "block.store").f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
     return MakeBlockOutStoreCodegenCCE(op, codegen);
 });
-
-REGISTER_BACKEND_OP(BackendCCE, "dist.get")
-    .set_pipe(ir::PipeType::MTE2)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistTransferCodegenCCE(op, codegen, true);
-    });
-
-REGISTER_BACKEND_OP(BackendCCE, "dist.put")
-    .set_pipe(ir::PipeType::MTE3)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistTransferCodegenCCE(op, codegen, false);
-    });
 
 REGISTER_BACKEND_OP(BackendCCE, "block.init_output")
     .set_pipe(ir::PipeType::V)

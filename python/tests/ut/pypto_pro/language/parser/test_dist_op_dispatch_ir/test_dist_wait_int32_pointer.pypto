@@ -1,0 +1,4 @@
+function kernel incast( %win_0, tensor<16, int32_t, tensor_view<, , ND, %sig_ptr>> %sig_0) outcast() #entry(false) #type(pro) {
+    dist.wait(ptr.make_ptr(%sig_0), 1, cmp=0, timeout_cycles=0);
+    return;
+}

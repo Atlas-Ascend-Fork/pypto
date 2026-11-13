@@ -1,0 +1,7 @@
+function kernel incast( %win_0, tensor<1 x 8, int32_t, tensor_view<, , ND, %buf_ptr>> %buf_0) outcast() #entry(false) #type(pro) {
+    ptr<int32_t> %_expr_tmp_0_0 = ptr.make_ptr(%buf_0);
+    ptr<int32_t> %_expr_tmp_1_0 = ptr.addptr(%_expr_tmp_0_0, 8);
+    ptr<int32_t> %ptr_0 = dist.remote_ptr(%win_0, %_expr_tmp_1_0, 1);
+    debug.printf(%ptr_0, format="%p\n", show_location=false);
+    return;
+}

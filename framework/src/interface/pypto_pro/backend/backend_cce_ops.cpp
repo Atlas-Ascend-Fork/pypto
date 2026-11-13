@@ -1707,9 +1707,9 @@ static std::string MakeDistBarrierCodegenCCE(const ir::CallPtr& op, codegen::Cod
     const bool flushStore = !op->HasKwarg("flush_store") || op->GetKwarg<bool>("flush_store");
 
     const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
-    codegen.Emit("pypto::dist::barrier<" + DistTimeoutLiteral(timeoutCycles) + ", " + (syncLocal ? "true" : "false") +
-                 ", " + (flushStore ? "true" : "false") + ">(reinterpret_cast<__gm__ pypto::dist::Window*>(" +
-                 windowPtr + "));");
+    codegen.Emit("pypto::dist::BarrierSync<" + DistTimeoutLiteral(timeoutCycles) + ", " +
+                 (syncLocal ? "true" : "false") + ", " + (flushStore ? "true" : "false") +
+                 ">(reinterpret_cast<__gm__ pypto::dist::Window*>(" + windowPtr + "));");
     return "";
 }
 
@@ -1722,76 +1722,35 @@ REGISTER_BACKEND_OP(BackendCCE, "dist.barrier")
 static std::string MakeDistNotifyCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
-        << "dist.notify requires 4 arguments, but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
+        << "dist.notify requires 2 arguments, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.notify requires the Vector target (the signal helpers run in the vector section)";
-
-    auto windowVar = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
-        << "dist.notify requires window to be a Var";
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::WindowType>(windowVar->GetType()))
-        << "dist.notify requires window to have WindowType";
 
     const int notifyOp = op->HasKwarg("notify_op") ? op->GetKwarg<int>("notify_op") : 0;
     PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, notifyOp == 0 || notifyOp == 1)
         << "dist.notify notify_op must be 0 (SET) or 1 (ATOMIC_ADD), but got " << notifyOp;
     const bool flushStore = !op->HasKwarg("flush_store") || op->GetKwarg<bool>("flush_store");
 
-    const std::string slot = codegen.GetExprAsCode(op->args_[1]);
-    const std::string val = codegen.GetExprAsCode(op->args_[2]);
-    const std::string peer = codegen.GetExprAsCode(op->args_[3]);
-    const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
-    codegen.Emit("pypto::dist::notify<" + std::to_string(notifyOp) + ", " + (flushStore ? "true" : "false") +
-                 ">(reinterpret_cast<__gm__ pypto::dist::Window*>(" + windowPtr + "), " + "static_cast<int64_t>(" +
-                 slot + "), static_cast<int64_t>(" + val + "), " + "static_cast<int32_t>(" + peer + "));");
-    return "";
-}
+    auto ptrType = ir::As<ir::PtrType>(op->args_[0]->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, ptrType)
+        << "dist.notify signal address must have PtrType";
+    const std::string dtypeStr = codegen.GetTypeString(ptrType->dtype_);
 
-static std::string MakeDistNotifyAllCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
-{
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
-        << "dist.notify_all requires 3 arguments, but got " << op->args_.size();
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
-        << "dist.notify_all requires the Vector target (the helper launches a SIMT VF)";
-
-    auto windowVar = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
-        << "dist.notify_all requires window to be a Var";
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::WindowType>(windowVar->GetType()))
-        << "dist.notify_all requires window to have WindowType";
-
-    const int notifyOp = op->HasKwarg("notify_op") ? op->GetKwarg<int>("notify_op") : 0;
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, notifyOp == 0 || notifyOp == 1)
-        << "dist.notify_all notify_op must be 0 (SET) or 1 (ATOMIC_ADD), but got " << notifyOp;
-    const bool flushStore = !op->HasKwarg("flush_store") || op->GetKwarg<bool>("flush_store");
-
-    const std::string slot = codegen.GetExprAsCode(op->args_[1]);
-    const std::string val = codegen.GetExprAsCode(op->args_[2]);
-    const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
-    codegen.Emit("pypto::dist::notify_all<" + std::to_string(notifyOp) + ", " + (flushStore ? "true" : "false") +
-                 ">(reinterpret_cast<__gm__ pypto::dist::Window*>(" + windowPtr + "), static_cast<int64_t>(" + slot +
-                 "), static_cast<int64_t>(" + val + "));");
+    const std::string addr = cce::GetOperandAsCode(codegen, op->args_[0]);
+    const std::string val = codegen.GetExprAsCode(op->args_[1]);
+    codegen.Emit("pypto::dist::Notify<" + dtypeStr + ", " + std::to_string(notifyOp) + ", " +
+                 (flushStore ? "true" : "false") + ">(" + addr + ", static_cast<int64_t>(" + val + "));");
     return "";
 }
 
 static std::string MakeDistWaitCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
-        << "dist.wait requires 3 arguments, but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
+        << "dist.wait requires 2 arguments, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.wait requires the Vector target (the wait helper spins on the vector pipe)";
-
-    auto windowVar = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
-        << "dist.wait requires window to be a Var";
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::WindowType>(windowVar->GetType()))
-        << "dist.wait requires window to have WindowType";
 
     const int cmp = op->HasKwarg("cmp") ? op->GetKwarg<int>("cmp") : 0;
     PRO_CODEGEN_CHECK(ExternalError::OUT_OF_RANGE, cmp >= 0 && cmp <= 5)
@@ -1800,12 +1759,15 @@ static std::string MakeDistWaitCodegenCCE(const ir::CallPtr& op, codegen::Codege
     PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, timeoutCycles >= 0)
         << "dist.wait timeout_cycles must be >= 0 (0 = wait forever), but got " << timeoutCycles;
 
-    const std::string slot = codegen.GetExprAsCode(op->args_[1]);
-    const std::string val = codegen.GetExprAsCode(op->args_[2]);
-    const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
-    codegen.Emit("pypto::dist::wait<" + std::to_string(cmp) + ">(reinterpret_cast<__gm__ pypto::dist::Window*>(" +
-                 windowPtr + "), " + "static_cast<int64_t>(" + slot + "), static_cast<int64_t>(" + val + "), " +
-                 std::to_string(timeoutCycles) + "LL);");
+    auto ptrType = ir::As<ir::PtrType>(op->args_[0]->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, ptrType)
+        << "dist.wait signal address must have PtrType";
+    const std::string dtypeStr = codegen.GetTypeString(ptrType->dtype_);
+
+    const std::string addr = cce::GetOperandAsCode(codegen, op->args_[0]);
+    const std::string val = codegen.GetExprAsCode(op->args_[1]);
+    codegen.Emit("pypto::dist::Wait<" + dtypeStr + ", " + std::to_string(cmp) + ">(" + addr +
+                 ", static_cast<int64_t>(" + val + "), " + std::to_string(timeoutCycles) + "LL);");
     return "";
 }
 
@@ -1819,12 +1781,6 @@ REGISTER_BACKEND_OP(BackendCCE, "dist.wait")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeDistWaitCodegenCCE(op, codegen);
-    });
-
-REGISTER_BACKEND_OP(BackendCCE, "dist.notify_all")
-    .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistNotifyAllCodegenCCE(op, codegen);
     });
 
 static std::string DistUbAddrLiteral(int64_t ubAddr)
@@ -1862,57 +1818,47 @@ static std::string MakeDistCreateChannelCodegenCCE(const ir::CallPtr& op, codege
 static std::string MakeDistChannelWriteCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 5)
-        << "dist.channel_write requires 5 arguments, but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
+        << "dist.channel_write requires 4 arguments [channel, dst_ptr, num_bytes, tensor], but got "
+        << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.channel_write requires the Vector target (the write engine runs on the AIV)";
 
-    auto sourceVar = ir::As<ir::Var>(op->args_[4]);
+    auto sourceVar = ir::As<ir::Var>(op->args_[3]);
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, sourceVar)
         << "dist.channel_write source must be a tensor Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
                                ir::As<ir::TensorType>(sourceVar->GetType()))
         << "dist.channel_write source must have TensorType";
-    auto memVar = ir::As<ir::Var>(op->args_[1]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, memVar)
-        << "dist.channel_write memory must be a tensor Var";
 
     const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
     const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
-    const std::string memPtr = codegen.GetPointer(codegen.GetVarName(memVar));
+    const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
     const std::string sourcePtr = codegen.GetPointer(codegen.GetVarName(sourceVar));
-    // The channel binds the peer at construction; the destination region comes from the
-    // DTensor's memory operand, the payload from the source tensor.
-    const std::string regionExpr = "pypto::dist::region_of(" + channel + ".win_, reinterpret_cast<int64_t>(" + memPtr +
-                                   "))";
     codegen.Emit(channel + ".Write<" + DistTimeoutLiteral(timeoutCycles) + ", " + (submit ? "true" : "false") + ">(" +
-                 regionExpr + ", static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[2]) +
-                 "), reinterpret_cast<__gm__ uint8_t*>(" + sourcePtr + "), static_cast<int64_t>(" +
-                 codegen.GetExprAsCode(op->args_[3]) + "));");
+                 "reinterpret_cast<GM_ADDR>(" + dstPtr + "), reinterpret_cast<__gm__ uint8_t*>(" + sourcePtr +
+                 "), static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[2]) + "));");
     return "";
 }
 
 static std::string MakeDistChannelWriteIndexedCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 8)
-        << "dist.channel_write_indexed requires 8 arguments [channel, region, base_bytes, tensor, count, "
-           "row_bytes, src_indices, dst_indices], but got "
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 7)
+        << "dist.channel_write_indexed requires 7 arguments [channel, dst_ptr, tensor, count, row_bytes, "
+           "src_indices, dst_indices], but got "
         << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.channel_write_indexed requires the Vector target (the write engine runs on the AIV)";
 
-    auto tensorVar = ir::As<ir::Var>(op->args_[3]);
+    auto tensorVar = ir::As<ir::Var>(op->args_[2]);
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, tensorVar)
         << "dist.channel_write_indexed source must be a tensor Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
                                ir::As<ir::TensorType>(tensorVar->GetType()))
         << "dist.channel_write_indexed source must have TensorType";
-    auto regionVar = ir::As<ir::Var>(op->args_[1]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, regionVar)
-        << "dist.channel_write_indexed region must be a Var";
 
     const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
     const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
@@ -1920,13 +1866,13 @@ static std::string MakeDistChannelWriteIndexedCodegenCCE(const ir::CallPtr& op, 
     // An index side is either a real Tile or the 0 sentinel; that is a compile-time
     // property, so the helper takes it as template parameters instead of runtime flags.
     // Both tables share the single IndexT of the device helper (IR enforces one dtype).
-    const bool hasSrcIndex = ir::As<ir::TileType>(op->args_[6]->GetType()) != nullptr;
-    const bool hasDstIndex = ir::As<ir::TileType>(op->args_[7]->GetType()) != nullptr;
+    const bool hasSrcIndex = ir::As<ir::TileType>(op->args_[5]->GetType()) != nullptr;
+    const bool hasDstIndex = ir::As<ir::TileType>(op->args_[6]->GetType()) != nullptr;
     auto indexCType = [&op](size_t index) {
         auto tileType = ir::As<ir::TileType>(op->args_[index]->GetType());
         return tileType != nullptr ? tileType->dtype_.ToCTypeString() : std::string();
     };
-    const std::string indexType = hasSrcIndex ? indexCType(6) : (hasDstIndex ? indexCType(7) : "int32_t");
+    const std::string indexType = hasSrcIndex ? indexCType(5) : (hasDstIndex ? indexCType(6) : "int32_t");
     auto indexPtr = [&codegen, &op](size_t index, bool present, const std::string& type) {
         if (!present) {
             return std::string("nullptr");
@@ -1936,83 +1882,74 @@ static std::string MakeDistChannelWriteIndexedCodegenCCE(const ir::CallPtr& op, 
     };
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
+    const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
     const std::string tensorPtr = codegen.GetPointer(codegen.GetVarName(tensorVar));
-    // The destination region is a per-call operand (multi-region windows), resolved by
-    // its kernel tensor parameter like channel_write; only one row stride exists in the
-    // IR (contiguous rows).
-    const std::string commonArgs = "pypto::dist::region_of(" + channel + ".win_, reinterpret_cast<int64_t>(" +
-                                   codegen.GetPointer(codegen.GetVarName(regionVar)) + ")), static_cast<int64_t>(" +
-                                   codegen.GetExprAsCode(op->args_[2]) + "), reinterpret_cast<__gm__ uint8_t*>(" +
-                                   tensorPtr + "), " + indexPtr(6, hasSrcIndex, indexType) + ", " +
-                                   indexPtr(7, hasDstIndex, indexType) + ", ";
+    const std::string commonArgs = "reinterpret_cast<GM_ADDR>(" + dstPtr + "), reinterpret_cast<__gm__ uint8_t*>(" +
+                                   tensorPtr + "), " + indexPtr(5, hasSrcIndex, indexType) + ", " +
+                                   indexPtr(6, hasDstIndex, indexType) + ", ";
 
     // The SIMT encoder builds every row's single-SGE WQEBB directly in the GM SQ;
     // only one row stride exists in the IR (contiguous rows).
     codegen.Emit(channel + ".WriteIndexed<" + indexType + ", " + (hasSrcIndex ? "true" : "false") + ", " +
                  (hasDstIndex ? "true" : "false") + ", " + DistTimeoutLiteral(timeoutCycles) + ", " +
                  (submit ? "true" : "false") + ">(" + commonArgs + "static_cast<uint64_t>(" +
-                 codegen.GetExprAsCode(op->args_[5]) + "), static_cast<uint64_t>(" +
-                 codegen.GetExprAsCode(op->args_[5]) + "), static_cast<uint64_t>(" +
-                 codegen.GetExprAsCode(op->args_[5]) + "), static_cast<uint64_t>(" +
-                 codegen.GetExprAsCode(op->args_[4]) + "));");
+                 codegen.GetExprAsCode(op->args_[4]) + "), static_cast<uint64_t>(" +
+                 codegen.GetExprAsCode(op->args_[4]) + "), static_cast<uint64_t>(" +
+                 codegen.GetExprAsCode(op->args_[4]) + "), static_cast<uint64_t>(" +
+                 codegen.GetExprAsCode(op->args_[3]) + "));");
     return "";
 }
 
 static std::string MakeDistChannelWriteValueCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
-        << "dist.channel_write_value requires 4 arguments, but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
+        << "dist.channel_write_value requires 3 arguments [channel, dst_ptr, value], but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.channel_write_value requires the Vector target (the write engine runs on the AIV)";
 
     const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
     const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
-    const ir::DataType dtype = op->GetKwarg<ir::DataType>("dtype");
-    const std::string dtypeStr = codegen.GetTypeString(dtype);
+    auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
+        << "dist.channel_write_value destination must be a pointer";
+    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
-    auto memVar = ir::As<ir::Var>(op->args_[1]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, memVar)
-        << "dist.channel_write_value memory must be a tensor Var";
-    const std::string memPtr = codegen.GetPointer(codegen.GetVarName(memVar));
+    const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
     codegen.Emit(channel + ".WriteValue<" + DistTimeoutLiteral(timeoutCycles) + ", " + dtypeStr + ", " +
-                 (submit ? "true" : "false") + ">(pypto::dist::region_of(" + channel +
-                 ".win_, reinterpret_cast<int64_t>(" + memPtr + ")), static_cast<int64_t>(" +
-                 codegen.GetExprAsCode(op->args_[2]) + "), static_cast<" + dtypeStr + ">(" +
-                 codegen.GetExprAsCode(op->args_[3]) + "));");
+                 (submit ? "true" : "false") + ">(reinterpret_cast<GM_ADDR>(" + dstPtr + "), static_cast<" + dtypeStr +
+                 ">(" + codegen.GetExprAsCode(op->args_[2]) + "));");
     return "";
 }
 
 static std::string MakeDistChannelWriteNotifyCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 7)
-        << "dist.channel_write_notify requires 7 arguments, but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 6)
+        << "dist.channel_write_notify requires 6 arguments [channel, dst_ptr, num_bytes, tensor, signal_ptr, val], but "
+           "got "
+        << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "dist.channel_write_notify requires the Vector target (the write engine runs on the AIV)";
 
-    auto sourceVar = ir::As<ir::Var>(op->args_[4]);
+    auto sourceVar = ir::As<ir::Var>(op->args_[3]);
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, sourceVar)
         << "dist.channel_write_notify source must be a tensor Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
                                ir::As<ir::TensorType>(sourceVar->GetType()))
         << "dist.channel_write_notify source must have TensorType";
-    auto memVar = ir::As<ir::Var>(op->args_[1]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, memVar)
-        << "dist.channel_write_notify memory must be a tensor Var";
 
     const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
-    const std::string memPtr = codegen.GetPointer(codegen.GetVarName(memVar));
+    const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
     const std::string sourcePtr = codegen.GetPointer(codegen.GetVarName(sourceVar));
-    codegen.Emit(channel + ".WriteNotify<" + DistTimeoutLiteral(timeoutCycles) + ">(pypto::dist::region_of(" + channel +
-                 ".win_, reinterpret_cast<int64_t>(" + memPtr + ")), static_cast<int64_t>(" +
-                 codegen.GetExprAsCode(op->args_[2]) + "), reinterpret_cast<__gm__ uint8_t*>(" + sourcePtr +
-                 "), static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[3]) + "), static_cast<int64_t>(" +
-                 codegen.GetExprAsCode(op->args_[5]) + "), static_cast<int64_t>(" +
-                 codegen.GetExprAsCode(op->args_[6]) + "));");
+    const std::string signalPtr = cce::GetOperandAsCode(codegen, op->args_[4]);
+    codegen.Emit(channel + ".WriteNotify<" + DistTimeoutLiteral(timeoutCycles) + ">(reinterpret_cast<GM_ADDR>(" +
+                 dstPtr + "), reinterpret_cast<__gm__ uint8_t*>(" + sourcePtr + "), static_cast<int64_t>(" +
+                 codegen.GetExprAsCode(op->args_[2]) + "), reinterpret_cast<__gm__ uint8_t*>(" + signalPtr +
+                 "), static_cast<uint64_t>(" + codegen.GetExprAsCode(op->args_[5]) + "));");
     return "";
 }
 
@@ -2099,133 +2036,68 @@ REGISTER_BACKEND_OP(BackendCCE, "dist.channel_is_exclusive")
         return MakeDistChannelIsExclusiveCodegenCCE(op, codegen);
     });
 
-// Raw uint8 pointer to a registered region of a peer's window. Returns the pointer
+// Typed pointer to a registered region of a peer's window. Returns the pointer
 // expression so the result var maps to it (a following ptr.addptr / ptr.make_tensor
 // consumes it), like the ptr.* ops. Only the UB_MEM plane is directly addressable.
-static std::string MakeDistGetRemotePtrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+static std::string MakeDistRemotePtrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
-        << "dist.get_remote_ptr requires 3 arguments: window, ptr, peer";
+        << "dist.remote_ptr requires 3 arguments: window, ptr, peer";
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
-        << "dist.get_remote_ptr requires the Vector target (the pointer is an AIV address)";
+        << "dist.remote_ptr requires the Vector target (the pointer is an AIV address)";
 
     auto windowVar = ir::As<ir::Var>(op->args_[0]);
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
-        << "dist.get_remote_ptr requires window to be a Var";
+        << "dist.remote_ptr requires window to be a Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
                                ir::As<ir::WindowType>(windowVar->GetType()))
-        << "dist.get_remote_ptr requires window to have WindowType";
+        << "dist.remote_ptr requires window to have WindowType";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
                                ir::As<ir::PtrType>(op->args_[1]->GetType()) != nullptr)
-        << "dist.get_remote_ptr requires a pointer operand";
+        << "dist.remote_ptr requires a pointer operand";
     auto ptrType = ir::As<ir::PtrType>(op->GetType());
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ptrType != nullptr && ptrType->dtype_ == ir::DataType::UINT8)
-        << "dist.get_remote_ptr must produce a uint8 PtrType";
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, ptrType != nullptr)
+        << "dist.remote_ptr must produce a PtrType";
+    const std::string dtypeStr = ptrType->dtype_.ToCTypeString();
 
     const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
     const std::string window = "reinterpret_cast<__gm__ pypto::dist::Window*>(" + windowPtr + ")";
-    return "pypto::dist::remote_ub_ptr(" + window + ", reinterpret_cast<int64_t>(" +
-           cce::GetOperandAsCode(codegen, op->args_[1]) + "), static_cast<int32_t>(" +
-           codegen.GetExprAsCode(op->args_[2]) + "))";
+    return "reinterpret_cast<__gm__ " + dtypeStr + "*>(pypto::dist::RemotePtr(" + window +
+           ", reinterpret_cast<int64_t>(" + cce::GetOperandAsCode(codegen, op->args_[1]) + "), static_cast<int32_t>(" +
+           codegen.GetExprAsCode(op->args_[2]) + ")))";
 }
 
-REGISTER_BACKEND_OP(BackendCCE, "dist.get_remote_ptr")
+REGISTER_BACKEND_OP(BackendCCE, "dist.remote_ptr")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistGetRemotePtrCodegenCCE(op, codegen);
+        return MakeDistRemotePtrCodegenCCE(op, codegen);
     });
 
-static std::string MakeDistAtomicCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase,
-                                            const char* helper)
+static std::string MakeDistChannelRemotePtrCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 7 || op->args_.size() == 8)
-        << op->name_ << " requires 7 or 8 arguments: window, memory, base_bytes, offsets, shape, peer, value(s)";
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
+        << "dist.channel_remote_ptr requires 2 arguments: channel, ptr";
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
-        << op->name_ << " requires the Vector target (scalar atomics run on the AIV)";
+        << "dist.channel_remote_ptr requires the Vector target (the pointer is an AIV address)";
 
-    auto windowVar = ir::As<ir::Var>(op->args_[0]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, windowVar)
-        << op->name_ << " requires window to be a Var";
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               ir::As<ir::WindowType>(windowVar->GetType()))
-        << op->name_ << " requires window to have WindowType";
-    auto memVar = ir::As<ir::Var>(op->args_[1]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, memVar)
-        << op->name_ << " requires memory to be a tensor Var";
-    auto shapeTuple = ir::As<ir::MakeTuple>(op->args_[4]);
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                               shapeTuple != nullptr && !shapeTuple->elements_.empty())
-        << op->name_ << " shape must be a non-empty tuple of view dimensions";
+                               ir::As<ir::PtrType>(op->args_[1]->GetType()) != nullptr)
+        << "dist.channel_remote_ptr requires a pointer operand";
+    auto ptrType = ir::As<ir::PtrType>(op->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, ptrType != nullptr)
+        << "dist.channel_remote_ptr must produce a PtrType";
+    const std::string dtypeStr = ptrType->dtype_.ToCTypeString();
 
-    const ir::DataType dtype = op->GetKwarg<ir::DataType>("dtype");
-    const std::string dtypeStr = codegen.GetTypeString(dtype);
-
-    // Coordinate form flattens through the view shape; the scalar form is already linear.
-    std::string elemOff;
-    if (auto offsetsTuple = ir::As<ir::MakeTuple>(op->args_[3])) {
-        const auto viewType = std::make_shared<const ir::TensorType>(shapeTuple->elements_, dtype, std::nullopt);
-        elemOff = codegen.ComputeTensorOffset(viewType, offsetsTuple);
-    } else {
-        elemOff = codegen.GetExprAsCode(op->args_[3]);
-    }
-
-    const std::string peer = codegen.GetExprAsCode(op->args_[5]);
-    const std::string baseBytes = codegen.GetExprAsCode(op->args_[2]);
-    const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
-    const std::string memPtr = codegen.GetPointer(codegen.GetVarName(memVar));
-
-    std::ostringstream call;
-    call << helper << "<" << dtypeStr << ">(reinterpret_cast<__gm__ pypto::dist::Window*>(" << windowPtr
-         << "), pypto::dist::region_of(reinterpret_cast<__gm__ pypto::dist::Window*>(" << windowPtr
-         << "), reinterpret_cast<int64_t>(" << memPtr << ")), static_cast<int32_t>(" << peer
-         << "), static_cast<int64_t>(" << baseBytes << "), static_cast<int64_t>(" << elemOff << ")";
-    for (size_t i = 6; i < op->args_.size(); ++i) {
-        call << ", static_cast<" << dtypeStr << ">(" << codegen.GetExprAsCode(op->args_[i]) << ")";
-    }
-    call << ")";
-
-    if (!codegen.GetCurrentResultTarget().empty()) {
-        return call.str();
-    }
-    // Result-discarding assignments and nested value positions (e.g. out[i] = pld.atomic_add(...)) both have an
-    // empty target: materialize the result so the atomic still executes and the caller can
-    // consume the temp. Same naming pattern as MakeSimtAtomicCodegenCCE.
-    const std::string temp = "__pypto_dist_atomic_" + std::to_string(codegen.GetTileOffsetCounter());
-    codegen.Emit("auto " + temp + " = " + call.str() + ";");
-    return temp;
+    return codegen.GetExprAsCode(op->args_[0]) + ".RemoteAddr<" + dtypeStr + ">(reinterpret_cast<int64_t>(" +
+           cce::GetOperandAsCode(codegen, op->args_[1]) + "))";
 }
 
-REGISTER_BACKEND_OP(BackendCCE, "dist.atomic_add")
+REGISTER_BACKEND_OP(BackendCCE, "dist.channel_remote_ptr")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistAtomicCodegenCCE(op, codegen, "pypto::dist::atomic_add");
-    });
-
-REGISTER_BACKEND_OP(BackendCCE, "dist.atomic_exchange")
-    .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistAtomicCodegenCCE(op, codegen, "pypto::dist::atomic_exchange");
-    });
-
-REGISTER_BACKEND_OP(BackendCCE, "dist.atomic_cas")
-    .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistAtomicCodegenCCE(op, codegen, "pypto::dist::atomic_cas");
-    });
-
-REGISTER_BACKEND_OP(BackendCCE, "dist.atomic_min")
-    .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistAtomicCodegenCCE(op, codegen, "pypto::dist::atomic_min");
-    });
-
-REGISTER_BACKEND_OP(BackendCCE, "dist.atomic_max")
-    .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistAtomicCodegenCCE(op, codegen, "pypto::dist::atomic_max");
+        return MakeDistChannelRemotePtrCodegenCCE(op, codegen);
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "block.tile_valid_shape")
