@@ -48,10 +48,6 @@ def test_cache_policy():
     assert str(pypto.CachePolicy.NONE_CACHEABLE) == "CachePolicy.NONE_CACHEABLE"
 
 
-def test_reduce_mode():
-    assert str(pypto.ReduceMode.ATOMIC_ADD) == "ReduceMode.ATOMIC_ADD"
-
-
 def test_cast_mode():
     assert str(pypto.CastMode.CAST_RINT) == "CastMode.CAST_RINT"
     assert str(pypto.CastMode.CAST_ROUND) == "CastMode.CAST_ROUND"
@@ -68,11 +64,6 @@ def test_op_type():
     assert str(pypto.OpType.LE) == "OpType.LE"
     assert str(pypto.OpType.GT) == "OpType.GT"
     assert str(pypto.OpType.GE) == "OpType.GE"
-
-
-def test_out_type():
-    assert str(pypto.OutType.BOOL) == "OutType.BOOL"
-    assert str(pypto.OutType.BIT) == "OutType.BIT"
 
 
 def test_topk_algo():

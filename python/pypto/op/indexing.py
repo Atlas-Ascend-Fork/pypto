@@ -15,7 +15,6 @@ from typing import Union
 from .. import pypto_impl
 from .._element import Element
 from .._op_wrapper import op_wrapper
-from ..enum import ScatterMode
 from ..error import PyptoError
 from ..tensor import Tensor
 
@@ -423,11 +422,11 @@ def scatter_update(input: Tensor, dim: int, index: Tensor, src: Tensor) -> Tenso
 
 def get_scatter_mode(reduce: str):
     if reduce is None:
-        return ScatterMode.NONE
+        return pypto_impl.ScatterMode.NONE
     elif reduce == 'add':
-        return ScatterMode.ADD
+        return pypto_impl.ScatterMode.ADD
     elif reduce == 'multiply':
-        return ScatterMode.MULTIPLY
+        return pypto_impl.ScatterMode.MULTIPLY
     else:
         raise PyptoError(0xF00002, ValueError("scatter reduce only support 'add', 'multiply'"))
 

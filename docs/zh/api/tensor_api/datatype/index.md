@@ -6,12 +6,10 @@
 CachePolicy
 CastMode
 DataType
+DequantScaleRoundingMode
 PrecisionType
 OpType
-OutType
-ReduceMode
 ReLuType
-ScatterMode
 SaturationMode
 TileOpFormat
 TopKAlgo

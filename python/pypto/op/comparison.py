@@ -15,7 +15,7 @@ from typing import List, Optional, Union
 from .. import pypto_impl
 from .._element import Element
 from .._op_wrapper import op_wrapper
-from ..enum import OpType, OutType, TopKAlgo
+from ..enum import OpType, TopKAlgo
 from ..tensor import Tensor
 
 
@@ -55,8 +55,8 @@ def greater(input: Tensor, other: Union[Tensor, float, Element]) -> Tensor:
     """
     if isinstance(other, float):
         # Tensor vs Scalar comparison
-        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.GT, OutType.BOOL)
-    return pypto_impl.Compare(input, other, OpType.GT, OutType.BOOL)
+        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.GT, pypto_impl.OutType.BOOL)
+    return pypto_impl.Compare(input, other, OpType.GT, pypto_impl.OutType.BOOL)
 
 
 @op_wrapper
@@ -95,8 +95,8 @@ def gt(input: Tensor, other: Union[Tensor, float, Element]) -> Tensor:
     """
     if isinstance(other, float):
         # Tensor vs Scalar comparison
-        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.GT, OutType.BOOL)
-    return pypto_impl.Compare(input, other, OpType.GT, OutType.BOOL)
+        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.GT, pypto_impl.OutType.BOOL)
+    return pypto_impl.Compare(input, other, OpType.GT, pypto_impl.OutType.BOOL)
 
 
 @op_wrapper
@@ -135,8 +135,8 @@ def ge(input: Tensor, other: Union[Tensor, float, Element]) -> Tensor:
     """
     if isinstance(other, float):
         # Tensor vs Scalar comparison
-        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.GE, OutType.BOOL)
-    return pypto_impl.Compare(input, other, OpType.GE, OutType.BOOL)
+        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.GE, pypto_impl.OutType.BOOL)
+    return pypto_impl.Compare(input, other, OpType.GE, pypto_impl.OutType.BOOL)
 
 
 @op_wrapper
@@ -175,8 +175,8 @@ def eq(input: Tensor, other: Union[Tensor, float, Element]) -> Tensor:
     """
     if isinstance(other, float):
         # Tensor vs Scalar comparison
-        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.EQ, OutType.BOOL)
-    return pypto_impl.Compare(input, other, OpType.EQ, OutType.BOOL)
+        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.EQ, pypto_impl.OutType.BOOL)
+    return pypto_impl.Compare(input, other, OpType.EQ, pypto_impl.OutType.BOOL)
 
 
 @op_wrapper
@@ -215,8 +215,8 @@ def ne(input: Tensor, other: Union[Tensor, float, Element]) -> Tensor:
     """
     if isinstance(other, float):
         # Tensor vs Scalar comparison
-        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.NE, OutType.BOOL)
-    return pypto_impl.Compare(input, other, OpType.NE, OutType.BOOL)
+        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.NE, pypto_impl.OutType.BOOL)
+    return pypto_impl.Compare(input, other, OpType.NE, pypto_impl.OutType.BOOL)
 
 
 @op_wrapper
@@ -255,8 +255,8 @@ def lt(input: Tensor, other: Union[Tensor, float, Element]) -> Tensor:
     """
     if isinstance(other, float):
         # Tensor vs Scalar comparison
-        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.LT, OutType.BOOL)
-    return pypto_impl.Compare(input, other, OpType.LT, OutType.BOOL)
+        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.LT, pypto_impl.OutType.BOOL)
+    return pypto_impl.Compare(input, other, OpType.LT, pypto_impl.OutType.BOOL)
 
 
 @op_wrapper
@@ -295,8 +295,8 @@ def le(input: Tensor, other: Union[Tensor, float, Element]) -> Tensor:
     """
     if isinstance(other, float):
         # Tensor vs Scalar comparison
-        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.LE, OutType.BOOL)
-    return pypto_impl.Compare(input, other, OpType.LE, OutType.BOOL)
+        return pypto_impl.Compare(input, pypto_impl.Element(input.dtype, other), OpType.LE, pypto_impl.OutType.BOOL)
+    return pypto_impl.Compare(input, other, OpType.LE, pypto_impl.OutType.BOOL)
 
 
 @op_wrapper

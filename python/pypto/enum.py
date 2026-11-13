@@ -22,14 +22,11 @@ def _enum_repr(self):
 DataType = pypto_impl.DataType
 TileOpFormat = pypto_impl.TileOpFormat
 CachePolicy = pypto_impl.CachePolicy
-ReduceMode = pypto_impl.ReduceMode
 CastMode = pypto_impl.CastMode
 OpType = pypto_impl.OpType
-OutType = pypto_impl.OutType
 TopKAlgo = pypto_impl.TopKAlgo
 ReLuType = pypto_impl.ReLuType
 TransMode = pypto_impl.TransMode
-ScatterMode = pypto_impl.ScatterMode
 SaturationMode = pypto_impl.SaturationMode
 AtomicRMWMode = pypto_impl.AtomicRMWMode
 AtomicType = pypto_impl.AtomicType
@@ -43,10 +40,8 @@ _ENUM_CLASSES = [
     DataType,
     TileOpFormat,
     CachePolicy,
-    ReduceMode,
     CastMode,
     OpType,
-    OutType,
     TopKAlgo,
     SaturationMode,
     DequantScaleRoundingMode,

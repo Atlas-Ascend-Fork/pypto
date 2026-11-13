@@ -45,4 +45,38 @@ index_add(input: Tensor, dim: int, index: Tensor, source: Tensor, *, alpha: Unio
 
 ## 调用示例
 
-请参考[pypto.index_add_](pypto-index_add_.md)的调用示例。
+### TileShape设置示例
+
+调用该operation接口前，应通过set_vec_tile_shapes设置TileShape。
+
+如输入input为[m, n, p]，dim为1，输入source为[m, t, p]，输入index为[t]，输出为[m, n, p]，TileShape设置为[m1, t1, p1]，则m1，t1，p1分别用于切分source的m，t，p轴。
+
+```python
+pypto.set_vec_tile_shapes(4, 16, 32)
+```
+
+### 接口调用示例
+
+```python
+x = pypto.tensor([2, 3], pypto.DT_INT32)        # shape (2, 3)
+source = pypto.tensor([3, 3], pypto.DT_INT32)   # shape (3, 3)
+index = pypto.tensor([3], pypto.DT_INT32)   # shape (3,)
+dim = 0
+# use alpha
+y = pypto.index_add(x, dim, index, source, alpha=1)
+# not use alpha
+y = pypto.index_add(x, dim, index, source)
+```
+
+结果示例如下：
+
+```python
+输入数据x:   [[0 0 0],
+               [0 0 0]]
+      source: [[1 1 1],
+               [1 1 1],
+               [1 1 1]]
+      index:   [0 1 0]
+输出数据y:   [[2 2 2],
+               [1 1 1]]               # shape (2, 3)
+```

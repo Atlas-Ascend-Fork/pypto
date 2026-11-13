@@ -56,7 +56,7 @@ quant_mx(
 |--------|-----------|------|
 | input | 输入 | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_FP16、DT_BF16、DT_FP32。<br>不支持空Tensor；仅支持TILEOP_ND格式；Shape仅支持1-4维；Shape Size不大于2147483647（即INT32_MAX）。 |
 | quant_dtype | 输入 | 量化后输出Tensor的数据类型。<br>支持：DT_FP8E4M3、DT_FP4_E2M1。DT_FP4_E2M1仅支持DT_FP16、DT_BF16输入。 |
-| mode | 输入 | 量化时共享指数的舍入模式。<br>支持：ROUND_DOWN（OCP）、ROUND_UP（NV）。 |
+| mode | 输入 | 量化时共享指数的舍入模式。<br>支持：ROUND_DOWN（OCP）、ROUND_UP（NV）。详细说明请参见[DequantScaleRoundingMode](../datatype/DequantScaleRoundingMode.md)。 |
 | axis | 输入 | 指定量化轴。<br>支持最后一维（`-1`或`input.shape.size() - 1`）和次尾轴（`-2`或`input.shape.size() - 2`）。 |
 | performance_mode | 输入 | 是否启用性能模式。<br>默认值为`True`。 |
 
