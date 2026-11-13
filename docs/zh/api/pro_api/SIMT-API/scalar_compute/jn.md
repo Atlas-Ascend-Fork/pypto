@@ -31,12 +31,13 @@ pypto_pro.language.simt.jn(
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| order | 输入 | 阶数，Scalar类型，仅支持DT_INT32。有效阶数为非负整数。Tensor或Tile元素需通过下标访问后传入。 |
+| order | 输入 | 阶数，Scalar类型，仅支持DT_INT32。有效范围为[0, 128]。Tensor或Tile元素需通过下标访问后传入。 |
 | value | 输入 | 源操作数，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 
 - 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
+- order的最大取值为128。order大于128的场景不支持，不保证计算结果。
 - order为负数时返回NaN，不进行阶数数值的编译期校验。
 
 ## 返回值说明
@@ -47,7 +48,7 @@ pypto_pro.language.simt.jn(
 |---|---|
 | order < 0，或value为NaN | NaN |
 | order = 1，value为±0或±Inf | 与value同符号的零 |
-| order ≥ 2，value为±0或±Inf | +0 |
+| 2 ≤ order ≤ 128，value为±0或±Inf | +0 |
 
 ## 调用示例
 
