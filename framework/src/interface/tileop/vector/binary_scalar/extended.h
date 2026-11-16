@@ -391,7 +391,11 @@ TILEOP void TBitwiseXorS(T0 dst, T1 src0, Scalar src1, T2 tmp)
 template <typename Scalar, auto PrecisionType = pto::RemSAlgorithm::DEFAULT, typename T0, typename T1, typename T2>
 TILEOP void TRemainderS(T0 dst, T1 src0, Scalar src1, T2 tmp)
 {
+#ifdef __DAV_V220
+    BinaryScalarTmpCompute<BinaryScalarOp::REM, pto::RemSAlgorithm::DEFAULT>(dst, src0, src1, tmp);
+#else
     BinaryScalarTmpCompute<BinaryScalarOp::REM, PrecisionType>(dst, src0, src1, tmp);
+#endif
 }
 
 #define OP_TILE_OP_POWS TPowS
@@ -432,7 +436,11 @@ TILEOP void TRemainderRS(T0 dst, T1 src0, Scalar src1, T2 tmp)
                 pto::TASSIGN(tmp1Tile, (uint64_t)(tmp.GetAddr() + shape3 * tmpTileW * sizeof(typename T2::Type)));
                 pto::TEXPANDS(tmp0Tile, src1);
                 SyncV();
+#ifdef __DAV_V220
+                pto::TREM<pto::RemAlgorithm::DEFAULT>(dstTile.Data(), tmp0Tile, src0ExecTile, tmp1Tile);
+#else
                 pto::TREM<PrecisionType>(dstTile.Data(), tmp0Tile, src0ExecTile, tmp1Tile);
+#endif
             }
         }
     }

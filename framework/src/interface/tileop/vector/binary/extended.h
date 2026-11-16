@@ -274,7 +274,11 @@ TILEOP void TPow(T0 dst, T1 src0, T2 src1, T3 tmp)
 template <auto PrecisionType = pto::RemAlgorithm::DEFAULT, typename T0, typename T1, typename T2, typename T3>
 TILEOP void TRemainder(T0 dst, T1 src0, T2 src1, T3 tmp)
 {
+#ifdef __DAV_V220
+    BinaryTmpCompute<BinaryOp::REM, pto::RemAlgorithm::DEFAULT>(dst, src0, src1, tmp);
+#else
     BinaryTmpCompute<BinaryOp::REM, PrecisionType>(dst, src0, src1, tmp);
+#endif
 }
 
 #endif // TILEOP_TILE_OPERATOR_VEC_BINARY_EXTENDED_H
