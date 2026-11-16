@@ -534,9 +534,6 @@ PHASE_BIAS_KINDS = {3}                # matmul_bias: initializes L0C (chain head
 PHASE_OVERWRITE_KINDS = {1, 4}        # matmul / matmul_mx: overwrite (chain head only)
 PHASE_NO_ACC_SRC_ADDR = -1
 
-_PHASE_MODE_UNKNOWN = 0
-_PHASE_MODE_SOFTWARE = 1
-_PHASE_MODE_HARDWARE = 2
 _PHASE_EXPECT_WRITE = 0
 _PHASE_EXPECT_READ = 1
 
@@ -576,11 +573,8 @@ class _PhaseToken:
 class _PhaseAccState:
     """All state that belongs to one (region, acc_addr) timeline."""
 
-    mode: int = _PHASE_MODE_UNKNOWN
-    mode_mixed: bool = False
     seen_phased_write: bool = False
     seen_unspec_write: bool = False
-    seen_unspec_read: bool = False
     flag: int = _PHASE_EXPECT_WRITE
     flag_set_by: tuple[int, PhaseAccessRecord] | None = None
     kchain: _KChainState = field(default_factory=_KChainState)
@@ -629,9 +623,7 @@ def check_phase_state_machine(records: list[PhaseAccessRecord], ctx: ReplayConte
             acc_state.blocked = True
             continue
 
-        # MIXED is a mode diagnostic, not a reason to discard hardware facts.
-        # Phased records must keep checking and updating unit_flag after a
-        # non-fatal mode boundary so a later flag violation remains visible.
+        # Mode findings do not suppress subsequent hardware flag checks.
         flag_result = _check_flag_permission(acc_state, token, ctx)
         if flag_result.issue is not None:
             issues.append(flag_result.issue)
@@ -729,49 +721,31 @@ def _mode_mix_read_issue(token: _PhaseToken, tile_desc: str,
 
 def _check_mode_transition(state: _PhaseAccState, token: _PhaseToken,
                            ctx: ReplayContext) -> _PhaseCheckResult:
-    """Check a synchronization-mode transition within the current round."""
+    """Check each operation against the writes in its current round."""
     rec = token.record
     issue: _PhaseIssue | None = None
     fatal = False
     tile_desc = f"region {rec.region}, Acc tile 0x{rec.acc_addr:x}"
 
-    current_mode = _PHASE_MODE_HARDWARE if token.is_phased else _PHASE_MODE_SOFTWARE
-    if not state.mode_mixed and state.mode not in (_PHASE_MODE_UNKNOWN, current_mode):
+    if token.is_write:
+        opposite_write_seen = state.seen_unspec_write if token.is_phased else state.seen_phased_write
+        if opposite_write_seen:
+            issue = _mode_mix_write_issue(token, tile_desc, ctx)
         if token.is_phased:
-            # Keep the old candidate order: phased-write + phase-less-read
-            # wins over write mixing when both begin at this record.
-            if token.is_write and state.seen_unspec_read:
-                issue = _mode_mix_read_issue(token, tile_desc, ctx)
-            elif token.is_write and state.seen_unspec_write:
-                issue = _mode_mix_write_issue(token, tile_desc, ctx)
-            elif not token.is_write and state.seen_unspec_write:
-                issue = _phase_issue(token.record_index, Finding(
-                    "PHASE_DEADLOCK",
-                    f"{tile_desc}: a phase-less matmul uses software sync, but a phased "
-                    f"store/move waits for the hardware unit_flag that the matmul never sets",
-                    ctx.location(rec.line),
-                    hint="Use matching AccPhase/STPhase on both sides, or omit phase on both sides",
-                ))
-                fatal = True
-        else:
-            if token.is_write and state.seen_phased_write:
-                issue = _mode_mix_write_issue(token, tile_desc, ctx)
-            elif not token.is_write and state.seen_phased_write:
-                issue = _mode_mix_read_issue(token, tile_desc, ctx)
-
-    if token.is_phased:
-        state.mode = _PHASE_MODE_HARDWARE
-        if token.is_write:
             state.seen_phased_write = True
-    else:
-        state.mode = _PHASE_MODE_SOFTWARE
-        if token.is_write:
-            state.seen_unspec_write = True
         else:
-            state.seen_unspec_read = True
-
-    if issue is not None:
-        state.mode_mixed = True
+            state.seen_unspec_write = True
+    elif not token.is_phased and state.seen_phased_write:
+        issue = _mode_mix_read_issue(token, tile_desc, ctx)
+    elif token.is_phased and state.seen_unspec_write and not state.seen_phased_write:
+        issue = _phase_issue(token.record_index, Finding(
+            "PHASE_DEADLOCK",
+            f"{tile_desc}: a phase-less matmul uses software sync, but a phased "
+            f"store/move waits for the hardware unit_flag that the matmul never sets",
+            ctx.location(rec.line),
+            hint="Use matching AccPhase/STPhase on both sides, or omit phase on both sides",
+        ))
+        fatal = True
     return _PhaseCheckResult(issue, fatal)
 
 
@@ -872,14 +846,13 @@ def _close_phase_round_if_complete(state: _PhaseAccState, token: _PhaseToken) ->
         return
     rec = token.record
     hardware_round_closed = token.is_phased and rec.phase == PHASE_FINAL
-    software_round_closed = not token.is_phased and state.kchain.round_has_write
+    software_round_closed = (
+        not token.is_phased and state.seen_unspec_write and not state.seen_phased_write
+    )
     if not (hardware_round_closed or software_round_closed):
         return
-    state.mode = _PHASE_MODE_UNKNOWN
-    state.mode_mixed = False
     state.seen_phased_write = False
     state.seen_unspec_write = False
-    state.seen_unspec_read = False
     state.kchain = _KChainState()
 
 

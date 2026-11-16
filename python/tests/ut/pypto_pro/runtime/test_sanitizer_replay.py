@@ -35,6 +35,93 @@ def test_phase_insert_final_read_records():
     assert check_phase_state_machine(records, _CTX) == []
 
 
+@pytest.mark.parametrize("previous_phase", [None, 0, 2], ids=["initial", "after-software", "after-hardware"])
+def test_phase_unpaired_read_does_not_set_next_round_mode(previous_phase):
+    records = []
+    if previous_phase is not None:
+        records.extend([
+            PhaseAccessRecord(op_kind=1, phase=previous_phase, acc_addr=0x100, line=10),
+            PhaseAccessRecord(op_kind=8, phase=previous_phase, acc_addr=0x100, line=11),
+        ])
+    records.extend([
+        PhaseAccessRecord(op_kind=6, phase=0, acc_addr=0x100, line=12),
+        PhaseAccessRecord(op_kind=1, phase=2, acc_addr=0x100, line=20),
+        PhaseAccessRecord(op_kind=8, phase=2, acc_addr=0x100, line=21),
+    ])
+    assert check_phase_state_machine(records, _CTX) == []
+
+
+def test_phase_mixing_reports_each_offending_location():
+    records = [
+        PhaseAccessRecord(op_kind=kind, phase=phase, acc_addr=0, line=line)
+        for kind, phase, line in (
+            (1, 0, 10), (2, 1, 11), (2, 2, 12),
+            (6, 0, 13), (10, 0, 14), (8, 2, 15),
+        )
+    ]
+    findings = check_phase_state_machine(records, _CTX)
+    assert [f.location for f in findings] == ["ut.py:11", "ut.py:12", "ut.py:13", "ut.py:14"]
+    assert all(f.kind == "PHASE_MISMATCH" for f in findings)
+    assert all("matmul ops mix" in f.message for f in findings[:2])
+    assert all("store/move" in f.message for f in findings[2:])
+
+
+@pytest.mark.parametrize("next_kind,expected_detail", [
+    (1, "matmul appears mid-chain"),
+    (3, "matmul_bias appears mid-chain"),
+    (4, "matmul appears mid-chain"),
+    (2, None),
+    (5, None),
+], ids=["overwrite", "bias", "mx-overwrite", "accumulate", "mx-accumulate"])
+def test_phase_unspecified_read_keeps_kchain_roles(next_kind, expected_detail):
+    first_kind = 4 if next_kind in (4, 5) else 1
+    records = [
+        PhaseAccessRecord(op_kind=kind, phase=phase, acc_addr=0, line=line)
+        for kind, phase, line in (
+            (first_kind, 1, 10), (6, 0, 11), (next_kind, 2, 12), (8, 2, 13),
+        )
+    ]
+    findings = check_phase_state_machine(records, _CTX)
+    expected_locations = ["ut.py:11", "ut.py:12"] if expected_detail else ["ut.py:11"]
+    assert [f.location for f in findings] == expected_locations
+    assert all(f.kind == "PHASE_MISMATCH" for f in findings)
+    assert "store/move" in findings[0].message
+    if expected_detail:
+        assert expected_detail in findings[1].message
+
+
+@pytest.mark.parametrize("write_phases", [(0, 1), (1, 0)], ids=["software-first", "hardware-first"])
+def test_phase_unspecified_read_keeps_mixed_round(write_phases):
+    records = [
+        PhaseAccessRecord(op_kind=kind, phase=phase, acc_addr=0, line=line)
+        for kind, phase, line in (
+            (1, write_phases[0], 10), (2, write_phases[1], 11),
+            (6, 0, 12), (1, 2, 13), (8, 2, 14),
+        )
+    ]
+    findings = check_phase_state_machine(records, _CTX)
+    assert [f.location for f in findings] == ["ut.py:11", "ut.py:12", "ut.py:13", "ut.py:13"]
+    assert all(f.kind == "PHASE_MISMATCH" for f in findings)
+    assert "matmul ops mix" in findings[0].message
+    assert "store/move" in findings[1].message
+    assert "matmul ops mix" in findings[2].message
+    assert "matmul appears mid-chain" in findings[3].message
+
+
+def test_phase_invalid_reads_preserve_round_until_final_consumer():
+    records = [
+        PhaseAccessRecord(op_kind=kind, phase=phase, acc_addr=0, line=line)
+        for kind, phase, line in (
+            (1, 1, 10), (6, 0, 11), (8, 0, 12), (10, 0, 13),
+            (2, 2, 14), (8, 2, 15), (1, 0, 16), (6, 0, 17),
+            (1, 2, 18), (8, 2, 19),
+        )
+    ]
+    findings = check_phase_state_machine(records, _CTX)
+    assert [f.location for f in findings] == ["ut.py:11", "ut.py:12", "ut.py:13"]
+    assert all(f.kind == "PHASE_MISMATCH" and "store/move" in f.message for f in findings)
+
+
 def test_replay_keeps_distinct_findings_at_same_location(monkeypatch):
     """同一行的不同诊断都保留，完全重复项只折叠 hits。"""
     class _Record:

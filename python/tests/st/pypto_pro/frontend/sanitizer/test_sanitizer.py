@@ -2532,11 +2532,11 @@ def test_ut_phase_insert_unspec_mixed_records():
 @pytest.mark.soc("950")
 def test_ut_phase_write_mixing_records():
     """写侧混用（P11）：无 phase 覆盖写开链 + phased 累加 -> 混用报错，且 D-1 不再误报。"""
-    recs = [_pr(1, 0), _pr(2, 1), _pr(2, 2), _pr(6, 2)]
+    recs = [_pr(1, 0, line=10), _pr(2, 1, line=11), _pr(2, 2, line=12), _pr(6, 2, line=13)]
     findings = check_phase_state_machine(recs, _CTX)
     msgs = [f.message for f in findings]
-    assert len(findings) == 1
-    assert any("mix phase and phase-less writes" in m for m in msgs)
+    assert [f.location for f in findings] == ["ut.py:11", "ut.py:12"]
+    assert all("mix phase and phase-less writes" in m for m in msgs)
     assert not any("matmul_acc" in m for m in msgs)  # 基值已由无 phase 写建立，D-1 不报
 
 
