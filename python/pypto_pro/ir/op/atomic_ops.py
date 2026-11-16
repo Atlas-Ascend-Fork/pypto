@@ -141,3 +141,16 @@ def _build_atomic_xor(self, tensor, offset, value, *, span: Span) -> Expr:
 @op_impl("atomic_cas")
 def _build_atomic_cas(self, tensor, offset, compare, value, *, span: Span) -> Expr:
     return _atomic_cas_call(self, tensor, offset, compare, value, span=span)
+
+
+@op_impl("atomic_load")
+def _build_atomic_load(self, tensor, offset, *, span: Span) -> Expr:
+    _atomic_target_dtype("atomic_load", tensor)
+    return _ir_core.create_op_call("block.atomic_load", [tensor, offset], {}, span)
+
+
+@op_impl("atomic_store")
+def _build_atomic_store(self, tensor, offset, value, *, span: Span) -> Expr:
+    dtype = _atomic_target_dtype("atomic_store", tensor)
+    value = _adapt_atomic_operand(self, "atomic_store", "value", value, dtype)
+    return _ir_core.create_op_call("block.atomic_store", [tensor, offset, value], {}, span)

@@ -16,7 +16,7 @@ import pytest
 
 
 @pytest.fixture
-def codegen_9201(monkeypatch, assert_9201_golden):
+def codegen_9201(monkeypatch, assert_golden):
     jit_module = importlib.import_module("pypto_pro.runtime.jit")
 
     def codegen(kernel_def, arch):
@@ -25,9 +25,9 @@ def codegen_9201(monkeypatch, assert_9201_golden):
 
         def checked(program, *args, **kwargs):
             target = kwargs["target"].name.lower()
-            assert_9201_golden(program, f"{target}-ir")
+            assert_golden(program, f"{target}-ir")
             result = original(program, *args, **kwargs)
-            assert_9201_golden(result.content, f"{target}-cce")
+            assert_golden(result.content, f"{target}-cce")
             captured.append(target)
             return result
 

@@ -83,6 +83,44 @@ std::string AtomicOperand(codegen::CCECodegen& codegen, const ir::ExprPtr& opera
     return codegen.ScalarCast(codegen.GetExprAsCode(operand), scalarType->dtype_, elementDtype);
 }
 
+// Scalar atomics are scalar-pipe instructions, so they are not tied to the
+// vector core: the same intrinsics are available in Cube sections.
+struct AtomicDevAccess {
+    const char* uintType;
+    const char* valueType;
+    bool isFloat;
+};
+
+const AtomicDevAccess* GetAtomicDevAccess(const ir::DataType& dtype)
+{
+    static const AtomicDevAccess kFp32{"uint32_t", "float", true};
+    static const AtomicDevAccess kInt32{"uint32_t", "int32_t", false};
+    static const AtomicDevAccess kUint32{"uint32_t", "uint32_t", false};
+    static const AtomicDevAccess kInt64{"uint64_t", "int64_t", false};
+    static const AtomicDevAccess kUint64{"uint64_t", "uint64_t", false};
+    if (dtype == ir::DataType::FP32) {
+        return &kFp32;
+    }
+    if (dtype == ir::DataType::INT32) {
+        return &kInt32;
+    }
+    if (dtype == ir::DataType::UINT32) {
+        return &kUint32;
+    }
+    if (dtype == ir::DataType::INT64) {
+        return &kInt64;
+    }
+    if (dtype == ir::DataType::UINT64) {
+        return &kUint64;
+    }
+    return nullptr;
+}
+
+std::string AtomicDevPointer(const std::string& pointer, const char* uintType, const std::string& offset)
+{
+    return "(__gm__ " + std::string(uintType) + "*)" + pointer + " + (" + offset + ")";
+}
+
 std::string EmitAtomicCall(codegen::CCECodegen& codegen, const ir::CallPtr& op, const std::string& call)
 {
     // The intrinsic returns the element-typed pre-op value, and the IR result
@@ -100,8 +138,6 @@ std::string MakeBlockAtomicRMWCodegenCCE(const ir::CallPtr& op, codegen::Codegen
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "block.atomic_rmw requires tensor, offset and value";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetTarget() == ir::SectionKind::Vector)
-        << "block.atomic_rmw is only supported in a Vector section";
 
     const auto kind = static_cast<ir::AtomicRMWMode>(op->GetKwarg<int>("kind"));
     const char* intrinsic = AtomicRMWIntrinsic(kind);
@@ -122,8 +158,6 @@ std::string MakeBlockAtomicCasCodegenCCE(const ir::CallPtr& op, codegen::Codegen
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
         << "block.atomic_cas requires tensor, offset, compare and value";
-    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetTarget() == ir::SectionKind::Vector)
-        << "block.atomic_cas is only supported in a Vector section";
 
     ir::DataType elementDtype;
     const std::string pointer = AtomicElementPointer(codegen, op, &elementDtype);
@@ -133,6 +167,53 @@ std::string MakeBlockAtomicCasCodegenCCE(const ir::CallPtr& op, codegen::Codegen
     const std::string call = "atomicCAS((__gm__ " + elementDtype.ToCTypeString() + "*)" + pointer + " + (" + offset +
                              "), " + compare + ", " + value + ")";
     return EmitAtomicCall(codegen, op, call);
+}
+
+// Load/store lowering chosen by micro-benchmark on Ascend 950 (3510, AIV and
+// AIC, 1024 dependent 32-bit element accesses, cycles per op):
+//   atomic_load : atomicAdd(ptr, 0) ~260 vs ld_dev ~91  -> ld_dev
+//   atomic_store: atomicExch        ~260 vs st_dev ~92  -> st_dev
+// The bypass accesses are ~2.9x faster.  st_dev is a posted write, so ordering
+// against later accesses is left to the caller's synchronization.
+std::string MakeBlockAtomicLoadCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
+        << "block.atomic_load requires tensor and offset";
+
+    ir::DataType elementDtype;
+    const std::string pointer = AtomicElementPointer(codegen, op, &elementDtype);
+    const AtomicDevAccess* access = GetAtomicDevAccess(elementDtype);
+    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, access != nullptr)
+        << "block.atomic_load does not support dtype " << elementDtype.ToString();
+    const std::string offset = codegen.GetExprAsCode(op->args_[1]);
+    const std::string raw = "ld_dev(" + AtomicDevPointer(pointer, access->uintType, offset) + ", 0)";
+    std::string value = "static_cast<" + std::string(access->valueType) + ">(" + raw + ")";
+    if (access->isFloat) {
+        value = "__builtin_bit_cast(" + std::string(access->valueType) + ", static_cast<uint32_t>(" + raw + "))";
+    }
+    return EmitAtomicCall(codegen, op, value);
+}
+
+std::string MakeBlockAtomicStoreCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
+        << "block.atomic_store requires tensor, offset and value";
+
+    ir::DataType elementDtype;
+    const std::string pointer = AtomicElementPointer(codegen, op, &elementDtype);
+    const AtomicDevAccess* access = GetAtomicDevAccess(elementDtype);
+    PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, access != nullptr)
+        << "block.atomic_store does not support dtype " << elementDtype.ToString();
+    const std::string offset = codegen.GetExprAsCode(op->args_[1]);
+    const std::string value = AtomicOperand(codegen, op->args_[2], elementDtype);
+    std::string stored = "static_cast<" + std::string(access->uintType) + ">(" + value + ")";
+    if (access->isFloat) {
+        stored = "__builtin_bit_cast(uint32_t, " + value + ")";
+    }
+    codegen.Emit("st_dev(" + stored + ", " + AtomicDevPointer(pointer, access->uintType, offset) + ", 0);");
+    return "";
 }
 
 } // namespace
@@ -147,6 +228,18 @@ REGISTER_BACKEND_OP(BackendCCE, "block.atomic_cas")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeBlockAtomicCasCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "block.atomic_load")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeBlockAtomicLoadCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "block.atomic_store")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeBlockAtomicStoreCodegenCCE(op, codegen);
     });
 
 } // namespace backend

@@ -47,11 +47,11 @@ def _make_kernel(mode, dynamic_row, dynamic_col):
 
 @pytest.mark.parametrize("mode", ["simd", "simt"])
 @pytest.mark.parametrize("dynamic_row,dynamic_col", [(False, False), (True, False), (False, True), (True, True)])
-def test_vf_valid_shape_abi(mode, dynamic_row, dynamic_col, assert_9201_golden):
+def test_vf_valid_shape_abi(mode, dynamic_row, dynamic_col, assert_golden):
     kernel = _make_kernel(mode, dynamic_row, dynamic_col)
     cube, vector = _parse_and_codegen_targets(kernel.to_kernel_def(), NpuArch.DAV_3510, "")
     source = _assemble_cv_source(cube, vector).content
-    assert_9201_golden(source, "cce")
+    assert_golden(source, "cce")
     params = ["__ubuf__ float* tile_0"]
     callee_args = ["tile_0"]
     pointer_cast = "(__ubuf__ float *)" if mode == "simd" else "(__ubuf__ float*)"

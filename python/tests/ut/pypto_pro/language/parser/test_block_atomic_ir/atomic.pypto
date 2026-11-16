@@ -1,0 +1,32 @@
+function _atomic_kernel incast(tensor<16, int32_t, tensor_view<, , ND, %i32_ptr>> %i32_0, tensor<16, uint32_t, tensor_view<, , ND, %u32_ptr>> %u32_0, tensor<16, float, tensor_view<, , ND, %f32_ptr>> %f32_0, tensor<16, uint64_t, tensor_view<, , ND, %u64_ptr>> %u64_0, tensor<16, int64_t, tensor_view<, , ND, %out_ptr>> %out_0, tensor<16, float, tensor_view<, , ND, %fout_ptr>> %fout_0, int32_t %value_0, int64_t %i_0, int64_t %j_0) outcast() #entry(false) #type(pro) {
+    block.atomic_rmw(%i32_0, 0, 1, kind=0);
+    block.atomic_rmw(%i32_0, 1, 1, kind=1);
+    block.atomic_rmw(%i32_0, 2, 1, kind=2);
+    block.atomic_rmw(%i32_0, 3, 1, kind=3);
+    block.atomic_rmw(%i32_0, 4, 1, kind=4);
+    block.atomic_rmw(%i32_0, 5, 1, kind=7);
+    block.atomic_rmw(%u32_0, 0, 1, kind=8);
+    block.atomic_rmw(%i32_0, 6, 1, kind=9);
+    block.atomic_rmw(%u32_0, 1, 5, kind=5);
+    block.atomic_rmw(%u32_0, 2, 5, kind=6);
+    block.atomic_rmw(%f32_0, 0, 1.5, kind=0);
+    block.atomic_cas(%i32_0, 7, 0, 7);
+    block.atomic_rmw(%u64_0, 0, -1, kind=2);
+    block.atomic_rmw(%i32_0, 8, %value_0, kind=0);
+    int64_t %_expr_tmp_0_0 = (%i_0 mul 8);
+    int64_t %_expr_tmp_1_0 = (%_expr_tmp_0_0 add %j_0);
+    block.atomic_rmw(%i32_0, %_expr_tmp_1_0, 1, kind=0);
+    int32_t %_expr_tmp_2_0 = block.atomic_rmw(%i32_0, 9, 1, kind=0);
+    block.setval(%out_0, 0, %_expr_tmp_2_0);
+    int32_t %old_0 = block.atomic_load(%i32_0, 1);
+    block.setval(%out_0, 1, %old_0);
+    block.atomic_store(%i32_0, 1, 7);
+    system.dsb(scope=1);
+    int32_t %_expr_tmp_3_0 = block.atomic_load(%i32_0, 1);
+    block.setval(%out_0, 2, %_expr_tmp_3_0);
+    block.atomic_store(%f32_0, 0, 1.5);
+    system.dsb(scope=1);
+    float %_expr_tmp_4_0 = block.atomic_load(%f32_0, 0);
+    block.setval(%fout_0, 0, %_expr_tmp_4_0);
+    return;
+}

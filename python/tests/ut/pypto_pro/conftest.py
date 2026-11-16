@@ -32,8 +32,8 @@ GOLDEN_SUFFIX = {"ir": ".pypto", "cce": ".pypto.cce", "entry": ".pypto.cce", "ca
 
 
 @pytest.fixture
-def assert_9201_golden(request):
-    """Compare the complete 9201 regression output with its checked-in golden."""
+def assert_golden(request):
+    """Compare the complete regression output with its checked-in golden."""
     def check(actual, label="ir"):
         printed = re.sub(r"memref_id=\d+", "memref_id=<id>", str(actual))
         suffix = GOLDEN_SUFFIX.get(label.rsplit("-", 1)[-1], ".pypto")

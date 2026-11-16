@@ -959,7 +959,7 @@ def test_simt_codegen_rejects_unsupported_architecture(arch):
         _compile_to_cce(_simt_tile_codegen_kernel, arch=arch)
 
 
-def test_simt_direct_codegen_rejects_9201(monkeypatch, assert_9201_golden):
+def test_simt_direct_codegen_rejects_9201(monkeypatch, assert_golden):
     from pypto.pypto_impl import NpuArch, ir
     from pypto.pypto_impl.codegen import CCECodegen
 
@@ -969,7 +969,7 @@ def test_simt_direct_codegen_rejects_9201(monkeypatch, assert_9201_golden):
     assert matched
     assert program.get_function("_callee_entry").func_type == ir.FunctionType.SimtVF
     assert program.get_function("_callee_apply").func_type == ir.FunctionType.SimtCallee
-    assert_9201_golden(program)
+    assert_golden(program)
     with pytest.raises(RuntimeError, match="SIMT direct CCE generation currently requires arch='3510'"):
         CCECodegen(ir.SectionKind.Vector).generate_single(program, NpuArch.DAV_9201)
 

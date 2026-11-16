@@ -311,7 +311,7 @@ def test_9201_simt_launch_reports_dsl_location(kernel, launch, monkeypatch):
     assert launch in message
 
 
-def test_9201_simd_kernel_does_not_parse_unused_simt_function(monkeypatch, assert_9201_golden):
+def test_9201_simd_kernel_does_not_parse_unused_simt_function(monkeypatch, assert_golden):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "9201")
 
     @pl.vector_function(mode="simt", max_threads=1)
@@ -331,7 +331,7 @@ def test_9201_simd_kernel_does_not_parse_unused_simt_function(monkeypatch, asser
     kernel_def = kernel.to_kernel_def()
     program, matched = kernel_def.parse_target_program(ir.SectionKind.Vector)
 
-    assert_9201_golden(program)
+    assert_golden(program)
     assert callable(unused)
     assert matched
     assert set(program.functions) == {"kernel"}

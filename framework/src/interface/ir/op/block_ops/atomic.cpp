@@ -102,6 +102,40 @@ TypePtr DeduceAtomicRMWType(const std::vector<ExprPtr>& args,
     return std::make_shared<ScalarType>(elementDtype);
 }
 
+TypePtr DeduceAtomicLoadType(const std::vector<ExprPtr>& args,
+                             [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    constexpr const char* kOpName = "block.atomic_load";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x2) << kOpName << " requires tensor and offset";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << kOpName << " does not accept keyword arguments";
+
+    CheckAtomicTensor(kOpName, args[0]);
+    const auto elementDtype = As<TensorType>(args[0]->GetType())->dtype_;
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsAtomicDType(elementDtype, /*check_float=*/true))
+        << kOpName << " does not support dtype " << elementDtype.ToString();
+    CheckAtomicOffset(kOpName, args[1]);
+
+    return std::make_shared<ScalarType>(elementDtype);
+}
+
+TypePtr DeduceAtomicStoreType(const std::vector<ExprPtr>& args,
+                              [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    constexpr const char* kOpName = "block.atomic_store";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3)
+        << kOpName << " requires tensor, offset and value";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << kOpName << " does not accept keyword arguments";
+
+    CheckAtomicTensor(kOpName, args[0]);
+    const auto elementDtype = As<TensorType>(args[0]->GetType())->dtype_;
+    PRO_IR_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, IsAtomicDType(elementDtype, /*check_float=*/true))
+        << kOpName << " does not support dtype " << elementDtype.ToString();
+    CheckAtomicOffset(kOpName, args[1]);
+    CheckAtomicValue(kOpName, "value", args[2], elementDtype);
+
+    return GetNoneType();
+}
+
 TypePtr DeduceAtomicCasType(const std::vector<ExprPtr>& args,
                             const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
@@ -131,6 +165,21 @@ REGISTER_OP("block.atomic_rmw")
     .add_argument("value", "Scalar operand matching the element dtype")
     .set_attr<int>("kind")
     .f_deduce_type(DeduceAtomicRMWType);
+
+REGISTER_OP("block.atomic_load")
+    .set_op_category("BlockOp")
+    .set_description("Scalar atomic load from one GM Tensor element")
+    .add_argument("tensor", "Source GM Tensor (TensorType)")
+    .add_argument("offset", "Linear element offset (ScalarType with integer dtype)")
+    .f_deduce_type(DeduceAtomicLoadType);
+
+REGISTER_OP("block.atomic_store")
+    .set_op_category("BlockOp")
+    .set_description("Scalar atomic store to one GM Tensor element")
+    .add_argument("tensor", "Destination GM Tensor (TensorType)")
+    .add_argument("offset", "Linear element offset (ScalarType with integer dtype)")
+    .add_argument("value", "Scalar operand matching the element dtype")
+    .f_deduce_type(DeduceAtomicStoreType);
 
 REGISTER_OP("block.atomic_cas")
     .set_op_category("BlockOp")

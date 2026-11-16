@@ -329,6 +329,8 @@
       - [pypto_pro.language.atomic_or](pro_api/SIMD-API/atomic/atomic_or.md)
       - [pypto_pro.language.atomic_xor](pro_api/SIMD-API/atomic/atomic_xor.md)
       - [pypto_pro.language.atomic_exch](pro_api/SIMD-API/atomic/atomic_exch.md)
+      - [pypto_pro.language.atomic_load](pro_api/SIMD-API/atomic/atomic_load.md)
+      - [pypto_pro.language.atomic_store](pro_api/SIMD-API/atomic/atomic_store.md)
       - [pypto_pro.language.atomic_cas](pro_api/SIMD-API/atomic/atomic_cas.md)
     - [Tile计算](pro_api/SIMD-API/tile_computation/index.md)
       - [比较](pro_api/SIMD-API/tile_computation/comparison/index.md)

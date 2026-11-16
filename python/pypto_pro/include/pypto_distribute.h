@@ -146,7 +146,7 @@ __aicore__ inline void Notify(__gm__ T* addr, int64_t val)
     if constexpr (kNotifyOp != 0) {
         (void)atomicAdd(addr, static_cast<T>(val));
     } else {
-        (void)atomicExch(addr, static_cast<T>(val));
+        StoreDev(addr, static_cast<T>(val));
     }
 }
 

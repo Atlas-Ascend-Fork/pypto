@@ -770,7 +770,7 @@ def test_acc_to_mat_insert_with_scaling_tile_preserves_operand():
 
 @pytest.mark.parametrize("layout", [pl.ND, pl.DN])
 @pytest.mark.parametrize("arch", ["3510", "9201"])
-def test_modern_acc_to_mat_move_accepts_supported_destination_layouts(monkeypatch, arch, layout, assert_9201_golden):
+def test_modern_acc_to_mat_move_accepts_supported_destination_layouts(monkeypatch, arch, layout, assert_golden):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", arch)
 
     @pl.jit(auto_mutex=False)
@@ -782,7 +782,7 @@ def test_modern_acc_to_mat_move_accepts_supported_destination_layouts(monkeypatc
         pl.move(dst, src)
 
     program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
-    assert_9201_golden(program.get_function(main.__name__))
+    assert_golden(program.get_function(main.__name__))
     assert "block.move" in _program_ir(program.get_function(main.__name__))
 
 
@@ -1016,7 +1016,7 @@ def test_mat_to_cube_move_with_offset_rejects_tmov_only_layout_conversion():
     ],
 )
 def test_mat_to_cube_move_without_offset_uses_move_layout_rules(
-    monkeypatch, arch, src_layout, dst_memory, dst_layout, assert_9201_golden
+    monkeypatch, arch, src_layout, dst_memory, dst_layout, assert_golden
 ):
     """Without an offset, both architectures use the TMOV layout rules."""
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", arch)
@@ -1034,7 +1034,7 @@ def test_mat_to_cube_move_without_offset_uses_move_layout_rules(
         pl.move(dst, src)
 
     program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
-    assert_9201_golden(program.get_function(main.__name__))
+    assert_golden(program.get_function(main.__name__))
 
 
 @pytest.mark.parametrize(
@@ -1616,7 +1616,7 @@ def test_modern_rejects_zz_nn_for_cube_buffers(monkeypatch, arch, memory, layout
 
 
 @pytest.mark.parametrize("arch", ["3510", "9201"])
-def test_modern_allows_regular_cube_buffer_layouts(monkeypatch, arch, assert_9201_golden):
+def test_modern_allows_regular_cube_buffer_layouts(monkeypatch, arch, assert_golden):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", arch)
 
     @pl.jit(auto_mutex=False)
@@ -1631,7 +1631,7 @@ def test_modern_allows_regular_cube_buffer_layouts(monkeypatch, arch, assert_920
 
     create_tile_program, _ = create_tile.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     create_tile = create_tile_program.get_function(create_tile.__name__)
-    assert_9201_golden(create_tile)
+    assert_golden(create_tile)
 
     stmt = create_tile.body.stmts[0] if hasattr(create_tile.body, "stmts") else create_tile.body
     assert isinstance(stmt.targets[0].type.hardware_info, _ir.HardwareInfo)

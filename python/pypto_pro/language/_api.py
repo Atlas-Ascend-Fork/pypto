@@ -1393,6 +1393,22 @@ def atomic_cas(tensor: Tensor, offset: int, compare: Union[int, float], value: U
 
 
 @_api_decl
+def atomic_load(tensor: Tensor, offset: int) -> Scalar:
+    """Atomically load one GM Tensor element, bypassing the scalar DCache.
+
+    Supported element dtypes: INT32, UINT32, FP32, INT64, UINT64.
+    """
+
+
+@_api_decl
+def atomic_store(tensor: Tensor, offset: int, value: Union[int, float]) -> None:
+    """Atomically store ``value`` into one GM Tensor element, bypassing the scalar DCache.
+
+    Supported element dtypes: INT32, UINT32, FP32, INT64, UINT64.
+    """
+
+
+@_api_decl
 def set_validshape(tile: "Tile | TileGroup", /, shape: Shape) -> None:
     """Set the valid shape of a Tile or tile_group (for partial-tile / tail-block operations).
 

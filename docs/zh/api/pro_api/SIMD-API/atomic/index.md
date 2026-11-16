@@ -15,5 +15,7 @@ atomic_and
 atomic_or
 atomic_xor
 atomic_exch
+atomic_load
+atomic_store
 atomic_cas
 ```

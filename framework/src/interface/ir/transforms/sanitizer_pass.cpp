@@ -207,6 +207,8 @@ public:
             {"block.setval", scalarBounds},
             {"block.atomic_rmw", scalarBounds},
             {"block.atomic_cas", scalarBounds},
+            {"block.atomic_load", scalarBounds},
+            {"block.atomic_store", scalarBounds},
             {"simt.atomic_add", scalarBounds},
             {"simt.atomic_sub", scalarBounds},
             {"simt.atomic_exch", scalarBounds},

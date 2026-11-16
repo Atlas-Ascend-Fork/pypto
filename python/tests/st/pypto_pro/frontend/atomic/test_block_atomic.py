@@ -99,6 +99,48 @@ def atomic_wide_kernel(
         pl.atomic_add(i64, 0, 1)  # discarded: the side effect must still land
 
 
+@pl.jit(arch="3510", auto_mutex=True)
+def atomic_load_store_kernel(
+    state: pl.Tensor[[4], pl.DT_INT32],
+    f32: pl.Tensor[[2], pl.DT_FP32],
+    old: pl.Tensor[[4], pl.DT_INT32],
+    old_f32: pl.Tensor[[2], pl.DT_FP32],
+):
+    with pl.section_vector():
+        old[0] = pl.atomic_load(state, 0)
+        pl.atomic_store(state, 1, 42)
+        # atomic_store is a posted write (no dsb emitted), so order the read-back
+        # explicitly; otherwise the load may observe the pre-store value.
+        pl.system.dsb(scope=pl.MemDsb.DDR)
+        old[1] = pl.atomic_load(state, 1)
+        old[2] = pl.atomic_load(state, 2)  # unchanged
+        pl.atomic_store(f32, 0, 2.5)
+        pl.system.dsb(scope=pl.MemDsb.DDR)
+        old_f32[0] = pl.atomic_load(f32, 0)
+        old_f32[1] = pl.atomic_load(f32, 1)  # unchanged
+
+
+@pl.jit(arch="3510", auto_mutex=True)
+def atomic_cube_kernel(
+    state: pl.Tensor[[4], pl.DT_INT32],
+    f32: pl.Tensor[[2], pl.DT_FP32],
+    old: pl.Tensor[[4], pl.DT_INT32],
+    old_f32: pl.Tensor[[2], pl.DT_FP32],
+):
+    with pl.section_cube():
+        old[0] = pl.atomic_add(state, 0, 5)
+        pl.atomic_store(state, 1, 42)
+        # atomic_store is a posted write (no dsb emitted), so order the read-back
+        # explicitly; otherwise the load may observe the pre-store value.
+        pl.system.dsb(scope=pl.MemDsb.DDR)
+        old[1] = pl.atomic_load(state, 1)
+        old[2] = pl.atomic_load(state, 2)  # unchanged
+        old[3] = pl.atomic_cas(state, 3, 7, 9)
+        pl.atomic_store(f32, 0, 2.5)
+        pl.system.dsb(scope=pl.MemDsb.DDR)
+        old_f32[0] = pl.atomic_load(f32, 0)
+
+
 @pytest.mark.soc("950")
 def test_atomic_add_across_blocks_keeps_every_update():
     _require_3510()
@@ -160,3 +202,37 @@ def test_wide_and_float_atomics_including_a_discarded_call():
     assert old_i64.cpu().tolist() == [10, 5]
     assert old_u64.cpu().tolist() == [4, 0]
     assert old_f32.cpu().tolist() == [1.0, 3.0]
+
+
+@pytest.mark.soc("950")
+def test_atomic_load_and_store_publish_and_observe_element_values():
+    _require_3510()
+    state = torch.tensor([10, 3, 7, 4], dtype=torch.int32).npu()
+    f32 = torch.tensor([1.0, 3.0], dtype=torch.float32).npu()
+    old = torch.full((4,), -1, dtype=torch.int32).npu()
+    old_f32 = torch.full((2,), -1.0, dtype=torch.float32).npu()
+
+    atomic_load_store_kernel[None, 1](state, f32, old, old_f32)
+    torch.npu.synchronize()
+
+    assert state.cpu().tolist() == [10, 42, 7, 4]
+    assert f32.cpu().tolist() == [2.5, 3.0]
+    assert old.cpu().tolist() == [10, 42, 7, -1]
+    assert old_f32.cpu().tolist() == [2.5, 3.0]
+
+
+@pytest.mark.soc("950")
+def test_scalar_atomics_run_on_the_cube_core():
+    _require_3510()
+    state = torch.tensor([10, 3, 7, 7], dtype=torch.int32).npu()
+    f32 = torch.tensor([1.0, 3.0], dtype=torch.float32).npu()
+    old = torch.full((4,), -1, dtype=torch.int32).npu()
+    old_f32 = torch.full((2,), -1.0, dtype=torch.float32).npu()
+
+    atomic_cube_kernel[None, 1](state, f32, old, old_f32)
+    torch.npu.synchronize()
+
+    assert state.cpu().tolist() == [15, 42, 7, 9]
+    assert f32.cpu().tolist() == [2.5, 3.0]
+    assert old.cpu().tolist() == [10, 42, 7, 7]
+    assert old_f32.cpu().tolist() == [2.5, -1.0]

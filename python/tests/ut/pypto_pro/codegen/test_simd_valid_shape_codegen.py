@@ -40,10 +40,10 @@ def pointer_kernel(count: pl.DT_INT32):
         pointer_bindings(dst, src, count)
 
 
-def test_simd_valid_shape_codegen(assert_9201_golden):
+def test_simd_valid_shape_codegen(assert_golden):
     cube, vector = _parse_and_codegen_targets(pointer_kernel.to_kernel_def(), NpuArch.DAV_3510, "")
     source = _assemble_cv_source(cube, vector).content
-    assert_9201_golden(source, "cce")
+    assert_golden(source, "cce")
     assert "__simd_callee__ inline void copy_valid__callee(__ubuf__ float* dst_0, __ubuf__ float* src_0)" in source
     assert (
         "__simd_vf__ inline void pointer_bindings(__ubuf__ float* dst_0, __ubuf__ float* src_0, int32_t count_0)"

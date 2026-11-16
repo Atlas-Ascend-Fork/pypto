@@ -124,13 +124,13 @@ def _shift_kernel(x: pl.Ptr[pl.DT_INT32]):
 
 
 @pytest.mark.parametrize("arch", [NpuArch.DAV_3510, NpuArch.DAV_9201])
-def test_register_shift_unsigned_operand_is_9201_only(arch, monkeypatch, assert_9201_golden):
+def test_register_shift_unsigned_operand_is_9201_only(arch, monkeypatch, assert_golden):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", str(arch))
     program, matched = _shift_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     assert matched
-    assert_9201_golden(program, "vector-ir")
+    assert_golden(program, "vector-ir")
     source = CCECodegen(ir.SectionKind.Vector).generate_single(program, arch)
-    assert_9201_golden(source, "vector-cce")
+    assert_golden(source, "vector-cce")
     assert "vshl(" in source
     assert ("(RegTensor<uint32_t>&)" in source) == (arch == NpuArch.DAV_9201)
     params = []

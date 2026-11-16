@@ -144,7 +144,7 @@ def test_architecture_specific_mixed_geometry_is_independent(future_config):
     (True, False, "__cube__", (1, 0)),
     (False, True, "__vector__", (0, 1)),
 ])
-def test_9201_target_uses_dav_9201_and_one_to_one_geometry(cube, vector, qualifier, cores, assert_9201_golden):
+def test_9201_target_uses_dav_9201_and_one_to_one_geometry(cube, vector, qualifier, cores, assert_golden):
     config = get_jit_compile_config()
     target = config.resolve_kernel_target(NpuArch.DAV_9201, has_cube=cube, has_vector=vector)
     flags = config.build_bisheng_flags(
@@ -152,8 +152,8 @@ def test_9201_target_uses_dav_9201_and_one_to_one_geometry(cube, vector, qualifi
     )
     caller = jit._generate_caller_cpp([], "kernel.cpp", "probe", target=target)
     entry = jit._make_global_entry("probe", [], target=target)
-    assert_9201_golden(caller, "caller")
-    assert_9201_golden(entry, "entry")
+    assert_golden(caller, "caller")
+    assert_golden(entry, "entry")
 
     assert target.npu_arch == "dav-9201"
     assert (target.aic_per_block, target.aiv_per_block) == cores

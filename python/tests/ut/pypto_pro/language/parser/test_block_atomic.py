@@ -8,13 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-
-"""Parse-level contracts for the ``pl.atomic_*`` GM Tensor scalar atomics.
-
-Every public name lowers to one of two IR ops: ``block.atomic_rmw`` carries the
-kind, ``block.atomic_cas`` is the compare-and-swap form. These tests pin that
-mapping, the linear-offset/value typing, and the rejection paths.
-"""
+from pathlib import Path
 
 from pypto_pro._errors import InvalidType, NotSupported
 import pypto_pro.language as pl
@@ -22,27 +16,33 @@ import pytest
 
 from pypto.pypto_impl import ir
 
+_GOLDEN_DIR = Path(__file__).parent / "test_block_atomic_ir"
+
 
 def _parse(kernel):
     program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     return program.get_function(kernel.__name__)
 
 
-def _op_calls(func, op_name):
-    """Every IR call to *op_name* in the parsed body, in program order."""
-    calls = []
-    for stmt in func.body.stmts:
-        value = getattr(stmt, "value", None) if isinstance(stmt, ir.AssignStmt) else getattr(stmt, "expr", None)
-        if isinstance(value, ir.Call) and value.name == op_name:
-            calls.append(value)
-    return calls
+def _assert_ir(kernel, golden_name):
+    """Whole parsed function text vs the ``.pypto`` golden."""
+    func = _parse(kernel)
+    assert isinstance(func, ir.Function)
+    golden_path = _GOLDEN_DIR / f"{golden_name}.pypto"
+    assert str(func).rstrip("\n") == golden_path.read_text(encoding="utf-8").rstrip("\n"), golden_name
 
 
 @pl.jit(arch="3510", auto_mutex=False)
-def _rmw_kernel(
+def _atomic_kernel(
     i32: pl.Tensor[[16], pl.DT_INT32],
     u32: pl.Tensor[[16], pl.DT_UINT32],
     f32: pl.Tensor[[16], pl.DT_FP32],
+    u64: pl.Tensor[[16], pl.DT_UINT64],
+    out: pl.Tensor[[16], pl.DT_INT64],
+    fout: pl.Tensor[[16], pl.DT_FP32],
+    value: pl.DT_INT32,
+    i: pl.DT_INT64,
+    j: pl.DT_INT64,
 ):
     with pl.section_vector():
         pl.atomic_add(i32, 0, 1)
@@ -56,93 +56,45 @@ def _rmw_kernel(
         pl.atomic_inc(u32, 1, 5)
         pl.atomic_dec(u32, 2, 5)
         pl.atomic_add(f32, 0, 1.5)
-
-
-@pl.jit(arch="3510", auto_mutex=False)
-def _cas_kernel(i32: pl.Tensor[[16], pl.DT_INT32], u64: pl.Tensor[[16], pl.DT_UINT64]):
-    with pl.section_vector():
-        pl.atomic_cas(i32, 0, 0, 7)
+        pl.atomic_cas(i32, 7, 0, 7)
         pl.atomic_exch(u64, 0, 18446744073709551615)
+        pl.atomic_add(i32, 8, value)
+        pl.atomic_add(tensor=i32, offset=i * 8 + j, value=1)
+        pl.setval(out, 0, pl.atomic_add(i32, 9, 1))
+        old = pl.atomic_load(i32, 1)
+        pl.setval(out, 1, old)
+        # atomic_store is a posted write (no dsb emitted), so order the read-back
+        # explicitly; otherwise the load may observe the pre-store value.
+        pl.atomic_store(i32, 1, 7)
+        pl.system.dsb(scope=pl.MemDsb.DDR)
+        pl.setval(out, 2, pl.atomic_load(i32, 1))
+        pl.atomic_store(f32, 0, 1.5)
+        pl.system.dsb(scope=pl.MemDsb.DDR)
+        pl.setval(fout, 0, pl.atomic_load(f32, 0))
 
 
-@pl.jit(arch="3510", auto_mutex=False)
-def _result_kernel(i32: pl.Tensor[[16], pl.DT_INT32], out: pl.Tensor[[16], pl.DT_INT64]):
-    with pl.section_vector():
-        old = pl.atomic_add(i32, 0, 1)
-        pl.setval(out, 0, old)
+def test_atomic_lowering():
+    _assert_ir(_atomic_kernel, "atomic")
 
 
-@pl.jit(arch="3510", auto_mutex=False)
-def _runtime_value_kernel(i32: pl.Tensor[[16], pl.DT_INT32], value: pl.DT_INT32):
-    with pl.section_vector():
-        pl.atomic_add(i32, 0, value)
+def test_load_rejects_unsupported_elements():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(u8: pl.Tensor[[16], pl.DT_UINT8]):
+        with pl.section_vector():
+            pl.atomic_load(u8, 0)
+
+    with pytest.raises(NotImplementedError, match="does not support dtype"):
+        _parse(kernel)
 
 
-def test_every_rmw_name_lowers_to_one_family_with_its_kind():
-    function = _parse(_rmw_kernel)
-    calls = _op_calls(function, "block.atomic_rmw")
+def test_store_rejects_a_mismatched_value_dtype():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(i32: pl.Tensor[[16], pl.DT_INT32], value: pl.DT_INT64):
+        with pl.section_vector():
+            pl.atomic_store(i32, 0, value)
 
-    kinds = [call.kwargs["kind"] for call in calls]
-    assert kinds == [
-        int(ir.AtomicRMWMode.ADD),
-        int(ir.AtomicRMWMode.SUB),
-        int(ir.AtomicRMWMode.EXCH),
-        int(ir.AtomicRMWMode.MAX),
-        int(ir.AtomicRMWMode.MIN),
-        int(ir.AtomicRMWMode.AND),
-        int(ir.AtomicRMWMode.OR),
-        int(ir.AtomicRMWMode.XOR),
-        int(ir.AtomicRMWMode.INC),
-        int(ir.AtomicRMWMode.DEC),
-        int(ir.AtomicRMWMode.ADD),
-    ]
-    assert _op_calls(function, "block.atomic_cas") == []
-
-
-def test_cas_lowers_to_its_own_family_with_compare_and_value():
-    call = _op_calls(_parse(_cas_kernel), "block.atomic_cas")[0]
-
-    assert [arg.type.dtype for arg in call.args] == [
-        ir.DataType.INT32,
-        ir.DataType.INT64,
-        ir.DataType.INT32,
-        ir.DataType.INT32,
-    ]
-
-
-def test_numeric_literals_are_retyped_to_the_element_dtype():
-    calls = _op_calls(_parse(_rmw_kernel), "block.atomic_rmw")
-
-    assert calls[0].args[2].type.dtype == ir.DataType.INT32
-    assert calls[6].args[2].type.dtype == ir.DataType.UINT32
-    assert calls[10].args[2].type.dtype == ir.DataType.FP32
-    # Offset stays a linear integer scalar, like getval/setval.
-    assert calls[0].args[1].type.dtype == ir.DataType.INT64
-
-
-def test_uint64_literal_preserves_the_unsigned_value():
-    call = next(call for call in _op_calls(_parse(_cas_kernel), "block.atomic_rmw"))
-
-    assert call.args[2].type.dtype == ir.DataType.UINT64
-    assert call.args[2].value == -1
-
-
-def test_runtime_value_keeps_its_scalar_type():
-    call = _op_calls(_parse(_runtime_value_kernel), "block.atomic_rmw")[0]
-
-    assert call.args[2].type.dtype == ir.DataType.INT32
-
-
-def test_old_value_keeps_the_element_dtype():
-    function = _parse(_result_kernel)
-    call = _op_calls(function, "block.atomic_rmw")[0]
-    assignment = next(
-        stmt for stmt in function.body.stmts
-        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call) and stmt.value.name == "block.atomic_rmw"
-    )
-
-    assert call.args[0].type.dtype == ir.DataType.INT32
-    assert assignment.targets[0].type.dtype == ir.DataType.INT32
+    with pytest.raises(TypeError, match="dtype must match the element dtype"):
+        _parse(kernel)
 
 
 def test_float_literal_on_an_integer_element_is_rejected():
@@ -203,18 +155,6 @@ def test_runtime_value_dtype_must_match_the_element_dtype():
 
     with pytest.raises(TypeError, match="dtype must match the element dtype"):
         _parse(kernel)
-
-
-def test_runtime_linear_offset_and_keyword_arguments_are_accepted():
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(t: pl.Tensor[[64], pl.DT_INT32], i: pl.DT_INT64, j: pl.DT_INT64):
-        with pl.section_vector():
-            pl.atomic_add(tensor=t, offset=i * 8 + j, value=1)
-
-    call = _op_calls(_parse(kernel), "block.atomic_rmw")[0]
-
-    assert not isinstance(call.args[1], ir.ConstInt)
-    assert call.args[2].type.dtype == ir.DataType.INT32
 
 
 def test_ub_tile_is_rejected():
