@@ -99,6 +99,8 @@ struct SpillContext {
     int deleteRetiredOpSize{0};
     int deleteNotRetiredOpSize{0};
     std::vector<std::tuple<Operation*, MemoryType, CoreLocationType>> deleteAllocOps;
+    // 依赖被 spill 改写的非退休 op：可能已被旧前驱唤醒进 issue 队列，需摘出按新前驱重新入队。
+    std::vector<Operation*> requeueOps;
 };
 
 struct SingleSpillCreatedOps {

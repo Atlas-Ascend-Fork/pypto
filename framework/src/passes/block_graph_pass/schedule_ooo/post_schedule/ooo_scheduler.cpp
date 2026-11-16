@@ -1838,6 +1838,32 @@ Status OoOScheduler::ApplySpillContext(SpillContext& ctx, Operation* allocOp)
         state_.allocIssueQueue[state_.schedInfoMap[newAllocOp].coreLocation][memType].Insert(newAllocOp);
     }
 
+    // spill 改写了依赖的非退休 op 若已被旧前驱唤醒进 issue 队列，摘出后按新前驱重新武装，
+    // 防止新 alloc 尚未执行 (tensorOccupyMap 无账) 时携带旧内存归属被发射。
+    std::unordered_set<Operation*> requeued;
+    for (auto* op : ctx.requeueOps) {
+        if (!requeued.insert(op).second) {
+            continue;
+        }
+        auto& pipeQueue = issueQueues[state_.schedInfoMap[op].coreLocation][state_.schedInfoMap[op].pipeType];
+        if (pipeQueue.curOp == op) {
+            continue;
+        }
+        pipeQueue.DeleteOp(op);
+        bool ready = true;
+        for (auto* pred : state_.depManager.GetPredecessors(op)) {
+            if (!state_.schedInfoMap[pred].isRetired) {
+                ready = false;
+                break;
+            }
+        }
+        if (ready) {
+            pipeQueue.Insert(op);
+            APASS_LOG_DEBUG_F(Elements::Operation, "    Requeue: %s, execOrder: %d", state_.GetOpInfo(op).c_str(),
+                              state_.schedInfoMap[op].execOrder);
+        }
+    }
+
     for (auto memId : ctx.spillMemIds) {
         state_.localBufferMap[memId]->retireCycle = state_.clock;
     }

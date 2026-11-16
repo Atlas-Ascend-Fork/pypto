@@ -1640,6 +1640,137 @@ TEST_F(ScheduleOoOTest, TestSpillWalkUpThroughSkipOps)
     EXPECT_LT(at(graph.GetOp("viewType")), at(copyout));
 }
 
+// Minimal UB graph for the requeue tests: allocSrc -> src, writer fills src, consumer reads src into dst.
+// The spill-context requeue path only cares about an op already woken into an issue queue.
+void BuildRequeueTestGraph(ComputationalGraphBuilder& graph)
+{
+    graph.AddTensors(DT_FP32, {16, 32}, {MEM_DEVICE_DDR, MEM_UB, MEM_UB, MEM_UB}, {"ddr", "src", "aux", "dst"});
+    graph.AddOp(Opcode::OP_UB_ALLOC, {}, {"src"}, "allocSrc");
+    graph.AddOp(Opcode::OP_COPY_IN, {"ddr"}, {"src"}, "writer");
+    graph.AddOp(Opcode::OP_UB_ALLOC, {}, {"aux"}, "allocAux");
+    graph.AddOp(Opcode::OP_UB_ALLOC, {}, {"dst"}, "allocDst");
+    graph.AddOp(Opcode::OP_ADD, {"src", "aux"}, {"dst"}, "consumer");
+}
+
+// Retire every op except the requeued one, so its refreshed predecessors are all retired
+// unless the test re-adds a blocking edge.
+void PrepareRequeueTest(OoOScheduler& scheduler, ComputationalGraphBuilder& graph, Operation*& consumer)
+{
+    consumer = graph.GetOp("consumer");
+    scheduler.state_.schedInfoMap[consumer].coreLocation = CoreLocationType::AIV0;
+    scheduler.state_.schedInfoMap[consumer].pipeType = PipeType::PIPE_V;
+    for (auto* op : scheduler.state_.orderedOps) {
+        if (op != consumer) {
+            scheduler.state_.schedInfoMap[op].isRetired = true;
+        }
+    }
+}
+
+// A non-retired predecessor keeps the requeued op out of the pipe: it must be evicted
+// and wait for the fresh predecessors to retire instead of issuing with stale ownership.
+// The blocker must be a non-alloc op: AddDependency silently drops alloc-involved edges.
+TEST_F(ScheduleOoOTest, TestSpillRequeueEvictsWokenWriter)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "TestSpillRequeueEvicts",
+                                               "TestSpillRequeueEvicts", nullptr);
+    OoOScheduler scheduler(*function);
+
+    LogicalTensorPtr ubTensor = CreateTensor(DT_FP32, {16, 32}, MemoryType::MEM_UB, 1);
+    LogicalTensorPtr ddrTensor = CreateTensor(DT_FP32, {16, 32}, MemoryType::MEM_DEVICE_DDR, 2);
+    Operation& alloc = CreateAllocOp(*function, ubTensor, 1);
+    Operation& pred = CreateCopyOp(*function, Opcode::OP_COPY_IN, ddrTensor, ubTensor, {16, 32});
+    Operation& consumer = CreateCopyOp(*function, Opcode::OP_COPY_IN, ddrTensor, ubTensor, {16, 32});
+
+    auto& schedInfo = scheduler.state_.schedInfoMap[&consumer];
+    schedInfo.coreLocation = CoreLocationType::AIV0;
+    schedInfo.pipeType = PipeType::PIPE_V;
+    scheduler.state_.schedInfoMap[&pred].isRetired = false;
+
+    scheduler.state_.depManager.RegisterOp(&consumer);
+    scheduler.state_.depManager.RegisterOp(&pred);
+    scheduler.state_.depManager.AddDependency(&pred, &consumer);
+
+    auto& pipe = scheduler.issueQueues[CoreLocationType::AIV0][PipeType::PIPE_V];
+    pipe.Insert(&consumer);
+
+    SpillContext ctx;
+    ctx.requeueOps.push_back(&consumer);
+    ASSERT_EQ(scheduler.ApplySpillContext(ctx, &alloc), SUCCESS);
+
+    EXPECT_TRUE(pipe.Empty());
+}
+
+// All predecessors retired: the evicted op must be re-armed immediately, otherwise
+// nothing would ever wake it again (its wakeup event already happened before the spill).
+TEST_F(ScheduleOoOTest, TestSpillRequeueReadyOpReinserts)
+{
+    ComputationalGraphBuilder graph;
+    BuildRequeueTestGraph(graph);
+    OoOScheduler scheduler(*graph.GetFunction());
+    ASSERT_EQ(scheduler.Init(graph.GetFunction()->Operations().DuplicatedOpList()), SUCCESS);
+
+    Operation* consumer = nullptr;
+    PrepareRequeueTest(scheduler, graph, consumer);
+
+    auto& pipe = scheduler.issueQueues[CoreLocationType::AIV0][PipeType::PIPE_V];
+    pipe.Insert(consumer);
+
+    SpillContext ctx;
+    ctx.requeueOps.push_back(consumer);
+    ASSERT_EQ(scheduler.ApplySpillContext(ctx, graph.GetOp("allocSrc")), SUCCESS);
+
+    ASSERT_EQ(pipe.Size(), 1u);
+    EXPECT_EQ(pipe.Front(), consumer);
+}
+
+// An op already executing (pipe.curOp) is past the issue point: leave it alone and never
+// re-insert it into the pending queue.
+TEST_F(ScheduleOoOTest, TestSpillRequeueSkipsExecutingOp)
+{
+    ComputationalGraphBuilder graph;
+    BuildRequeueTestGraph(graph);
+    OoOScheduler scheduler(*graph.GetFunction());
+    ASSERT_EQ(scheduler.Init(graph.GetFunction()->Operations().DuplicatedOpList()), SUCCESS);
+
+    Operation* consumer = nullptr;
+    PrepareRequeueTest(scheduler, graph, consumer);
+
+    auto& pipe = scheduler.issueQueues[CoreLocationType::AIV0][PipeType::PIPE_V];
+    pipe.busy = true;
+    pipe.curOp = consumer;
+
+    SpillContext ctx;
+    ctx.requeueOps.push_back(consumer);
+    ASSERT_EQ(scheduler.ApplySpillContext(ctx, graph.GetOp("allocSrc")), SUCCESS);
+
+    EXPECT_EQ(pipe.curOp, consumer);
+    EXPECT_TRUE(pipe.Empty());
+}
+
+// The same op recorded twice by the spill engine must be processed once, otherwise the
+// delete-then-reinsert dance would duplicate it in the queue.
+TEST_F(ScheduleOoOTest, TestSpillRequeueDedupesDuplicatedOp)
+{
+    ComputationalGraphBuilder graph;
+    BuildRequeueTestGraph(graph);
+    OoOScheduler scheduler(*graph.GetFunction());
+    ASSERT_EQ(scheduler.Init(graph.GetFunction()->Operations().DuplicatedOpList()), SUCCESS);
+
+    Operation* consumer = nullptr;
+    PrepareRequeueTest(scheduler, graph, consumer);
+
+    auto& pipe = scheduler.issueQueues[CoreLocationType::AIV0][PipeType::PIPE_V];
+    pipe.Insert(consumer);
+
+    SpillContext ctx;
+    ctx.requeueOps.push_back(consumer);
+    ctx.requeueOps.push_back(consumer);
+    ASSERT_EQ(scheduler.ApplySpillContext(ctx, graph.GetOp("allocSrc")), SUCCESS);
+
+    EXPECT_EQ(pipe.Size(), 1u);
+    EXPECT_EQ(pipe.Front(), consumer);
+}
+
 // 直接写者就是 ND2NZ 时, WalkUp 第一跳要认出跨分形 (旧逻辑只查第二跳, crossedNd2nz 漏置为假)。
 TEST_F(ScheduleOoOTest, TestSpillWalkUpFirstHopIsNd2nz)
 {

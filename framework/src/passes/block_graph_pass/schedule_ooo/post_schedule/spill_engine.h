@@ -193,7 +193,7 @@ private:
     Status FreeSpilledBuffer(int memId, CoreLocationType freeCore);
 
     Status UpdateSpillOpDepend(Operation* spillOp, LogicalTensorPtr newTensor, int spillMemId,
-                               std::vector<Operation*>& rewired);
+                               std::vector<Operation*>& rewired, SpillContext& ctx);
 
     Status UpdateOperationInput(Operation* targetOp, Operation* spillOp, LogicalTensorPtr reloadTensor, int spillMemId);
     Status UpdateSkipOpInput(Operation* chainTail, Operation* spillOp, Operation* targetOp,
@@ -205,14 +205,14 @@ private:
     void ReplaceSkipOpChainMemId(LogicalTensorPtr startTensor, int oldMemId, int newMemId);
     bool RemapOpReqMemId(Operation* op, int oldMemId, int newMemId);
     bool ReplaceTensorMemId(Operation* op, int oldMemId, int newMemId);
-    Status UpdateRemainMemid(int oldMemId, int newMemId, std::vector<Operation*>& remapped);
+    Status UpdateRemainMemid(int oldMemId, int newMemId, std::vector<Operation*>& remapped, SpillContext& ctx);
     void UpdateOpInternalSubgraphID(Operation& op, Operation* srcOp);
 
     Status UpdateCopyoutScheduleInfo(Operation* op, const SpillSource& source, int sourceMemId);
     void UpdateOpScheduleInfo(Operation* op, std::vector<int> memIds, Operation* AllocOp);
     Status InsertOps(OpMemIdMap opMemidMap, Operation* spillAllocOp, int memId);
     Status UpdateScheduleStatus(OpMemIdMap opMemidMap, int memId, Operation* spillAllocOp, LogicalTensorPtr localTensor,
-                                Operation* spillOp, const SpillPlan& plan);
+                                Operation* spillOp, const SpillPlan& plan, SpillContext& ctx);
 };
 
 } // namespace npu::tile_fwk

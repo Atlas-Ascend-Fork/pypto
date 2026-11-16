@@ -879,7 +879,7 @@ void SpillEngine::UpdateOpInternalSubgraphID(Operation& op, Operation* srcOp)
 }
 
 Status SpillEngine::UpdateSpillOpDepend(Operation* spillOp, LogicalTensorPtr newTensor, int spillMemId,
-                                        std::vector<Operation*>& rewired)
+                                        std::vector<Operation*>& rewired, SpillContext& ctx)
 {
     const auto successors = state_.depManager.GetSuccessors(spillOp);
     for (auto succOp : successors) {
@@ -890,6 +890,7 @@ Status SpillEngine::UpdateSpillOpDepend(Operation* spillOp, LogicalTensorPtr new
                     return FAILED;
                 }
                 rewired.push_back(succOp);
+                ctx.requeueOps.push_back(succOp);
             }
         }
     }
@@ -1187,7 +1188,7 @@ Status SpillEngine::ReloadIntoNewBuffer(int spillMemId, LogicalTensorPtr spillTe
         wholeCopyin = CreateWholeReload(gmTensor, localTensor, plan);
         opMemIdMap.push_back({wholeCopyin, {localTensor->memoryrange.memId}});
     }
-    if (UpdateScheduleStatus(opMemIdMap, spillMemId, spillAllocOp, localTensor, spillOp, plan) != SUCCESS) {
+    if (UpdateScheduleStatus(opMemIdMap, spillMemId, spillAllocOp, localTensor, spillOp, plan, ctx) != SUCCESS) {
         APASS_LOG_ERROR_F(Elements::Operation, "Spill: update schedule status failed.");
         return FAILED;
     }
@@ -1647,7 +1648,8 @@ Status SpillEngine::InsertOps(OpMemIdMap opMemidMap, Operation* spillAllocOp, in
 }
 
 Status SpillEngine::UpdateScheduleStatus(OpMemIdMap opMemidMap, int memId, Operation* spillAllocOp,
-                                         LogicalTensorPtr localTensor, Operation* spillOp, const SpillPlan& plan)
+                                         LogicalTensorPtr localTensor, Operation* spillOp, const SpillPlan& plan,
+                                         SpillContext& ctx)
 {
     std::vector<Operation*> seeds;
     for (auto& [op, memid] : opMemidMap) {
@@ -1662,11 +1664,11 @@ Status SpillEngine::UpdateScheduleStatus(OpMemIdMap opMemidMap, int memId, Opera
         APASS_LOG_ERROR_F(Elements::Operation, "InsertOps failed.");
         return FAILED;
     }
-    if (UpdateSpillOpDepend(spillOp, localTensor, memId, seeds) != SUCCESS) {
+    if (UpdateSpillOpDepend(spillOp, localTensor, memId, seeds, ctx) != SUCCESS) {
         APASS_LOG_ERROR_F(Elements::Operation, "UpdateSpillOpDepend failed.");
         return FAILED;
     }
-    if (UpdateRemainMemid(memId, localTensor->memoryrange.memId, seeds) != SUCCESS) {
+    if (UpdateRemainMemid(memId, localTensor->memoryrange.memId, seeds, ctx) != SUCCESS) {
         APASS_LOG_ERROR_F(Elements::Operation, "UpdateRemainMemid failed.");
         return FAILED;
     }
@@ -1677,7 +1679,7 @@ Status SpillEngine::UpdateScheduleStatus(OpMemIdMap opMemidMap, int memId, Opera
     return SUCCESS;
 }
 
-Status SpillEngine::UpdateRemainMemid(int oldMemId, int newMemId, std::vector<Operation*>& remapped)
+Status SpillEngine::UpdateRemainMemid(int oldMemId, int newMemId, std::vector<Operation*>& remapped, SpillContext& ctx)
 {
     if (state_.bufRefCount.find(oldMemId) == state_.bufRefCount.end()) {
         APASS_LOG_ERROR_F(Elements::Tensor, "bufRefCount cannot find Tensor[%d]. ", oldMemId);
@@ -1693,6 +1695,7 @@ Status SpillEngine::UpdateRemainMemid(int oldMemId, int newMemId, std::vector<Op
         bool tensorChanged = ReplaceTensorMemId(op, oldMemId, newMemId);
         if (reqChanged || tensorChanged) {
             remapped.push_back(op);
+            ctx.requeueOps.push_back(op);
         }
     }
     return SUCCESS;
