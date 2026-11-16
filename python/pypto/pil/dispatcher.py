@@ -16,6 +16,7 @@ from typing import Optional
 
 from .. import pypto_impl
 from .._utils import clear_source_location, set_source_location
+from ..frontend.parser.parser import NestedFunctionMarker
 from .op_registry import dispatch
 from .parser import ast2pil
 from .pir import (
@@ -76,6 +77,8 @@ class DispatchError(RuntimeError):
 
 def dispatch_call(call: Call, scope: Scope, ctx: BuildContext):
     callee = scope.resolve(call.callee)
+    if isinstance(callee, NestedFunctionMarker):
+        callee = callee._original_func
     args = tuple(scope.resolve(call.args))
 
     kwargs = {}

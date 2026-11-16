@@ -1314,3 +1314,19 @@ def test_config_scope():
             assert pypto.get_vec_tile_shapes() == [32, 16]
 
     pil.compile(foo, has_move=False)
+
+
+def test_frontend_function_marker_is_inlined():
+    def helper(x, out):
+        out[:] = x * 2.0
+
+    marker = pypto.frontend.function(helper)
+
+    def kernel(x, out):
+        pypto.set_vec_tile_shapes(16, 16)
+        marker(x, out)
+
+    x = pypto.Tensor(shape=(16, 16), dtype=pypto.DT_FP32)
+    func = _compile_ops(kernel, x, x)
+    opcodes = {s.opcode for s in _tensor_ops_of(func.body)}
+    assert "MULS" in opcodes
