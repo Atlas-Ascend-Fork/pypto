@@ -142,6 +142,14 @@ class Block:
 
 
 @dataclass
+class Cond:
+    """A ``while`` condition: the block that evaluates it plus the value it yields."""
+
+    block: Block
+    value: Operand
+
+
+@dataclass
 class Function:
     # Function name
     name: str

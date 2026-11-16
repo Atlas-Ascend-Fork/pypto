@@ -14,7 +14,7 @@ from typing import Any, Callable, NoReturn, Optional, Union
 
 from pypto import ir
 
-from .pir import Block, Call, DoubleStarred, Function, Jump, LoopKind, Operand, Starred, Value, in_, not_in
+from .pir import Block, Call, Cond, DoubleStarred, Function, Jump, LoopKind, Operand, Starred, Value, in_, not_in
 
 
 class Source:
@@ -382,21 +382,17 @@ class Parser:
         if stmt.orelse:
             ctx.raise_error(stmt, "while-else not supported")
 
-        with ctx.new_block() as body:
+        with ctx.new_block() as cond_block:
             cond = self.visit(stmt.test, ctx)
-            with ctx.new_block() as then_block:
-                ctx.set_jump(Jump.END_BRANCH)
-            with ctx.new_block() as else_block:
-                ctx.set_jump(Jump.BREAK)
-            ctx.call_void("pil.if_else", (cond, then_block, else_block))
-
+            ctx.set_jump(Jump.END_BRANCH)
+        with ctx.new_block() as body:
             ctx.loop_kinds.append(LoopKind.WHILE)
             self._stmts(stmt.body, ctx)
             if body.jump is None:
                 ctx.set_jump(Jump.CONTINUE)
             ctx.loop_kinds.pop()
 
-        ctx.call_void("pil.loop", (body, None))
+        ctx.call_void("pil.loop", (body, Cond(cond_block, cond)))
 
     def visit_for(self, node: ast.For, ctx: _Context):
         if node.orelse:

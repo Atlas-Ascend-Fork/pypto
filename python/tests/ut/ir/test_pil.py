@@ -1330,3 +1330,13 @@ def test_frontend_function_marker_is_inlined():
     func = _compile_ops(kernel, x, x)
     opcodes = {s.opcode for s in _tensor_ops_of(func.body)}
     assert "MULS" in opcodes
+
+
+def test_while_symbolic_condition_is_rejected():
+    def kernel():
+        cond = pypto.SymbolicScalar("cond")
+        while cond:
+            pass
+
+    with pytest.raises(Exception, match="while condition must be a concrete bool, got SymbolicScalar"):
+        _compile_ops(kernel)

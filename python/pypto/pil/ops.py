@@ -20,6 +20,7 @@ from .pir import (
     Block,
     BreakSignal,
     BuildContext,
+    Cond,
     ContinueSignal,
     DoubleStarred,
     InsertPoint,
@@ -359,8 +360,21 @@ def _static_for(body: Block, iterator):
             continue
 
 
-def _static_while(body: Block):
+def _static_while(body: Block, cond: Cond):
+    scope = Scope.current()
     while True:
+        dispatch_block(cond.block, False)
+        value = scope.resolve(cond.value)
+        if isinstance(value, pypto.SymbolicScalar):
+            value = value.simplify()
+            if not value.is_concrete():
+                raise ValueError(
+                    f"while condition must be a concrete bool, got {type(value).__name__}; "
+                    "use pypto.loop for dynamic iteration"
+                )
+            value = value.concrete()
+        if not value:
+            break
         try:
             dispatch_block(body, True)
         except BreakSignal:
@@ -481,10 +495,10 @@ def loop_impl(ctx: BuildContext, body: Block, loop):
         ctx.loop_stack.append((loop.start, loop.stop, loop.step))
         _dyn_for(body, loop, ctx)
         ctx.loop_stack.pop()
-    elif loop is not None:
-        _static_for(body, loop)
+    elif isinstance(loop, Cond):
+        _static_while(body, loop)
     else:
-        _static_while(body)
+        _static_for(body, loop)
 
 
 def _if_else_stmt(cond, then_block: Block, else_block: Block, ctx: BuildContext):
