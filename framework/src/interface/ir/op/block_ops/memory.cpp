@@ -537,8 +537,8 @@ REGISTER_OP("block.subview")
     .set_op_category("BlockOp")
     .set_description("Create a sub-view of a tile with offset and valid_shape")
     .add_argument("container", "Input tile (TileType)")
-    .add_argument("offset", "Linear element offset (ScalarType with integer dtype)")
-    .add_argument("valid_shape", "Sub-window dimensions (MakeTuple)")
+    .add_argument("offset", "Two-element coordinate tuple or VF integer scalar offset")
+    .add_argument("valid_shape", "Two-element sub-window dimensions for coordinate offsets")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceSubViewType(args, kwargs);

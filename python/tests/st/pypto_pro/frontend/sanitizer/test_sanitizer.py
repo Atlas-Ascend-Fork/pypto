@@ -3059,3 +3059,165 @@ def test_non_simt_tile_group_coordinates_use_selected_slot_valid_shape(col, viol
         scalar_coordinate_tile_group_kernel[None, 1](out, 1, col)
         torch.npu.synchronize()
         assert out.cpu().item() == 17
+
+
+@pl.jit(sanitizer=True, auto_mutex=False)
+def mat_slice_dynamic_kernel(out: pl.Tensor[[1], pl.DT_INT64], start: pl.DT_INT64):
+    mat_type = pl.TileType(
+        shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ,
+    )
+    ma = pl.make_tile(mat_type, addr=0x0000)
+    with pl.section_cube():
+        pl.set_validshape(ma, [64, 64])
+        view = ma[start:start + 32, 0:32]
+        out[0] = view.valid_shape[0]
+
+
+@pytest.mark.soc("950", "960")
+@pytest.mark.parametrize("start,expected_kind", [
+    (16, None),
+    (48, "TILE_OUT_OF_BOUNDS"),
+    (8, "TILE_SLICE_UNALIGNED"),
+], ids=["aligned_in_bounds", "row_overflow", "unaligned_start"])
+def test_mat_slice_dynamic_bounds_and_alignment(start, expected_kind):
+    _require_3510_or_9201(ST_DEVICE)
+    out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int64)
+    if expected_kind is None:
+        mat_slice_dynamic_kernel(out, start)
+        torch.npu.synchronize()
+        assert out.item() == 32
+    else:
+        with pytest.raises(SanitizerReplayError) as error:
+            mat_slice_dynamic_kernel(out, start)
+        findings = error.value.findings
+        assert any(f.kind == expected_kind for f in findings), \
+            f"expected {expected_kind}, got {[f.kind for f in findings]}"
+
+
+@pl.jit(sanitizer=True, auto_mutex=False)
+def mat_slice_validshape_bound_kernel(
+    out: pl.Tensor[[1], pl.DT_FP32],
+    start: pl.DT_INT64, valid_rows: pl.DT_INT64,
+):
+    mat_type = pl.TileType(
+        shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ,
+        valid_shape=[-1, -1],
+    )
+    ma = pl.make_tile(mat_type, addr=0x0000)
+    with pl.section_cube():
+        pl.set_validshape(ma, [valid_rows, 64])
+        view = ma[start:start + 32, 0:32]
+        out[0] = view.valid_shape[0]
+
+
+@pytest.mark.soc("950", "960")
+@pytest.mark.parametrize("start,valid_rows,expected", [
+    (16, 64, None),           # within valid_shape: 16+32=48 < 64
+    (48, 64, "TILE_OUT_OF_BOUNDS"),  # beyond declared: 48+32=80 > 64 (inner-block aligned start)
+    (16, 32, "TILE_OUT_OF_BOUNDS"),  # within declared (48 <= 64), beyond valid_shape (48 > 32)
+    (0, 0, "TILE_OUT_OF_BOUNDS"),    # zero valid rows is a known empty region
+    (40, 64, "TILE_SLICE_UNALIGNED"),  # alignment is checked first: it wins over the bounds violation
+], ids=["in_valid", "beyond_declared", "beyond_valid_shape", "empty_valid_shape",
+        "unaligned_precedes_bounds"])
+def test_mat_slice_bounds_compare_runtime_valid_shape(start, valid_rows, expected):
+    _require_3510_or_9201(ST_DEVICE)
+    out = torch.zeros(1, device=ST_DEVICE, dtype=torch.float32)
+    if expected is None:
+        mat_slice_validshape_bound_kernel(out, start, valid_rows)
+        torch.npu.synchronize()
+    else:
+        with pytest.raises(SanitizerReplayError) as error:
+            mat_slice_validshape_bound_kernel(out, start, valid_rows)
+        findings = error.value.findings
+        assert any(f.kind == expected for f in findings), \
+            f"expected {expected}, got {[f.kind for f in findings]}"
+
+
+@pytest.mark.soc("950")
+@pytest.mark.parametrize("layout", [pl.ND, pl.DN])
+@pytest.mark.parametrize("dtype,aligned_step", [(pl.DT_FP16, 16), (pl.DT_FP4E2M1, 64)])
+@pytest.mark.parametrize("start_case", ["zero", "aligned", "unaligned"])
+def test_plain_l1_slice_dynamic_address(layout, dtype, aligned_step, start_case):
+    _require_3510(ST_DEVICE)
+
+    @pl.jit(sanitizer=True, auto_mutex=False)
+    def kernel(out: pl.Tensor[[1], pl.DT_INT64], start: pl.DT_INT64):
+        tile = pl.make_tile(pl.TileType(shape=[128, 128], dtype=dtype,
+                                       target_memory=pl.MemorySpace.Mat, layout=layout), addr=32)
+        with pl.section_cube():
+            pl.set_validshape(tile, [128, 128])
+            if layout == pl.ND:
+                view = tile[1:17, start:start + 16]
+            else:
+                view = tile[start:start + 16, 1:17]
+            # Consume the descriptor without issuing an invalid L1 data access.
+            out[0] = view.valid_shape[0]
+
+    start = {"zero": 0, "aligned": aligned_step, "unaligned": 1}[start_case]
+    out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int64)
+    if start_case == "unaligned":
+        with pytest.raises(SanitizerReplayError) as error:
+            kernel(out, start)
+        assert [f.kind for f in error.value.findings] == ["TILE_SLICE_UNALIGNED"]
+        assert "32-byte (256-bit) aligned" in error.value.findings[0].message
+    else:
+        kernel(out, start)
+        torch.npu.synchronize()
+        assert out.item() == 16
+
+
+@pytest.mark.soc("950")
+@pytest.mark.parametrize("layout", [pl.ND, pl.DN])
+@pytest.mark.parametrize("start,unaligned", [(0, False), (1, True), (16, False)])
+def test_plain_l1_nested_slice_dynamic_address(layout, start, unaligned):
+    _require_3510(ST_DEVICE)
+
+    @pl.jit(sanitizer=True, auto_mutex=False)
+    def kernel(out: pl.Tensor[[1], pl.DT_INT64], start: pl.DT_INT64):
+        tile = pl.make_tile(pl.TileType(shape=[64, 128], dtype=pl.DT_FP16,
+                                       target_memory=pl.MemorySpace.Mat, layout=layout), addr=32)
+        with pl.section_cube():
+            pl.set_validshape(tile, [51, 99])
+            # Neither valid-shape stride (35, 67) equals the physical stride.
+            parent = tile[16:51, 16:83]
+            if layout == pl.ND:
+                view = parent[1:17, start:start + 16]
+            else:
+                view = parent[start:start + 16, 1:17]
+            out[0] = view.valid_shape[0]
+
+    out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int64)
+    if unaligned:
+        with pytest.raises(SanitizerReplayError) as error:
+            kernel(out, start)
+        assert [f.kind for f in error.value.findings] == ["TILE_SLICE_UNALIGNED"]
+    else:
+        kernel(out, start)
+        torch.npu.synchronize()
+        assert out.item() == 16
+
+
+@pytest.mark.soc("950")
+@pytest.mark.parametrize("layout", [pl.ND, pl.DN])
+@pytest.mark.parametrize("start", [-1, 33554432])
+def test_plain_l1_slice_extreme_coordinate_preserves_bounds_log(layout, start):
+    _require_3510(ST_DEVICE)
+
+    @pl.jit(sanitizer=True, auto_mutex=False)
+    def kernel(out: pl.Tensor[[1], pl.DT_INT64], offset: pl.DT_INT64):
+        tile = pl.make_tile(pl.TileType(shape=[64, 64], dtype=pl.DT_FP16,
+                                       target_memory=pl.MemorySpace.Mat, layout=layout), addr=32)
+        with pl.section_cube():
+            pl.set_validshape(tile, [64, 64])
+            if layout == pl.ND:
+                view = tile[offset:offset + 16, 0:16]
+            else:
+                view = tile[0:16, offset:offset + 16]
+            # Consume only the descriptor, without dereferencing the invalid view.
+            out[0] = view.valid_shape[0]
+
+    out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int64)
+    with pytest.raises(SanitizerReplayError) as error:
+        kernel(out, start)
+    assert [finding.kind for finding in error.value.findings] == ["TILE_OUT_OF_BOUNDS"]
+    assert str(start) in error.value.findings[0].message

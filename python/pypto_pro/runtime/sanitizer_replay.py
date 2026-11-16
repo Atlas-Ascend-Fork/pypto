@@ -31,7 +31,7 @@ DETECTIONS row.
 
 Detections:
     1  GmAccess    GM_OUT_OF_BOUNDS    access window vs tensor shape
-    2  TileAccess  TILE_OUT_OF_BOUNDS  transfer offsets vs tile dims
+    2  TileAccess  TILE_OUT_OF_BOUNDS / TILE_SLICE_UNALIGNED  tile bounds / L1 slice start alignment
     3  MutexAccess MUTEX_*             lock/unlock pairing
     4  ViewShape   GM_OUT_OF_BOUNDS    make_tensor view vs source capacity
     5  TileScalar  TILE_OUT_OF_BOUNDS  getval/setval vs tile element count
@@ -49,7 +49,7 @@ import struct
 from typing import Callable
 
 from pypto.pypto_impl.ir import SANITIZER_RECORD_MAGIC as RECORD_MAGIC
-from pypto.pypto_impl.ir import sanitizer_record_layouts
+from pypto.pypto_impl.ir import Layout, sanitizer_record_layouts
 
 # ---------------------------------------------------------------------------
 # Shared vocabulary (mirrors the C++ enums for readable reports)
@@ -138,7 +138,9 @@ class ReplayContext:
 
 # Sentinel fields default to -1; they and everything after them are optional, line/region default 0.
 _SENTINEL_FIELDS = frozenset({"acc_src_addr", "acc_valid_rows", "acc_valid_cols",
-                               "acc_src_valid_rows", "acc_src_valid_cols"})
+                               "acc_src_valid_rows", "acc_src_valid_cols",
+                               "layout_kind", "inner_rows", "inner_cols", "base_addr",
+                               "shape_row", "shape_col", "dtype_bits"})
 
 
 def _record_type(det_id: int, name: str, fields, wire: str):
@@ -179,8 +181,8 @@ ScalarAxisRecord = RECORD_TYPES[9]
 #     win_ax0/win_ax1 (-1 = that tile dim maps to no axis), all other
 #     dims are offset-only. Rank-1 access carries the whole-tile window
 #     product in acc_row with win_ax0 = 0.
-#   2 TileAccess RecordTileAccess: dims from the access-site tile type --
-#     the runtime truth of the access, not the tile table.
+#   2 TileAccess: L1 slice bounds use runtime valid_shape; alignment uses
+#     layout, base address, physical shape and dtype bits.
 #   3 MutexAccess RecordMutex: one record per mutex id of a deduped call;
 #     region distinguishes independent sub-block mutex hardware slots.
 #   4 ViewShape  CollectMakeTensor: the declared shape, its byte footprint
@@ -295,33 +297,76 @@ def check_gm_bounds(records: list[GmAccessRecord], ctx: ReplayContext) -> list[F
 # ===========================================================================
 
 
+def _slice_unaligned_issue(rec: TileAccessRecord, ctx: ReplayContext) -> Finding | None:
+    if rec.layout_kind in (int(Layout.ND), int(Layout.DN)):
+        if rec.base_addr == -1:
+            return None
+        # Match ConvertPtoTileType: a single-column Tile uses column-major storage.
+        row_stride, col_stride = ((rec.shape_col, 1)
+                                  if rec.layout_kind == int(Layout.ND) and rec.shape_col != 1
+                                  else (1, rec.shape_row))
+        start_bits = rec.base_addr * 8 + (rec.off_row * row_stride + rec.off_col * col_stride) * rec.dtype_bits
+        if start_bits % 256 == 0:
+            return None
+        detail = f"bit address {start_bits} is not 32-byte (256-bit) aligned"
+        hint = "Align the slice start address to 32 bytes, including sub-byte element offsets"
+    elif rec.layout_kind in (int(Layout.NZ), int(Layout.ZN)):
+        # Preserve the frontend's slice contract, with transposed axes for ZN.
+        if rec.inner_rows <= 0 or rec.inner_cols <= 0:
+            return None
+        if rec.off_row % rec.inner_rows == 0 and rec.off_col % rec.inner_cols == 0:
+            return None
+        detail = f"is unaligned to the [{rec.inner_rows}, {rec.inner_cols}] fractal inner block"
+        hint = "Start fractal slices at multiples of the inner block, as the static slice contract requires"
+    else:
+        return None
+    return Finding(
+        "TILE_SLICE_UNALIGNED",
+        f"L1 {Layout(rec.layout_kind).name} slice start [{rec.off_row}, {rec.off_col}] {detail}",
+        ctx.location(rec.line),
+        hint=hint,
+    )
+
+
 def check_tile_bounds(records: list[TileAccessRecord], ctx: ReplayContext) -> list[Finding]:
     findings: list[Finding] = []
     for rec in records:
+        is_slice = rec.layout_kind != -1
+        if is_slice:
+            unaligned = _slice_unaligned_issue(rec, ctx)
+            if unaligned is not None:
+                findings.append(unaligned)
+                continue
         violations = []
-        # A runtime offset is signed on the wire.  Check the lower bound before
-        # the upper bound so a negative dynamic offset cannot hide a bad access.
-        if rec.off_row < 0:
-            violations.append(f"dim0: negative offset {rec.off_row}")
-        if rec.off_col < 0:
-            violations.append(f"dim1: negative offset {rec.off_col}")
-        # Per-dimension logical bounds (0 = unknown, skipped).
-        if rec.dim_row > 0 and rec.off_row + rec.acc_row > rec.dim_row:
-            over = rec.off_row + rec.acc_row - rec.dim_row
-            violations.append(f"dim0: offset {rec.off_row} + valid_shape {rec.acc_row} = "
-                              f"{rec.off_row + rec.acc_row} > {rec.dim_row} (over by {over})")
-        if rec.dim_col > 0 and rec.off_col + rec.acc_col > rec.dim_col:
-            over = rec.off_col + rec.acc_col - rec.dim_col
-            violations.append(f"dim1: offset {rec.off_col} + valid_shape {rec.acc_col} = "
-                              f"{rec.off_col + rec.acc_col} > {rec.dim_col} (over by {over})")
+        # A bound of -1 is unknown; zero is a real empty dimension.
+        axes = ((rec.off_row, rec.acc_row, rec.dim_row), (rec.off_col, rec.acc_col, rec.dim_col))
+        for axis, (offset, window, bound) in enumerate(axes):
+            if offset < 0:
+                violations.append(f"dim{axis}: negative offset {offset}")
+            if is_slice and bound != -1 and offset > bound:
+                violations.append(f"dim{axis}: slice start {offset} exceeds parent valid_shape {bound}")
+            elif window < 0:
+                violations.append(f"dim{axis}: negative window size {window}")
+            elif bound != -1 and offset + window > bound:
+                end = offset + window
+                violations.append(f"dim{axis}: offset {offset} + valid_shape {window} = "
+                                  f"{end} > {bound} (over by {end - bound})")
         if not violations:
             continue
+        if is_slice:
+            message = (f"L1 slice window [{rec.acc_row}, {rec.acc_col}] at offsets [{rec.off_row}, {rec.off_col}] "
+                       f"is invalid for the parent Tile's runtime valid_shape [{rec.dim_row}, {rec.dim_col}]")
+            hint = "Keep the slice within the parent Tile's runtime valid_shape"
+        else:
+            relation = "are invalid for" if min(rec.acc_row, rec.acc_col) < 0 else "exceed"
+            message = (f"offsets [{rec.off_row}, {rec.off_col}] + valid_shape [{rec.acc_row}, {rec.acc_col}] "
+                       f"{relation} tile shape [{rec.dim_row}, {rec.dim_col}]")
+            hint = "Keep the tile's valid shape within the declared TileType dims"
         findings.append(Finding(
             "TILE_OUT_OF_BOUNDS",
-            f"offsets [{rec.off_row}, {rec.off_col}] + valid_shape [{rec.acc_row}, {rec.acc_col}] "
-            f"exceed tile shape [{rec.dim_row}, {rec.dim_col}] — " + "; ".join(violations),
+            message + " — " + "; ".join(violations),
             ctx.location(rec.line),
-            hint="Keep the tile's valid shape within the declared TileType dims",
+            hint=hint,
         ))
     return findings
 

@@ -67,6 +67,40 @@ ExprPtr TileDim(const ExprPtr& tile, int axis)
 
 ExprPtr Int64Const(int64_t v) { return std::make_shared<ConstInt>(v, DataType::INT64, Span::Unknown()); }
 
+// TensorLayout code (ir/op_attr_types.h) and fractal inner block of a tile type.
+struct TileLayoutDesc {
+    Layout layout = Layout::ND;
+    int64_t innerRows = 0;
+    int64_t innerCols = 0;
+};
+
+// Mirrors the frontend L1 slice contract: NZ (16, 256/bits), ZN (256/bits, 16); fractal 1024 uses (16, 16).
+TileLayoutDesc TileLayoutInfo(const TypePtr& type)
+{
+    TileLayoutDesc desc;
+    auto tileType = As<TileType>(type);
+    if (tileType == nullptr || !tileType->hardwareInfo_.has_value()) {
+        return desc;
+    }
+    const auto& hw = *tileType->hardwareInfo_;
+    desc.layout = backend::cce::GetTileTensorLayout(hw).value_or(Layout::ND);
+    if (desc.layout != Layout::NZ && desc.layout != Layout::ZN) {
+        return desc;
+    }
+    desc.innerRows = 16;
+    desc.innerCols = 16;
+    const int64_t bits = static_cast<int64_t>(tileType->dtype_.GetBit());
+    if (hw.fractal != 1024 && bits > 0) {
+        const int64_t innerSpan = 256 / bits;
+        if (desc.layout == Layout::NZ) {
+            desc.innerCols = innerSpan;
+        } else {
+            desc.innerRows = innerSpan;
+        }
+    }
+    return desc;
+}
+
 // ---------------------------------------------------------------------------
 // SanitizerInstrumenter injects the log records (an IRMutator).
 //
@@ -119,6 +153,7 @@ public:
             return SeqStmts::Flatten({src, dst}, c->span_);
         };
         auto scalarBounds = [this](const CallPtr& c) { return RecordScalarAccess(c); };
+        auto matSlice = [this](const CallPtr& c) { return RecordSubview(c); };
         auto validshapeBounds = [this](const CallPtr& c) { return RecordValidShape(c); };
         auto mutexPairing = [this](const CallPtr& c) { return RecordMutex(c); };
         auto tileOverlapDecl = [this](const CallPtr& c) { return CollectMakeTile(c); };
@@ -167,6 +202,7 @@ public:
             {"block.store", gmAndPhaseStore},
             {"block.move", tileAndPhaseMove},
             {"block.insert", tileAndPhaseInsert},
+            {"block.subview", matSlice},
             {"block.getval", scalarBounds},
             {"block.setval", scalarBounds},
             {"block.atomic_rmw", scalarBounds},
@@ -211,6 +247,8 @@ private:
     StmtPtr RecordGmAccess(const CallPtr& call);
     StmtPtr RecordTileAccess(const CallPtr& call, uint32_t tileArgIdx, const ExprPtr& offRow, const ExprPtr& offCol,
                              const ExprPtr& winRow, const ExprPtr& winCol);
+    // L1 (Mat) slice records: one per block.subview call, judged by the replay.
+    StmtPtr RecordSubview(const CallPtr& call);
     StmtPtr RecordMutex(const CallPtr& call);
     // sync_src/sync_dst record: event_id (runtime expr from args[0]) +
     // set_pipe/wait_pipe kwargs + is_src flag. Frontend already validates
@@ -449,6 +487,7 @@ StmtPtr SanitizerInstrumenter::RecordValidShape(const CallPtr& call)
     fields.push_back(Int64Const(0));
     fields.push_back(call->args_[1]);
     fields.push_back(call->args_[2]);
+    fields.insert(fields.end(), 7, Int64Const(-1)); // L1 slice layout and address metadata are not applicable.
     return MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::TileAccess), std::move(fields), call->span_);
 }
 
@@ -564,6 +603,42 @@ StmtPtr SanitizerInstrumenter::RecordTileAccess(const CallPtr& call, uint32_t ti
     fields.push_back(offCol);
     fields.push_back(winRow);
     fields.push_back(winCol);
+    fields.insert(fields.end(), 7, Int64Const(-1)); // L1 slice layout and address metadata are not applicable.
+    return MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::TileAccess), std::move(fields), call->span_);
+}
+
+// block.subview slice record: Mat tiles only (L1 scope); the scalar-offset VF form has no window and is skipped.
+StmtPtr SanitizerInstrumenter::RecordSubview(const CallPtr& call)
+{
+    auto tileType = As<TileType>(call->args_[0]->GetType());
+    if (tileType == nullptr || !tileType->memref_.has_value() || *tileType->memref_ == nullptr)
+        return nullptr;
+    if ((*tileType->memref_)->memorySpace_ != MemorySpace::Mat)
+        return nullptr;
+    auto offTuple = As<MakeTuple>(call->args_[1]);
+    auto winTuple = As<MakeTuple>(call->args_[2]);
+    if (offTuple == nullptr || winTuple == nullptr)
+        return nullptr;
+    // Bounds are the parent's runtime valid_shape, matching the frontend's static clamp.
+    const auto layoutDesc = TileLayoutInfo(call->args_[0]->GetType());
+    std::vector<ExprPtr> fields;
+    fields.push_back(TileDim(call->args_[0], 0));
+    fields.push_back(TileDim(call->args_[0], 1));
+    fields.push_back(offTuple->elements_[0]);
+    fields.push_back(offTuple->elements_[1]);
+    fields.push_back(winTuple->elements_[0]);
+    fields.push_back(winTuple->elements_[1]);
+    fields.push_back(Int64Const(static_cast<int64_t>(layoutDesc.layout)));
+    fields.push_back(Int64Const(layoutDesc.innerRows));
+    fields.push_back(Int64Const(layoutDesc.innerCols));
+    if (layoutDesc.layout == Layout::ND || layoutDesc.layout == Layout::DN) {
+        fields.push_back(RuntimeTileAddr(call->args_[0]));
+        fields.push_back(tileType->shape_[0]);
+        fields.push_back(tileType->shape_[1]);
+        fields.push_back(Int64Const(tileType->dtype_.GetBit()));
+    } else {
+        fields.insert(fields.end(), 4, Int64Const(-1));
+    }
     return MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::TileAccess), std::move(fields), call->span_);
 }
 

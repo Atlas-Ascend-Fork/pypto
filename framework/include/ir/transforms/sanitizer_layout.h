@@ -75,8 +75,9 @@ constexpr SanitizerFieldLayout kGmAccessWire[] = {
 };
 
 constexpr SanitizerFieldLayout kTileAccessWire[] = {
-    {"dim_row", 'u'}, {"dim_col", 'u'}, {"off_row", 's'}, {"off_col", 's'},
-    {"acc_row", 'u'}, {"acc_col", 'u'}, {"line", 'u'},
+    {"dim_row", 's'},   {"dim_col", 's'},     {"off_row", 's'},    {"off_col", 's'},    {"acc_row", 's'},
+    {"acc_col", 's'},   {"layout_kind", 's'}, {"inner_rows", 's'}, {"inner_cols", 's'}, {"base_addr", 's'},
+    {"shape_row", 's'}, {"shape_col", 's'},   {"dtype_bits", 's'}, {"line", 'u'},
 };
 
 constexpr SanitizerFieldLayout kMutexAccessWire[] = {
