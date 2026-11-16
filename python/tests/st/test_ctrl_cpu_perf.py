@@ -49,14 +49,18 @@ _BLOCK_NUM = _S2_TILE // _BLOCK
 
 # 定标时 ENABLE_PERF_EVT 必须为 0（仓库默认）。这是编译期宏，打开后
 # PerfBegin/End 会增加 ctrl 耗时，不能和 DUMP_DEVICE_PERF 看护一起用。
-# 数据来自 0 卡 11 次压测（2026-09-09）：每次 30 轮、去掉前 2 轮、峰值先做 IQR 离群点过滤。
-#   EXEC_DYN 均值 171.85~196.02us（最差 196.02），IQR 过滤后单轮最大最差 222.04
-#   首个 DEV_TASK_BUILD 均值 93.70~107.77us（最差 107.77），IQR 过滤后单轮最大最差 124.66
+# 数据来自 0 卡 11 次压测（2026-11-14，commit bca90a6c6，kernel 已固定 enable_slice=True）：
+# 每次 30 轮、去掉前 2 轮、峰值先做 IQR 离群点过滤。
+#   EXEC_DYN 均值 216.41~236.79us（最差 236.79），IQR 过滤后单轮最大最差 273.34
+#   首个 DEV_TASK_BUILD 均值 111.33~120.28us（最差 120.28），IQR 过滤后单轮最大最差 151.62
 # 门限 = 最差实测（过滤后）* 1.20，峰值门限按单轮波动大小微调（max_first * 1.28）。
-_MEAN_EXEC_DYN_US = 235.0
-_MEAN_FIRST_BUILD_US = 130.0
-_MAX_EXEC_DYN_US = 266.0
-_MAX_FIRST_BUILD_US = 160.0
+# 旧基线（2026-09-09）是 enable_slice=false 的 VIEW/ASSEMBLE 图，均值最差 196.02；
+# 01024cb47 打开 slice 后该用例稳定上移约 30~40us，HEAD 上两种模式实测 167us vs 227us，
+# 故按新编译模式重新定标。
+_MEAN_EXEC_DYN_US = 284.0
+_MEAN_FIRST_BUILD_US = 144.0
+_MAX_EXEC_DYN_US = 328.0
+_MAX_FIRST_BUILD_US = 194.0
 
 # 单轮首个 DEV_TASK_BUILD 门禁超限提示：先排查当前修改是否引入 ctrl cpu 效率回退，再考虑环境波动。
 _MAX_FIRST_GATE_HINT = (
@@ -67,7 +71,12 @@ _BUILD_NAME = re.compile(r"^DEV_TASK_BUILD_(\d+)\((\d+)\)$")
 _INIT_NAME = re.compile(r"^INIT_(\d+)$")
 
 
-@pypto.frontend.jit(runtime_options={"stitch_function_max_num": _STITCH_FUNCTION_MAX_NUM})
+@pypto.frontend.jit(
+    runtime_options={"stitch_function_max_num": _STITCH_FUNCTION_MAX_NUM},
+    # 固定编译模式：测量子进程是 spawn 的独立解释器，不会继承 conftest 的全局配置，
+    # 只能靠这里传给 kernel 的 pass_options 决定 enable_slice，否则会随配置文件默认值漂移。
+    pass_options={"enable_slice": True},
+)
 def ctrl_perf_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_FP16),
     residual: pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_FP16),
@@ -343,7 +352,19 @@ def _filter_outliers_iqr(values: List[float], factor: float = 1.5) -> List[float
     return filtered
 
 
-@pypto.options(pass_options={"enable_slice": True})
+def _print_gate_failure_hint(name: str, value: float, gate: float) -> None:
+    """门禁超限时先打屏，提示优先排查 stitch 效率回退。"""
+    if value <= gate:
+        return
+    print(
+        "\n" + "!" * 78 + "\n"
+        f"[ctrl_cpu_perf] FAIL {name}: {value:.2f}us > gate {gate:.2f}us\n"
+        "[ctrl_cpu_perf] 请审视本次修改是否影响了 stitch 的性能，"
+        "如果修改是必须的请联系 machine 调整阈值。\n"
+        + "!" * 78
+    )
+
+
 def test_ctrl_cpu_perf():
     """看护 AICPU-CTRL EXEC_DYN 与首个 DEV_TASK_BUILD（30 轮去头 2）。"""
     mp.set_start_method("spawn", force=True)
@@ -393,15 +414,19 @@ def test_ctrl_cpu_perf():
         f"(raw_max={max(first_vals):.2f})"
     )
 
+    _print_gate_failure_hint("mean EXEC_DYN", mean_exec, _MEAN_EXEC_DYN_US)
     assert mean_exec <= _MEAN_EXEC_DYN_US, (
         f"mean EXEC_DYN {mean_exec:.2f} us > gate {_MEAN_EXEC_DYN_US:.2f} us"
     )
+    _print_gate_failure_hint("mean first DEV_TASK_BUILD", mean_first, _MEAN_FIRST_BUILD_US)
     assert mean_first <= _MEAN_FIRST_BUILD_US, (
         f"mean first DEV_TASK_BUILD {mean_first:.2f} us > gate {_MEAN_FIRST_BUILD_US:.2f} us"
     )
+    _print_gate_failure_hint("max EXEC_DYN", max_exec, _MAX_EXEC_DYN_US)
     assert max_exec <= _MAX_EXEC_DYN_US, (
         f"max EXEC_DYN {max_exec:.2f} us > gate {_MAX_EXEC_DYN_US:.2f} us"
     )
+    _print_gate_failure_hint("max first DEV_TASK_BUILD", max_first, _MAX_FIRST_BUILD_US)
     assert max_first <= _MAX_FIRST_BUILD_US, (
         f"max first DEV_TASK_BUILD {max_first:.2f} us > gate {_MAX_FIRST_BUILD_US:.2f} us. {_MAX_FIRST_GATE_HINT}"
     )
