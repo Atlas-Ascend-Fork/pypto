@@ -9,49 +9,27 @@
 # -----------------------------------------------------------------------------------------------------------
 
 set(_pgo_vf_impl_dir "${CMAKE_CURRENT_SOURCE_DIR}/pgo_vf_impl")
-set(_pgo_vf_required_dirs
-    pass_driver
-    pass_interface
-    reg_pass
-    tile_pass)
 
-set(_pgo_vf_skip FALSE)
-foreach(_dir IN LISTS _pgo_vf_required_dirs)
-    if(NOT IS_DIRECTORY "${_pgo_vf_impl_dir}/${_dir}")
-        message(STATUS "pgo_vf: missing directory pgo_vf_impl/${_dir}, enabling PGO_VF_SKIP")
-        set(_pgo_vf_skip TRUE)
-        break()
-    endif()
-endforeach()
-
-file(GLOB_RECURSE _sources CONFIGURE_DEPENDS *.cpp)
-if(_pgo_vf_skip)
-    list(FILTER _sources EXCLUDE REGEX "/pgo_vf_impl/")
+if(NOT EXISTS "${_pgo_vf_impl_dir}/CMakeLists.txt")
+    add_library(pypto_pass_pgo_vf SHARED pgo_vf_api.cpp)
+    target_compile_definitions(pypto_pass_pgo_vf PRIVATE PGO_VF_SKIP)
+    target_compile_options(pypto_pass_pgo_vf PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
+else()
+    file(GLOB_RECURSE _pgo_vf_sources CONFIGURE_DEPENDS "${_pgo_vf_impl_dir}/src/*.cpp")
+    add_library(pypto_pass_pgo_vf SHARED pgo_vf_api.cpp ${_pgo_vf_sources})
+    target_include_directories(pypto_pass_pgo_vf PRIVATE ${_pgo_vf_impl_dir}/src)
+    add_subdirectory(${_pgo_vf_impl_dir})
 endif()
 
-if(NOT _sources)
-    message(WARNING "pgo_vf: no sources under ${CMAKE_CURRENT_SOURCE_DIR}")
-    return()
-endif()
-
-add_library(pgo_vf SHARED ${_sources})
-if(_pgo_vf_skip)
-    target_compile_definitions(pgo_vf PRIVATE PGO_VF_SKIP)
-endif()
-target_include_directories(pgo_vf PRIVATE
+target_include_directories(pypto_pass_pgo_vf PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PTO_FWK_SRC_ROOT}/framework/include
     ${PTO_FWK_SRC_ROOT}/framework/src
     ${PTO_FWK_SRC_ROOT}/framework/src/interface
     ${PTO_FWK_SRC_ROOT}/framework/src/interface/machine/device)
-target_link_libraries(pgo_vf PRIVATE tile_fwk_interface tile_fwk_utils tile_fwk_intf_pub)
-target_compile_options(pgo_vf PRIVATE -fvisibility=hidden -fvisibility-inlines-hidden)
-target_link_options(pgo_vf PRIVATE
-    -Wl,--version-script=${CMAKE_CURRENT_SOURCE_DIR}/pgo_vf.map)
-# Clang resolves ASan runtime symbols from the final executable, not the shared library.
+target_link_libraries(pypto_pass_pgo_vf PRIVATE tile_fwk_interface tile_fwk_utils tile_fwk_intf_pub)
 if(NOT (CMAKE_CXX_COMPILER_ID STREQUAL "Clang" AND ENABLE_ASAN))
-    target_link_options(pgo_vf PRIVATE -Wl,--no-undefined -Wl,-z,defs)
+    target_link_options(pypto_pass_pgo_vf PRIVATE -Wl,--no-undefined -Wl,-z,defs)
 endif()
-set_target_properties(pgo_vf PROPERTIES
-    OUTPUT_NAME pypto_pass_pgo_vf
+set_target_properties(pypto_pass_pgo_vf PROPERTIES
     SOVERSION 1)

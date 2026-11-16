@@ -40,7 +40,7 @@ const std::shared_ptr<npu::tile_fwk::PluginPassPGOVF>& GetPGOVFPlugin()
         auto& manager = PluginManager::GetInstance();
         auto plugins = manager.GetPlugin<PluginPassPGOVF>();
         if (plugins.empty()) {
-            INTERNAL_CHECK(manager.AddSharedLibraryPlugin<PluginPassPGOVF>("pgo_vf", "pypto_pass_pgo_vf", kPgoVfVersion,
+            INTERNAL_CHECK(manager.AddSharedLibraryPlugin<PluginPassPGOVF>("pgo_vf", "pypto_pass_pgo_vf", kPGOVFVersion,
                                                                            "PGOVFRun"))
                 << "Failed to load the PGO VF plugin";
             plugins = manager.GetPlugin<PluginPassPGOVF>();

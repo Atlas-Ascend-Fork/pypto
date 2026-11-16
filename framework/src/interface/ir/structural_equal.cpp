@@ -383,21 +383,6 @@ public:
         return true; // Never reached
     }
 
-    ResultType VisitLeafField(const std::vector<IterArgPtr>& lhs, const std::vector<IterArgPtr>& rhs)
-    {
-        if (lhs.size() != rhs.size()) {
-            return IRAssert({}, "IterArg vector size mismatch (", lhs.size(), " != ", rhs.size(), ")");
-        }
-        for (size_t i = 0; i < lhs.size(); ++i) {
-            INTERNAL_CHECK(lhs[i]) << "structural_equal encountered null lhs IterArgPtr in vector at index " << i;
-            INTERNAL_CHECK(rhs[i]) << "structural_equal encountered null rhs IterArgPtr in vector at index " << i;
-            if (!EqualIterArg(lhs[i], rhs[i])) {
-                return false;
-            }
-        }
-        return true;
-    }
-
     // Field kind hooks
     template <typename FVisitOp>
     void VisitIgnoreField([[maybe_unused]] FVisitOp&& visitOp)
@@ -459,7 +444,6 @@ private:
     bool Equal(const IRNodePtr& lhs, const IRNodePtr& rhs);
     bool EqualVar(const VarPtr& lhs, const VarPtr& rhs);
     bool EqualMemRef(const MemRefPtr& lhs, const MemRefPtr& rhs);
-    bool EqualIterArg(const IterArgPtr& lhs, const IterArgPtr& rhs);
     bool EqualType(const TypePtr& lhs, const TypePtr& rhs);
     bool IsLoopVarFieldContext() const { return !fieldNameStack_.empty() && fieldNameStack_.back() == "loop_var"; }
     bool IsConstIntTypeContext() const
@@ -634,6 +618,7 @@ bool StructuralEqualImpl<AssertMode>::Equal(const IRNodePtr& lhs, const IRNodePt
     }
 
     // All other types use generic field-based comparison
+    EQUAL_DISPATCH(IterArgStmt)
     EQUAL_DISPATCH(ConstInt)
     EQUAL_DISPATCH(ConstFloat)
     EQUAL_DISPATCH(ConstBool)
@@ -904,24 +889,6 @@ bool StructuralEqualImpl<AssertMode>::EqualMemRef(const MemRefPtr& lhs, const Me
         return IRAssert({std::static_pointer_cast<const IRNode>(lhs), std::static_pointer_cast<const IRNode>(rhs)},
                         "MemRef base mismatch");
     }
-    return true;
-}
-
-template <bool AssertMode>
-bool StructuralEqualImpl<AssertMode>::EqualIterArg(const IterArgPtr& lhs, const IterArgPtr& rhs)
-{
-    // 1. Compare the variable (handles variable mapping)
-    if (!EqualVar(lhs->iterVar_, rhs->iterVar_)) {
-        return false;
-    }
-
-    // 2. Compare the initial value
-    if (!Equal(lhs->initValue_, rhs->initValue_)) {
-        return IRAssert({std::static_pointer_cast<const IRNode>(lhs->initValue_),
-                         std::static_pointer_cast<const IRNode>(rhs->initValue_)},
-                        "IterArg initValue mismatch");
-    }
-
     return true;
 }
 

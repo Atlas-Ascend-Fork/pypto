@@ -371,6 +371,89 @@ public:
 using ReturnStmtPtr = std::shared_ptr<const ReturnStmt>;
 
 /**
+ * \brief Iteration argument variable
+ *
+ * Represents an iteration argument (loop-carried value) in for loops.
+ * IterArgs implement SSA-style loop-carried dependencies where values are
+ * carried from one iteration to the next via yield statements.
+ *
+ * **Scoping Rules:**
+ * - IterArg variables are scoped to the loop body only
+ * - Cannot be directly accessed outside the loop
+ * - Must use return_vars to expose final values after the loop
+ *
+ * **Usage Pattern:**
+ * 1. Create IterArg with initial value
+ * 2. Use in ForStmt's iter_args list
+ * 3. Update via YieldStmt in loop body
+ * 4. Capture final value in ForStmt's return_vars
+ *
+ * \example
+ * // for i, (sum,) in pl.range(0, n, 1, init_values=[0]):
+ * //     sum = pl.yield_(sum + i)
+ * // sum_final = sum
+ * auto sum_iter = std::make_shared<IterArg>("sum", type, init_val, span);
+ * auto sum_final = std::make_shared<Var>("sum_final", type, span);
+ * auto for_stmt = std::make_shared<ForStmt>(
+ *     i, start, stop, step,
+ *     std::vector{sum_iter},  // iter_args (loop-scoped)
+ *     body,
+ *     std::vector{sum_final}, // return_vars (accessible after loop)
+ *     span
+ * );
+ */
+class IterArgStmt : public IRNode {
+public:
+    VarPtr iterVar_;    // Variable reference for the iteration argument
+    ExprPtr initValue_; // Initial value expression for first iteration
+
+    /**
+     * \brief Create an iteration argument
+     *
+     * \param name Variable name (scoped to loop body)
+     * \param type Type of the variable (ScalarType, TensorType, or TileType)
+     *             Memory reference information is stored in ShapedType for Tensor/Tile types
+     * \param initValue Initial value expression for first iteration
+     * \param span Source location
+     */
+    IterArgStmt(std::string name, TypePtr type, ExprPtr initValue, Span span)
+        : IRNode(std::move(span)),
+          iterVar_(std::make_shared<Var>(name, std::move(type), span_)),
+          initValue_(std::move(initValue))
+    {}
+
+    /**
+     * \brief Create an iteration argument with existing variable reference
+     *
+     * \param var Variable reference for the iteration argument
+     * \param initValue Initial value expression for first iteration
+     */
+    IterArgStmt(VarPtr var, ExprPtr initValue)
+        : IRNode(var != nullptr ? var->span_ : Span::Unknown()),
+          iterVar_(std::move(var)),
+          initValue_(std::move(initValue))
+    {}
+
+    [[nodiscard]] ObjectKind GetKind() const override { return ObjectKind::IterArgStmt; }
+    [[nodiscard]] std::string TypeName() const override { return "IterArgStmt"; }
+
+    /**
+     * \brief Get field descriptors for reflection-based visitation
+     *
+     * \return Tuple of field descriptors (initValue_ as USUAL field)
+     */
+    static constexpr auto GetFieldDescriptors()
+    {
+        return std::tuple_cat(IRNode::GetFieldDescriptors(),
+                              std::make_tuple(reflection::UsualField(&IterArgStmt::initValue_, "initValue"),
+                                              reflection::UsualField(&IterArgStmt::iterVar_, "iterVar")));
+    }
+};
+
+using IterArgPtr = std::shared_ptr<const IterArgStmt>;
+using IterArg = IterArgStmt;
+
+/**
  * \brief For loop statement
  *
  * Represents a for loop with optional loop-carried values (SSA-style iteration).

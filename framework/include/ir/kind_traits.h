@@ -107,6 +107,7 @@ DEFINE_KIND_TRAIT(WindowType, ObjectKind::WindowType);
 DEFINE_KIND_TRAIT(RegType, ObjectKind::RegType);
 
 // Other IR node types
+DEFINE_KIND_TRAIT(IterArgStmt, ObjectKind::IterArgStmt);
 DEFINE_KIND_TRAIT(Function, ObjectKind::Function);
 DEFINE_KIND_TRAIT(Program, ObjectKind::Program);
 

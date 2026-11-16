@@ -275,17 +275,6 @@ public:
         return 0;
     }
 
-    ResultType VisitLeafField(const std::vector<IterArgPtr>& fields)
-    {
-        ResultType h = 0;
-        for (const auto& ia : fields) {
-            INTERNAL_CHECK(ia) << "structural_hash encountered null IterArgPtr in vector";
-            h = HashCombine(h, HashNode(std::static_pointer_cast<const IRNode>(ia->iterVar_)));
-            h = HashCombine(h, HashNode(std::static_pointer_cast<const IRNode>(ia->initValue_)));
-        }
-        return h;
-    }
-
     template <typename Desc>
     void CombineResult(ResultType& accumulator, ResultType fieldHash, [[maybe_unused]] const Desc& descriptor)
     {
@@ -448,7 +437,6 @@ StructuralHasher::ResultType StructuralHasher::HashNode(const IRNodePtr& node)
 
     // MemRef needs special handling: dispatch for fields, then add Var mapping
     HASH_DISPATCH(MemRef)
-    // IterArg needs special handling: dispatch for fields, then add Var mapping
     HASH_DISPATCH(Var)
     HASH_DISPATCH(ConstInt)
     HASH_DISPATCH(ConstFloat)
@@ -465,6 +453,7 @@ StructuralHasher::ResultType StructuralHasher::HashNode(const IRNodePtr& node)
     HASH_DISPATCH(IfStmt)
     HASH_DISPATCH(YieldStmt)
     HASH_DISPATCH(ReturnStmt)
+    HASH_DISPATCH(IterArgStmt)
     HASH_DISPATCH(ForStmt)
     HASH_DISPATCH(WhileStmt)
     HASH_DISPATCH(SectionStmt)
@@ -474,7 +463,7 @@ StructuralHasher::ResultType StructuralHasher::HashNode(const IRNodePtr& node)
     HASH_DISPATCH(Function)
     HASH_DISPATCH(Program)
 
-    // Free Var types (including MemRef and IterArg) that may be mapped to other free vars.
+    // Free Var types (including MemRef) that may be mapped to other free vars.
     // These have already been dispatched above for field hashing;
     // here we add the variable identity hash.
     auto hashVarIdentity = [&](const Var* var) {

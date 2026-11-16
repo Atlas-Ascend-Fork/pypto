@@ -96,6 +96,9 @@ enum class ObjectKind {
     ScalarOpStmt,
     TensorOpStmt,
 
+    // Loop header kinds
+    IterArgStmt,
+
     // Type kinds
     UnknownType,
     MemRefType,

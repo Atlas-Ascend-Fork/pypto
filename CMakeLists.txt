@@ -141,7 +141,7 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
             TARGETS     ${InstallTargets}
     )
     install(TARGETS pypto_impl LIBRARY DESTINATION "${PyPTO_WhlName}" COMPONENT pypto)
-    install(TARGETS pgo_vf LIBRARY DESTINATION "${PyPTO_WhlName}/lib" COMPONENT pypto)
+    install(TARGETS pypto_pass_pgo_vf LIBRARY DESTINATION "${PyPTO_WhlName}/lib" COMPONENT pypto)
 
     # 安装 配置文件
     install(FILES

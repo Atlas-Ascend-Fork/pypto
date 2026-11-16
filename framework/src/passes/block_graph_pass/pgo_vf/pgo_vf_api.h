@@ -24,8 +24,7 @@
 namespace npu::tile_fwk {
 enum Status : uint32_t;
 
-constexpr const char* kPgoVfVersion = "1.0.0";
-
+constexpr const char* kPGOVFVersion = "1.0.0";
 } // namespace npu::tile_fwk
 
 #if defined(__GNUC__)

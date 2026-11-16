@@ -12,13 +12,21 @@ set(_Target ${PTO_Fwk_UTestNamePrefix}_passes)
 
 file(GLOB_RECURSE _Sources src/*.cpp)
 
+set(_PgoVfLdLibraries pypto_pass_pgo_vf)
+if(TARGET pypto_pass_pgo_vf_test)
+    list(APPEND _PgoVfLdLibraries pypto_pass_pgo_vf_test)
+endif()
+
 PTO_Fwk_UTest_AddCaseLib(
         TARGET ${_Target}
         SOURCES ${_Sources}
         LINK_LIBRARIES
-        LD_LIBRARIES_EXT pgo_vf
+        LD_LIBRARIES_EXT ${_PgoVfLdLibraries}
 )
-get_target_property(_pgo_vf_compile_definitions pgo_vf COMPILE_DEFINITIONS)
+if(TARGET pypto_pass_pgo_vf_test)
+    add_dependencies(${_Target} pypto_pass_pgo_vf_test)
+endif()
+get_target_property(_pgo_vf_compile_definitions pypto_pass_pgo_vf COMPILE_DEFINITIONS)
 if("PGO_VF_SKIP" IN_LIST _pgo_vf_compile_definitions)
     set_source_files_properties(src/test_pgo_vf.cpp PROPERTIES COMPILE_DEFINITIONS PGO_VF_SKIP)
 endif()

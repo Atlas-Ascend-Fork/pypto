@@ -13,6 +13,7 @@
  * \brief UT for pgo_vf plugin loading.
  */
 
+#include <dlfcn.h>
 #include <gtest/gtest.h>
 #include <functional>
 #include <stdexcept>
@@ -24,6 +25,30 @@
 #include "ir/program.h"
 #include "ir/stmt.h"
 #include "passes/block_graph_pass/pgo_vf/pgo_vf_api.h"
+
+namespace {
+
+// Loads the gtest cases compiled into libpgo_vf_test.so so their static registration
+// reaches the gtest registry before main() runs. The handle is intentionally never
+// closed: the registered test objects live in the library until process exit.
+class PgoVfTestLibraryLoader {
+public:
+    PgoVfTestLibraryLoader()
+    {
+        // Not found: ignore silently and keep running without the extra test cases.
+        handle_ = dlopen("libpypto_pass_pgo_vf_test.so", RTLD_NOW | RTLD_LOCAL);
+    }
+
+    PgoVfTestLibraryLoader(const PgoVfTestLibraryLoader&) = delete;
+    PgoVfTestLibraryLoader& operator=(const PgoVfTestLibraryLoader&) = delete;
+
+private:
+    void* handle_{nullptr};
+};
+
+PgoVfTestLibraryLoader g_pgoVfTestLibraryLoader;
+
+} // namespace
 
 TEST(PgoVfTest, LoadSharedLibraryPlugin)
 {
@@ -37,7 +62,7 @@ TEST(PgoVfTest, LoadSharedLibraryPlugin)
                                                               "pgo_vf_ut", span);
     PluginManager& manager = PluginManager::GetInstance();
     ASSERT_TRUE(
-        manager.AddSharedLibraryPlugin<PluginPassPGOVF>("pgo_vf", "pypto_pass_pgo_vf", kPgoVfVersion, "PGOVFRun"));
+        manager.AddSharedLibraryPlugin<PluginPassPGOVF>("pgo_vf", "pypto_pass_pgo_vf", kPGOVFVersion, "PGOVFRun"));
     const auto plugins = manager.GetPlugin<PluginPassPGOVF>();
     ASSERT_EQ(plugins.size(), 1U);
     // Both branches must either run the implementation or report that it is unavailable.
@@ -69,7 +94,7 @@ TEST(PgoVfTest, LoadSharedLibraryPlugin)
 
 TEST(PgoVfTest, SharedLibraryLoadUnloadAndReload)
 {
-    npu::tile_fwk::SharedLibrary library("pypto_pass_pgo_vf", npu::tile_fwk::kPgoVfVersion);
+    npu::tile_fwk::SharedLibrary library("pypto_pass_pgo_vf", npu::tile_fwk::kPGOVFVersion);
     EXPECT_FALSE(library.Valid());
     EXPECT_EQ(library.GetSymbolAddress("PGOVFRun"), nullptr);
 
@@ -78,7 +103,7 @@ TEST(PgoVfTest, SharedLibraryLoadUnloadAndReload)
     using GetVersionEntry = const char* (*)();
     auto getVersion = reinterpret_cast<GetVersionEntry>(library.GetSymbolAddress(PLUGIN_STR(PLUGIN_GET_VERSION_NAME)));
     ASSERT_NE(getVersion, nullptr);
-    EXPECT_STREQ(getVersion(), npu::tile_fwk::kPgoVfVersion);
+    EXPECT_STREQ(getVersion(), npu::tile_fwk::kPGOVFVersion);
     auto entry = library.GetSymbolAddress("PGOVFRun");
     ASSERT_NE(entry, nullptr);
     EXPECT_EQ(library.GetSymbolAddress("PGOVFRunMissing"), nullptr);
@@ -98,7 +123,7 @@ TEST(PgoVfTest, SharedLibraryLoadUnloadAndReload)
 
 TEST(PgoVfTest, SharedLibraryRejectsVersionMismatch)
 {
-    npu::tile_fwk::SharedLibrary library("pypto_pass_pgo_vf", std::string(npu::tile_fwk::kPgoVfVersion) + "-mismatch");
+    npu::tile_fwk::SharedLibrary library("pypto_pass_pgo_vf", std::string(npu::tile_fwk::kPGOVFVersion) + "-mismatch");
 
     EXPECT_FALSE(library.Load());
     EXPECT_FALSE(library.Valid());
@@ -110,7 +135,7 @@ TEST(PgoVfTest, UnavailableImplementationReturnsFailureDuringUnwind)
 {
     using namespace npu::tile_fwk;
 
-    PluginPassPGOVF plugin("pgo_vf_unwind", "pypto_pass_pgo_vf", kPgoVfVersion, "PGOVFRun");
+    PluginPassPGOVF plugin("pgo_vf_unwind", "pypto_pass_pgo_vf", kPGOVFVersion, "PGOVFRun");
     ASSERT_TRUE(plugin.IsValid());
     const auto span = pypto::ir::Span::Unknown();
     auto function = std::make_shared<const pypto::ir::Function>(

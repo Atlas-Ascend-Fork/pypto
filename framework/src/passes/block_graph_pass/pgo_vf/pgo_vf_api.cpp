@@ -13,11 +13,11 @@
  * \brief Version and fallback implementations of the pgo_vf ABI.
  */
 
-#include "passes/block_graph_pass/pgo_vf/pgo_vf_api.h"
+#include "pgo_vf_api.h"
 
 #include "interface/utils/common.h"
 
-extern "C" const char* PLUGIN_GET_VERSION_NAME() { return npu::tile_fwk::kPgoVfVersion; }
+extern "C" const char* PLUGIN_GET_VERSION_NAME() { return npu::tile_fwk::kPGOVFVersion; }
 
 #ifdef PGO_VF_SKIP
 extern "C" PGO_VF_API npu::tile_fwk::Status PGOVFRun(const pypto::ir::ProgramPtr&, const pypto::ir::FunctionPtr&,
