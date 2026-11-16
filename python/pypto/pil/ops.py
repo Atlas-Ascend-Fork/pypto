@@ -54,8 +54,11 @@ def _store_wrapper(orig, arg_idx):
 @contextmanager
 def apply_patches():
     def assemble(*args, **kwargs) -> None:
-        if pypto_impl.ir.assemble_new_logical_tensor() and not isinstance(args[0], Sequence):
-            slot_write_inplace(args[2])
+        if pypto_impl.ir.assemble_new_logical_tensor():
+            if len(args) == 2 and isinstance(args[0], Sequence):
+                slot_write_inplace(args[1])
+            elif len(args) == 3:
+                slot_write_inplace(args[2])
         _orig_assemble(*args, **kwargs)
 
     try:

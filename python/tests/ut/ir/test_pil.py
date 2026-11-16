@@ -1340,3 +1340,19 @@ def test_while_symbolic_condition_is_rejected():
 
     with pytest.raises(Exception, match="while condition must be a concrete bool, got SymbolicScalar"):
         _compile_ops(kernel)
+
+
+def test_multi_source_assemble_in_symbolic_if_is_yielded():
+    def kernel(x, out):
+        if pypto.SymbolicScalar("cond") > 0:
+            pypto.assemble([(x, [0, 0]), (x, [0, 16])], out)
+
+    x = pypto.Tensor(shape=(16, 16), dtype=pypto.DT_FP32)
+    out = pypto.Tensor(shape=(16, 32), dtype=pypto.DT_FP32)
+    func = pil.compile(kernel, x, out, create_new_logical_tensor=True)
+
+    if_stmts = _collect_stmts(func.body, ir.IfStmt)
+    assert len(if_stmts) == 1
+    return_vars = if_stmts[0].return_vars
+    assert len(return_vars) == 1
+    assert return_vars[0].name.startswith("out")
