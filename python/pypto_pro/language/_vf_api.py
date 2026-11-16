@@ -169,7 +169,9 @@ class Vf:
                 Supports all b8 types including FP8 (``DT_FP8E4M3FN``/``DT_FP8E5M2``/
                 ``DT_FP8E8M0``/``DT_HF8``) and b4-packed FP4 (``DT_FP4E2M1``/
                 ``DT_FP4E1M2``).
-            post_update: ``True`` for post-increment addressing
+            post_update: ``True`` for post-increment addressing. The trailing
+                offset argument is the post-update stride, so the 1-arg form
+                (no offset) does not support post_update.
             block_stride: Datablock stride in DataBlocks (32B) for the datablock-copy mode
             repeat_stride: Datablock stride in DataBlocks (32B) for post-update
                 address advance in the datablock-copy mode (requires ``post_update=True``)
@@ -179,15 +181,17 @@ class Vf:
             is_reg: Selects the destination kind for ``dist`` = NORM (and for
                 the no-dist form): ``True`` (default) loads into a data register
                 (RegTensor, vlds); ``False`` loads into a predicate register
-                (MaskReg, plds). Other dist values keep their own dst kind
-                (US/DS -> MaskReg, DINTLV_B* -> RegTensor pair) and ignore
-                ``is_reg``; ``is_reg=False`` together with ``dist=DINTLV_B*``
-                is rejected. ``data_copy_mode=DATA_BLOCK_COPY`` never supports
+                (MaskReg, plds). Every other dist fixes the dst kind itself
+                (the suffix-free US/DS are the MaskDist/plds forms;
+                US_B8/US_B16/DS_B8/DS_B16 and BRC/UNPK/E2B/BLK are
+                RegTensor-only; DINTLV_B* -> RegTensor pair) and ignores
+                ``is_reg``. ``data_copy_mode=DATA_BLOCK_COPY`` never supports
                 a MaskReg dst.
 
         Returns:
             Destination register: ``RegTensor`` by default, ``MaskReg`` when
-            ``is_reg=False`` (or when ``dist`` selects a mask form).
+            ``dist`` selects a mask form (suffix-free US/DS), or when
+            ``is_reg=False`` with NORM (or no ``dist``).
         """
 
     @staticmethod
@@ -232,7 +236,9 @@ class Vf:
                 ``INTLV_B8``/``_B16``/``_B32``. ``INTLV``/``INTLV_Bx``
                 (interleaved) requires two src registers.
                 ``pl.StoreDist.PACK`` for MaskReg src (psts PK mode)
-            post_update: True to auto-advance destination address after store
+            post_update: True to auto-advance destination address after store.
+                A MaskReg src needs a trailing stride argument, and an AddrReg
+                offset cannot be combined with post_update.
             data_copy_mode: ``pl.DataCopyMode.DATA_BLOCK_COPY`` for vsstb instruction
             block_stride: DataBlock copy block stride
             repeat_stride: DataBlock copy repeat stride

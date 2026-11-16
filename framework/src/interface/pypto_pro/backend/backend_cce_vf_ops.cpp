@@ -1012,6 +1012,11 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
             << "vf.load_align 1-arg form does not support block_stride";
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !op->HasKwarg("repeat_stride"))
             << "vf.load_align 1-arg form does not support repeat_stride";
+        // plds/vlds POST_UPDATE needs a post-update stride operand, which the
+        // 1-arg form does not carry.
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT,
+                          !(op->HasKwarg("post_update") && op->GetKwarg<bool>("post_update")))
+            << "vf.load_align 1-arg form does not support post_update; pass an offset/stride argument";
         std::string dst = codegen.GetExprAsCode(op->args_[0]);
         DataType dstDt = op->HasKwarg("dtype") ? op->GetKwarg<DataType>("dtype") :
                                                  GetTypeDtype(op->args_[0]->GetType(), GetExprDtype(op->args_[1]));
@@ -1166,7 +1171,10 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
         // DataBlock mode requires RegTensor dst (not MaskReg)
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, !dstIsMask)
             << "vf.load_align with data_copy_mode=DATA_BLOCK_COPY does not support MaskReg dst";
-        // vsldb only supports b8/b16/b32 (not b64)
+        // vsldb only has b8/b16/b32 forms (AscendC: SupportBytes<ActualT, 1, 2, 4>).
+        // b8 covers 4-bit packed dtypes (sizeof == 1), so test storage width, not GetBit() == 8.
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, IsB8Type(dstDt) || dstDt.GetBit() == 16 || dstDt.GetBit() == 32)
+            << "vf.load_align (DATA_BLOCK_COPY) only supports b8/b16/b32, got " << DTypeStr(dstDt);
         std::string maskReg = codegen.GetExprAsCode(op->args_[2]);
         std::string blockStride = "0";
         std::string repeatStride = "0";
@@ -1177,12 +1185,14 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
             repeatStride = std::to_string(op->GetKwarg<int>("repeat_stride"));
         }
         if (postUpdate) {
-            std::string ubPtr = codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
-            codegen.Emit("vsldb(" + dst + ", " + ubPtr + ", (" + blockStride + " << 16u) | (" + repeatStride +
-                         " & 0xFFFFU), " + maskReg + ", POST_UPDATE);");
+            std::string ubPtr = "(__ubuf__ " + ptrType + " *&)" +
+                                codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
+            codegen.Emit("vsldb(" + GetB8Cast(dstDt) + dst + ", " + ubPtr + ", (" + blockStride + " << 16u) | (" +
+                         repeatStride + " & 0xFFFFU), " + maskReg + ", POST_UPDATE);");
         } else {
             std::string ubPtr = GetUBufPtr(codegen, op->args_[1], ptrType);
-            codegen.Emit("vsldb(" + dst + ", " + ubPtr + ", (" + blockStride + " << 16u), " + maskReg + ");");
+            codegen.Emit("vsldb(" + GetB8Cast(dstDt) + dst + ", " + ubPtr + ", (" + blockStride + " << 16u), " +
+                         maskReg + ");");
         }
         return "";
     }
@@ -1194,7 +1204,7 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
             << "vf.load_align (MaskReg) only supports NORM/US/DS dist, got " << mode;
         std::string pldsPtr;
         if (postUpdate) {
-            pldsPtr = codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
+            pldsPtr = "(__ubuf__ uint32_t *&)" + codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
             codegen.Emit("plds(" + dst + ", " + pldsPtr + ", " + offsetStr + ", " + mode + ", POST_UPDATE);");
         } else {
             pldsPtr = GetUBufPtr(codegen, op->args_[1], "uint32_t");
@@ -1206,10 +1216,15 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
     // Get UB pointer (post_update uses reference-based ptr)
     std::string ubPtr;
     if (postUpdate) {
-        ubPtr = codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
+        ubPtr = "(__ubuf__ " + ptrType + " *&)" + codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/true);
     } else {
         ubPtr = GetUBufPtr(codegen, op->args_[1], ptrType);
     }
+    // Suffix-free US/DS are AscendC MaskDist (plds) names: a RegTensor dst
+    // cannot use them. The vlds sampling forms are US_B8/US_B16/DS_B8/DS_B16.
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, mode != "US" && mode != "DS")
+        << "vf.load_align (RegTensor) does not support dist=" << mode
+        << "; use US_B8/US_B16/DS_B8/DS_B16 for register sampling loads";
     // Determine vlds mode string
     std::string vldsMode;
     if (mode == "NORM") {
@@ -1221,16 +1236,6 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
             vldsMode = "BRC_B16";
         else
             vldsMode = "BRC_B32";
-    } else if (mode == "US") {
-        if (IsB8Type(dstDt))
-            vldsMode = "US_B8";
-        else
-            vldsMode = "US_B16";
-    } else if (mode == "DS") {
-        if (IsB8Type(dstDt))
-            vldsMode = "DS_B8";
-        else
-            vldsMode = "DS_B16";
     } else if (mode == "UNPK") {
         if (IsB8Type(dstDt))
             vldsMode = "UNPK_B8";
@@ -1318,18 +1323,25 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
             if (dist == "PACK")
                 dist = "PK";
         }
+        bool maskPostUpdate = op->HasKwarg("post_update") && op->GetKwarg<bool>("post_update");
+        // psts POST_UPDATE consumes the trailing arg as its post-update stride.
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !maskPostUpdate || op->args_.size() >= 3)
+            << "vf.store_align (MaskReg, post_update) requires an offset/stride argument";
         // AddrReg offset path: 3rd arg is AddrReg -> pst(mask, ptr, areg, dist)
         if (op->args_.size() >= 3) {
             std::string thirdArg = codegen.GetExprAsCode(op->args_[2]);
             if (ir::IsAddrReg(op->args_[2]->GetType())) {
+                PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !maskPostUpdate)
+                    << "vf.store_align (MaskReg, AddrReg) does not support post_update; recreate the AddrReg offset "
+                       "each iteration";
                 std::string ubPtr = GetUBufPtr(codegen, op->args_[0], "uint32_t");
                 codegen.Emit("pst(" + srcReg + ", " + ubPtr + ", " + thirdArg + ", " + dist + ");");
                 return "";
             }
             // Post-update path: int offset with post_update kwarg
-            bool postUpdate = op->HasKwarg("post_update") && op->GetKwarg<bool>("post_update");
-            if (postUpdate) {
-                std::string ptrVar = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
+            if (maskPostUpdate) {
+                std::string ptrVar = "(__ubuf__ uint32_t *&)" +
+                                     codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
                 codegen.Emit("psts(" + srcReg + ", " + ptrVar + ", " + thirdArg + ", " + dist + ", POST_UPDATE);");
                 return "";
             }
@@ -1536,10 +1548,11 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
     } else if (dataCopyMode == "DATA_BLOCK_LOAD" || dataCopyMode == "DATA_BLOCK_COPY") {
         // Accept both DATA_BLOCK_LOAD (pypto legacy name) and DATA_BLOCK_COPY
         //, consistent with load_align behavior.
-        // vsstb only supports b8/b16/b32 (not b64)
+        // vsstb only has b8/b16/b32 forms (AscendC: SupportBytes<ActualT, 1, 2, 4>).
+        // b8 covers 4-bit packed dtypes (sizeof == 1), so test storage width, not GetBit() == 8.
         DataType dcSrcDt = GetExprDtype(op->args_[1]);
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                          dcSrcDt.GetBit() == 8 || dcSrcDt.GetBit() == 16 || dcSrcDt.GetBit() == 32)
+                          IsB8Type(dcSrcDt) || dcSrcDt.GetBit() == 16 || dcSrcDt.GetBit() == 32)
             << "vf.store_align (DATA_BLOCK_COPY) only supports b8/b16/b32, got " << DTypeStr(dcSrcDt);
         // In DataBlock mode, args[2] is a mask register
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 3)
@@ -1563,7 +1576,8 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
             repeatStride = std::to_string(op->GetKwarg<int>("repeat_stride"));
         }
         if (postUpdate) {
-            std::string ptrVar = codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
+            std::string ptrVar = "(__ubuf__ " + ptrType + " *&)" +
+                                 codegen.GetOrCreateVFTilePtr(op->args_[0], /*is_post_update=*/true);
             codegen.Emit("vsstb(" + cast + srcReg + ", " + ptrVar + ", " + "(" + blockStride + " << 16u) | (" +
                          repeatStride + " & 0xFFFFU), " + maskReg + ", POST_UPDATE);");
         } else {
@@ -1604,8 +1618,8 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
             codegen.Emit("vsts((RegTensor<uint32_t>&)" + srcReg + ", (__ubuf__ uint32_t*&)" + ptrVar + ", " +
                          effectiveStride + ", " + dist + ", " + m0 + ", POST_UPDATE);");
         } else {
-            codegen.Emit("vsts(" + cast + srcReg + ", " + ptrVar + ", " + effectiveStride + ", " + dist + ", " +
-                         maskReg + ", POST_UPDATE);");
+            codegen.Emit("vsts(" + cast + srcReg + ", (__ubuf__ " + ptrType + " *&)" + ptrVar + ", " + effectiveStride +
+                         ", " + dist + ", " + maskReg + ", POST_UPDATE);");
         }
     } else {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 3)
@@ -5637,9 +5651,16 @@ static std::string EmitVFLoadUnalign(const ir::CallPtr& op, codegen::CodegenBase
         codegen.Emit("vldus(" + dstExpr + ", " + ureg + ", " + srcPtr + ", " + effectiveStride + ", POST_UPDATE);");
         return "";
     }
-    // Stride-less form: non-advancing vldus.
-    std::string srcPtr = GetUBufPtr(codegen, op->args_[2], ptrType);
-    codegen.Emit("vldus(" + dst + ", " + ureg + ", " + srcPtr + ");");
+    // Stride-less form: non-advancing vldus. b64 has only the signed overload,
+    // so reinterpret dst/ptr as int64_t (AscendC
+    // kernel_reg_compute_datacopy_load_impl.h DataCopyUnAlignImpl).
+    if (dstDt.GetBit() == 64) {
+        std::string srcVar = codegen.GetOrCreateVFTilePtr(op->args_[2], /*is_post_update=*/false);
+        codegen.Emit("vldus((RegTensor<int64_t>&)" + dst + ", " + ureg + ", (__ubuf__ int64_t *)" + srcVar + ");");
+    } else {
+        std::string srcPtr = GetUBufPtr(codegen, op->args_[2], ptrType);
+        codegen.Emit("vldus(" + dst + ", " + ureg + ", " + srcPtr + ");");
+    }
     return "";
 }
 
@@ -6517,12 +6538,31 @@ static std::string EmitVFLoad(const ir::CallPtr& op, codegen::CodegenBase& codeg
     int elemBytes = static_cast<int>(dstDt.GetBit() / 8);
     if (elemBytes <= 0)
         elemBytes = 4;
-    // vldas and vldus both use the native dtype pointer (matches asc_load C-API).
+    // Non-b64 vldas/vldus use the native dtype pointer (matches asc_load C-API);
+    // b64 is handled below since the intrinsics have no unsigned b64 overload.
     // For b8 types that lack a direct vldas/vldus overload, reinterpret as uint8_t.
     std::string ptrType = NeedsB8Reinterpret(dstDt) ? "uint8_t" : dstDt.ToCTypeString();
     static int loadCounter = 0;
     std::string uregName = "__ureg_ld_" + std::to_string(loadCounter++);
     codegen.Emit("UnalignReg " + uregName + ";");
+    // b64 (INT64/UINT64) mirrors AscendC DataCopyUnAlignImpl
+    // (kernel_reg_compute_datacopy_load_impl.h): vldas takes a b32 pointer, the
+    // strided vldus is simulated with b32 pairs and a doubled stride, and the
+    // stride-less vldus reinterprets dst/ptr as int64_t — the CCE intrinsics
+    // provide no unsigned b64 overload.
+    if (dstDt.GetBit() == 64) {
+        std::string srcVar = codegen.GetOrCreateVFTilePtr(op->args_[1], /*is_post_update=*/op->args_.size() == 3);
+        codegen.Emit("vldas(" + uregName + ", (__ubuf__ uint32_t *)" + srcVar + ");");
+        if (op->args_.size() == 3) {
+            std::string stride = codegen.GetExprAsCode(op->args_[2]);
+            codegen.Emit("vldus((RegTensor<uint32_t>&)" + dst + ", " + uregName + ", (__ubuf__ uint32_t*&)" + srcVar +
+                         ", (" + stride + ") * 2, POST_UPDATE);");
+        } else {
+            codegen.Emit("vldus((RegTensor<int64_t>&)" + dst + ", " + uregName + ", (__ubuf__ int64_t *)" + srcVar +
+                         ");");
+        }
+        return "";
+    }
     if (op->args_.size() == 3) {
         std::string srcPtr = GetUBufPtr(codegen, op->args_[1], ptrType, /*is_post_update=*/true);
         std::string stride = codegen.GetExprAsCode(op->args_[2]);

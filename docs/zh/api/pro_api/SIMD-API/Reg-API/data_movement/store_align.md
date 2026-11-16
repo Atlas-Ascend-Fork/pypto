@@ -68,7 +68,7 @@ store_align(tile, src, preg=None, offset=None, /, *, dist: Optional[StoreDist] =
 | data_copy_mode | 输入 | 可选，数据拷贝模式，对应[DataCopyMode](../basic_data_structures/DataCopyMode.md)类型。仅在src为reg_tensor下有效，mask_reg源不支持此参数。取值：pypto_pro.language.DataCopyMode.NORM（默认，普通连续搬运）或pypto_pro.language.DataCopyMode.DATA_BLOCK_COPY（非连续以DataBlock（32B）为单位进行搬运）。 |
 | block_stride | 输入 | 可选，仅在data_copy_mode=pypto_pro.language.DataCopyMode.DATA_BLOCK_COPY模式下有效，其他模式下传入会被忽略。表示相邻DataBlock间的间隔，单位：DataBlock（32字节）。可作位置参数（第4个）或关键字参数传入。 |
 | repeat_stride | 输入 | 可选，仅在data_copy_mode=pypto_pro.language.DataCopyMode.DATA_BLOCK_COPY模式且post_update=True时有效。表示重复搬运时的地址更新步长，单位：DataBlock（32字节），需要32字节对齐。post_update=True时，搬运后目标地址自动更新为dstAddr += repeat_stride * 32B。可作位置参数（第5个）或关键字参数传入。 |
-| post_update | 输入 | 可选，True时搬运后目标地址自动累进，默认False。适用于循环内连续存储。 |
+| post_update | 输入 | 可选，True时搬运后目标地址自动累进，默认False。适用于循环内连续存储。mask_reg模式下需同时传入整数stride作为累进步长；AddrReg偏移不支持post_update。 |
 
 ## 约束说明
 

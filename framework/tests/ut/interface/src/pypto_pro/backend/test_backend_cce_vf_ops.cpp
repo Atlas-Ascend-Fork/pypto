@@ -900,6 +900,12 @@ TEST(BackendCCEVFOpsTest, EmitsAlignedDataMovement)
     ExpectInvoke(codegen, VF_LOAD_ALIGN, {"vld(fp16"}, {tile, addr}, {}, "fp16");
     ExpectInvoke(codegen, VF_LOAD_ALIGN, {"plds(mask"}, {tile, Int(0)}, {{"dist", EnumValue(ir::LoadDist::US)}}, "mask",
                  mask->GetType());
+    // Suffix-free US/DS are MaskDist (plds) names and are rejected on a
+    // RegTensor dst; the vlds sampling forms carry the element-width suffix.
+    EXPECT_ANY_THROW(Invoke(codegen, VF_LOAD_ALIGN, {tile, Int(0)}, {{"dist", EnumValue(ir::LoadDist::US)}}, "fp16",
+                            fp16->GetType()));
+    ExpectInvoke(codegen, VF_LOAD_ALIGN, {"vlds(", "US_B16"}, {tile, Int(0)},
+                 {{"dist", EnumValue(ir::LoadDist::US_B16)}}, "fp16", fp16->GetType());
     ExpectInvoke(codegen, VF_LOAD_ALIGN, {"DINTLV_B16", "POST_UPDATE"}, {tile, Int(3)},
                  {{"dist", EnumValue(ir::LoadDist::DINTLV_B16)}, {"post_update", true}}, "deintlv",
                  std::make_shared<const ir::TupleType>(std::vector<ir::TypePtr>{fp16->GetType(), fp16b->GetType()}));
@@ -923,15 +929,75 @@ TEST(BackendCCEVFOpsTest, EmitsAlignedDataMovement)
     ExpectInvoke(codegen, VF_STORE_ALIGN, {"NORM_B8"}, {tile8, f8, mask});
 }
 
+TEST(BackendCCEVFOpsTest, EmitsPostUpdatePointerReferences)
+{
+    CapturingCCECodegen codegen(ir::SectionKind::Vector);
+    auto tile = MakeTile("tile", ir::DataType::FP32);
+    auto mask = MakeMaskVar("mask");
+
+    // plds POST_UPDATE takes a b32 pointer reference even for an FP32 tile.
+    ExpectInvoke(codegen, VF_LOAD_ALIGN, {"plds(", "(__ubuf__ uint32_t *&)tile", "US", "POST_UPDATE"}, {tile, Int(32)},
+                 {{"dist", EnumValue(ir::LoadDist::US)}, {"post_update", true}}, "mask", mask->GetType());
+    // psts POST_UPDATE has the same b32 reference contract.
+    ExpectInvoke(codegen, VF_STORE_ALIGN, {"psts(", "(__ubuf__ uint32_t *&)tile", "POST_UPDATE"}, {tile, mask, Int(32)},
+                 {{"post_update", true}});
+    // vlds POST_UPDATE with a dtype reinterpretation casts the pointer to the
+    // destination element type so the typed vlds overload is selected.
+    ExpectInvoke(codegen, VF_LOAD_ALIGN, {"vlds(", "(__ubuf__ uint32_t *&)tile", "POST_UPDATE"}, {tile, Int(32)},
+                 {{"dtype", ir::DataType::UINT32}, {"post_update", true}}, "u32",
+                 std::make_shared<const ir::RegType>(ir::RegKind::VecReg, ir::DataType::UINT32));
+}
+
+TEST(BackendCCEVFOpsTest, RejectsInvalidPostUpdateForms)
+{
+    CapturingCCECodegen codegen(ir::SectionKind::Vector);
+    auto tile = MakeTile("tile", ir::DataType::FP32);
+    auto mask = MakeMaskVar("mask");
+    auto addr = MakeAddrRegVar("addr");
+
+    // The 1-arg load_align form carries no post-update stride.
+    EXPECT_ANY_THROW(Invoke(codegen, VF_LOAD_ALIGN, {tile}, {{"post_update", true}}, "fp16",
+                            std::make_shared<const ir::RegType>(ir::RegKind::VecReg, ir::DataType::FP16)));
+    // A MaskReg store_align needs a trailing stride to post-update.
+    EXPECT_ANY_THROW(Invoke(codegen, VF_STORE_ALIGN, {tile, mask}, {{"post_update", true}}));
+    // pst (AddrReg mode) has no post mode parameter.
+    EXPECT_ANY_THROW(Invoke(codegen, VF_STORE_ALIGN, {tile, mask, addr}, {{"post_update", true}}));
+    // vsldb has no b64 form.
+    auto tile64 = MakeTile("tile64", ir::DataType::INT64);
+    auto i64 = MakeVar("i64", ir::DataType::INT64);
+    EXPECT_ANY_THROW(Invoke(codegen, VF_LOAD_ALIGN, {tile64, mask},
+                            {{"data_copy_mode", EnumValue(ir::DataCopyMode::DATA_BLOCK_COPY)}}, "i64", i64->GetType()));
+}
+
+TEST(BackendCCEVFOpsTest, AcceptsB4PackedDataBlockTransfer)
+{
+    CapturingCCECodegen codegen(ir::SectionKind::Vector);
+    auto tile = MakeTile("tile", ir::DataType::FP4E2M1);
+    auto mask = MakeMaskVar("mask");
+    auto src = MakeRegVar("src", ir::DataType::FP4E2M1);
+    auto fp4 = std::make_shared<const ir::RegType>(ir::RegKind::VecReg, ir::DataType::FP4E2M1);
+
+    // b4-packed dtypes have GetBit() == 4 but travel through the b8 form
+    // (uint8_t pointer and register), so DataBlock transfer must accept them.
+    ExpectInvoke(codegen, VF_LOAD_ALIGN, {"vsldb(", "(RegTensor<uint8_t>&)", "(__ubuf__ uint8_t *&)", "POST_UPDATE"},
+                 {tile, mask},
+                 {{"data_copy_mode", EnumValue(ir::DataCopyMode::DATA_BLOCK_COPY)}, {"post_update", true}}, "fp4", fp4);
+    ExpectInvoke(codegen, VF_STORE_ALIGN, {"vsstb(", "(RegTensor<uint8_t>&)", "(__ubuf__ uint8_t *&)", "POST_UPDATE"},
+                 {tile, src, mask},
+                 {{"data_copy_mode", EnumValue(ir::DataCopyMode::DATA_BLOCK_COPY)}, {"post_update", true}});
+}
+
 TEST(BackendCCEVFOpsTest, EmitsGatherAndUnalignedDataMovement)
 {
     CapturingCCECodegen codegen(ir::SectionKind::Vector);
     auto tile = MakeTile("tile", ir::DataType::FP16);
     auto tile8 = MakeTile("tile8", ir::DataType::UINT8);
     auto tile64 = MakeTile("tile64", ir::DataType::INT64);
+    auto tile_u64 = MakeTile("tile_u64", ir::DataType::UINT64);
     auto fp16 = MakeVar("fp16", ir::DataType::FP16);
     auto u8 = MakeVar("u8", ir::DataType::UINT8);
     auto i64 = MakeVar("i64", ir::DataType::INT64);
+    auto u64 = MakeVar("u64", ir::DataType::UINT64);
     auto index = MakeVar("index", ir::DataType::UINT32);
     auto index_u16 = MakeVar("index_u16", ir::DataType::UINT16);
     auto mask = MakeVar("mask", ir::DataType::UINT32);
@@ -956,6 +1022,14 @@ TEST(BackendCCEVFOpsTest, EmitsGatherAndUnalignedDataMovement)
     ExpectInvoke(codegen, VF_LOAD_UNALIGN_PRE, {"vldas("}, {ureg, tile});
     ExpectInvoke(codegen, VF_LOAD_UNALIGN, {"vldus("}, {ureg, tile}, {}, "fp16");
     ExpectInvoke(codegen, VF_LOAD_UNALIGN, {"vldus(", "4, POST_UPDATE"}, {ureg, tile64, Int(4)}, {}, "i64");
+    // b64 load_unalign (AscendC DataCopyUnAlignImpl): b32 vldas, b32 pairs with
+    // a doubled stride, or an int64_t reinterpretation for the stride-less form.
+    ExpectInvoke(codegen, VF_LOAD_UNALIGN_PRE, {"vldas(", "(__ubuf__ uint32_t *)tile_u64"}, {ureg, tile_u64});
+    ExpectInvoke(codegen, VF_LOAD_UNALIGN,
+                 {"vldus(", "(RegTensor<uint32_t>&)", "(__ubuf__ uint32_t *&)", "* 2", "POST_UPDATE"},
+                 {ureg, tile_u64, Int(4)}, {}, "u64", u64->GetType());
+    ExpectInvoke(codegen, VF_LOAD_UNALIGN, {"vldus(", "(RegTensor<int64_t>&)", "(__ubuf__ int64_t *)"},
+                 {ureg, tile_u64}, {}, "u64", u64->GetType());
     ExpectInvoke(codegen, VF_SQUEEZE_STORE_UNALIGN, {"vstur("}, {tile8, u8, ureg});
     ExpectInvoke(codegen, VF_STORE_UNALIGN, {"vstus(", "POST_UPDATE"}, {tile8, u8, ureg, Int(2)},
                  {{"post_update", true}});
@@ -1081,17 +1155,30 @@ TEST(BackendCCEVFOpsTest, EmitsLoadWithUnifiedPointerType)
     auto i64_reg = MakeVar("i64_reg", ir::DataType::INT64);
     auto tile_u8 = MakeTile("tile_u8", ir::DataType::UINT8);
     auto u8_reg = MakeVar("u8_reg", ir::DataType::UINT8);
+    auto tile_u64 = MakeTile("tile_u64", ir::DataType::UINT64);
+    auto u64_reg = MakeVar("u64_reg", ir::DataType::UINT64);
 
     // FP16: vldas and vldus both use the same pointer (native half, no separate int ptr).
     // Value-form: the dst comes from the result target, the call carries [src_ptr, (stride)].
     auto fp16_out = Invoke(codegen, VF_LOAD, {tile_fp16}, {}, "fp16_reg", fp16_reg->GetType());
     ExpectContains(fp16_out, {"UnalignReg __ureg_ld_", "vldas(", "vldus(", "fp16_reg"});
 
-    // INT64: vldas and vldus both use native int64_t pointer, no "* 2" multiplier
-    ExpectInvoke(codegen, VF_LOAD, {"UnalignReg __ureg_ld_", "vldas(", "vldus("}, {tile_i64}, {}, "i64_reg",
-                 i64_reg->GetType());
+    // B64: AscendC mirrors — vldas takes a b32 pointer, the stride-less vldus
+    // reinterprets dst/ptr as int64_t, the strided vldus uses b32 pairs with a
+    // doubled stride (there is no unsigned b64 intrinsic overload).
+    ExpectInvoke(codegen, VF_LOAD,
+                 {"UnalignReg __ureg_ld_", "vldas(", "(__ubuf__ uint32_t *)", "vldus(", "(RegTensor<int64_t>&)",
+                  "(__ubuf__ int64_t *)"},
+                 {tile_i64}, {}, "i64_reg", i64_reg->GetType());
     auto i64_out = Invoke(codegen, VF_LOAD, {tile_i64, Int(4)}, {}, "i64_reg", i64_reg->GetType());
-    EXPECT_EQ(i64_out.find("* 2"), std::string::npos);
+    ExpectContains(i64_out, {"(RegTensor<uint32_t>&)", "(__ubuf__ uint32_t*&)", "* 2", "POST_UPDATE"});
+
+    ExpectInvoke(codegen, VF_LOAD,
+                 {"UnalignReg __ureg_ld_", "vldas(", "(__ubuf__ uint32_t *)", "vldus(", "(RegTensor<int64_t>&)",
+                  "(__ubuf__ int64_t *)"},
+                 {tile_u64}, {}, "u64_reg", u64_reg->GetType());
+    auto u64_out = Invoke(codegen, VF_LOAD, {tile_u64, Int(4)}, {}, "u64_reg", u64_reg->GetType());
+    ExpectContains(u64_out, {"(RegTensor<uint32_t>&)", "(__ubuf__ uint32_t*&)", "* 2", "POST_UPDATE"});
 
     // UINT8: b8 uses uint8_t pointer (tile is UINT8, matches natively)
     auto u8_out = Invoke(codegen, VF_LOAD, {tile_u8}, {}, "u8_reg", u8_reg->GetType());

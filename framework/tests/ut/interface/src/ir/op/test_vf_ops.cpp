@@ -181,5 +181,112 @@ TEST_F(VFOpsTest, Unsqueeze_NoDtypeKwarg_FallsBackToMaskPlaceholder)
     EXPECT_EQ(rt->dtype_, DataType::UINT16);
 }
 
+// ============================================================================
+// DeduceVFLoadAlignType: vf.load_align
+//
+// AscendC's MaskDist only spells US/DS without an element-width suffix, while
+// LoadDist spells the sampling forms US_B8/US_B16/DS_B8/DS_B16. The dst kind
+// therefore follows the dist; NORM exists in both enums and is the only dist
+// selected by is_reg.
+// ============================================================================
+
+TEST_F(VFOpsTest, LoadAlign_NoDist_DefaultsToRegTensor)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto tile = MakeTileVar("src", {1, 128}, DataType::FP32);
+    auto call = reg.Create("vf.load_align", {tile}, Sp());
+    auto rt = As<RegType>(call->GetType());
+    ASSERT_NE(rt, nullptr);
+    EXPECT_EQ(rt->regtype_, RegKind::VecReg);
+    EXPECT_EQ(rt->dtype_, DataType::FP32);
+}
+
+TEST_F(VFOpsTest, LoadAlign_NormDist_IsRegFalse_ReturnsMaskReg)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto tile = MakeTileVar("src", {1, 128}, DataType::FP32);
+    auto call = reg.Create("vf.load_align", {tile}, {{"dist", static_cast<int>(LoadDist::NORM)}, {"is_reg", false}},
+                           Sp());
+    auto rt = As<RegType>(call->GetType());
+    ASSERT_NE(rt, nullptr);
+    EXPECT_EQ(rt->regtype_, RegKind::PredReg);
+}
+
+TEST_F(VFOpsTest, LoadAlign_USDist_ReturnsMaskReg)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto tile = MakeTileVar("src", {1, 128}, DataType::FP32);
+    // Suffix-free US is a MaskDist (plds) form.
+    auto call = reg.Create("vf.load_align", {tile}, {{"dist", static_cast<int>(LoadDist::US)}}, Sp());
+    auto rt = As<RegType>(call->GetType());
+    ASSERT_NE(rt, nullptr);
+    EXPECT_EQ(rt->regtype_, RegKind::PredReg);
+}
+
+TEST_F(VFOpsTest, LoadAlign_DSDist_ReturnsMaskReg)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto tile = MakeTileVar("src", {1, 128}, DataType::FP32);
+    // Suffix-free DS is a MaskDist (plds) form.
+    auto call = reg.Create("vf.load_align", {tile}, {{"dist", static_cast<int>(LoadDist::DS)}}, Sp());
+    auto rt = As<RegType>(call->GetType());
+    ASSERT_NE(rt, nullptr);
+    EXPECT_EQ(rt->regtype_, RegKind::PredReg);
+}
+
+TEST_F(VFOpsTest, LoadAlign_USB16Dist_ReturnsRegTensor)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto tile = MakeTileVar("src", {1, 128}, DataType::FP32);
+    // The element-width-qualified forms belong to LoadDist (vlds) only.
+    auto call = reg.Create("vf.load_align", {tile}, {{"dist", static_cast<int>(LoadDist::US_B16)}}, Sp());
+    auto rt = As<RegType>(call->GetType());
+    ASSERT_NE(rt, nullptr);
+    EXPECT_EQ(rt->regtype_, RegKind::VecReg);
+    EXPECT_EQ(rt->dtype_, DataType::FP32);
+}
+
+TEST_F(VFOpsTest, LoadAlign_DSB8Dist_ReturnsRegTensor)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto tile = MakeTileVar("src", {1, 128}, DataType::UINT8);
+    auto call = reg.Create("vf.load_align", {tile}, {{"dist", static_cast<int>(LoadDist::DS_B8)}}, Sp());
+    auto rt = As<RegType>(call->GetType());
+    ASSERT_NE(rt, nullptr);
+    EXPECT_EQ(rt->regtype_, RegKind::VecReg);
+    EXPECT_EQ(rt->dtype_, DataType::UINT8);
+}
+
+TEST_F(VFOpsTest, LoadAlign_WidthQualifiedDist_IgnoresIsReg)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto tile = MakeTileVar("src", {1, 128}, DataType::FP32);
+    // is_reg only selects NORM's kind: a width-qualified LoadDist stays a
+    // RegTensor even when is_reg=False is passed.
+    auto call = reg.Create("vf.load_align", {tile}, {{"dist", static_cast<int>(LoadDist::US_B16)}, {"is_reg", false}},
+                           Sp());
+    auto rt = As<RegType>(call->GetType());
+    ASSERT_NE(rt, nullptr);
+    EXPECT_EQ(rt->regtype_, RegKind::VecReg);
+}
+
+TEST_F(VFOpsTest, LoadAlign_DintlvDist_IgnoresIsReg)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto tile = MakeTileVar("src", {1, 128}, DataType::FP32);
+    // DINTLV is vlds-only and always yields the RegTensor pair, so is_reg does
+    // not participate (no rejection for is_reg=False).
+    auto call = reg.Create("vf.load_align", {tile},
+                           {{"dist", static_cast<int>(LoadDist::DINTLV_B16)}, {"is_reg", false}}, Sp());
+    auto tuple = As<TupleType>(call->GetType());
+    ASSERT_NE(tuple, nullptr);
+    ASSERT_EQ(tuple->types_.size(), 2);
+    for (const auto& elem : tuple->types_) {
+        auto rt = As<RegType>(elem);
+        ASSERT_NE(rt, nullptr);
+        EXPECT_EQ(rt->regtype_, RegKind::VecReg);
+    }
+}
+
 } // namespace ir
 } // namespace pypto

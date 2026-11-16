@@ -205,19 +205,22 @@ static DataType VfDeduceDataDtype(const std::vector<ExprPtr>& args,
 }
 
 // load_align: the value-form call carries [tile, (offset | mask)]. The dst kind
-// follows the dist kwarg: US/DS dists produce a MaskReg dst (plds), DINTLV_B*
-// produces a pair of RegTensor dsts (the de-interleave load), every other dist
-// a RegTensor (vlds). NORM is the only kind-ambiguous dist (plds/mask vs
-// vlds/data): is_reg selects its kind (False -> MaskReg, True or absent ->
-// RegTensor) and is ignored for every other dist.
+// follows the dist kwarg, matching AscendC's two dist enums:
+//   - MaskDist (plds, MaskReg) only spells US/DS without an element-width
+//     suffix, so the suffix-free US/DS produce a MaskReg dst;
+//   - LoadDist (vlds, RegTensor) spells the sampling forms US_B8/US_B16/
+//     DS_B8/DS_B16, and every other dist (BRC/UNPK/BLK/E2B/...) is vlds-only
+//     as well, so those produce a RegTensor;
+//   - DINTLV_B* produces a pair of RegTensor dsts (the de-interleave load).
+// NORM is the only dist present in both enums (plds/mask vs vlds/data):
+// is_reg selects its kind (False -> MaskReg, True or absent -> RegTensor) and
+// is ignored for every other dist.
 TypePtr DeduceVFLoadAlignType(const std::vector<ExprPtr>& args,
                               const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    bool hasIsReg = false;
     bool isMaskNorm = false;
     for (const auto& [key, value] : kwargs) {
         if (key == "is_reg") {
-            hasIsReg = true;
             isMaskNorm = !AnyCast<bool>(value, "kwarg: is_reg");
         }
     }
@@ -228,19 +231,15 @@ TypePtr DeduceVFLoadAlignType(const std::vector<ExprPtr>& args,
                 case LoadDist::DINTLV_B8:
                 case LoadDist::DINTLV_B16:
                 case LoadDist::DINTLV_B32: {
-                    if (hasIsReg && isMaskNorm) {
-                        throw TypeError("vf.load_align is_reg=False (MaskReg dst) does not support "
-                                        "the DINTLV_B* de-interleave dist");
-                    }
                     auto elem = std::make_shared<RegType>(RegKind::VecReg, VfDeduceDataDtype(args, kwargs));
                     return std::make_shared<TupleType>(std::vector<TypePtr>{elem, elem});
                 }
                 case LoadDist::US:
-                case LoadDist::US_B8:
-                case LoadDist::US_B16:
                 case LoadDist::DS:
-                case LoadDist::DS_B8:
-                case LoadDist::DS_B16:
+                    // AscendC MaskDist: only the suffix-free US/DS exist, and
+                    // they are the plds (MaskReg) forms. US_B8/US_B16/DS_B8/
+                    // DS_B16 belong to LoadDist only and fall through to the
+                    // RegTensor default below.
                     return std::make_shared<RegType>(RegKind::PredReg, VfDeduceDataDtype(args, kwargs));
                 case LoadDist::NORM:
                     return std::make_shared<RegType>(isMaskNorm ? RegKind::PredReg : RegKind::VecReg,
