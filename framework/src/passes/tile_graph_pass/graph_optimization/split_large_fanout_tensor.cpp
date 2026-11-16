@@ -32,6 +32,7 @@ namespace {
 // pto-isa仅支持不超过5维的tensor copyout；6维assemble=>view大tensor一旦拆分，会拆出一个tensor对应多个
 // assemble的结构，后续必然产生多个copyout而不被支持，因此维度超过该值的场景直接跳过拆分。
 constexpr size_t MAX_SPLIT_LARGE_FANOUT_TENSOR_DIM = 5;
+constexpr size_t MIN_MTO_M_WRITERS = 2;
 
 Operation* FindAssembleFamilyProducer(const LogicalTensorPtr& input, const LogicalTensorPtr& output)
 {
@@ -90,6 +91,120 @@ Operation* FindAssembleFamilyConsumer(const LogicalTensorPtr& input)
     return result;
 }
 
+// 检查显式依赖以及 Call、Atomic、RMW 或 Inplace 等阻止拆分块共享的约束。
+bool HasSplitRegionSideEffects(const Operation& op)
+{
+    if (PassOperationUtils::HasExplicitOrderDependency(op) || op.IsCall()) {
+        return true;
+    }
+    if (op.GetAtomicScopeId() != -1 || op.HasAttribute(OpAttributeKey::rmwMode)) {
+        return true;
+    }
+    for (size_t i = 0; i < op.GetOOperands().size(); ++i) {
+        if (op.GetInplaceIndex(i) >= 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 仅允许无副作用、且通用属性不超出 NeedCopy 的写入参与共享。
+bool IsShareableSplitWriter(const Operation& op)
+{
+    if (HasSplitRegionSideEffects(op)) {
+        return false;
+    }
+    const auto attributes = op.GetAllAttribute();
+    return std::all_of(attributes.begin(), attributes.end(),
+                       [](const auto& entry) { return entry.first == OpAttributeKey::needCopy; });
+}
+
+// 图清理前沿 View 和 Assemble 追溯写入源，检查共享资格。
+// 遇到带副作用或含未知属性的 Operation 时，拒绝共享该拆分块。
+bool CollectSplitRegionRequirements(Operation* writer)
+{
+    std::vector<Operation*> pending{writer};
+    std::unordered_set<Operation*> visited;
+    while (!pending.empty()) {
+        auto* op = pending.back();
+        pending.pop_back();
+        if (op == nullptr || !IsShareableSplitWriter(*op)) {
+            return false;
+        }
+        if (!visited.insert(op).second) {
+            continue;
+        }
+        for (const auto& input : op->GetIOperands()) {
+            if (input == nullptr) {
+                return false;
+            }
+            for (auto* producer : input->GetProducers()) {
+                if (producer == nullptr) {
+                    return false;
+                }
+                if (IsViewLike(producer->GetOpcode()) || IsAssembleLike(producer->GetOpcode())) {
+                    pending.push_back(producer);
+                }
+            }
+        }
+    }
+    return true;
+}
+
+// 简化动态偏移或有效形状中的符号表达式，再按维度顺序序列化为 JSON。
+Json SplitRegionDynShape(const std::vector<SymbolicScalar>& values)
+{
+    Json result = Json::array();
+    for (const auto& value : values) {
+        result.push_back(ToJson(value.Simplify()));
+    }
+    return result;
+}
+
+// 检查写入是否落在目标 Tensor 内，以及动态偏移是否等于对应的静态偏移。
+bool IsSplitWriteInBounds(const LogicalTensorPtr& input, const LogicalTensorPtr& tensor,
+                          const AssembleOpAttribute& attr)
+{
+    const auto& offset = attr.GetToOffset();
+    const auto& dynOffset = attr.GetToDynOffset();
+    const auto& shape = tensor->GetShape();
+    if (offset.size() != shape.size() || input->GetShape().size() != shape.size() ||
+        (!dynOffset.empty() && dynOffset.size() != offset.size())) {
+        return false;
+    }
+    for (size_t d = 0; d < shape.size(); ++d) {
+        if (offset[d] < 0 || input->GetShape()[d] <= 0 || input->GetShape()[d] > shape[d] ||
+            offset[d] > shape[d] - input->GetShape()[d]) {
+            return false;
+        }
+        if (!dynOffset.empty()) {
+            auto value = dynOffset[d].Simplify();
+            if (!value.ConcreteValid() || value.Concrete() != offset[d]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+// 将已验证的 CONTRACT 源 Tensor、写入属性及 Scope 信息编码为等价比较用的签名。
+Json BuildSplitWriteSignature(const Operation& writer)
+{
+    const auto& input = writer.GetIOperands().front();
+    const auto& scope = writer.GetScopeInfo();
+    Json signature = {input->GetMagic(),
+                      input->GetOffset(),
+                      SplitRegionDynShape(input->GetDynOffset()),
+                      input->GetShape(),
+                      SplitRegionDynShape(input->GetDynValidShape()),
+                      writer.GetOpAttribute()->DumpDynJson(),
+                      scope.scopeId,
+                      scope.allowParallelMerge,
+                      scope.allowCrossScopeMerge,
+                      scope.cvFuseId};
+    return signature;
+}
+
 } // namespace
 
 void InheritTokenFromOldAssemble(Function& function, const Operation& oldAssemble, Operation& newAssemble);
@@ -124,6 +239,10 @@ Status SplitLargeFanoutTensor::RunOnFunction(Function& function)
             return FAILED;
         }
     }
+    // 图清理后按实际写入源比较新建的 M-to-M 拆分块。
+    if (config::EnableSlice() && mtoMSplitTensors_.size() > 1) {
+        MergeEquivalentMtoMRegions(function);
+    }
     APASS_LOG_INFO_F(Elements::Function, "===> End SplitLargeFanoutTensor.");
     return SUCCESS;
 }
@@ -131,6 +250,7 @@ Status SplitLargeFanoutTensor::RunOnFunction(Function& function)
 void SplitLargeFanoutTensor::Init()
 {
     addedOps_.clear();
+    mtoMSplitTensors_.clear();
     toInfoMap_.clear();
     fromInfoMap_.clear();
     toInfoIndexMap_.clear();
@@ -506,7 +626,7 @@ void SplitLargeFanoutTensor::CreateOpFor1toM(Function& function, const LogicalTe
     auto isPureAlias = [](Operation* op, Opcode opcode) {
         bool needCopy = false;
         return op != nullptr && op->GetOpcode() == opcode && op->tokens_.empty() && op->result_token_.empty() &&
-               !(op->GetAttr<bool>("NeedCopy", needCopy) && needCopy) &&
+               !(op->GetAttr<bool>(OpAttributeKey::needCopy, needCopy) && needCopy) &&
                !op->HasAttribute(OpAttributeKey::inplaceIdx) && !op->HasAttribute(OpAttributeKey::rmwMode);
     };
     const bool aliasFanout = isPureAlias(oldAssemble, Opcode::OP_ASSEMBLE) &&
@@ -674,6 +794,12 @@ void SplitLargeFanoutTensor::CreateOpForMtoM(Function& function, const LogicalTe
 {
     auto newTensor = irBuilder_.CreateTensorVar(largeTensor->Datatype(), lcmTileShape, std::vector<SymbolicScalar>{},
                                                 largeTensor->Format());
+    // 仅 slice 路径使用共享候选；清理前检查可能被重写丢失的依赖和未知属性。
+    if (config::EnableSlice() && std::all_of(overlaps.begin(), overlaps.end(), [&](const LogicalTensorPtr& input) {
+            return CollectSplitRegionRequirements(FindAssembleFamilyProducer(input, largeTensor));
+        })) {
+        mtoMSplitTensors_.push_back(newTensor);
+    }
     for (const auto& overlap : overlaps) {
         auto assembleOp = AddNewAssembleOp(function, overlap, largeTensor, lcmTileOffset, newTensor);
         if (assembleOp == nullptr) {
@@ -720,6 +846,189 @@ void SplitLargeFanoutTensor::CreateOpForMtoM(Function& function, const LogicalTe
     // 进一步拆分, 未来通过旋钮的方式适时打开
     if (enableMoreSplit_) {
         MoreSplit(function, largeTensor, overlaps, dualOverlaps);
+    }
+}
+
+SplitLargeFanoutTensor::SplitRegionStorageInfo SplitLargeFanoutTensor::CollectSplitRegionStorageInfo(
+    Function& function) const
+{
+    SplitRegionStorageInfo storage;
+    storage.versionedRaws = GraphUtils::GetRawMagicsWithMultipleLogicalTensors(function);
+    const auto collectMemoryRaws = [&storage](const LogicalTensors& tensors) {
+        for (const auto& tensor : tensors) {
+            if (tensor != nullptr) {
+                storage.memoryRaws[tensor->tensor->memoryId].insert(tensor->GetRawMagic());
+            }
+        }
+    };
+    for (const auto& op : function.Operations(false)) {
+        collectMemoryRaws(op.GetIOperands());
+        collectMemoryRaws(op.GetOOperands());
+        collectMemoryRaws(op.GetDependOperands());
+    }
+    for (const auto& tensor : function.GetIncast()) {
+        storage.memoryRaws[tensor->tensor->memoryId].insert(tensor->GetRawMagic());
+        storage.externalRaws.insert(tensor->GetRawMagic());
+    }
+    for (const auto& tensor : function.GetOutcast()) {
+        storage.memoryRaws[tensor->tensor->memoryId].insert(tensor->GetRawMagic());
+        storage.externalRaws.insert(tensor->GetRawMagic());
+    }
+    return storage;
+}
+
+bool SplitLargeFanoutTensor::HasSplitRegionStorageAlias(const LogicalTensorPtr& tensor,
+                                                        const SplitRegionStorageInfo& storage) const
+{
+    const auto memory = storage.memoryRaws.find(tensor->tensor->memoryId);
+    // memoryId 初始值等于 rawMagic；只有多个 rawMagic 共用同一 memoryId 才构成共享存储。
+    const bool sharedMemory = tensor->tensor->memoryId >= 0 && memory != storage.memoryRaws.end() &&
+                              memory->second.size() > 1;
+    const bool explicitAlias = tensor->tensor->actualRawmagic != -1 || tensor->tensor->addrOffset != UINT64_MAX;
+    return storage.versionedRaws.count(tensor->GetRawMagic()) != 0 || sharedMemory || explicitAlias;
+}
+
+bool SplitLargeFanoutTensor::IsShareableSplitTensor(const LogicalTensorPtr& tensor,
+                                                    const SplitRegionStorageInfo& storage) const
+{
+    if (tensor == nullptr || tensor->GetProducers().empty() || tensor->GetConsumers().empty()) {
+        return false;
+    }
+    if (HasSplitRegionStorageAlias(tensor, storage) || storage.externalRaws.count(tensor->GetRawMagic()) != 0) {
+        return false;
+    }
+    if (!tensor->IsOffsetAllZero() || tensor->GetShape() != tensor->tensor->GetRawShape()) {
+        return false;
+    }
+    const auto memory = tensor->GetMemoryTypeOriginal();
+    const auto targetMemory = tensor->GetMemoryTypeToBe();
+    const bool supportedMemory = memory == MemoryType::MEM_UNKNOWN || memory == MemoryType::MEM_DEVICE_DDR;
+    const bool supportedTarget = targetMemory == MemoryType::MEM_UNKNOWN || targetMemory == MemoryType::MEM_DEVICE_DDR;
+    if (!supportedMemory || !supportedTarget) {
+        return false;
+    }
+    return std::all_of(tensor->GetConsumers().begin(), tensor->GetConsumers().end(), [](const auto* reader) {
+        if (reader == nullptr || reader->GetOpcode() != Opcode::OP_SLICE) {
+            return false;
+        }
+        return reader->GetIOperands().size() == 1 && !HasSplitRegionSideEffects(*reader);
+    });
+}
+
+bool SplitLargeFanoutTensor::IsShareableSplitSource(const LogicalTensorPtr& input,
+                                                    const SplitRegionStorageInfo& storage)
+{
+    if (input == nullptr || input->GetProducers().empty() || HasSplitRegionStorageAlias(input, storage)) {
+        return false;
+    }
+    const auto memory = input->GetMemoryTypeOriginal();
+    if (memory != MemoryType::MEM_UNKNOWN && memory != MemoryType::MEM_UB) {
+        return false;
+    }
+    for (auto* producer : input->GetProducers()) {
+        if (producer == nullptr || HasSplitRegionSideEffects(*producer)) {
+            return false;
+        }
+        if (IsViewLike(producer->GetOpcode()) || IsAssembleLike(producer->GetOpcode()) ||
+            !IsOperandUbConfirmed(*producer, input, true)) {
+            return false;
+        }
+    }
+    return std::none_of(input->GetConsumers().begin(), input->GetConsumers().end(), [](const auto* consumer) {
+        return consumer == nullptr || HasSplitRegionSideEffects(*consumer);
+    });
+}
+
+bool SplitLargeFanoutTensor::IsShareableSplitWrite(Operation& writer, const LogicalTensorPtr& tensor,
+                                                   const SplitRegionStorageInfo& storage)
+{
+    auto attr = std::dynamic_pointer_cast<AssembleOpAttribute>(writer.GetOpAttribute());
+    if (writer.GetOpcode() != Opcode::OP_CONTRACT || writer.GetIOperands().size() != 1 ||
+        writer.GetOOperands().size() != 1) {
+        return false;
+    }
+    if (!IsShareableSplitWriter(writer) || attr == nullptr) {
+        return false;
+    }
+    const auto& input = writer.GetIOperands().front();
+    return IsShareableSplitSource(input, storage) && IsSplitWriteInBounds(input, tensor, *attr);
+}
+
+bool SplitLargeFanoutTensor::BuildSplitRegionCandidate(const LogicalTensorPtr& tensor,
+                                                       const SplitRegionStorageInfo& storage,
+                                                       EquivalentSplitRegion& candidate, Json& key)
+{
+    if (!IsShareableSplitTensor(tensor, storage)) {
+        return false;
+    }
+    LogicalTensors inputs;
+    std::vector<std::pair<Json, Operation*>> writes;
+    for (auto* writer : tensor->GetProducers()) {
+        if (writer == nullptr || !IsShareableSplitWrite(*writer, tensor, storage)) {
+            return false;
+        }
+        inputs.push_back(writer->GetIOperands().front());
+        writes.emplace_back(BuildSplitWriteSignature(*writer), writer);
+    }
+    if (inputs.size() < MIN_MTO_M_WRITERS || !CheckOverlapCoverage(tensor, inputs, tensor->GetShape())) {
+        return false;
+    }
+    std::sort(writes.begin(), writes.end(), [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
+    Json signature = {tensor->GetShape(),
+                      tensor->Datatype(),
+                      tensor->Format(),
+                      SplitRegionDynShape(tensor->GetDynValidShape()),
+                      tensor->GetMemoryTypeOriginal(),
+                      tensor->GetMemoryTypeToBe(),
+                      tensor->GetCachePolicy(CachePolicy::PREFETCH),
+                      tensor->GetCachePolicy(CachePolicy::NONE_CACHEABLE)};
+    candidate = {tensor, {}};
+    for (const auto& entry : writes) {
+        signature.push_back(entry.first);
+        candidate.writes.push_back(entry.second);
+    }
+    key = std::move(signature);
+    return true;
+}
+
+void SplitLargeFanoutTensor::MergeSplitRegionReaders(const EquivalentSplitRegion& duplicate,
+                                                     const EquivalentSplitRegion& canonical) const
+{
+    for (size_t i = 0; i < duplicate.writes.size(); ++i) {
+        bool needCopy = false;
+        if (duplicate.writes[i]->GetAttr<bool>(OpAttributeKey::needCopy, needCopy) && needCopy) {
+            canonical.writes[i]->SetAttr(OpAttributeKey::needCopy, true);
+        }
+    }
+    auto readers = duplicate.tensor->GetConsumers();
+    for (auto* reader : readers) {
+        // 仅替换输入 Tensor，保留 SLICE 的读取偏移、有效形状和其他属性。
+        reader->ReplaceInput(canonical.tensor, duplicate.tensor);
+    }
+}
+
+void SplitLargeFanoutTensor::MergeEquivalentMtoMRegions(Function& function)
+{
+    const auto storage = CollectSplitRegionStorageInfo(function);
+    // Full JSON key equality resolves hash collisions; a hash alone never authorizes sharing.
+    std::unordered_map<Json, EquivalentSplitRegion> regions;
+    std::vector<Operation*> redundantWrites;
+    for (const auto& region : mtoMSplitTensors_) {
+        EquivalentSplitRegion candidate;
+        Json key;
+        if (!BuildSplitRegionCandidate(region, storage, candidate, key)) {
+            continue;
+        }
+        auto [it, inserted] = regions.try_emplace(std::move(key), std::move(candidate));
+        if (inserted) {
+            continue;
+        }
+        MergeSplitRegionReaders(candidate, it->second);
+        redundantWrites.insert(redundantWrites.end(), candidate.writes.begin(), candidate.writes.end());
+    }
+    if (!redundantWrites.empty()) {
+        RemoveOps(function, redundantWrites);
+        function.RefreshVarDependency();
     }
 }
 

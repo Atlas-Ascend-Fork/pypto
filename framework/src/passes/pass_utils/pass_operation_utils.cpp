@@ -18,6 +18,14 @@
 
 namespace npu::tile_fwk {
 
+bool PassOperationUtils::HasExplicitOrderDependency(const Operation& op)
+{
+    if (!op.tokens_.empty() || !op.result_token_.empty() || !op.GetDependOperands().empty()) {
+        return true;
+    }
+    return !op.GetInCtrlOperations().empty() || !op.GetOutCtrlOperations().empty();
+}
+
 Operation& PassOperationUtils::AddOperation(Function& function, Opcode opCode, LogicalTensors iOperands,
                                             const LogicalTensors& oOperands,
                                             std::function<void(Operation&)> beforeInferShapeHandler,

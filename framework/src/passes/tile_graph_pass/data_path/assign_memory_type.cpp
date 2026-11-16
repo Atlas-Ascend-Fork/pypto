@@ -959,7 +959,7 @@ bool AssignMemoryType::HasDifferentConsumerRequirement(const LogicalTensorPtr& t
                 auto output = consumerOp->oOperand.front();
                 bool needCopy = false;
                 return output->GetConsumers().empty() &&
-                       ((consumerOp->GetAttr<bool>("NeedCopy", needCopy) && needCopy) ||
+                       ((consumerOp->GetAttr<bool>(OpAttributeKey::needCopy, needCopy) && needCopy) ||
                         MemoryPathUtils::IsDifferentKnownRequirement(output->GetMemoryTypeOriginal(), targetType));
             });
     };

@@ -3112,6 +3112,37 @@ TEST_F(MergeViewAssembleTest, AssembleContractChainShouldMergeToContract)
     EXPECT_EQ(attr->GetToOffset(), (std::vector<int64_t>{4, 6}));
 }
 
+TEST_F(MergeViewAssembleTest, AssembleContractChainPreservesNeedCopy)
+{
+    // Missing/false attributes must not create a copy; true at any position must survive.
+    for (int copyPosition : {-2, -1, 0, 1, 2}) {
+        SCOPED_TRACE(copyPosition);
+        ComputationalGraphBuilder graph;
+        ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {10, 10}, {"input", "mid1", "mid2", "output"}));
+        const std::vector<std::string> tensors{"input", "mid1", "mid2", "output"};
+        for (int i = 0; i < 3; ++i) {
+            const auto name = "write" + std::to_string(i);
+            ASSERT_TRUE(graph.AddOp(i == 2 ? Opcode::OP_CONTRACT : Opcode::OP_ASSEMBLE, {tensors[i]}, {tensors[i + 1]},
+                                    name, true));
+            SetSimpleAssembleAttr(graph.GetOp(name), {0, 0});
+            if (i == copyPosition || copyPosition == -1) {
+                graph.GetOp(name)->SetAttr(OpAttributeKey::needCopy, copyPosition >= 0);
+            }
+        }
+        ASSERT_TRUE(graph.SetInCast({"input"}));
+        ASSERT_TRUE(graph.SetOutCast({"output"}));
+        MergeViewAssemble pass;
+        ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+        const auto& producers = graph.GetTensor("output")->GetProducers();
+        ASSERT_EQ(producers.size(), 1U);
+        auto* mergedContract = *producers.begin();
+        ASSERT_EQ(mergedContract->GetIOperands().front(), graph.GetTensor("input"));
+        bool needCopy = false;
+        mergedContract->GetAttr<bool>(OpAttributeKey::needCopy, needCopy);
+        EXPECT_EQ(needCopy, copyPosition >= 0);
+    }
+}
+
 TEST_F(MergeViewAssembleTest, ContractContractChainShouldNotMerge)
 {
     ComputationalGraphBuilder G;

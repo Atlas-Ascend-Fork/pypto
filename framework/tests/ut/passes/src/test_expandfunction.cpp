@@ -1326,7 +1326,7 @@ TEST_F(TestExpandFunctionPass, MatmulValidRegionViewDoesNotRetileScore)
         auto& exp = PassOperationUtils::AddOperation(*func, Opcode::OP_EXP, {viewed}, {output});
         exp.tileShape_.SetVecTile(8, 64);
         if (std::string(reason) == "copy") {
-            view.SetAttribute("NeedCopy", true);
+            view.SetAttribute(OpAttributeKey::needCopy, true);
         } else if (std::string(reason) == "token") {
             view.tokens_ = {IRContext::Get().MakeSemanticToken("score_read", ir::TokenKind::READ, ir::Span::Unknown())};
         } else if (std::string(reason) == "offset") {
@@ -1373,7 +1373,7 @@ TEST_F(TestExpandFunctionPass, ComputedConcatKeepsReadOnlyCubeViews)
         auto& crop = PassOperationUtils::AddOperation(*func, Opcode::OP_VIEW, {viewed}, {cropped});
         SetViewOpAttribute(crop, {0, 0}, pieceShape);
         if (copyRequired) {
-            crop.SetAttribute("NeedCopy", true);
+            crop.SetAttribute(OpAttributeKey::needCopy, true);
         }
         PassOperationUtils::AddOperation(*func, Opcode::OP_A_MUL_B, {viewed, rhs}, {result});
         PassOperationUtils::AddOperation(*func, Opcode::OP_A_MUL_B, {cropped, rhs2}, {result2});
@@ -1681,7 +1681,7 @@ TEST_F(TestExpandFunctionPass, IncastGatherRejectsAllWritersIfAnyRequiresExpansi
             writers.back()->result_token_ = {
                 IRContext::Get().MakeSemanticToken("gather_write", ir::TokenKind::WRITE, ir::Span::Unknown())};
         } else if (reason == "copy") {
-            writers.back()->SetAttr("NeedCopy", true);
+            writers.back()->SetAttr(OpAttributeKey::needCopy, true);
         } else if (reason == "original_memory") {
             writers.back()->GetIOperands()[0]->SetMemoryTypeOriginal(MemoryType::MEM_UB, false);
         } else if (reason == "target_memory") {

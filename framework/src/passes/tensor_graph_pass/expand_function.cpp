@@ -872,10 +872,10 @@ bool GetColumnSegment(Operation& writer, const LogicalTensorPtr& concat, int64_t
     auto assemble = std::dynamic_pointer_cast<AssembleOpAttribute>(writer.GetOpAttribute());
     auto piece = writer.GetIOperands().front();
     bool needCopy = false;
-    if ((writer.GetAttr<bool>("NeedCopy", needCopy) && needCopy) || writer.HasAttribute(OpAttributeKey::inplaceIdx) ||
-        writer.HasAttribute(OpAttributeKey::rmwMode) || assemble == nullptr || piece->GetShape().size() != 2 ||
-        piece->Datatype() != concat->Datatype() || piece->Format() != concat->Format() ||
-        piece->GetShape()[0] != concat->GetShape()[0]) {
+    if ((writer.GetAttr<bool>(OpAttributeKey::needCopy, needCopy) && needCopy) ||
+        writer.HasAttribute(OpAttributeKey::inplaceIdx) || writer.HasAttribute(OpAttributeKey::rmwMode) ||
+        assemble == nullptr || piece->GetShape().size() != 2 || piece->Datatype() != concat->Datatype() ||
+        piece->Format() != concat->Format() || piece->GetShape()[0] != concat->GetShape()[0]) {
         return false;
     }
     auto to = assemble->GetToDynOffset().empty() ? SymbolicScalar::FromConcrete(assemble->GetToOffset()) :
@@ -892,8 +892,8 @@ bool IsColumnSourceView(Operation& view, const std::shared_ptr<ViewOpAttribute>&
 {
     bool needCopy = false;
     if (view.GetOpcode() != Opcode::OP_VIEW || attr == nullptr || view.GetIOperands().size() != 1 ||
-        (view.GetAttr<bool>("NeedCopy", needCopy) && needCopy) || view.HasAttribute(OpAttributeKey::inplaceIdx) ||
-        view.HasAttribute(OpAttributeKey::rmwMode) ||
+        (view.GetAttr<bool>(OpAttributeKey::needCopy, needCopy) && needCopy) ||
+        view.HasAttribute(OpAttributeKey::inplaceIdx) || view.HasAttribute(OpAttributeKey::rmwMode) ||
         (attr->GetTo() != MemoryType::MEM_UNKNOWN && attr->GetTo() != MemoryType::MEM_DEVICE_DDR) ||
         !view.tokens_.empty() || !view.result_token_.empty()) {
         return false;
@@ -1041,8 +1041,8 @@ bool IsDdrAlias(Operation* op)
         return false;
     }
     bool needCopy = false;
-    if ((op->GetAttr<bool>("NeedCopy", needCopy) && needCopy) || op->HasAttribute(OpAttributeKey::inplaceIdx) ||
-        op->HasAttribute(OpAttributeKey::rmwMode)) {
+    if ((op->GetAttr<bool>(OpAttributeKey::needCopy, needCopy) && needCopy) ||
+        op->HasAttribute(OpAttributeKey::inplaceIdx) || op->HasAttribute(OpAttributeKey::rmwMode)) {
         return false;
     }
     const auto& input = op->GetIOperands().front();

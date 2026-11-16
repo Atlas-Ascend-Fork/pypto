@@ -47,6 +47,7 @@ const std::string OpAttributeKey::tilePadding = "TILE_PADDING";
 const std::string OpAttributeKey::reshapePadding = "RESHAPE_PADDING";
 const std::string OpAttributeKey::shapePadded = "SHAPE_PADDED";
 const std::string OpAttributeKey::needAlloc = "NEED_ALLOC";
+const std::string OpAttributeKey::needCopy = "NeedCopy";
 const std::string OpAttributeKey::broadcastLastAxis = "BROADCAST_LAST_AXIS";
 const std::string OpAttributeKey::dontTouch = "DONT_TOUCH";
 const std::string OpAttributeKey::tag = "TAG";

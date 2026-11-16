@@ -203,7 +203,7 @@ void TiledAssembleRecursive(Function& function, const TileShape& tileShape, size
         sliceOp.SetOpAttribute(std::make_shared<ViewOpAttribute>(fromOffset, fromDynOffset, tileValidShape));
 
         auto& contractOp = function.AddRawOperation(Opcode::OP_CONTRACT, {inputTile}, {result});
-        contractOp.SetAttr("NeedCopy", true);
+        contractOp.SetAttr(OpAttributeKey::needCopy, true);
         auto* currentTileOp = ExpandFunction::GetCurrentTileOp();
         AttachExpandResultTokens(sliceOp, contractOp, currentTileOp, operand);
         AttachExpandInputTokens(contractOp, currentTileOp);
@@ -269,7 +269,7 @@ void TiledViewOperationRecursive(Function& function, const TileShape& tileShape,
         viewOp.SetOpAttribute(viewAttr);
 
         auto& contractOp = function.AddRawOperation(Opcode::OP_CONTRACT, {resultTile}, {resultParent});
-        contractOp.SetAttr("NeedCopy", true);
+        contractOp.SetAttr(OpAttributeKey::needCopy, true);
         auto* currentTileOp = ExpandFunction::GetCurrentTileOp();
         if (currentTileOp != nullptr) {
             size_t readCount = 0;

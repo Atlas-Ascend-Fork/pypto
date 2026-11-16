@@ -18,6 +18,9 @@ namespace npu::tile_fwk {
 
 class PassOperationUtils {
 public:
+    // Explicit data-independent ordering constraints must survive graph rewrites.
+    static bool HasExplicitOrderDependency(const Operation& op);
+
     static Operation& AddOperation(Function& function, Opcode opCode, LogicalTensors iOperands,
                                    const LogicalTensors& oOperands,
                                    std::function<void(Operation&)> beforeInferShapeHandler = nullptr,

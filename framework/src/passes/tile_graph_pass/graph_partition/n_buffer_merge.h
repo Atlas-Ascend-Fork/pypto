@@ -84,6 +84,45 @@ private:
                        std::vector<std::vector<int>>& colorNode);
     std::map<uint64_t, size_t> GetIsoColorMergeNum(const std::map<uint64_t, std::vector<int>>& hashMap) const;
     std::vector<std::vector<int>> SortColorWithInput(std::vector<int>& colorValues) const;
+    /**
+     * @brief 检查 Operation 无显式顺序约束，且非 CONTRACT 输出仅供当前子图使用。
+     * @param[in] op 待检查的 Gather、CONTRACT 或 VIEW。
+     * @param[in] color 当前子图编号。
+     * @param[in] tensorDeps 当前 Function 内的 Tensor 依赖信息。
+     * @return Operation 满足读者分组条件时返回 true。
+     */
+    static bool IsGatherGroupOperation(const Operation& op, int color,
+                                       const RescheduleUtils::TensorDependencyMap& tensorDeps);
+    /**
+     * @brief 检查子图是否由一个 Gather、一个 CONTRACT 及可选 VIEW 组成，并检查显式依赖和中间输出。
+     * @param[in] color 待检查的子图编号。
+     * @param[in] opList 当前 Function 的 Operation 列表。
+     * @param[in] tensorDeps 当前 Function 内的 Tensor 依赖信息。
+     * @return 通过检查的 CONTRACT 输出 Tensor；不满足条件时返回 nullptr。输出的读者由调用方检查。
+     */
+    LogicalTensorPtr GetGatherWrittenTensor(int color, const OperationsViewer& opList,
+                                            const RescheduleUtils::TensorDependencyMap& tensorDeps) const;
+    /**
+     * @brief 按完整读者集合的字典序重新编号，消除写入遍历顺序对组号的影响。
+     * @param[in] consumerGroups 读者集合到临时组号的映射。
+     * @param[in,out] groups 每个子图的组号；INVALID_COLOR 保持不变。
+     */
+    static void NormalizeGatherConsumerGroups(const std::map<std::vector<int>, int>& consumerGroups,
+                                              std::vector<int>& groups);
+    /**
+     * @brief 按写入 Tensor 的完整读者集合对合格 Gather 子图分组。
+     * @param[in] opList 当前 Function 的 Operation 列表。
+     * @return 按子图编号索引的确定性组号；不参与分组的子图为 INVALID_COLOR。
+     */
+    std::vector<int> GetGatherConsumerGroups(const OperationsViewer& opList) const;
+    /**
+     * @brief 细分最小外部读者相同的合格 Gather 组，使每组具有相同的完整读者集合。
+     * @param[in] sortedColors 按公共输入或最小外部读者生成的原始分组。
+     * @param[in] gatherConsumerGroups 各子图对应的完整读者集合组号。
+     * @return 细分后的分组；不合格成员单独保留，独立读者沿用原合并机会。
+     */
+    std::vector<std::vector<int>> RefineGatherConsumerGroups(const std::vector<std::vector<int>>& sortedColors,
+                                                             const std::vector<int>& gatherConsumerGroups) const;
     Status MergeProcess(const OperationsViewer& opOriList, std::map<uint64_t, std::vector<int>>& hashMap,
                         std::map<uint64_t, size_t>& hashMergeNum, std::vector<uint64_t>& hashColor);
     void MergePingPong(std::vector<std::vector<int>>& sortedColors, const OperationsViewer& opOriList,

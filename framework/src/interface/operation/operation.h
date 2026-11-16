@@ -63,6 +63,7 @@ public:
     static const std::string reshapePadding;
     static const std::string shapePadded;
     static const std::string needAlloc;
+    static const std::string needCopy;
     static const std::string dontTouch;
     static const std::string tag;
     static const std::string distTilingInfo;

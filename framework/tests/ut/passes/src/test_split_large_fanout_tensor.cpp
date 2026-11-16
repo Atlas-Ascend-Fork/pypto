@@ -695,6 +695,189 @@ void BuildDynamicDslPerfFunction(Tensor& q, Tensor& out, int b, int sq, int d, c
 }
 } // namespace
 
+// 仅当源 Tensor 与写入偏移的映射一致时，两条读分支才共享拆分块。
+TEST_F(SplitLargeFanoutTensorTest, EquivalentSplitRegionsServeBothBranches)
+{
+    for (int variant = 0; variant < 14; ++variant) {
+        SCOPED_TRACE(variant);
+        const bool shareable = variant == 0 || variant == 10 || variant == 13;
+        config::SetPassOption("enable_slice", true);
+        ComputationalGraphBuilder graph;
+        graph.AddTensor(DT_FP32, {1}, "controlInput");
+        graph.AddTensor(DT_FP32, {1}, "controlOutput");
+        graph.AddOp(Opcode::OP_EXP, {"controlInput"}, {"controlOutput"}, "control");
+        for (const auto& branch : {"left", "right"}) {
+            graph.AddTensor(DT_FP32, {256, 512}, branch);
+        }
+        std::vector<LogicalTensorPtr> tiles;
+        for (int i = 0; i < 8; ++i) {
+            auto tile = "tile" + std::to_string(i);
+            auto input = "input" + std::to_string(i);
+            graph.AddTensor(DT_FP32, {32, 512}, input);
+            graph.AddTensor(DT_FP32, {32, 512}, tile);
+            auto source = tile;
+            if (variant >= 10) {
+                source = "prefix" + std::to_string(i);
+                graph.AddTensor(DT_FP32, {32, 512}, source);
+            }
+            graph.AddOp(Opcode::OP_EXP, {input}, {source}, "compute" + std::to_string(i));
+            if (variant >= 10) {
+                graph.AddOp(Opcode::OP_ASSEMBLE, {source}, {tile}, "prefixWrite" + std::to_string(i));
+                graph.GetOp("prefixWrite" + std::to_string(i))->SetAssembleOpAttribute({0, 0});
+                if (variant == 12) {
+                    graph.GetOp("prefixWrite" + std::to_string(i))->SetAttr("UnrecognizedCopyConstraint", true);
+                }
+            }
+            if (variant == 3) {
+                graph.GetOp("compute" + std::to_string(i))
+                    ->SetAttr(OpAttributeKey::inplaceInfo, std::map<int, int>{{0, 0}});
+            }
+            if (variant == 4 && !tiles.empty()) {
+                graph.GetTensor(tile)->tensor->memoryId = tiles.front()->tensor->memoryId;
+            }
+            tiles.push_back(graph.GetTensor(source));
+            for (const auto& branch : {"left", "right"}) {
+                auto write = std::string(branch) + "write" + std::to_string(i);
+                graph.AddOp(Opcode::OP_CONTRACT, {tile}, {branch}, write);
+                const int row = variant == 1 && std::string(branch) == "right" ? (i ^ 1) * 32 : i * 32;
+                graph.GetOp(write)->SetAssembleOpAttribute({row, 0});
+                if (variant == 2 && std::string(branch) == "right") {
+                    graph.GetOp(write)->result_token_ = {IRBuilder().CreateTokenVar(ir::Span::Unknown())};
+                }
+                if (std::string(branch) == "right") {
+                    if (variant == 5 || variant == 11) {
+                        graph.GetOp(write)->SetAttr("UnrecognizedCopyConstraint", true);
+                    } else if (variant == 6) {
+                        graph.GetOp(write)->AddDependOperand(graph.GetTensor(input));
+                    } else if (variant == 7) {
+                        graph.GetOp(write)->SetAtomicScopeId(1);
+                    } else if (variant == 8) {
+                        graph.GetOp(write)->AddInCtrlOperation(*graph.GetOp("compute" + std::to_string(i)));
+                    } else if (variant == 9) {
+                        graph.GetOp(write)->AddOutCtrlOperation(*graph.GetOp("control"));
+                    }
+                    if (variant != 13 || i == 0) {
+                        graph.GetOp(write)->SetAttr(OpAttributeKey::needCopy, true);
+                    }
+                }
+            }
+        }
+        for (const auto& branch : {"left", "right"}) {
+            for (int row = 0; row < 2; ++row) {
+                for (int col = 0; col < 4; ++col) {
+                    auto read = std::string(branch) + std::to_string(row) + std::to_string(col);
+                    graph.AddTensor(DT_FP32, {128, 128}, read);
+                    graph.AddTensor(DT_FP32, {128, 128}, read + "out");
+                    graph.AddOp(Opcode::OP_SLICE, {branch}, {read}, read);
+                    graph.GetOp(read)->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{row * 128, col * 128}));
+                    graph.GetOp(read)->SetAttr<int64_t>("op_attr_copy_in_l1_k_index",
+                                                        std::string(branch) == "left" ? 1 : 0);
+                    graph.AddOp(Opcode::OP_EXP, {read}, {read + "out"}, read + "use");
+                    graph.GetFunction()->AppendOutcast(graph.GetTensor(read + "out"),
+                                                       graph.GetOp(read + "use")->GetOpMagic(), 0);
+                }
+            }
+        }
+        SplitLargeFanoutTensor pass;
+        ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+        for (const auto& tile : tiles) {
+            size_t writes = 0;
+            for (auto* op : tile->GetConsumers()) {
+                if (op->GetOpcode() == Opcode::OP_CONTRACT) {
+                    ++writes;
+                    if (shareable) {
+                        bool needCopy = false;
+                        op->GetAttr<bool>(OpAttributeKey::needCopy, needCopy);
+                        EXPECT_EQ(needCopy, variant != 13 || tile == tiles.front());
+                    }
+                }
+            }
+            EXPECT_EQ(writes, shareable ? 1U : 2U);
+        }
+        for (int row = 0; row < 2; ++row) {
+            for (int col = 0; col < 4; ++col) {
+                auto suffix = std::to_string(row) + std::to_string(col);
+                auto* left = graph.GetOp("left" + suffix);
+                auto* right = graph.GetOp("right" + suffix);
+                const auto& buffer = left->GetIOperands().front();
+                EXPECT_EQ(buffer == right->GetIOperands().front(), shareable);
+                EXPECT_EQ(buffer->GetShape(), (Shape{128, 512}));
+                EXPECT_EQ(std::dynamic_pointer_cast<ViewOpAttribute>(left->GetOpAttribute())->GetFromOffset(),
+                          (Offset{0, col * 128}));
+                EXPECT_EQ(std::dynamic_pointer_cast<ViewOpAttribute>(right->GetOpAttribute())->GetFromOffset(),
+                          (Offset{0, col * 128}));
+                int64_t leftK = -1;
+                int64_t rightK = -1;
+                EXPECT_TRUE(left->GetAttr<int64_t>("op_attr_copy_in_l1_k_index", leftK));
+                EXPECT_TRUE(right->GetAttr<int64_t>("op_attr_copy_in_l1_k_index", rightK));
+                EXPECT_EQ(leftK, 1);
+                EXPECT_EQ(rightK, 0);
+                EXPECT_FALSE(left->IsDeleted());
+                EXPECT_FALSE(right->IsDeleted());
+            }
+        }
+    }
+}
+
+TEST_F(SplitLargeFanoutTensorTest, NullRegionEdgesRejectSharing)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {4, 4}, {"input", "tile", "buffer", "read"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"input"}, {"tile"}, "compute"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_CONTRACT, {"tile"}, {"buffer"}, "write"));
+    graph.GetOp("write")->SetAssembleOpAttribute({0, 0});
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_SLICE, {"buffer"}, {"read"}, "read"));
+    graph.GetOp("read")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}));
+    SplitLargeFanoutTensor pass;
+    const auto storage = pass.CollectSplitRegionStorageInfo(*graph.GetFunction());
+    auto tile = graph.GetTensor("tile");
+    auto buffer = graph.GetTensor("buffer");
+    ASSERT_TRUE(pass.IsShareableSplitTensor(buffer, storage));
+    ASSERT_TRUE(pass.IsShareableSplitSource(tile, storage));
+
+    // CompareOp dereferences its operands; inject a singleton null set without comparison.
+    auto readers = buffer->GetConsumers();
+    buffer->GetConsumers().clear();
+    buffer->GetConsumers().insert(nullptr);
+    EXPECT_FALSE(pass.IsShareableSplitTensor(buffer, storage));
+    buffer->GetConsumers().swap(readers);
+    auto producers = tile->GetProducers();
+    tile->GetProducers().clear();
+    tile->GetProducers().insert(nullptr);
+    EXPECT_FALSE(pass.IsShareableSplitSource(tile, storage));
+    tile->GetProducers().swap(producers);
+    auto consumers = tile->GetConsumers();
+    tile->GetConsumers().clear();
+    tile->GetConsumers().insert(nullptr);
+    EXPECT_FALSE(pass.IsShareableSplitSource(tile, storage));
+    tile->GetConsumers().swap(consumers);
+    auto writers = buffer->GetProducers();
+    buffer->GetProducers().clear();
+    buffer->GetProducers().insert(nullptr);
+    SplitLargeFanoutTensor::EquivalentSplitRegion candidate;
+    Json key;
+    EXPECT_FALSE(pass.BuildSplitRegionCandidate(buffer, storage, candidate, key));
+    buffer->GetProducers().swap(writers);
+}
+
+TEST_F(SplitLargeFanoutTensorTest, SliceDisabledDoesNotCollectSharingCandidates)
+{
+    config::SetPassOption(ENABLE_SLICE, false);
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensor(DT_FP32, {8, 4}, "buffer"));
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {4, 4}, {"input0", "input1"}));
+    LogicalTensors inputs;
+    for (int i = 0; i < 2; ++i) {
+        const auto name = "input" + std::to_string(i);
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {name}, {"buffer"}, "write" + std::to_string(i)));
+        graph.GetOp("write" + std::to_string(i))->SetAssembleOpAttribute({i * 4, 0});
+        inputs.push_back(graph.GetTensor(name));
+    }
+    SplitLargeFanoutTensor pass;
+    pass.CreateOpForMtoM(*graph.GetFunction(), graph.GetTensor("buffer"), {8, 4}, {0, 0}, inputs, {});
+    EXPECT_TRUE(pass.mtoMSplitTensors_.empty());
+}
+
 TEST_F(SplitLargeFanoutTensorTest, TestLCM)
 {
     int64_t NUM_16 = 16;
@@ -2392,9 +2575,9 @@ TEST_F(SplitLargeFanoutTensorTest, AliasFanoutHasIndependentBuffersWhileCopiesAn
         } else if (mode == "assemble_result_token") {
             assemble->result_token_ = {token};
         } else if (mode == "view_need_copy") {
-            graph.GetOp("left")->SetAttr("NeedCopy", true);
+            graph.GetOp("left")->SetAttr(OpAttributeKey::needCopy, true);
         } else if (mode == "assemble_need_copy") {
-            assemble->SetAttr("NeedCopy", true);
+            assemble->SetAttr(OpAttributeKey::needCopy, true);
         } else if (mode == "inplace") {
             graph.GetOp("left")->SetAttribute(OpAttributeKey::inplaceIdx, 0);
         } else if (mode == "rmw") {

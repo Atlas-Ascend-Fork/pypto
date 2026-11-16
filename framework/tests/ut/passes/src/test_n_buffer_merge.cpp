@@ -465,5 +465,220 @@ TEST_F(NBufferMergeTest, ByFuncMergeDefaultOneNoMerge)
     EXPECT_EQ(function->GetTotalSubGraphCount(), subGraphNum + 1);
 }
 
+namespace {
+// 构造四个交错写入等形状小块的子图。第一个读者读取两组写入，第二个默认只读取偶数组。
+// sameReaders 为 true 时，两个读者都读取两组写入。
+void BuildGatherReaderGroups(ComputationalGraphBuilder& graph, bool sameReaders = false,
+                             Opcode producerOpcode = Opcode::OP_GATHER_IN_UB)
+{
+    ASSERT_TRUE(graph.AddTensor(DT_FP32, {64, 80}, "source"));
+    ASSERT_TRUE(graph.AddTensor(DT_INT32, {1, 4}, "indices"));
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {8, 80}, {"sharedA", "sharedB", "out1", "out2"}));
+    for (int i = 0; i < 4; ++i) {
+        const auto suffix = std::to_string(i);
+        ASSERT_TRUE(graph.AddTensor(DT_FP32, {4, 80}, "tile" + suffix));
+        const std::vector<std::string> inputs = producerOpcode == Opcode::OP_GATHER_IN_UB ?
+                                                    std::vector<std::string>{"source", "indices"} :
+                                                    std::vector<std::string>{"source"};
+        ASSERT_TRUE(graph.AddOp(producerOpcode, inputs, {"tile" + suffix}, "produce" + suffix));
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_CONTRACT, {"tile" + suffix}, {i % 2 == 0 ? "sharedA" : "sharedB"},
+                                "write" + suffix));
+        graph.GetOp("produce" + suffix)->UpdateSubgraphID(i);
+        graph.GetOp("write" + suffix)->UpdateSubgraphID(i);
+        graph.GetOp("write" + suffix)->SetAssembleOpAttribute({(i / 2) * 4, 0});
+    }
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_A_MUL_B, {"sharedA", "sharedB"}, {"out1"}, "read1"));
+    ASSERT_TRUE(graph.AddOp(
+        Opcode::OP_A_MUL_B,
+        sameReaders ? std::vector<std::string>{"sharedA", "sharedB"} : std::vector<std::string>{"sharedA", "sharedA"},
+        {"out2"}, "read2"));
+    graph.GetOp("read1")->UpdateSubgraphID(4);
+    graph.GetOp("read2")->UpdateSubgraphID(5);
+    ASSERT_TRUE(graph.SetInCast({"source", "indices"}));
+    ASSERT_TRUE(graph.SetOutCast({"out1", "out2"}));
+    graph.GetFunction()->SetTotalSubGraphCount(6);
+    graph.GetFunction()->paramConfigs_.vecNBufferSetting = {{-1, 4}};
+    graph.GetFunction()->paramConfigs_.mgVecParallelLb = 2;
+}
+} // namespace
+
+TEST_F(NBufferMergeTest, GatherWritersWithDifferentReadersRemainSeparate)
+{
+    ComputationalGraphBuilder graph;
+    BuildGatherReaderGroups(graph);
+    auto* function = graph.GetFunction();
+    std::vector<nlohmann::json> writeAttrs;
+    for (int i = 0; i < 4; ++i) {
+        writeAttrs.push_back(graph.GetOp("write" + std::to_string(i))->GetOpAttribute()->DumpDynJson());
+    }
+    NBufferMerge pass;
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    EXPECT_EQ(graph.GetOp("produce0")->GetSubgraphID(), graph.GetOp("produce2")->GetSubgraphID());
+    EXPECT_EQ(graph.GetOp("produce1")->GetSubgraphID(), graph.GetOp("produce3")->GetSubgraphID());
+    EXPECT_NE(graph.GetOp("produce0")->GetSubgraphID(), graph.GetOp("produce1")->GetSubgraphID());
+    EXPECT_EQ(function->GetTotalSubGraphCount(), 4);
+    for (int i = 0; i < 4; ++i) {
+        auto* write = graph.GetOp("write" + std::to_string(i));
+        EXPECT_EQ(write->GetOpAttribute()->DumpDynJson(), writeAttrs[i]);
+        EXPECT_EQ(write->GetOOperands()[0], graph.GetTensor(i % 2 == 0 ? "sharedA" : "sharedB"));
+    }
+    EXPECT_EQ(graph.GetOp("read1")->GetIOperands()[1], graph.GetTensor("sharedB"));
+    EXPECT_EQ(graph.GetOp("read2")->GetIOperands()[0], graph.GetTensor("sharedA"));
+}
+
+TEST_F(NBufferMergeTest, GatherAutoModeRefinesDifferentReaders)
+{
+    ComputationalGraphBuilder graph;
+    BuildGatherReaderGroups(graph);
+    graph.GetFunction()->paramConfigs_.vecNBufferSetting.clear();
+    NBufferMerge pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+    EXPECT_EQ(graph.GetFunction()->GetTotalSubGraphCount(), 4);
+    EXPECT_NE(graph.GetOp("produce0")->GetSubgraphID(), graph.GetOp("produce1")->GetSubgraphID());
+}
+
+TEST_F(NBufferMergeTest, GatherWritersWithSameReadersStillMerge)
+{
+    ComputationalGraphBuilder graph;
+    BuildGatherReaderGroups(graph, true);
+    NBufferMerge pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+    EXPECT_EQ(graph.GetFunction()->GetTotalSubGraphCount(), 3);
+    EXPECT_EQ(graph.GetOp("produce0")->GetSubgraphID(), graph.GetOp("produce3")->GetSubgraphID());
+}
+
+TEST_F(NBufferMergeTest, GatherWriterMergeRespectsConfiguredLimit)
+{
+    ComputationalGraphBuilder graph;
+    BuildGatherReaderGroups(graph, true);
+    graph.GetFunction()->paramConfigs_.vecNBufferSetting = {{-1, 2}};
+    NBufferMerge pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+    EXPECT_EQ(graph.GetFunction()->GetTotalSubGraphCount(), 4);
+}
+
+TEST_F(NBufferMergeTest, GatherRegroupingRespectsConfiguredLimit)
+{
+    ComputationalGraphBuilder graph;
+    BuildGatherReaderGroups(graph);
+    graph.GetFunction()->paramConfigs_.vecNBufferSetting = {{-1, 2}};
+    NBufferMerge pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+    EXPECT_EQ(graph.GetFunction()->GetTotalSubGraphCount(), 4);
+    EXPECT_EQ(graph.GetOp("produce0")->GetSubgraphID(), graph.GetOp("produce2")->GetSubgraphID());
+    EXPECT_NE(graph.GetOp("produce0")->GetSubgraphID(), graph.GetOp("produce1")->GetSubgraphID());
+}
+
+TEST_F(NBufferMergeTest, GatherPrivateReadersKeepCommonInputMerging)
+{
+    ComputationalGraphBuilder graph;
+    BuildGatherReaderGroups(graph);
+    ASSERT_TRUE(graph.AddTensor(DT_FP32, {64, 80}, "commonInput"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_VIEW, {"source"}, {"commonInput"}, "commonView"));
+    graph.GetOp("commonView")->UpdateSubgraphID(6);
+    for (int i = 0; i < 4; ++i) {
+        graph.GetOp("produce" + std::to_string(i))->UpdateInputOperand(0, graph.GetTensor("commonInput"));
+    }
+    graph.GetOp("read1")->UpdateInputOperand(1, graph.GetTensor("sharedA"));
+    graph.GetOp("read2")->UpdateInputOperand(0, graph.GetTensor("sharedB"));
+    graph.GetOp("read2")->UpdateInputOperand(1, graph.GetTensor("sharedB"));
+    graph.GetFunction()->SetTotalSubGraphCount(7);
+    NBufferMerge pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+    EXPECT_EQ(graph.GetOp("produce0")->GetSubgraphID(), graph.GetOp("produce1")->GetSubgraphID());
+    EXPECT_EQ(graph.GetFunction()->GetTotalSubGraphCount(), 4);
+}
+
+TEST_F(NBufferMergeTest, NonGatherWritersKeepExistingGrouping)
+{
+    ComputationalGraphBuilder graph;
+    BuildGatherReaderGroups(graph, false, Opcode::OP_EXP);
+    NBufferMerge pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+    EXPECT_EQ(graph.GetFunction()->GetTotalSubGraphCount(), 3);
+}
+
+TEST_F(NBufferMergeTest, GatherMultiInputOutputModesRefineDifferentReaders)
+{
+    for (int manual : {0, 1}) {
+        SCOPED_TRACE(manual);
+        ComputationalGraphBuilder graph;
+        BuildGatherReaderGroups(graph);
+        graph.GetFunction()->paramConfigs_.vecNBufferSetting = manual == 0 ?
+                                                                   std::map<int64_t, int64_t>{{-2, 0}} :
+                                                                   std::map<int64_t, int64_t>{{-2, 1}, {-1, 4}};
+        NBufferMerge pass;
+        ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+        EXPECT_EQ(graph.GetFunction()->GetTotalSubGraphCount(), 4);
+        EXPECT_NE(graph.GetOp("produce0")->GetSubgraphID(), graph.GetOp("produce1")->GetSubgraphID());
+    }
+}
+
+TEST_F(NBufferMergeTest, GatherMixedDependencyGroupRefinesEligibleWriters)
+{
+    ComputationalGraphBuilder graph;
+    BuildGatherReaderGroups(graph);
+    graph.GetOp("write0")->AddDependOperand(graph.GetTensor("source"));
+    NBufferMerge pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+    EXPECT_EQ(graph.GetFunction()->GetTotalSubGraphCount(), 5);
+    EXPECT_EQ(graph.GetOp("write0")->GetDependOperands()[0], graph.GetTensor("source"));
+}
+
+TEST_F(NBufferMergeTest, GatherMixedControlGroupRefinesEligibleWriters)
+{
+    ComputationalGraphBuilder graph;
+    BuildGatherReaderGroups(graph);
+    graph.GetOp("write0")->AddOutCtrlOperation(*graph.GetOp("read2"));
+    NBufferMerge pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+    EXPECT_EQ(graph.GetFunction()->GetTotalSubGraphCount(), 5);
+    EXPECT_EQ(graph.GetOp("write0")->GetOutCtrlOperations().count(graph.GetOp("read2")), 1);
+}
+
+TEST_F(NBufferMergeTest, GatherMixedTokenGroupRefinesEligibleWriters)
+{
+    ComputationalGraphBuilder graph;
+    BuildGatherReaderGroups(graph);
+    auto token = std::make_shared<ir::Var>("writerToken", ir::GetTokenType(), ir::Span::Unknown());
+    graph.GetOp("write0")->result_token_ = {token};
+    NBufferMerge pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+    EXPECT_EQ(graph.GetFunction()->GetTotalSubGraphCount(), 5);
+    EXPECT_EQ(graph.GetOp("write0")->result_token_[0], token);
+}
+
+TEST_F(NBufferMergeTest, GatherOperationWithoutDependencyRecordIsRejected)
+{
+    ComputationalGraphBuilder graph;
+    BuildGatherReaderGroups(graph);
+    EXPECT_FALSE(NBufferMerge::IsGatherGroupOperation(*graph.GetOp("produce0"), 0, {}));
+}
+
+TEST_F(NBufferMergeTest, GatherPartialReaderConflictKeepsIndependentMerging)
+{
+    NBufferMerge pass;
+    pass.outColor_ = {{4}, {4}, {5}, {6}, {4}};
+    // Colors 0/1 share a minimum reader but have different complete reader sets.
+    // Colors 2/3 have independent readers; color 4 is ineligible.
+    EXPECT_EQ(pass.RefineGatherConsumerGroups({{0, 1, 2, 3, 4}}, {0, 1, 2, 3, -1}),
+              (std::vector<std::vector<int>>{{2, 3}, {4}, {0}, {1}}));
+}
+
+TEST_F(NBufferMergeTest, GatherMultiInputOutputModesKeepSameReadersTogether)
+{
+    for (int manual : {0, 1}) {
+        SCOPED_TRACE(manual);
+        ComputationalGraphBuilder graph;
+        BuildGatherReaderGroups(graph, true);
+        graph.GetFunction()->paramConfigs_.vecNBufferSetting = manual == 0 ?
+                                                                   std::map<int64_t, int64_t>{{-2, 0}} :
+                                                                   std::map<int64_t, int64_t>{{-2, 1}, {-1, 4}};
+        NBufferMerge pass;
+        ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+        EXPECT_EQ(graph.GetOp("produce0")->GetSubgraphID(), graph.GetOp("produce1")->GetSubgraphID());
+    }
+}
+
 } // namespace tile_fwk
 } // namespace npu

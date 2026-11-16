@@ -1380,6 +1380,9 @@ Status MergeViewAssembleUtils::AppendMergedAssembleOperations(Function& function
                                                                {assembleOp.output}, assembleOp.span);
         mergedAssembleOp.SetScopeInfo(assembleOp.scopeInfo);
         mergedAssembleOp.SetOpAttribute(attr);
+        if (assembleOp.needCopy) {
+            mergedAssembleOp.SetAttr(OpAttributeKey::needCopy, true);
+        }
         if (assembleOp.subgraphId != -1) {
             mergedAssembleOp.UpdateSubgraphID(assembleOp.subgraphId);
         }
@@ -1985,11 +1988,15 @@ Status MergeViewAssembleUtils::CommitAssembleChain(Function& function, const std
         return FAILED;
     }
     AtomicSemanticAttrState atomicSemanticAttr = GetChainAtomicSemanticAttr(chain);
+    const bool needCopy = std::any_of(chain.begin(), chain.end(), [](const Operation* op) {
+        bool value = false;
+        return op->GetAttr<bool>(OpAttributeKey::needCopy, value) && value;
+    });
     // 4. 记录并清理
     RecordAssembleOperation(startTensor, endTensor, newOffset, newDynOffset, firstSpan, chainScopeInfo,
                             GetRmwModeAttrKey(rmwModeAttr), GetMergedAssembleOpcode(chain), tokenDependency,
                             atomicSemanticAttr.fromReduceAcc, atomicSemanticAttr.fromExplicitRmw,
-                            chain.back()->GetSubgraphID());
+                            chain.back()->GetSubgraphID(), needCopy);
     if (tokenSemantics) {
         ClearLinearTokenDependency(function, chain, tokenDependency);
         DeleteMergedChainOps(chain, endTensor);
@@ -2030,11 +2037,14 @@ std::pair<std::vector<int64_t>, std::vector<SymbolicScalar>> MergeViewAssembleUt
     return {newOffset, newDynOffset};
 }
 
-void MergeViewAssembleUtils::RecordAssembleOperation(
-    const std::shared_ptr<LogicalTensor>& input, const std::shared_ptr<LogicalTensor>& output,
-    const std::vector<int64_t>& offset, const std::vector<SymbolicScalar>& dynOffset, const ir::Span& span,
-    const Operation::ScopeInfo& scopeInfo, const std::string& rmwModeAttr, Opcode opcode,
-    const TokenDependency& tokenDependency, bool atomicFromReduceAcc, bool atomicFromExplicitRmw, int subgraphId)
+void MergeViewAssembleUtils::RecordAssembleOperation(const std::shared_ptr<LogicalTensor>& input,
+                                                     const std::shared_ptr<LogicalTensor>& output,
+                                                     const std::vector<int64_t>& offset,
+                                                     const std::vector<SymbolicScalar>& dynOffset, const ir::Span& span,
+                                                     const Operation::ScopeInfo& scopeInfo,
+                                                     const std::string& rmwModeAttr, Opcode opcode,
+                                                     const TokenDependency& tokenDependency, bool atomicFromReduceAcc,
+                                                     bool atomicFromExplicitRmw, int subgraphId, bool needCopy)
 {
     AssembleOp assembleOp{input,
                           output,
@@ -2050,6 +2060,7 @@ void MergeViewAssembleUtils::RecordAssembleOperation(
     // The merged op takes over the chain tail's write; ops created after graph partitioning
     // must carry a valid subgraph id.
     assembleOp.subgraphId = subgraphId;
+    assembleOp.needCopy = needCopy;
     if (input != nullptr) {
         recordedMergeInputMagics_.insert(input->GetMagic());
     }

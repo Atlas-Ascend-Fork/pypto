@@ -119,6 +119,76 @@ private:
                                     Shape& newViewOffset);
     void CollectLargeTensor(Function& function);
     void SplitLargeTensor(Function& function);
+    /** @brief 保存存储别名与函数输入输出的检查信息。 */
+    struct SplitRegionStorageInfo {
+        std::unordered_set<int64_t> versionedRaws;
+        std::unordered_map<int, std::set<int>> memoryRaws;
+        std::set<int> externalRaws;
+    };
+    /** @brief 保存通过共享检查的拆分块及按写入签名排序的 CONTRACT。 */
+    struct EquivalentSplitRegion {
+        LogicalTensorPtr tensor;
+        std::vector<Operation*> writes;
+    };
+
+    /**
+     * @brief 收集 Function 内的存储别名信息及输入输出 rawMagic。
+     * @param[in] function 待检查的 Function。
+     * @return 存储检查信息，供所有拆分块复用。
+     */
+    SplitRegionStorageInfo CollectSplitRegionStorageInfo(Function& function) const;
+    /**
+     * @brief 判断 Tensor 是否存在多版本、共享存储或显式地址别名。
+     * @param[in] tensor 待检查的 Tensor。
+     * @param[in] storage 当前 Function 的存储检查信息。
+     * @return 存在存储别名时返回 true。
+     */
+    bool HasSplitRegionStorageAlias(const LogicalTensorPtr& tensor, const SplitRegionStorageInfo& storage) const;
+    /**
+     * @brief 检查拆分块的存储、完整形状及 SLICE 读者是否允许共享。
+     * @param[in] tensor 待检查的拆分块。
+     * @param[in] storage 当前 Function 的存储检查信息。
+     * @return 拆分块非外部可见且所有读者满足共享条件时返回 true。
+     */
+    bool IsShareableSplitTensor(const LogicalTensorPtr& tensor, const SplitRegionStorageInfo& storage) const;
+    /**
+     * @brief 检查写入源是否为无存储别名且无副作用约束的 UB Tensor。
+     * @param[in] input CONTRACT 的输入 Tensor。
+     * @param[in] storage 当前 Function 的存储检查信息。
+     * @return 输入及其相邻 Operation 均满足共享条件时返回 true。
+     */
+    bool IsShareableSplitSource(const LogicalTensorPtr& input, const SplitRegionStorageInfo& storage);
+    /**
+     * @brief 检查 CONTRACT 的输入输出、属性、写入源及写入范围。
+     * @param[in] writer 待检查的写入 Operation。
+     * @param[in] tensor 写入目标拆分块。
+     * @param[in] storage 当前 Function 的存储检查信息。
+     * @return 写入可安全参与等价比较时返回 true。
+     */
+    bool IsShareableSplitWrite(Operation& writer, const LogicalTensorPtr& tensor,
+                               const SplitRegionStorageInfo& storage);
+    /**
+     * @brief 验证拆分块的完整写入覆盖，并构建与写入遍历顺序无关的等价签名。
+     * @param[in] tensor 图清理前通过资格检查并登记的拆分块。
+     * @param[in] storage 当前 Function 的存储检查信息。
+     * @param[out] candidate 验证成功后保存拆分块和有序写入列表。
+     * @param[out] key 验证成功后保存包含形状、属性和写入映射的签名。
+     * @return 验证成功时返回 true；失败时不使用输出参数。
+     */
+    bool BuildSplitRegionCandidate(const LogicalTensorPtr& tensor, const SplitRegionStorageInfo& storage,
+                                   EquivalentSplitRegion& candidate, Json& key);
+    /**
+     * @brief 合并等价写入的 NeedCopy 要求，并将重复拆分块的读者重定向到共享 Tensor。
+     * @param[in] duplicate 待替换的拆分块；读者输入会被修改。
+     * @param[in] canonical 等价共享块；对应写入的 NeedCopy 属性可能被设置。
+     */
+    void MergeSplitRegionReaders(const EquivalentSplitRegion& duplicate, const EquivalentSplitRegion& canonical) const;
+    /**
+     * @brief 合并等价的 M-to-M 拆分块，删除重复写入并刷新依赖。
+     * @details 在图清理及有效形状推导后调用，仅比较本次新建的拆分块。
+     * @param[in,out] function 待更新的 Function。
+     */
+    void MergeEquivalentMtoMRegions(Function& function);
     bool IsBeCovered(Function& function, const LogicalTensorPtr& largeTensor,
                      const std::vector<std::pair<LogicalTensorPtr, Offset>>& toTensorInfos);
     bool HasDuplicateToTile(const std::vector<std::pair<LogicalTensorPtr, Offset>>& toTensorInfos);
@@ -148,6 +218,7 @@ private:
     std::unordered_set<int> mixedConsumerTensors_;
     IRBuilder irBuilder_;
     std::vector<Operation*> addedOps_;
+    LogicalTensors mtoMSplitTensors_;
 
     std::string idx;
 };

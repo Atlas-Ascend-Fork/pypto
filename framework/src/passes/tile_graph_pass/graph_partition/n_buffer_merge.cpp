@@ -22,6 +22,7 @@
 #include "passes/pass_log/pass_log.h"
 #include "passes/pass_utils/parallel_tool.h"
 #include "passes/pass_utils/pass_utils.h"
+#include "passes/pass_utils/pass_operation_utils.h"
 #include "passes/pass_utils/reschedule_utils.h"
 
 #define MODULE_NAME "NBufferMerge"
@@ -471,6 +472,127 @@ std::vector<std::vector<int>> NBufferMerge::SortColorWithInput(std::vector<int>&
     return res;
 }
 
+bool NBufferMerge::IsGatherGroupOperation(const Operation& op, int color,
+                                          const RescheduleUtils::TensorDependencyMap& tensorDeps)
+{
+    if (PassOperationUtils::HasExplicitOrderDependency(op)) {
+        return false;
+    }
+    for (const auto& output : op.GetOOperands()) {
+        if (op.GetOpcode() == Opcode::OP_CONTRACT) {
+            continue;
+        }
+        const auto dependency = tensorDeps.find(output.get());
+        if (dependency == tensorDeps.end()) {
+            return false;
+        }
+        const auto& readers = dependency->second.consumerColors;
+        if (std::any_of(readers.begin(), readers.end(), [color](int reader) { return reader != color; })) {
+            return false;
+        }
+    }
+    return true;
+}
+
+LogicalTensorPtr NBufferMerge::GetGatherWrittenTensor(int color, const OperationsViewer& opList,
+                                                      const RescheduleUtils::TensorDependencyMap& tensorDeps) const
+{
+    int gatherCount = 0;
+    int writeCount = 0;
+    LogicalTensorPtr writtenTensor;
+    for (auto index : colorNode_[color]) {
+        const auto& op = opList[index];
+        if (op.GetOpcode() == Opcode::OP_GATHER_IN_UB) {
+            ++gatherCount;
+        } else if (op.GetOpcode() == Opcode::OP_CONTRACT) {
+            ++writeCount;
+            if (op.GetOOperands().size() != 1) {
+                return nullptr;
+            }
+            writtenTensor = op.GetOOperands().front();
+        } else if (op.GetOpcode() != Opcode::OP_VIEW) {
+            return nullptr;
+        }
+        if (!IsGatherGroupOperation(op, color, tensorDeps)) {
+            return nullptr;
+        }
+    }
+    return gatherCount == 1 && writeCount == 1 ? writtenTensor : nullptr;
+}
+
+void NBufferMerge::NormalizeGatherConsumerGroups(const std::map<std::vector<int>, int>& consumerGroups,
+                                                 std::vector<int>& groups)
+{
+    std::vector<int> orderedGroups(consumerGroups.size());
+    int order = 0;
+    for (const auto& entry : consumerGroups) {
+        orderedGroups[entry.second] = order++;
+    }
+    for (auto& group : groups) {
+        if (group != INVALID_COLOR) {
+            group = orderedGroups[group];
+        }
+    }
+}
+
+std::vector<int> NBufferMerge::GetGatherConsumerGroups(const OperationsViewer& opList) const
+{
+    const auto tensorDeps = RescheduleUtils::BuildTensorDependencyInfo(opList);
+    std::vector<int> result(colorNum_, INVALID_COLOR);
+    std::unordered_map<const LogicalTensor*, int> tensorGroups;
+    std::map<std::vector<int>, int> consumerGroups;
+    for (int color = 0; color < colorNum_; ++color) {
+        const auto writtenTensor = GetGatherWrittenTensor(color, opList, tensorDeps);
+        if (writtenTensor == nullptr) {
+            continue;
+        }
+        const auto dependency = tensorDeps.find(writtenTensor.get());
+        if (dependency == tensorDeps.end()) {
+            continue;
+        }
+        const auto& readers = dependency->second.consumerColors;
+        if (readers.empty() || std::binary_search(readers.begin(), readers.end(), color)) {
+            continue;
+        }
+        auto cached = tensorGroups.find(writtenTensor.get());
+        if (cached == tensorGroups.end()) {
+            auto group = consumerGroups.emplace(readers, static_cast<int>(consumerGroups.size()));
+            cached = tensorGroups.emplace(writtenTensor.get(), group.first->second).first;
+        }
+        result[color] = cached->second;
+    }
+    NormalizeGatherConsumerGroups(consumerGroups, result);
+    return result;
+}
+
+std::vector<std::vector<int>> NBufferMerge::RefineGatherConsumerGroups(
+    const std::vector<std::vector<int>>& sortedColors, const std::vector<int>& gatherConsumerGroups) const
+{
+    std::vector<std::vector<int>> refinedColors;
+    for (const auto& group : sortedColors) {
+        std::map<std::vector<int>, std::set<int>> readerSetsByOutput;
+        for (auto color : group) {
+            if (gatherConsumerGroups[color] != INVALID_COLOR) {
+                readerSetsByOutput[outColor_[color]].insert(gatherConsumerGroups[color]);
+            }
+        }
+        // 独立读者仍可沿用原分组；不合格成员单独保留，不能阻止其他成员细分。
+        constexpr int UNCONFLICTED_GROUP = -2;
+        std::map<int, std::vector<int>> byConsumers;
+        for (auto color : group) {
+            int consumerGroup = gatherConsumerGroups[color];
+            if (consumerGroup != INVALID_COLOR && readerSetsByOutput.at(outColor_[color]).size() == 1) {
+                consumerGroup = UNCONFLICTED_GROUP;
+            }
+            byConsumers[consumerGroup].push_back(color);
+        }
+        for (auto& entry : byConsumers) {
+            refinedColors.push_back(std::move(entry.second));
+        }
+    }
+    return refinedColors;
+}
+
 void NBufferMerge::MergePingPong(std::vector<std::vector<int>>& sortedColors, const OperationsViewer& opOriList,
                                  std::vector<uint64_t>& hashColor, size_t& numDBmerge, int hashOrder)
 {
@@ -511,6 +633,7 @@ Status NBufferMerge::MergeProcessForMulityInOut(const OperationsViewer& opOriLis
                                                 const std::map<uint64_t, size_t>& hashMergeNum,
                                                 std::vector<uint64_t>& hashColor)
 {
+    const auto gatherConsumerGroups = GetGatherConsumerGroups(opOriList);
     std::vector<uint64_t> hashMapKeys;
     for (const auto& entry : hashMap) {
         hashMapKeys.push_back(entry.first);
@@ -536,8 +659,7 @@ Status NBufferMerge::MergeProcessForMulityInOut(const OperationsViewer& opOriLis
             std::vector<int> colorValues = it->second;
             if (colorValues.empty())
                 continue;
-            std::vector<std::vector<int>> sortedColors;
-            sortedColors.push_back(colorValues);
+            auto sortedColors = RefineGatherConsumerGroups({colorValues}, gatherConsumerGroups);
             APASS_LOG_INFO_F(Elements::Operation, "HashOrder %d, HashValue %lu (MulityInOut mode): subgraphs %s.",
                              hashOrder_[colorHashValue], colorHashValue, IntVecToStr(colorValues).c_str());
             size_t numDBMerge = (vecNBuffermode_ == autoMulityInOutMerge) ? hashMergeNum.at(colorHashValue) :
@@ -551,6 +673,7 @@ Status NBufferMerge::MergeProcessForMulityInOut(const OperationsViewer& opOriLis
 Status NBufferMerge::MergeProcess(const OperationsViewer& opOriList, std::map<uint64_t, std::vector<int>>& hashMap,
                                   std::map<uint64_t, size_t>& hashMergeNum, std::vector<uint64_t>& hashColor)
 {
+    const auto gatherConsumerGroups = GetGatherConsumerGroups(opOriList);
     std::vector<uint64_t> hashMapKeys;
     for (const auto& entry : hashMap) {
         hashMapKeys.push_back(entry.first);
@@ -562,7 +685,7 @@ Status NBufferMerge::MergeProcess(const OperationsViewer& opOriList, std::map<ui
             if (colorHashValue == 0)
                 continue;
             std::vector<int>& colorValues = hashMap[colorHashValue];
-            auto sortedColors = SortColorWithInput(colorValues);
+            auto sortedColors = RefineGatherConsumerGroups(SortColorWithInput(colorValues), gatherConsumerGroups);
             if (sortedColors.empty())
                 continue;
             APASS_LOG_INFO_F(

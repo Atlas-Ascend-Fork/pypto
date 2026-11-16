@@ -89,6 +89,7 @@ public:
         bool atomicFromReduceAcc = false;
         bool atomicFromExplicitRmw = false;
         int subgraphId = -1;
+        bool needCopy = false;
     };
     struct ConsumerCacheEntry {
         std::vector<Operation*> viewConsumers;
@@ -229,7 +230,7 @@ public:
                                  const std::vector<SymbolicScalar>& dynOffset, const ir::Span& span,
                                  const Operation::ScopeInfo& scopeInfo, const std::string& rmwModeAttr, Opcode opcode,
                                  const TokenDependency& tokenDependency, bool atomicFromReduceAcc,
-                                 bool atomicFromExplicitRmw, int subgraphId);
+                                 bool atomicFromExplicitRmw, int subgraphId, bool needCopy);
 
     // Common methods
     Status Initialize();
