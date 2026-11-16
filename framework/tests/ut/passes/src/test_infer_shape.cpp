@@ -23,6 +23,7 @@
 #include "symbolic_scalar_test_utils.h"
 #include "interface/inner/tilefwk.h"
 #include "interface/operation/op_infer_shape_impl.h"
+#include "interface/operation/operation_impl.h"
 #include "passes/tile_graph_pass/graph_constraint/infer_dyn_shape.h"
 #include "interface/operation/attribute.h"
 #include "interface/tensor/irbuilder.h"
@@ -1165,6 +1166,83 @@ TEST_F(InferShapeTest, CheckDynValidShapeFailed)
     InferDynShape inferShapeTest;
     inferShapeTest.RunOnFunction(*currFunctionPtr);
     EXPECT_EQ(inferShapeTest.PostCheck(*currFunctionPtr), FAILED);
+}
+
+// L0C(NZ) -> UB tile 直通搬运: 输出 valid 由 l0cValidMN 与 realCutW 属性推导 (VIEW 路径)
+TEST_F(InferShapeTest, L0CCopyUBConvDerivesValidShapeFromL0cAttrs)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "l0c_conv_view_infer", "l0c_conv_view_infer",
+                                               nullptr);
+    const std::vector<int64_t> l0cShape = {56, 48};
+    const std::vector<int64_t> ubShape = {1, 64, 8, 8};
+    auto l0cInput = IRBuilder().CreateTensorVar(DT_FP16, l0cShape, SymbolicScalar::FromConcrete(l0cShape));
+    auto ubOutput = IRBuilder().CreateTensorVar(DT_FP16, ubShape, SymbolicScalar::FromConcrete(ubShape));
+    auto copyAttr = CreateCopyOutAttribute(MEM_UB, OpImmediate::Specified({0, 0, 0, 0}),
+                                           OpImmediate::Specified(ubShape), OpImmediate::Specified(ubShape));
+    auto& convCopyOp = PassOperationUtils::AddOperation(
+        *function, Opcode::OP_L0C_COPY_UB_CONV, {l0cInput}, {ubOutput},
+        [&copyAttr](Operation& op) {
+            op.SetOpAttribute(copyAttr);
+            op.SetAttribute(OpAttributeKey::l0cValidMN,
+                            std::vector<SymbolicScalar>{SymbolicScalar(56), SymbolicScalar(48)});
+            op.SetAttribute(Conv::LoadStoreConvOpAttributeKey::realCutW, SymbolicScalar(6));
+        },
+        ir::Span::Unknown(), false);
+    AppendFunctionIO(function, {l0cInput}, {ubOutput});
+
+    InferShapeRegistry::GetInstance().CallInferShapeFunc(&convCopyOp);
+
+    const auto& outValid = ubOutput->GetDynValidShape();
+    ASSERT_EQ(outValid.size(), 4U);
+    EXPECT_EQ(outValid[0].Concrete(), 1);
+    EXPECT_EQ(outValid[1].Concrete(), 48);
+    EXPECT_EQ(outValid[2].Concrete(), 9);
+    EXPECT_EQ(outValid[3].Concrete(), 6);
+}
+
+// INSERT (小搬大) 路径: 多个 L0C copy 拼入同一 UB tile, 各窗口贡献按维取 max 合并
+TEST_F(InferShapeTest, L0CCopyUBConvInsertPathMergesProducerWindow)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "l0c_conv_insert_infer", "l0c_conv_insert_infer",
+                                               nullptr);
+    const std::vector<int64_t> l0cShape = {128, 64};
+    const std::vector<int64_t> ubShape = {1, 64, 8, 8};
+    auto producerInput = IRBuilder().CreateTensorVar(DT_FP16, l0cShape, SymbolicScalar::FromConcrete(l0cShape));
+    auto insertInput = IRBuilder().CreateTensorVar(DT_FP16, l0cShape, SymbolicScalar::FromConcrete(l0cShape));
+    // INSERT 路径下输出 valid 是各 copy 窗口逐维 max 的累计结果, 初始必须为空 (未承载数据)
+    auto ubOutput = IRBuilder().CreateTensorVar(DT_FP16, ubShape, std::vector<SymbolicScalar>{});
+    auto producerAttr = CreateCopyOutAttribute(MEM_UB, OpImmediate::Specified({0, 0, 0, 0}),
+                                               OpImmediate::Specified(ubShape), OpImmediate::Specified(ubShape));
+    auto insertAttr = CreateCopyOutAttribute(MEM_UB, OpImmediate::Specified({0, 0, 0, 0}),
+                                             OpImmediate::Specified(ubShape), OpImmediate::Specified(ubShape));
+    PassOperationUtils::AddOperation(
+        *function, Opcode::OP_L0C_COPY_UB_CONV, {producerInput}, {ubOutput},
+        [&producerAttr](Operation& op) {
+            op.SetOpAttribute(producerAttr);
+            op.SetAttribute(OpAttributeKey::l0cValidMN,
+                            std::vector<SymbolicScalar>{SymbolicScalar(56), SymbolicScalar(48)});
+            op.SetAttribute(Conv::LoadStoreConvOpAttributeKey::realCutW, SymbolicScalar(6));
+        },
+        ir::Span::Unknown(), false);
+    auto& insertOp = PassOperationUtils::AddOperation(
+        *function, Opcode::OP_L0C_COPY_UB_CONV, {insertInput}, {ubOutput},
+        [&insertAttr](Operation& op) {
+            op.SetOpAttribute(insertAttr);
+            op.SetAttribute(OpAttributeKey::l0cValidMN,
+                            std::vector<SymbolicScalar>{SymbolicScalar(32), SymbolicScalar(16)});
+            op.SetAttribute(Conv::LoadStoreConvOpAttributeKey::realCutW, SymbolicScalar(4));
+        },
+        ir::Span::Unknown(), false);
+    AppendFunctionIO(function, {producerInput, insertInput}, {ubOutput});
+
+    InferShapeRegistry::GetInstance().CallInferShapeFunc(&insertOp);
+
+    const auto& outValid = ubOutput->GetDynValidShape();
+    ASSERT_EQ(outValid.size(), 4U);
+    EXPECT_EQ(outValid[0].Concrete(), 1);
+    EXPECT_EQ(outValid[1].Concrete(), 48);
+    EXPECT_EQ(outValid[2].Concrete(), 9);
+    EXPECT_EQ(outValid[3].Concrete(), 6);
 }
 
 } // namespace tile_fwk

@@ -173,13 +173,6 @@ int64_t ConvAlignB(int64_t a, int64_t b)
     return ((a + b - 1) / b) * b;
 }
 
-std::vector<int64_t> rotateVector(const std::vector<int64_t>& input, size_t shift)
-{
-    std::vector<int64_t> result = input;
-    std::rotate(result.begin(), result.begin() + shift, result.end());
-    return result;
-}
-
 void CheckOutputShape(const Tensor& inputTensor, const Tensor& weightTensor, const ConvAttrParam& attrParam)
 {
     int64_t hOut = ConvComputeHo(inputTensor, weightTensor, attrParam);
@@ -319,9 +312,9 @@ void CheckLoad3dShape(DataType outType, const Tensor& weightTensor, const ConvAt
     std::vector<int64_t> dilations = attrParam.dilations;
     std::vector<int64_t> strides = attrParam.strides;
     if (attrParam.isConv3D) {
-        paddings = rotateVector(paddings, NUM4);
-        dilations = rotateVector(dilations, NUM2);
-        strides = rotateVector(strides, NUM2);
+        std::rotate(paddings.begin(), paddings.begin() + NUM4, paddings.end());
+        std::rotate(dilations.begin(), dilations.begin() + NUM2, dilations.end());
+        std::rotate(strides.begin(), strides.begin() + NUM2, strides.end());
     }
     CheckDimensionRange(paddings, "paddings", 0, MAX_PAD_KERNEL);
     CheckDimensionRange(dilations, "dilations", NUM1, MAX_DILATION_STRIDE);
@@ -356,7 +349,7 @@ void CheckAttrShape(DataType outType, const Tensor& inputTensor, const Tensor& w
     int64_t cOut = weightTensor.GetShape()[NCHW_N_IDX];
 
     if (attrParam.isConv3D) {
-        paddings = rotateVector(paddings, NUM4);
+        std::rotate(paddings.begin(), paddings.begin() + NUM4, paddings.end());
     }
     const std::vector<std::string> dimNames = attrParam.isConv1D ? std::vector<std::string>{"L"} :
                                               attrParam.isConv3D ? std::vector<std::string>{"D", "H", "W"} :

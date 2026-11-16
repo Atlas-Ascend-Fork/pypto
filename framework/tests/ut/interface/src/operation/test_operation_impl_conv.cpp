@@ -349,6 +349,54 @@ TEST_F(OperationImplConvTest, Test_Conv3d_FP16_A5)
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
 }
 
+TEST_F(OperationImplConvTest, Test_Conv2d_FP16_SymPad_A5)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    Conv::TileL1Info l1TileShape(1, 1, 16, 16, 16, 16, 16, 1);
+    Conv::TileL0Info l0TileShape(1, 16, 16, 16);
+    TileShape::Current().SetConvTile(l1TileShape, l0TileShape, true);
+    TileShape::Current().SetVecTile({16, 16, 1, 16});
+    Tensor fmap(DT_FP16, {1, 16, 16, 16}, "fmap");
+    Tensor weight(DT_FP16, {16, 16, 3, 3}, "weight");
+    Tensor result;
+    Conv::ConvExtendParam convExtendParam;
+    std::vector<SymbolicScalar> symPaddings = {SymbolicScalar("pad_top"), SymbolicScalar("pad_bottom"),
+                                               SymbolicScalar("pad_left"), SymbolicScalar("pad_right")};
+    FUNCTION("TestConv2dSymPadA5")
+    {
+        result = npu::tile_fwk::Conv::Conv(DT_FP16, fmap, weight, {1, 1}, symPaddings, {1, 1}, convExtendParam, 1);
+    }
+
+    ExpandFunction expandFunction;
+    EXPECT_NE(expandFunction.RunOnFunction(*Program::GetInstance().GetCurrentFunction()), Status::FAILED);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationImplConvTest, Test_Conv3d_FP16_SymDPad_A5)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    Conv::TileL1Info l1TileShape(1, 1, 16, 16, 16, 16, 16, 1);
+    Conv::TileL0Info l0TileShape(1, 16, 16, 16);
+    TileShape::Current().SetConvTile(l1TileShape, l0TileShape, true);
+    TileShape::Current().SetVecTile({16, 16, 1, 4, 16});
+    Tensor fmap(DT_FP16, {1, 16, 2, 8, 16}, "fmap");
+    Tensor weight(DT_FP16, {16, 16, 2, 3, 3}, "weight");
+    Tensor result;
+    Conv::ConvExtendParam convExtendParam;
+    std::vector<SymbolicScalar> symPaddings = {SymbolicScalar("pad_head"), SymbolicScalar("pad_tail"),
+                                               SymbolicScalar("pad_top"),  SymbolicScalar("pad_bottom"),
+                                               SymbolicScalar("pad_left"), SymbolicScalar("pad_right")};
+    FUNCTION("TestConv3dSymDPadA5")
+    {
+        result = npu::tile_fwk::Conv::Conv(DT_FP16, fmap, weight, {1, 1, 1}, symPaddings, {1, 1, 1}, convExtendParam,
+                                           1);
+    }
+
+    ExpandFunction expandFunction;
+    EXPECT_NE(expandFunction.RunOnFunction(*Program::GetInstance().GetCurrentFunction()), Status::FAILED);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
 TEST_F(OperationImplConvTest, Test_ConvBp2d_FP16)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);

@@ -1348,25 +1348,13 @@ void L0CCopyUBConvInferFunc(Operation* op, std::vector<std::vector<SymbolicScala
         }
         return;
     }
-    const auto& inValid = input->GetDynValidShape();
     const Shape& tileShape = output->GetShape();
     auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(op->GetOpAttribute());
-    // 本 copy 的有效 (M, N): 优先取 l0cValidMN 属性 (GenerateMoveOp 已按 view 窗口刷新,
-    // 携带 conv tile 的运行时有效行列; 动态场景下 tensor 的 dynValidShape 可能被重置回
-    // 静态全量), 缺省回退到输入 tensor 的 valid
-    SymbolicScalar copyM = (inValid.size() == SHAPE_DIM2) ? inValid[0] : SymbolicScalar(0);
-    SymbolicScalar copyN = (inValid.size() == SHAPE_DIM2) ? inValid[1] : SymbolicScalar(0);
+
     std::vector<SymbolicScalar>* validMN = op->GetAttr<std::vector<SymbolicScalar>>(OpAttributeKey::l0cValidMN);
-    if (validMN != nullptr && validMN->size() == SHAPE_DIM2) {
-        copyM = (*validMN)[0];
-        copyN = (*validMN)[1];
-    }
-    // conv tile 的运行时有效 W (REAL_CUT_W 属性), 缺省取 tile 的 w
-    SymbolicScalar realCutW = SymbolicScalar(tileShape.back());
-    SymbolicScalar realCutWAttr;
-    if (op->GetAttr(Conv::LoadStoreConvOpAttributeKey::realCutW, realCutWAttr) && realCutWAttr.IsValid()) {
-        realCutW = realCutWAttr;
-    }
+    SymbolicScalar copyM = (*validMN)[0];
+    SymbolicScalar copyN = (*validMN)[1];
+    SymbolicScalar realCutW = *op->GetAttr<SymbolicScalar>(Conv::LoadStoreConvOpAttributeKey::realCutW);
     SymbolicScalar validN = copyN.Min(tileShape[1]).Max(0);
     SymbolicScalar validW = realCutW.Min(tileShape.back());
     SymbolicScalar validRows = copyM.Min(tileShape[tileShape.size() - NUM2] * tileShape.back()).Max(0);
@@ -1428,12 +1416,8 @@ void L0CCopyUBConvInferFunc(Operation* op, std::vector<std::vector<SymbolicScala
                 if (producerValidMN == nullptr || producerValidMN->size() != SHAPE_DIM2) {
                     continue;
                 }
-                SymbolicScalar producerRealCutW = SymbolicScalar(tileShape.back());
-                SymbolicScalar producerRealCutWAttr;
-                if (producer->GetAttr(Conv::LoadStoreConvOpAttributeKey::realCutW, producerRealCutWAttr) &&
-                    producerRealCutWAttr.IsValid()) {
-                    producerRealCutW = producerRealCutWAttr;
-                }
+                SymbolicScalar producerRealCutW = *producer->GetAttr<SymbolicScalar>(
+                    Conv::LoadStoreConvOpAttributeKey::realCutW);
                 SymbolicScalar producerValidN = (*producerValidMN)[1].Min(tileShape[1]).Max(0);
                 SymbolicScalar producerValidW = producerRealCutW.Min(tileShape.back());
                 SymbolicScalar producerValidRows = (*producerValidMN)[0]
