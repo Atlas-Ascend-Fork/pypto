@@ -17,7 +17,7 @@
  * - NORMAL_WRITE has two layouts (see CellMatchIsNormalWriteSlowPath):
  *   Fast: one writer per cell; mutex overwrite; no stored ranges.
  *   Slow: up to 2^N writers; store ranges; replace on overlap, else append (write-write only).
- *   Encode picks Fast when divides or min_read >= max_write on every dim; else Slow.
+ *   Encode picks Fast when divides, or (!WAW && min_read > max_write) on every dim; else Slow.
  * - Reads / atomic / write-meets-them: full dependency on the current group.
  * - Callers claim the stitch-cache edge before HandleOneStitch so duplicates can skip
  *   GetOperationStitch / PushBackTask without a second claim inside HandleOne.

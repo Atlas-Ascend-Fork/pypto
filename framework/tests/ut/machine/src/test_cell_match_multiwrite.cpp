@@ -276,14 +276,15 @@ TEST(CellMatchMultiWrite, TailMultipleOfCellUsesOneWriter)
     }
 }
 
-TEST(CellMatchMultiWrite, ReadAtLeastMaxWriteForcesOneWriter)
+// WAW + min_read >= max_write used to force Fast; cover alone must not drop Slow when WAW is set.
+TEST(CellMatchMultiWrite, WawWithReadCoverKeepsTwoWriters)
 {
     PrepareTailKernel(64, kHidden);
     Tensor in(DT_FP32, {144, kHidden}, "in");
     Tensor out(DT_FP32, {144, kHidden}, "out");
     Tensor result(DT_FP32, {128, kHidden}, "result");
     Tensor sideOut(DT_FP32, {64, kHidden}, "side_out");
-    FUNCTION("read_covers_max_write", {in}, {out, result, sideOut})
+    FUNCTION("waw_read_covers_max_write", {in}, {out, result, sideOut})
     {
         LOOP("FC_W", FunctionType::DYNAMIC_LOOP, i, LoopRange(1))
         {
@@ -297,7 +298,7 @@ TEST(CellMatchMultiWrite, ReadAtLeastMaxWriteForcesOneWriter)
         LOOP("FC_R", FunctionType::DYNAMIC_LOOP, j, LoopRange(1))
         {
             (void)j;
-            // All reads COA shape 64 → min_read 64 >= max_write 64 → factor 1.
+            // min_read 64 >= max_write 64 would cover, but WAW keeps factor 2.
             Assemble(View(out, {64, kHidden}, {0, 0}), {0, 0}, result);
             Assemble(View(out, {64, kHidden}, {64, 0}), {64, 0}, result);
             Assemble(View(out, {64, kHidden}, {96, 0}), {0, 0}, sideOut);
@@ -305,10 +306,10 @@ TEST(CellMatchMultiWrite, ReadAtLeastMaxWriteForcesOneWriter)
     }
 
     EncodedOutcast slot;
-    ASSERT_TRUE(FindEncoded(48, 1u, 0u, &slot));
+    ASSERT_TRUE(FindEncoded(48, 2u, 0u, &slot));
     const DevCellMatchTableDesc& desc = slot.update->cellMatchTableDesc;
-    EXPECT_EQ(desc.normalWriteOpRangeBase, 0u);
-    EXPECT_EQ(desc.cellUint64Size, 2u);
+    EXPECT_NE(desc.normalWriteOpRangeBase, 0u);
+    EXPECT_EQ(slot.update->stitchCtrlBitMask & STITCH_CTRL_WAW, STITCH_CTRL_WAW);
     ExpectReaderMask(*slot.update);
 }
 

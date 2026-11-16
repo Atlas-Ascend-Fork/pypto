@@ -3120,6 +3120,7 @@ static uint32_t FastSlowStitchCheckInitPartialUpdate(const std::vector<const Dev
                                                      const std::vector<Opcode>& outcastOpcodeList,
                                                      const std::vector<FastSlowStitchCheckShapeGate>& allWriteOpGates,
                                                      const std::vector<FastSlowStitchCheckShapeGate>& readOpGates,
+                                                     bool hasWaw,
                                                      DevCellMatchTableDesc* partialUpdateCellMatchTableDesc)
 {
     std::vector<int> tensorShape;
@@ -3164,8 +3165,9 @@ static uint32_t FastSlowStitchCheckInitPartialUpdate(const std::vector<const Dev
         cellShape.push_back(mergeDim);
     }
     partialUpdateCellMatchTableDesc->SetCellShape(cellShape);
-    // Per-dim factor: 1 if cell<=1, divides, or minReadOp>=maxAllWriteOp (0 on either side = covered);
-    // else 2. NORMAL_WRITE capacity = product (2^N). Empty write gates are skipped for divides.
+    // Per-dim factor: 1 if cell<=1, divides, or (!hasWaw && minReadOp > maxAllWriteOp);
+    // else 2. Cover→Fast must match WAW stitch gate: WAW slots keep Slow for write-write overlap.
+    // NORMAL_WRITE capacity = product (2^N). Empty write gates are skipped for divides.
     uint32_t normalWriteCount = 1;
     int dims = static_cast<int>(cellShape.size());
     for (int d = 0; d < dims && d < DEV_SHAPE_DIM_MAX; ++d) {
@@ -3199,7 +3201,8 @@ static uint32_t FastSlowStitchCheckInitPartialUpdate(const std::vector<const Dev
                 minReadOp = minReadOp == 0 ? readOpShape : std::min(minReadOp, readOpShape);
             }
         }
-        if (minReadOp == 0 || maxAllWriteOp == 0 || minReadOp >= maxAllWriteOp) {
+        // Factor 1 only when no WAW and read strictly covers write — same WAW notion as stitchCtrlBitMask.
+        if (!hasWaw && minReadOp > maxAllWriteOp) {
             continue;
         }
         normalWriteCount *= 2;
@@ -3566,8 +3569,9 @@ static int InitSinglePartialUpdateSlot(
     }
 
     DevCellMatchTableDesc partialUpdateCellMatchTableDesc;
-    uint32_t normalWriteCount = FastSlowStitchCheckInitPartialUpdate(outcastList, outcastOpcodeList, allWriteOpGates,
-                                                                     readOpGates, &partialUpdateCellMatchTableDesc);
+    const bool hasWaw = (stitchCtrlBitMask & STITCH_CTRL_WAW) != 0;
+    uint32_t normalWriteCount = FastSlowStitchCheckInitPartialUpdate(
+        outcastList, outcastOpcodeList, allWriteOpGates, readOpGates, hasWaw, &partialUpdateCellMatchTableDesc);
     partialUpdateCellMatchTableDesc.SetCacheOpMaxCount({normalWriteCount,
                                                         hasAtomicWrite ? CELL_MATCH_MAX_ATOMIC_WRITE_COUNT : 0U,
                                                         outcastList.size() > 1 ? maxReadCount : 0u});
