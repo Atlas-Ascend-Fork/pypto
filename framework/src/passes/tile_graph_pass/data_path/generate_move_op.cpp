@@ -471,7 +471,7 @@ Status GenerateMoveOp::ProcessConvAssemble(Operation& op, AssembleOpAttribute* a
         transFormatInput->GetMemoryTypeOriginal(), OpImmediate::Specified(assembleOpAttribute->GetToTensorOffset()),
         OpImmediate::Specified(assembleInput->GetShape()),
         OpImmediate::Specified(assembleOutput->GetRawTensor()->GetDynRawShape()),
-        OpImmediate::Specified(transFormatInput->GetDynValidShape()));
+        OpImmediate::Specified(assembleInput->GetDynValidShape()));
 
     op.SetOpCode(Opcode::OP_L0C_COPY_OUT_CONV);
     op.GetAllAttr() = std::move(transFormatAttrs);
