@@ -207,6 +207,11 @@ public:
     // 判断 op 是否为跨核 move(CONVERT/COPY 输入输出跨 AIC/AIV), IntraSubgraphAdapter 会将其
     // 改写为 OP_COPY_OUT 复用原 op 承担 DDR 搬运. ReduceCopyMerge 预判 DDR 化时复用此逻辑.
     static bool IsCrossCoreMoveOp(Operation* op);
+
+    // True if removing this inplace reshape would break a downstream alias: a sibling tensor still
+    // shares its output raw storage. RemoveRedundantReshape and DeadOperationEliminator must keep it.
+    static bool InplaceReshapeRemovalBreaksAlias(Function& function, Operation& op, const LogicalTensorPtr& in,
+                                                 const LogicalTensorPtr& out);
 };
 } // namespace tile_fwk
 } // namespace npu

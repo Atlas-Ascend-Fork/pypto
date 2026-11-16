@@ -365,5 +365,36 @@ bool GraphUtils::IsCrossCoreMoveOp(Operation* op)
     }
     return false;
 }
+bool GraphUtils::InplaceReshapeRemovalBreaksAlias(Function& function, Operation& op, const LogicalTensorPtr& in,
+                                                  const LogicalTensorPtr& out)
+{
+    if (!op.GetBoolAttribute(OP_ATTR_PREFIX + "isInplace")) {
+        return false;
+    }
+    auto inRaw = in->GetRawTensor();
+    auto outRaw = out->GetRawTensor();
+    if (inRaw == nullptr || outRaw == nullptr) {
+        return false;
+    }
+    if (inRaw->rawmagic == outRaw->rawmagic) {
+        return false;
+    }
+    const int aliasRawMagic = outRaw->rawmagic;
+    const auto tensors = GraphUtils::GetAllTensors(function);
+    for (const auto& tensor : tensors) {
+        if (tensor == nullptr || tensor->GetMagic() == out->GetMagic() || tensor->GetMagic() == in->GetMagic()) {
+            continue;
+        }
+        auto raw = tensor->GetRawTensor();
+        if (raw == nullptr || raw->rawmagic != aliasRawMagic) {
+            continue;
+        }
+        // A sibling still uses the alias storage independently: removal would orphan it.
+        if (!tensor->GetProducers().empty() || !tensor->GetConsumers().empty()) {
+            return true;
+        }
+    }
+    return false;
+}
 } // namespace tile_fwk
 } // namespace npu

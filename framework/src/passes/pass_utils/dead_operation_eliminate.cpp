@@ -17,6 +17,7 @@
 #include <queue>
 #include <chrono>
 #include "interface/tensor/logical_tensor.h"
+#include "passes/pass_utils/graph_utils.h"
 
 namespace npu::tile_fwk {
 
@@ -79,6 +80,25 @@ void DeadOperationEliminator::EliminateOperation(Function& function, bool useSor
             }
             visited.emplace(op);
             q.emplace(op);
+        }
+    }
+    // Keep inplace reshapes that anchor a downstream alias (a sibling still shares the output raw):
+    // they are live alias links, not dead code. Seed them as liveness roots.
+    for (auto& op : function.Operations(false)) {
+        if (op.GetOpcode() != Opcode::OP_RESHAPE || visited.count(&op) != 0) {
+            continue;
+        }
+        if (op.GetIOperands().size() != 1 || op.GetOOperands().size() != 1) {
+            continue;
+        }
+        const auto& in = op.GetIOperands().front();
+        const auto& out = op.GetOOperands().front();
+        if (in == nullptr || out == nullptr) {
+            continue;
+        }
+        if (GraphUtils::InplaceReshapeRemovalBreaksAlias(function, op, in, out)) {
+            visited.emplace(&op);
+            q.emplace(&op);
         }
     }
     while (!q.empty()) {

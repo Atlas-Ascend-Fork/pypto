@@ -17,6 +17,7 @@
 #include "interface/tensor/logical_tensor.h"
 #include "passes/pass_check/remove_redundant_reshape_checker.h"
 #include "passes/pass_log/pass_log.h"
+#include "passes/pass_utils/graph_utils.h"
 #include "passes/pass_utils/merge_view_assemble_utils.h"
 #include "passes/pass_utils/pass_token_utils.h"
 #include "passes/pass_utils/pass_utils.h"
@@ -84,6 +85,13 @@ Status TryCollectRedundantReshape(Function& function, Operation& op, std::unorde
         }
     }
     bool removeReshape = allConsumersIsReshape && !function.IsFromOutCast(out);
+    // Keep an inplace reshape whose removal would break the downstream alias relationship.
+    if (removeReshape && GraphUtils::InplaceReshapeRemovalBreaksAlias(function, op, in, out)) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Keep inplace reshape op [%d]: removal would break the downstream alias relationship.",
+                          op.GetOpMagic());
+        return SUCCESS;
+    }
     if (removeReshape) {
         PassTokenUtils::MoveTokenDependencyBeforeRemoveOp(function, op);
     }
