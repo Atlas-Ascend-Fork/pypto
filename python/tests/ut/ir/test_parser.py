@@ -6,7 +6,9 @@
 # THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND, EITHER EXPRESS OR IMPLIED,
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
+import importlib.util
 import operator
+import sys
 
 import pytest
 
@@ -491,3 +493,36 @@ def test_visit_listcomp():
         _ = [(i, j) for i in range(2) for j in range(2) if i < j]
 
     _parse_func(f)
+
+
+@pytest.mark.skipif(sys.version_info < (3, 10), reason="match statement requires Python 3.10+")
+def test_match_statement_error(tmp_path):
+    module_path = tmp_path / "match_module.py"
+    module_path.write_text("def f():\n    match 1:\n        case _:\n            pass\n", encoding="utf-8")
+
+    spec = importlib.util.spec_from_file_location("_match_module", module_path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    with pytest.raises(SyntaxError, match="match statements are not supported"):
+        _parse_func(module.f)
+
+
+def test_named_expression_error():
+    def f():
+        if (n := 4) > 0:
+            _z = n
+
+    with pytest.raises(SyntaxError, match=r"assignment expressions \(:=\) are not supported"):
+        _parse_func(f)
+
+
+def test_set_vec_tile_shapes_requires_concrete_dims():
+    pypto.set_vec_tile_shapes(pypto.SymbolicScalar(16), 16)
+    with pytest.raises(Exception, match="tile shape dimension 0 must be concrete at trace time"):
+        pypto.set_vec_tile_shapes(pypto.SymbolicScalar("n"), 16)
+
+
+def test_set_cube_tile_shapes_requires_concrete_dims():
+    with pytest.raises(Exception, match="tile shape dimension 0 must be concrete at trace time"):
+        pypto.set_cube_tile_shapes([pypto.SymbolicScalar("n"), 16], [16, 16], [16, 16])

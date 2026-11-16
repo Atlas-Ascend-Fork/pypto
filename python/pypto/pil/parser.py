@@ -629,10 +629,16 @@ class Parser:
         cause = self.visit(stmt.cause, ctx) if stmt.cause else None
         ctx.call_void("pil.raise", (exc, cause))
 
+    def visit_match(self, stmt: "ast.Match", ctx: _Context):
+        ctx.raise_error(stmt, "match statements are not supported; use if/elif")
+
+    def visit_named_expr(self, expr: ast.NamedExpr, ctx: _Context):
+        ctx.raise_error(expr, "assignment expressions (:=) are not supported; assign before use")
+
     def visit(self, node: ast.AST, ctx: _Context):
         # CamelCase -> snake_case
         name = re.sub(r"(?<!^)(?=[A-Z])", "_", node.__class__.__name__).lower()
-        visitor = getattr(self, "visit_" + name)
+        visitor = getattr(self, "visit_" + name, None)
         if visitor is None:
             ctx.raise_error(node)
         return visitor(node, ctx)

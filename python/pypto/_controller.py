@@ -45,6 +45,25 @@ __all__ = [
 ]
 
 
+def _concrete_tile_dims(shapes, api_name: str) -> List[int]:
+    dims = []
+    for idx, it in enumerate(shapes):
+        if isinstance(it, SymbolicScalar):
+            if not it.is_concrete():
+                raise FeError(TypeError(
+                    f"{api_name}: tile shape dimension {idx} must be concrete at trace time, "
+                    f"got {type(it).__name__}; tile shapes drive static tiling and cannot be dynamic"
+                ))
+            dims.append(it.concrete())
+        elif isinstance(it, int) and not isinstance(it, bool):
+            dims.append(it)
+        else:
+            raise FeError(TypeError(
+                f"{api_name}: tile shape dimension {idx} must be int, got {type(it).__name__}"
+            ))
+    return dims
+
+
 def set_vec_tile_shapes(*shapes: int):
     """set the tile shapes in vector computation
 
@@ -68,7 +87,7 @@ def set_vec_tile_shapes(*shapes: int):
 
     """
     # implementation
-    concrete_shapes = [it.concrete() if isinstance(it, SymbolicScalar) else it for it in shapes]
+    concrete_shapes = _concrete_tile_dims(shapes, "set_vec_tile_shapes")
     pypto_impl.SetScope({"vec_tile_shapes": concrete_shapes})
 
 
@@ -85,7 +104,7 @@ def get_vec_tile_shapes() -> List[int]:
 
     Examples
     --------
-    >>> pypto.set_vec_tile_shapes([1, 1, 8, 8])
+    >>> pypto.set_vec_tile_shapes(1, 1, 8, 8)
     >>> print(pypto.get_vec_tile_shapes())
     [1, 1, 8, 8]
 
@@ -132,6 +151,9 @@ def set_cube_tile_shapes(m: List[int], k: List[int], n: List[int], enable_split_
 
     """
     # implementation
+    m = _concrete_tile_dims(m, "set_cube_tile_shapes(): m")
+    k = _concrete_tile_dims(k, "set_cube_tile_shapes(): k")
+    n = _concrete_tile_dims(n, "set_cube_tile_shapes(): n")
     cube_tile = CubeTile(m, k, n, enable_split_k)
     pypto_impl.SetScope({"cube_tile_shapes": cube_tile.impl()})
 

@@ -404,6 +404,8 @@ Status CheckL1L0Tile(const int64_t L0Tile, const int64_t L1Tile, const std::stri
 Status CheckCubeTiling(const Tensor& operand1, const Tensor& operand2, const MatmulAttrParam& attrParam)
 {
     auto cubeTile = TileShape::Current().GetCubeTile();
+    CHECK(ExternalError::INVALID_TILE, cubeTile.valid())
+        << "Cube tile shape is not set; call pypto.set_cube_tile_shapes(m, k, n) before matmul";
     const int32_t kBL1Idx = 2;
     const int64_t kL0 = cubeTile.k[0];
     const int64_t kL1a = cubeTile.k[1];

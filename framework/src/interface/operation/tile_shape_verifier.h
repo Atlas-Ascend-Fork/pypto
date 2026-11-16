@@ -74,6 +74,9 @@ private:
             auto opName = OpcodeManager::Inst().GetOpcodeStr(op.GetOpcode());
             oss << "Operation: " << opName << ". Tile shape size " << tile_size
                 << " is not matched the output shape size " << shape_size << ".";
+            if (tile_size == 0) {
+                oss << " Vec tile shape is not set; call pypto.set_vec_tile_shapes(...) before this operation.";
+            }
             return false;
         }
         return true;
