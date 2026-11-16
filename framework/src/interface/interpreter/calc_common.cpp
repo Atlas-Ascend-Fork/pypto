@@ -204,7 +204,7 @@ void ExecuteOpView(ExecuteOperationContext* ctx)
         CheckViewToDynValidShapeNotExceedInput(validShape, iop->GetValidShape());
     }
 
-    if (oop->GetData() == iop->GetData()) {
+    if (ctx->op->GetIOperands()[0]->tensor->GetRawMagic() == ctx->op->GetOOperands()[0]->tensor->GetRawMagic()) {
         return;
     }
     uint64_t shmOffset = 0;
