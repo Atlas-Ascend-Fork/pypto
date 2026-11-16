@@ -87,8 +87,8 @@ struct PipeSyncTypes {
 
     struct PipeCore {
         PipeCore(PipeType ps, PipeType pe, CoreType c, AIVCore a) : pipeStart(ps), pipeEnd(pe), core(c), aivCore(a) {}
-        PipeType pipeStart;
-        PipeType pipeEnd;
+        PipeType pipeStart; // Entry pipe: receives waits.
+        PipeType pipeEnd;   // Exit pipe: emits sets; a multi-pipe op does not imply entry-to-exit FIFO.
         CoreType core;
         AIVCore aivCore;
 

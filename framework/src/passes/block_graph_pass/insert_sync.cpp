@@ -686,8 +686,8 @@ Status PipeSync::AdjustOpDep(DepOp& op, size_t waitOpIdx, IssueQueue& issueQ, bo
         return SUCCESS;
     }
 
-    APASS_LOG_INFO_F(Elements::Operation, "Event reuse yield: dependency (%zu,%zu) moves to (%zu,%zu).", op.idx,
-                     waitOpIdx, nextOpIdx, waitOpIdx);
+    APASS_LOG_DEBUG_F(Elements::Operation, "Event reuse yield: dependency (%zu,%zu) moves to (%zu,%zu).", op.idx,
+                      waitOpIdx, nextOpIdx, waitOpIdx);
     auto& nextOp = depOps_[nextOpIdx];
     RemoveOpDep(op, waitOp);
     if (AddOpDep(nextOp, waitOp) != SUCCESS) {
@@ -1131,6 +1131,11 @@ Status PipeSync::RecordEventWait(size_t setIdx, size_t waitIdx, Operation& syncO
         GetFreeEventIdQueue(instance->pipes).push_back(instance->id.resource.eventId);
     }
     if (UseCrossCoreProof()) {
+        if (!instance->intraCore) {
+            const int id = instance->id.resource.eventId;
+            crossCoreCompletedSenders_[id] = instance->pipes.first.core;
+            crossCoreWaitGenerations_[static_cast<size_t>(instance->pipes.second.core)][id] = crossCoreGenerations_[id];
+        }
         auto snapshot = crossCoreSnapshots_.find({setIdx, waitIdx});
         if (snapshot != crossCoreSnapshots_.end()) {
             MergeCrossCoreProof(crossCoreConsumed_[instance->pipes.second], snapshot->second);
@@ -1757,8 +1762,8 @@ Status PipeSync::ProcessDeadLock(uint64_t& eventIdDeadlockEnterTimes, bool& even
                                  std::vector<IndexOp>& syncedOpLog, bool* mergeSearchExhausted)
 {
     eventIdDeadlockEnterTimes++;
-    APASS_LOG_INFO_F(Elements::Operation, "Event reuse stall: attempt=%lu, emitted=%zu, pending=%zu.",
-                     static_cast<unsigned long>(eventIdDeadlockEnterTimes), syncedOpLog.size(), orderedOpList_.size());
+    APASS_LOG_DEBUG_F(Elements::Operation, "Event reuse stall: attempt=%lu, emitted=%zu, pending=%zu.",
+                      static_cast<unsigned long>(eventIdDeadlockEnterTimes), syncedOpLog.size(), orderedOpList_.size());
     // eventID deadlock
     if (eventIdDeadlockEnterTimes > DEADLOCK_TIME_THRESHOLD) {
         eventIdDeadlock = true;
@@ -2002,8 +2007,8 @@ bool PipeSync::MergeDependenciesForReplay(std::vector<DepOp>& plan, const PipePa
         erase(candidate[set2].setPipe, wait2);
         erase(candidate[wait2].waitPipe, set2);
         candidate[wait1].waitPipe.push_back(set2);
-        APASS_LOG_INFO_F(Elements::Operation, "Event reuse replay merge: (%zu,%zu) and (%zu,%zu) become (%zu,%zu).",
-                         set1, wait1, set2, wait2, set2, wait1);
+        APASS_LOG_DEBUG_F(Elements::Operation, "Event reuse replay merge: (%zu,%zu) and (%zu,%zu) become (%zu,%zu).",
+                          set1, wait1, set2, wait2, set2, wait1);
         plan = std::move(candidate);
         return true;
     }
@@ -2056,8 +2061,8 @@ bool PipeSync::AdvanceReturningWaitForReplay(std::vector<DepOp>& plan, const Int
         if (!BuildReplayIssueOrder(candidate, order)) {
             continue;
         }
-        APASS_LOG_INFO_F(Elements::Operation, "Event reuse return wait: dependency (%zu,%zu) moves to (%zu,%zu).", set,
-                         wait, set, blocked);
+        APASS_LOG_DEBUG_F(Elements::Operation, "Event reuse return wait: dependency (%zu,%zu) moves to (%zu,%zu).", set,
+                          wait, set, blocked);
         plan = std::move(candidate);
         return true;
     }
@@ -2129,7 +2134,7 @@ bool PipeSync::AddReturningDependencyForReplay(std::vector<DepOp>& plan, const I
         if (!BuildReplayIssueOrder(candidate, order)) {
             continue;
         }
-        APASS_LOG_INFO_F(Elements::Operation, "Event reuse directed return: dependency (%zu,%zu).", consumer, blocked);
+        APASS_LOG_DEBUG_F(Elements::Operation, "Event reuse directed return: dependency (%zu,%zu).", consumer, blocked);
         plan = std::move(candidate);
         return true;
     }
@@ -2155,8 +2160,11 @@ void PipeSync::ResetForReplay(const std::vector<DepOp>& plan, const std::vector<
     eventState_ = EventInstanceTracker{};
     reclaimBarriers_.clear();
     freeEventId_.clear();
+    // Replay rebuilds the entire emitted stream; no cross-core proof from the old stream survives.
     crossCoreFreeEventId_.clear();
     crossCoreEventSenders_.fill(std::nullopt);
+    crossCoreCompletedSenders_.fill(std::nullopt);
+    crossCoreWaitGenerations_ = {};
     crossCoreGenerations_.fill(0);
     crossCoreConsumed_.clear();
     crossCoreSnapshots_.clear();
@@ -2384,9 +2392,9 @@ Status PipeSync::MergePendingDependencies(int set1, int wait1, int set2, int wai
     for (auto waitIdx : depOps_[set2].setPipe) {
         originalDeps.emplace(waitIdx, depOps_[waitIdx]);
     }
-    APASS_LOG_INFO_F(Elements::Operation,
-                     "Event reuse pending merge: (%d,%d), id=%d and (%d,%d), id=%d become (%d,%d).", set1, wait1,
-                     eventId1, set2, wait2, eventId2, set2, wait1);
+    APASS_LOG_DEBUG_F(Elements::Operation,
+                      "Event reuse pending merge: (%d,%d), id=%d and (%d,%d), id=%d become (%d,%d).", set1, wait1,
+                      eventId1, set2, wait2, eventId2, set2, wait1);
     RemoveOpDep(depOps_[set1], depOps_[wait1]);
     RemoveOpDep(depOps_[set2], depOps_[wait2]);
     if (AddOpDep(depOps_[set2], depOps_[wait1]) != SUCCESS) {
@@ -2697,7 +2705,7 @@ Status PipeSync::GetEventId(const PipePairEx& pp, int& eventId, size_t setIdx, s
                                         AIVCore::AIV0 ?
                                     0 :
                                     1;
-            RefreshCrossCoreEventIds(pp.first, pool, crossCoreConsumed_[pp.first]);
+            RefreshCrossCoreEventIds(pp.first, pool, crossCoreConsumed_[pp.first], setIdx);
             if (cvEventIdQ.empty()) {
                 // InjectSync reserves the whole output group before emitting input waits.
                 // Draining here could cancel sets after those waits have already committed.
@@ -2800,9 +2808,9 @@ bool PipeSync::HasReclaimCapacity(size_t blockedIdx, size_t boundary, const Pipe
                               {target.pipeStart, target.core, target.aivCore}};
         required += pair == pp ? 1 : 0;
     }
-    APASS_LOG_INFO_F(Elements::Operation,
-                     "Event reuse prefix drain: blocked=%zu, boundary=%zu, covered=%zu, available=%zu, required=%zu.",
-                     blockedIdx, boundary, covered, available, required);
+    APASS_LOG_DEBUG_F(Elements::Operation,
+                      "Event reuse prefix drain: blocked=%zu, boundary=%zu, covered=%zu, available=%zu, required=%zu.",
+                      blockedIdx, boundary, covered, available, required);
     return covered != 0 && available >= required;
 }
 
@@ -2981,7 +2989,15 @@ Status PipeSync::GetCrossCoreBarrierBoundary(size_t idx, size_t instructionCount
 
 bool PipeSync::UseCrossCoreProof() const
 {
+    // A5 opts into proof-based reuse and the local handshake. Other architectures keep their legacy policy.
     return enableLocalCrossCoreBarrier_ && Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510;
+}
+
+CoreType PipeSync::GetCrossCoreHandshakeSender(int eventId) const
+{
+    // A pending set is removed by the drain. Its direction must not replace
+    // the last signal whose wait remains in the emitted prefix.
+    return crossCoreCompletedSenders_[eventId].value_or(*crossCoreEventSenders_[eventId]);
 }
 
 void PipeSync::MergeCrossCoreProof(CrossCoreClock& clock, const CrossCoreSnapshot& snapshot)
@@ -3022,19 +3038,52 @@ bool PipeSync::CanReuseCrossCoreEventId(int eventId, const CrossCoreClock& clock
             (crossCoreGenerations_[eventId] != 0 && clock[eventId] == crossCoreGenerations_[eventId]));
 }
 
-void PipeSync::RefreshCrossCoreEventIds(const PipeCoreRealEx& source, size_t pool, const CrossCoreClock& clock)
+bool PipeSync::CanOrderCrossCoreWaits(int eventId, size_t idx, size_t pool) const
+{
+    if (crossCoreWaitGenerations_[0][eventId] == 0 && crossCoreWaitGenerations_[1][eventId] == 0) {
+        return true; // No earlier wait in either direction needs ordering.
+    }
+    const auto& current = depOps_[idx].selfPipeCore;
+    for (size_t consumer : depOps_[idx].setPipe) {
+        const auto& target = depOps_[consumer].selfPipeCore;
+        if (current.core == target.core) {
+            continue;
+        }
+        const auto vector = current.core == CoreType::AIV ? current.aivCore : target.aivCore;
+        if ((vector == AIVCore::AIV0 ? 0U : 1U) != pool) {
+            continue;
+        }
+        const auto generation = crossCoreWaitGenerations_[static_cast<size_t>(target.core)][eventId];
+        if (generation == 0) {
+            continue;
+        }
+        const PipeCoreRealEx receivingPipe(target.pipeStart, target.core, target.aivCore);
+        const auto known = crossCoreConsumed_.find(receivingPipe);
+        // Do not use the new set->wait edge to prove that wait's own ordering.
+        // Otherwise a different receiving pipe can consume an older signal.
+        if (known == crossCoreConsumed_.end() || known->second[eventId] < generation) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void PipeSync::RefreshCrossCoreEventIds(const PipeCoreRealEx& source, size_t pool, const CrossCoreClock& clock,
+                                        size_t idx)
 {
     auto& queue = crossCoreFreeEventId_[source][source.core == CoreType::AIC ? pool : 0];
     const int base = static_cast<int>(pool) * CROSS_CORE_EVENT_NUM;
     queue.erase(std::remove_if(queue.begin(), queue.end(),
                                [&](int id) {
                                    return id < base || id >= base + CROSS_CORE_EVENT_NUM ||
-                                          !CanReuseCrossCoreEventId(id, clock);
+                                          !CanReuseCrossCoreEventId(id, clock) ||
+                                          !CanOrderCrossCoreWaits(id, idx, pool);
                                }),
                 queue.end());
     // Keep fresh IDs in FIFO order. Reusable IDs are appended deterministically.
     for (int id = base; id < base + CROSS_CORE_EVENT_NUM; ++id) {
-        if (crossCoreEventSenders_[id].has_value() && CanReuseCrossCoreEventId(id, clock)) {
+        if (crossCoreEventSenders_[id].has_value() && CanReuseCrossCoreEventId(id, clock) &&
+            CanOrderCrossCoreWaits(id, idx, pool)) {
             PushEventIdIfAbsent(queue, id);
         }
     }
@@ -3056,12 +3105,19 @@ Status PipeSync::PlanCrossCoreBarriers(size_t idx, const std::array<size_t, NUM2
         if (demand[pool] == 0) {
             continue;
         }
-        RefreshCrossCoreEventIds(source, pool, projected);
+        RefreshCrossCoreEventIds(source, pool, projected, idx);
         if (demand[pool] <= crossCoreFreeEventId_[source][current.core == CoreType::AIC ? pool : 0].size()) {
             continue;
         }
         ++plan.localCount;
         ++exhaustedPools;
+        const bool scalarWaits = std::all_of(
+            depOps_[idx].setPipe.begin(), depOps_[idx].setPipe.end(), [&](size_t consumer) {
+                const auto& target = depOps_[consumer].selfPipeCore;
+                const auto vector = current.core == CoreType::AIV ? current.aivCore : target.aivCore;
+                return current.core == target.core || target.pipeStart == PIPE_S ||
+                       (vector == AIVCore::AIV0 ? 0U : 1U) != pool;
+            });
         const int base = static_cast<int>(pool) * CROSS_CORE_EVENT_NUM;
         for (int id = base; id < base + CROSS_CORE_EVENT_NUM; ++id) {
             if (!crossCoreEventSenders_[id].has_value() ||
@@ -3069,7 +3125,8 @@ Status PipeSync::PlanCrossCoreBarriers(size_t idx, const std::array<size_t, NUM2
                 continue;
             }
             // H remains available only on its final receiving S pipe, ordered after the final wait.
-            const bool canUseHandshake = source.pipe == PIPE_S && source.core != *crossCoreEventSenders_[id];
+            const bool canUseHandshake = source.pipe == PIPE_S && source.core != GetCrossCoreHandshakeSender(id) &&
+                                         scalarWaits;
             if (demand[pool] <= CROSS_CORE_EVENT_NUM - 1 + static_cast<size_t>(canUseHandshake)) {
                 plan.handshakeIds[pool] = id;
                 break;
@@ -3128,6 +3185,9 @@ Status PipeSync::EnsureCrossCoreCapacity(Function& function, size_t idx, std::ve
             return FAILED;
         }
         if (plan.globalBarrier) {
+            APASS_LOG_DEBUG_F(
+                Elements::Operation, "Inserting global cross-core barrier before op %zu: %s; pool demand %zu/%zu.", idx,
+                plan.localCount > 1 ? "both pools exhausted" : "no eligible handshake ID", demand[0], demand[1]);
             if (AddGlobalCrossCoreBarrier(function, idx, insertIdx, syncedOpLog) != SUCCESS) {
                 return FAILED;
             }
@@ -3173,6 +3233,8 @@ Status PipeSync::AddGlobalCrossCoreBarrier(Function& function, size_t boundary, 
     }
     InitCVEventIdQ();
     crossCoreEventSenders_.fill(std::nullopt);
+    crossCoreCompletedSenders_.fill(std::nullopt);
+    crossCoreWaitGenerations_ = {};
     crossCoreConsumed_.clear();
     crossCoreSnapshots_.clear();
     return SUCCESS;
@@ -3255,7 +3317,7 @@ Status PipeSync::AddLocalCrossCoreBarrier(Function& function, size_t boundary, s
     emit(Opcode::OP_BAR_ALL, cubeSet, cubeWait);
     emit(Opcode::OP_BAR_ALL, vectorSet, vectorWait);
     // Reverse the old sender first; the return hop uses H in its old direction.
-    const bool oldCubeSender = *crossCoreEventSenders_[eventId] == CoreType::AIC;
+    const bool oldCubeSender = GetCrossCoreHandshakeSender(eventId) == CoreType::AIC;
     const auto firstSet = oldCubeSender ? vectorSet : cubeSet;
     const auto firstWait = oldCubeSender ? cubeWait : vectorWait;
     const auto returnSet = oldCubeSender ? cubeSet : vectorSet;
@@ -3314,10 +3376,16 @@ Status PipeSync::ResetCrossCorePool(size_t pool, int handshakeId, std::vector<In
     }
     const int base = static_cast<int>(pool) * CROSS_CORE_EVENT_NUM;
     const auto vector = pool == 0 ? AIVCore::AIV0 : AIVCore::AIV1;
-    const auto finalReceiver = *crossCoreEventSenders_[handshakeId] == CoreType::AIC ? CoreType::AIV : CoreType::AIC;
+    const auto handshakeSender = GetCrossCoreHandshakeSender(handshakeId);
+    const auto finalReceiver = handshakeSender == CoreType::AIC ? CoreType::AIV : CoreType::AIC;
+    crossCoreEventSenders_[handshakeId] = handshakeSender;
+    crossCoreCompletedSenders_[handshakeId] = handshakeSender;
     auto clearPool = [base](CrossCoreClock& clock) {
         std::fill(clock.begin() + base, clock.begin() + base + CROSS_CORE_EVENT_NUM, 0);
     };
+    for (auto& clock : crossCoreWaitGenerations_) {
+        clearPool(clock);
+    }
     for (auto& [pipe, clock] : crossCoreConsumed_) {
         (void)pipe;
         clearPool(clock);
@@ -3327,9 +3395,13 @@ Status PipeSync::ResetCrossCorePool(size_t pool, int handshakeId, std::vector<In
         clearPool(snapshot.consumed);
     }
     crossCoreGenerations_[handshakeId] += NUM2;
-    const PipeCoreRealEx receivingPipe(PIPE_S, finalReceiver,
-                                       finalReceiver == CoreType::AIV ? vector : AIVCore::UNSPECIFIED);
-    crossCoreConsumed_[receivingPipe][handshakeId] = crossCoreGenerations_[handshakeId];
+    // Both handshake waits remain live; retain their ordering on the receiving S pipes.
+    for (auto core : {handshakeSender, finalReceiver}) {
+        const auto generation = crossCoreGenerations_[handshakeId] - (core == handshakeSender ? 1U : 0U);
+        crossCoreWaitGenerations_[static_cast<size_t>(core)][handshakeId] = generation;
+        const PipeCoreRealEx receivingPipe(PIPE_S, core, core == CoreType::AIV ? vector : AIVCore::UNSPECIFIED);
+        crossCoreConsumed_[receivingPipe][handshakeId] = generation;
+    }
     for (const auto& pipe : cvPipeCoreEx) {
         if (pipe.core != CoreType::AIC && pipe.aivCore != vector) {
             continue;
@@ -3345,6 +3417,7 @@ Status PipeSync::ResetCrossCorePool(size_t pool, int handshakeId, std::vector<In
     for (int id = base; id < base + CROSS_CORE_EVENT_NUM; ++id) {
         if (id != handshakeId) {
             crossCoreEventSenders_[id].reset();
+            crossCoreCompletedSenders_[id].reset();
         }
     }
     return SUCCESS;
@@ -4109,8 +4182,8 @@ void InsertSync::InsertPipeAll(Function* subGraphFunc)
 // regist pass
 Status InsertSync::RunOnFunction(Function& function)
 {
-    APASS_LOG_INFO_F(Elements::Operation,
-                     "===============================================================> Start InsertSync.");
+    APASS_LOG_DEBUG_F(Elements::Operation,
+                      "===============================================================> Start InsertSync.");
     if (cvHardSync_) {
         APASS_LOG_INFO_F(Elements::Operation,
                          "CvHardSync debug mode enabled, all cross-core syncs use 1C2V hard sync.");
@@ -4164,8 +4237,8 @@ Status InsertSync::RunOnFunction(Function& function)
         return FAILED;
     }
 
-    APASS_LOG_INFO_F(Elements::Operation,
-                     "===============================================================> Finish InsertSync.");
+    APASS_LOG_DEBUG_F(Elements::Operation,
+                      "===============================================================> Finish InsertSync.");
     return SUCCESS;
 }
 

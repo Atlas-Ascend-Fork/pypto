@@ -4281,6 +4281,63 @@ static size_t AppendLocalBarrierTestOp(PipeSync& ps, Function& function, const P
     return idx;
 }
 
+TEST_F(InsertSyncTest, A5HandshakeUsesSurvivingSenderAfterCancellingReverseGeneration)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    for (bool cubeFirst : {false, true}) {
+        for (auto vector : {AIVCore::AIV0, AIVCore::AIV1}) {
+            auto [root, leaf] = SetupDebugFunc("A5CancelledReverseHandshake");
+            PipeSync ps;
+            ps.InitCVEventIdQ();
+            const PipeSync::PipeCore sender = cubeFirst ?
+                                                  PipeSync::PipeCore(PIPE_FIX, PIPE_FIX, CoreType::AIC,
+                                                                     AIVCore::UNSPECIFIED) :
+                                                  PipeSync::PipeCore(PIPE_MTE3, PIPE_MTE3, CoreType::AIV, vector);
+            const PipeSync::PipeCore receiver = cubeFirst ?
+                                                    PipeSync::PipeCore(PIPE_MTE2, PIPE_MTE2, CoreType::AIV, vector) :
+                                                    PipeSync::PipeCore(PIPE_MTE1, PIPE_MTE1, CoreType::AIC,
+                                                                       AIVCore::UNSPECIFIED);
+            for (const auto& pipe : {sender, receiver, receiver, receiver, sender}) {
+                AppendLocalBarrierTestOp(ps, *leaf, pipe);
+            }
+            ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[1]), SUCCESS);
+            ASSERT_EQ(ps.AddOpDep(ps.depOps_[2], ps.depOps_[4]), SUCCESS);
+            std::vector<IndexOp> synced;
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 0, synced), SUCCESS);
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 1, synced), SUCCESS);
+            const int id = vector == AIVCore::AIV0 ? 0 : 16;
+            const PipeSync::PipeCoreRealEx reverseSource(receiver.pipeEnd, receiver.core, receiver.aivCore);
+            const PipeSync::PipeCoreRealEx reverseTarget(sender.pipeStart, sender.core, sender.aivCore);
+            // Isolate the consumed ID, whose return proof is available on the receiving pipe.
+            *ps.GetCrossCoreEventIdQPtr({reverseSource, reverseTarget}) = {id};
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 2, synced), SUCCESS);
+            ASSERT_EQ(ps.setWaitPairMap_.at({2, 4}), id);
+            ASSERT_EQ(*ps.crossCoreEventSenders_[id], receiver.core);
+            ASSERT_EQ(ps.NoWaitCVPairs_.size(), 1U);
+            auto* cancelledSet = ps.NoWaitCVPairs_.front().second;
+            uint64_t insertion = 3 * SEQUENCE_IDX - HALF_SEQUENCE_IDX - 32;
+            ASSERT_EQ(ps.AddLocalCrossCoreBarrier(*leaf, 3, vector == AIVCore::AIV0 ? 0 : 1, id, insertion, synced),
+                      SUCCESS);
+            std::vector<Operation*> handshake;
+            for (auto& entry : synced) {
+                auto* op = &entry.second.get();
+                if (ps.forceSyncOps_.count(op) && op->GetOpcode() == Opcode::OP_CV_SYNC_SRC) {
+                    handshake.push_back(op);
+                }
+            }
+            ASSERT_EQ(handshake.size(), 2U);
+            // The pending reverse set is removed. Reverse the last surviving sender instead.
+            EXPECT_EQ(handshake[0]->syncQueue_.coreType_, receiver.core);
+            EXPECT_EQ(handshake[1]->syncQueue_.coreType_, sender.core);
+            ASSERT_EQ(ps.ResetCrossCorePool(vector == AIVCore::AIV0 ? 0 : 1, id, synced), SUCCESS);
+            EXPECT_TRUE(cancelledSet->IsDeleted());
+            EXPECT_EQ(*ps.crossCoreEventSenders_[id], sender.core);
+            const PipeSync::PipeCoreRealEx finalReceiver(PIPE_S, receiver.core, receiver.aivCore);
+            EXPECT_TRUE(ps.CanReuseCrossCoreEventId(id, ps.crossCoreConsumed_[finalReceiver]));
+        }
+    }
+}
+
 TEST_F(InsertSyncTest, A5BarrierPreservesConsumedEdgesOtherPoolAndIntraCoreState)
 {
     NpuArchScope archScope(NPUArch::DAV_3510);
@@ -5084,3 +5141,186 @@ TEST_F(InsertSyncTest, A5CrossCoreDrainPreservesPendingIntraAndOtherCore)
 
 } // namespace tile_fwk
 } // namespace npu
+
+TEST_F(InsertSyncTest, A5CrossCoreReuseCannotLetAnotherWaitPipeStealSignal)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    using PipeCore = PipeSync::PipeCore;
+    for (bool cubeFirst : {false, true}) {
+        for (auto vector : {AIVCore::AIV0, AIVCore::AIV1}) {
+            for (bool sameWaitPipe : {false, true}) {
+                SCOPED_TRACE(::testing::Message() << "cubeFirst=" << cubeFirst << ", vector="
+                                                  << static_cast<int>(vector) << ", sameWaitPipe=" << sameWaitPipe);
+                auto [root, leaf] = SetupDebugFunc("A5CrossCoreWaitOrder");
+                PipeSync ps;
+                ps.InitCVEventIdQ();
+                const auto sender = cubeFirst ? PipeCore(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED) :
+                                                PipeCore(PIPE_V, PIPE_V, CoreType::AIV, vector);
+                const auto receiver = cubeFirst ? PipeCore(PIPE_V, PIPE_V, CoreType::AIV, vector) :
+                                                  PipeCore(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED);
+                const auto nextSender = cubeFirst ?
+                                            PipeCore(PIPE_MTE1, PIPE_MTE1, CoreType::AIC, AIVCore::UNSPECIFIED) :
+                                            PipeCore(PIPE_MTE3, PIPE_MTE3, CoreType::AIV, vector);
+                const auto targetPipe = sameWaitPipe ? receiver.pipeStart : (cubeFirst ? PIPE_MTE2 : PIPE_MTE1);
+                const PipeCore nextReceiver(targetPipe, targetPipe, receiver.core, receiver.aivCore);
+                for (const auto& pipe : {sender, receiver, receiver, nextSender, nextSender, nextReceiver}) {
+                    AppendLocalBarrierTestOp(ps, *leaf, pipe);
+                }
+                for (size_t i : {0U, 2U, 4U}) {
+                    ASSERT_EQ(ps.AddOpDep(ps.depOps_[i], ps.depOps_[i + 1]), SUCCESS);
+                }
+                std::vector<IndexOp> synced;
+                for (size_t i = 0; i < 4; ++i) {
+                    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, i, synced), SUCCESS);
+                }
+                const int id = ps.setWaitPairMap_.at({0, 1});
+                const PipeSync::PipeCoreRealEx source(nextSender.pipeEnd, nextSender.core, nextSender.aivCore);
+                const PipeSync::PipeCoreRealEx target(targetPipe, receiver.core, receiver.aivCore);
+                *ps.GetCrossCoreEventIdQPtr({source, target}) = {id};
+                ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 4, synced), SUCCESS);
+                const int reused = ps.setWaitPairMap_.at({4, 5});
+                EXPECT_TRUE(ps.forceSyncOps_.empty());
+                if (sameWaitPipe) {
+                    EXPECT_EQ(reused, id);
+                } else {
+                    // Reject the unordered wait; reuse the proven return ID without draining.
+                    EXPECT_NE(reused, id);
+                    EXPECT_EQ(reused, ps.setWaitPairMap_.at({2, 3}));
+                }
+            }
+        }
+    }
+}
+
+TEST_F(InsertSyncTest, A5HandshakeIdCanBeReusedAndDrainedAgain)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    using PipeCore = PipeSync::PipeCore;
+    for (bool cubeFirst : {false, true}) {
+        for (auto vector : {AIVCore::AIV0, AIVCore::AIV1}) {
+            auto [root, leaf] = SetupDebugFunc("A5HandshakeSecondLifetime");
+            PipeSync ps;
+            ps.InitCVEventIdQ();
+            const auto sender = cubeFirst ? PipeCore(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED) :
+                                            PipeCore(PIPE_MTE3, PIPE_MTE3, CoreType::AIV, vector);
+            const auto receiver = cubeFirst ? PipeCore(PIPE_S, PIPE_S, CoreType::AIV, vector) :
+                                              PipeCore(PIPE_S, PIPE_S, CoreType::AIC, AIVCore::UNSPECIFIED);
+            const PipeCore reverseReceiver(PIPE_S, PIPE_S, sender.core, sender.aivCore);
+            for (const auto& pipe : {sender, receiver, receiver, reverseReceiver, sender, receiver}) {
+                AppendLocalBarrierTestOp(ps, *leaf, pipe);
+            }
+            for (size_t i : {0U, 2U, 4U}) {
+                ASSERT_EQ(ps.AddOpDep(ps.depOps_[i], ps.depOps_[i + 1]), SUCCESS);
+            }
+            std::vector<IndexOp> synced;
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 0, synced), SUCCESS);
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 1, synced), SUCCESS);
+            const int id = ps.setWaitPairMap_.at({0, 1});
+            const size_t pool = vector == AIVCore::AIV0 ? 0 : 1;
+            uint64_t insertion = 2 * SEQUENCE_IDX - HALF_SEQUENCE_IDX - 32;
+            ASSERT_EQ(ps.AddLocalCrossCoreBarrier(*leaf, 2, pool, id, insertion, synced), SUCCESS);
+            ASSERT_EQ(ps.ResetCrossCorePool(pool, id, synced), SUCCESS);
+            const PipeSync::PipeCoreRealEx reverseSource(PIPE_S, receiver.core, receiver.aivCore);
+            const PipeSync::PipeCoreRealEx reverseTarget(PIPE_S, sender.core, sender.aivCore);
+            *ps.GetCrossCoreEventIdQPtr({reverseSource, reverseTarget}) = {id};
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 2, synced), SUCCESS);
+            EXPECT_EQ(ps.setWaitPairMap_.at({2, 3}), id);
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 3, synced), SUCCESS);
+            EXPECT_EQ(ps.GetCrossCoreHandshakeSender(id), receiver.core);
+            insertion = 4 * SEQUENCE_IDX - HALF_SEQUENCE_IDX - 32;
+            ASSERT_EQ(ps.AddLocalCrossCoreBarrier(*leaf, 4, pool, id, insertion, synced), SUCCESS);
+            ASSERT_EQ(ps.ResetCrossCorePool(pool, id, synced), SUCCESS);
+            EXPECT_EQ(ps.crossCoreGenerations_[id], 6U);
+            EXPECT_EQ(ps.GetCrossCoreHandshakeSender(id), receiver.core);
+            const PipeSync::PipeCoreRealEx finalReceiver(PIPE_S, sender.core, sender.aivCore);
+            EXPECT_TRUE(ps.CanReuseCrossCoreEventId(id, ps.crossCoreConsumed_[finalReceiver]));
+        }
+    }
+}
+
+TEST_F(InsertSyncTest, A5HandshakeWaitHistoryRejectsUnorderedReceivingPipe)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    using PipeCore = PipeSync::PipeCore;
+    for (bool cubeFirst : {false, true}) {
+        for (auto vector : {AIVCore::AIV0, AIVCore::AIV1}) {
+            SCOPED_TRACE(::testing::Message() << "cubeFirst=" << cubeFirst << ", vector=" << static_cast<int>(vector));
+            auto [root, leaf] = SetupDebugFunc("ReviewHandshakeWaitHistory");
+            PipeSync ps;
+            ps.InitCVEventIdQ();
+            const auto sender = cubeFirst ? PipeCore(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED) :
+                                            PipeCore(PIPE_MTE3, PIPE_MTE3, CoreType::AIV, vector);
+            const auto receiver = cubeFirst ? PipeCore(PIPE_S, PIPE_S, CoreType::AIV, vector) :
+                                              PipeCore(PIPE_S, PIPE_S, CoreType::AIC, AIVCore::UNSPECIFIED);
+            const auto newReceiver = cubeFirst ? PipeCore(PIPE_V, PIPE_V, CoreType::AIV, vector) :
+                                                 PipeCore(PIPE_MTE1, PIPE_MTE1, CoreType::AIC, AIVCore::UNSPECIFIED);
+            for (const auto& pipe : {sender, receiver, sender, newReceiver}) {
+                AppendLocalBarrierTestOp(ps, *leaf, pipe);
+            }
+            ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[1]), SUCCESS);
+            ASSERT_EQ(ps.AddOpDep(ps.depOps_[2], ps.depOps_[3]), SUCCESS);
+            std::vector<IndexOp> synced;
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 0, synced), SUCCESS);
+            ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, 1, synced), SUCCESS);
+            const int id = ps.setWaitPairMap_.at({0, 1});
+            const size_t pool = vector == AIVCore::AIV0 ? 0 : 1;
+            uint64_t insertion = 2 * SEQUENCE_IDX - HALF_SEQUENCE_IDX - 32;
+            ASSERT_EQ(ps.AddLocalCrossCoreBarrier(*leaf, 2, pool, id, insertion, synced), SUCCESS);
+            ASSERT_EQ(ps.ResetCrossCorePool(pool, id, synced), SUCCESS);
+            // The final handshake wait is on PIPE_S, but the next receiving pipe
+            // has no dependency ordering it after that wait. It must not steal H.
+            EXPECT_EQ(ps.crossCoreWaitGenerations_[static_cast<size_t>(receiver.core)][id],
+                      ps.crossCoreGenerations_[id]);
+            EXPECT_EQ(ps.crossCoreWaitGenerations_[static_cast<size_t>(sender.core)][id],
+                      ps.crossCoreGenerations_[id] - 1);
+            EXPECT_FALSE(ps.CanOrderCrossCoreWaits(id, 2, pool));
+        }
+    }
+}
+
+TEST_F(InsertSyncTest, A5FullPoolHandshakeRequiresOrderedReceivingPipes)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    using PipeCore = PipeSync::PipeCore;
+    for (bool cubeFirst : {false, true}) {
+        for (auto vector : {AIVCore::AIV0, AIVCore::AIV1}) {
+            for (bool scalarWait : {false, true}) {
+                SCOPED_TRACE(::testing::Message() << "cubeFirst=" << cubeFirst << ", vector="
+                                                  << static_cast<int>(vector) << ", scalarWait=" << scalarWait);
+                auto [root, leaf] = SetupDebugFunc("A5FullPoolHandshakeWaitOrder");
+                PipeSync ps;
+                ps.InitCVEventIdQ();
+                const auto sender = cubeFirst ? PipeCore(PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED) :
+                                                PipeCore(PIPE_MTE3, PIPE_MTE3, CoreType::AIV, vector);
+                const auto receiver = cubeFirst ? PipeCore(PIPE_S, PIPE_S, CoreType::AIV, vector) :
+                                                  PipeCore(PIPE_S, PIPE_S, CoreType::AIC, AIVCore::UNSPECIFIED);
+                const PipeCore target(scalarWait ? PIPE_S : sender.pipeStart, scalarWait ? PIPE_S : sender.pipeStart,
+                                      sender.core, sender.aivCore);
+                std::vector<size_t> producers;
+                for (int i = 0; i < PipeSync::CROSS_CORE_EVENT_NUM; ++i) {
+                    producers.push_back(AppendLocalBarrierTestOp(ps, *leaf, sender));
+                }
+                const size_t boundary = AppendLocalBarrierTestOp(ps, *leaf, receiver);
+                for (auto producer : producers) {
+                    const auto wait = AppendLocalBarrierTestOp(ps, *leaf, receiver);
+                    ASSERT_EQ(ps.AddOpDep(ps.depOps_[producer], ps.depOps_[wait]), SUCCESS);
+                }
+                for (int i = 0; i < PipeSync::CROSS_CORE_EVENT_NUM; ++i) {
+                    const auto wait = AppendLocalBarrierTestOp(ps, *leaf, target);
+                    // Exercise the capacity limit directly; AddOpDep normally coalesces same-pipe consumers.
+                    ps.depOps_[boundary].setPipe.push_back(wait);
+                    ps.depOps_[wait].waitPipe.push_back(boundary);
+                }
+                std::vector<IndexOp> synced;
+                for (auto producer : producers) {
+                    ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, producer, synced), SUCCESS);
+                }
+                ASSERT_EQ(ps.InjectSync(*leaf, ps.oriOpList_, boundary, synced), SUCCESS);
+                EXPECT_EQ(ps.forceSyncOps_.size(), scalarWait ? 6U : 12U);
+                for (auto wait : ps.depOps_[boundary].setPipe) {
+                    EXPECT_GE(ps.setWaitPairMap_.at({boundary, wait}), 0);
+                }
+            }
+        }
+    }
+}

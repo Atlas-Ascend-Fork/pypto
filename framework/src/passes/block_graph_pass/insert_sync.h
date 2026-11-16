@@ -296,10 +296,12 @@ private:
         bool globalBarrier{false};
     };
     bool UseCrossCoreProof() const;
+    CoreType GetCrossCoreHandshakeSender(int eventId) const;
     static void MergeCrossCoreProof(CrossCoreClock& clock, const CrossCoreSnapshot& snapshot);
     CrossCoreClock ProjectCrossCoreConsumption(size_t idx) const;
     bool CanReuseCrossCoreEventId(int eventId, const CrossCoreClock& clock) const;
-    void RefreshCrossCoreEventIds(const PipeCoreRealEx& source, size_t pool, const CrossCoreClock& clock);
+    bool CanOrderCrossCoreWaits(int eventId, size_t idx, size_t pool) const;
+    void RefreshCrossCoreEventIds(const PipeCoreRealEx& source, size_t pool, const CrossCoreClock& clock, size_t idx);
     Status PlanCrossCoreBarriers(size_t idx, const std::array<size_t, NUM2>& demand, CrossCoreBarrierPlan& plan);
     Status EnsureCrossCoreCapacity(Function& function, size_t idx, std::vector<IndexOp>& syncedOpLog);
     Status GetCrossCoreBarrierBoundary(size_t idx, size_t instructionCount, const std::vector<IndexOp>& syncedOpLog,
@@ -336,6 +338,7 @@ private:
     EventInstanceTracker eventState_;
 
     // set pipe可用的eventid
+    // AIC queues use the target pool index; AIV queues use index 0 and carry pool-offset IDs.
     std::unordered_map<PipeCoreRealEx, std::array<std::deque<int>, NUM2>, PipeCoreRealExHash> crossCoreFreeEventId_;
     std::vector<std::pair<std::pair<size_t, size_t>, Operation*>> NoWaitCVPairs_;
 
@@ -349,7 +352,12 @@ private:
 
     // Both directions share each physical slot. Proofs refer to a specific set generation.
     std::array<std::optional<CoreType>, CROSS_CORE_EVENT_NUM * NUM2> crossCoreEventSenders_{};
+    // Pending reverse generations may be cancelled; retain the last surviving direction.
+    std::array<std::optional<CoreType>, CROSS_CORE_EVENT_NUM * NUM2> crossCoreCompletedSenders_{};
     CrossCoreClock crossCoreGenerations_{};
+    // Last inserted wait per receiving core, conservatively using the current slot generation.
+    // This is compile-time bookkeeping, not a record of hardware completion.
+    std::array<CrossCoreClock, NUM2> crossCoreWaitGenerations_{};
     std::unordered_map<PipeCoreRealEx, CrossCoreClock, PipeCoreRealExHash> crossCoreConsumed_;
     std::unordered_map<std::pair<size_t, size_t>, CrossCoreSnapshot, IndexVecHash> crossCoreSnapshots_;
     bool enableLocalCrossCoreBarrier_{true};
