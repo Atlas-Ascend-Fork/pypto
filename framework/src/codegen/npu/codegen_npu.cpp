@@ -190,7 +190,13 @@ void CodeGenNPU::GenDDRChecker(std::ostringstream& oss) const
     }
 
     std::string checkFunc = R"!!!(
-inline __aicore__ void  CheckInvalidAccessOfDDR(uint64_t ddr_size, uint64_t access_offset, uint64_t access_extent, uint32_t read_or_write) {
+template <typename... ValidDims>
+inline __aicore__ void CheckInvalidAccessOfDDR(uint64_t ddr_size, uint64_t access_offset, uint64_t access_extent,
+                                             uint32_t read_or_write, ValidDims... valid_dims) {
+    // A copy with any zero valid dimension does not access GM.
+    if (((valid_dims == 0) || ...)) {
+        return;
+    }
     if (access_offset < 0 || access_offset + access_extent > ddr_size) {
         if (read_or_write == 1) {
             trap();

@@ -921,9 +921,16 @@ std::string CodeGenOpNPU::GenGmCheck() const
     std::string gmTotalSize = SymbolicExpressionTable::BuildExpression(checkInfo->totalSize.GetSpecifiedValue());
     std::string rw = checkInfo->accessType == GmOutOfRangeCheckInfo::AccessType::READ_GM ? "1" : "0";
 
-    std::ostringstream os;
-    os << "CheckInvalidAccessOfDDR" << WrapParamByParentheses({gmTotalSize, gmOffset, gmExtent, rw}) << STMT_END;
-    return os.str();
+    // Match the shape used by CodegenPreproc to compute the GM access range.
+    const auto& dynValidShape = attr->IsCopyOut() ? attr->GetFromDynValidShape() : attr->GetToDynValidShape();
+    const auto& validShape = dynValidShape.empty() ? attr->GetShape() : dynValidShape;
+
+    std::vector<std::string> checkArgs{gmTotalSize, gmOffset, gmExtent, rw};
+    checkArgs.reserve(checkArgs.size() + validShape.size());
+    for (const auto& dim : validShape) {
+        checkArgs.push_back(SymbolicExpressionTable::BuildExpression(dim.GetSpecifiedValue()));
+    }
+    return "CheckInvalidAccessOfDDR" + WrapParamByParentheses(checkArgs) + STMT_END;
 }
 
 std::string CodeGenOpNPU::GenOpCode() const
