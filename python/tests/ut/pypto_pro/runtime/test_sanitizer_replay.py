@@ -17,11 +17,14 @@ import pypto_pro.runtime.sanitizer_replay as replay_module
 from pypto_pro.runtime.sanitizer_replay import (
     Detection,
     Finding,
+    MutexAccessRecord,
     PhaseAccessRecord,
     ReplayContext,
+    SyncAccessRecord,
     TileAccessRecord,
     check_phase_state_machine,
     check_tile_bounds,
+    pipe_name,
     run_replay,
 )
 import pytest
@@ -122,6 +125,79 @@ def test_phase_invalid_reads_preserve_round_until_final_consumer():
     assert all(f.kind == "PHASE_MISMATCH" and "store/move" in f.message for f in findings)
 
 
+@pytest.mark.parametrize("head_kind", [1, 3, 4], ids=["matmul", "bias", "mx"])
+@pytest.mark.parametrize("read_kind", [6, 8, 10], ids=["store", "move", "insert"])
+@pytest.mark.parametrize("same_line", [False, True], ids=["distinct-lines", "loop-lines"])
+def test_phase_software_initialization_recovers_after_mixed_read(head_kind, read_kind, same_line):
+    records = [
+        PhaseAccessRecord(op_kind=1, phase=1, acc_addr=0, line=10),
+        PhaseAccessRecord(op_kind=read_kind, phase=0, acc_addr=0, line=11),
+    ]
+    for index in range(30):
+        line = 20 if same_line else 20 + 2 * index
+        records.extend([
+            PhaseAccessRecord(op_kind=head_kind, phase=0, acc_addr=0, line=line),
+            PhaseAccessRecord(op_kind=read_kind, phase=0, acc_addr=0, line=line + 1),
+        ])
+    for findings in (check_phase_state_machine(records, _CTX), run_replay(records, _CTX)):
+        assert [(f.kind, f.location, f.hits) for f in findings] == [("PHASE_MISMATCH", "ut.py:11", 1)]
+        assert "store/move" in findings[0].message
+
+
+@pytest.mark.parametrize("write_phases", [(0, 1), (1, 0)])
+def test_phase_software_initialization_recovers_after_mixed_writes(write_phases):
+    records = [
+        PhaseAccessRecord(op_kind=kind, phase=phase, acc_addr=0, line=line)
+        for kind, phase, line in (
+            (1, write_phases[0], 10), (2, write_phases[1], 11),
+            (6, 0, 12), (8, 0, 13), (1, 0, 14), (6, 0, 15),
+            (1, 2, 16), (8, 2, 17),
+        )
+    ]
+    findings = check_phase_state_machine(records, _CTX)
+    assert [f.location for f in findings] == ["ut.py:11", "ut.py:12", "ut.py:13"]
+    assert "matmul ops mix" in findings[0].message
+    assert all("store/move" in f.message for f in findings[1:])
+
+
+@pytest.mark.parametrize("steps,expected", [
+    ([(1, 1), (2, 0), (6, 0)], [11, 12]),
+    ([(1, 1), (6, 0), (2, 0), (6, 0)], [11, 12, 13]),
+    ([(1, 1), (6, 0), (5, 0), (6, 0)], [11, 12, 13]),
+    ([(1, 1), (6, 0), (2, 1), (1, 0), (6, 0)], [11, 13, 14]),
+], ids=["no-read", "accumulate", "mx-accumulate", "intervening-write"])
+def test_phase_software_recovery_requires_read_then_initialization(steps, expected):
+    records = [PhaseAccessRecord(op_kind=kind, phase=phase, acc_addr=0, line=10 + index)
+               for index, (kind, phase) in enumerate(steps)]
+    findings = check_phase_state_machine(records, _CTX)
+    assert [f.location for f in findings] == [f"ut.py:{line}" for line in expected]
+    assert all(f.kind == "PHASE_MISMATCH" for f in findings)
+
+
+@pytest.mark.parametrize("other", [{"acc_addr": 1}, {"region": 1}], ids=["address", "region"])
+def test_phase_software_recovery_cannot_use_another_timeline_read(other):
+    records = [
+        PhaseAccessRecord(op_kind=1, phase=1, acc_addr=0, line=10),
+        PhaseAccessRecord(op_kind=6, phase=0, acc_addr=0, line=11)._replace(**other),
+        PhaseAccessRecord(op_kind=1, phase=0, acc_addr=0, line=12),
+        PhaseAccessRecord(op_kind=6, phase=0, acc_addr=0, line=13),
+    ]
+    findings = check_phase_state_machine(records, _CTX)
+    assert [f.location for f in findings] == ["ut.py:12", "ut.py:13"]
+    assert all(f.kind == "PHASE_MISMATCH" for f in findings)
+
+
+def test_phase_software_recovery_preserves_unconsumed_final():
+    records = [PhaseAccessRecord(op_kind=kind, phase=phase, acc_addr=0, line=10 + index)
+               for index, (kind, phase) in enumerate([(1, 2), (6, 0), (1, 0), (6, 0)])]
+    findings = check_phase_state_machine(records, _CTX)
+    assert [(f.kind, f.location) for f in findings] == [
+        ("PHASE_DEADLOCK", "ut.py:10"), ("PHASE_MISMATCH", "ut.py:11"),
+        ("PHASE_MISMATCH", "ut.py:12"), ("PHASE_MISMATCH", "ut.py:13"),
+    ]
+    assert "Final write has no Final read" in findings[0].message
+
+
 def test_replay_keeps_distinct_findings_at_same_location(monkeypatch):
     """同一行的不同诊断都保留，完全重复项只折叠 hits。"""
     class _Record:
@@ -143,6 +219,77 @@ def test_replay_keeps_distinct_findings_at_same_location(monkeypatch):
         for f in findings
     )
     assert any(f.message == "contract mismatch" and f.hits == 1 for f in findings)
+
+
+@pytest.mark.parametrize("field,value", [
+    ("region", 2), ("event_id", 2), ("set_pipe", 2), ("wait_pipe", 0),
+])
+@pytest.mark.parametrize("kind", ["SYNC_UNPAIRED_DST", "SYNC_EVENT_REUSE", "SYNC_UNPAIRED_SRC"])
+def test_sync_aggregation_preserves_each_identity_field(field, value, kind):
+    first = SyncAccessRecord(event_id=1, set_pipe=1, wait_pipe=4, is_src=0, line=20, region=1)
+    second = first._replace(**{field: value})
+    if kind == "SYNC_UNPAIRED_SRC":
+        records = [first._replace(is_src=1), second._replace(is_src=1)]
+        expected_hits = [1, 1]
+    elif kind == "SYNC_EVENT_REUSE":
+        records = []
+        for record in (first, second, first):
+            records.extend([record._replace(is_src=1, line=10), record._replace(is_src=1), record])
+        expected_hits = [2, 1]
+    else:
+        records = [first, second, first]
+        expected_hits = [2, 1]
+    findings = run_replay(records, _CTX)
+    assert len(findings) == 2
+    assert [f.kind for f in findings] == [kind, kind]
+    assert [f.hits for f in findings] == expected_hits
+    for finding, record in zip(findings, (first, second)):
+        assert finding.group_key == (record.region, record.set_pipe, record.wait_pipe, record.event_id)
+        assert f"region={record.region}" in finding.message
+        assert f"event_id={record.event_id}" in finding.message
+        assert f"set_pipe={pipe_name(record.set_pipe)}" in finding.message
+        assert f"wait_pipe={pipe_name(record.wait_pipe)}" in finding.message
+    if expected_hits[0] == 2:
+        assert "hit 2 times" in findings[0].message
+
+
+def test_phase_aggregation_preserves_each_identity_field():
+    base = PhaseAccessRecord(op_kind=2, phase=1, acc_addr=0, acc_src_addr=-1, line=10, region=0)
+    records = [base, base._replace(acc_addr=0x200)]
+    findings = run_replay(records, _CTX)
+    assert len(findings) == 2
+    assert [f.group_key for f in findings] == [(0, 0), (0, 0x200)]
+    assert "0x0" in findings[0].message and "0x200" in findings[1].message
+    assert all("matmul_acc is the first write" in f.message for f in findings)
+
+
+@pytest.mark.parametrize("field,value", [("region", 1), ("mutex_id", 2), ("pipe", 2)])
+def test_mutex_aggregation_preserves_each_identity_field(field, value):
+    first = MutexAccessRecord(mutex_id=1, pipe=1, is_lock=0, line=20, region=0)
+    second = first._replace(**{field: value})
+    findings = run_replay([first, second], _CTX)
+    assert [f.kind for f in findings] == ["MUTEX_UNLOCK_BEFORE_LOCK", "MUTEX_UNLOCK_BEFORE_LOCK"]
+    assert [f.hits for f in findings] == [1, 1]
+    expected = [(0, 1, 1), (second.region, second.mutex_id, second.pipe)]
+    assert [f.group_key for f in findings] == expected
+
+
+def test_tile_bounds_aggregation_preserves_region_identity():
+    base = TileAccessRecord(dim_row=64, dim_col=64, off_row=100, off_col=0, acc_row=1, acc_col=1, line=20, region=0)
+    records = [base, base._replace(region=1)]
+    findings = run_replay(records, _CTX)
+    assert len(findings) == 2
+    assert [f.group_key for f in findings] == [(0,), (1,)]
+
+
+def test_sync_aggregation_keeps_different_locations_and_diagnoses():
+    record = SyncAccessRecord(event_id=1, set_pipe=1, wait_pipe=4, is_src=0, line=20, region=1)
+    records = [record, record._replace(line=21), record._replace(is_src=1), record._replace(is_src=1)]
+    findings = run_replay(records, _CTX)
+    assert {(f.kind, f.location, f.hits) for f in findings} == {
+        ("SYNC_UNPAIRED_DST", "ut.py:20", 1), ("SYNC_UNPAIRED_DST", "ut.py:21", 1),
+        ("SYNC_EVENT_REUSE", "ut.py:20", 1), ("SYNC_UNPAIRED_SRC", "ut.py:20", 1),
+    }
 
 
 def _acc_record(kind=2, phase=0, **changes):
@@ -448,3 +595,19 @@ def test_slice_address_wire_round_trip(layout, base_addr):
 def test_transfer_records_do_not_apply_slice_address_alignment():
     record = _slice_rec(0, 1, 16, 16, layout_kind=-1, base_addr=0, dtype_bits=4)
     assert check_tile_bounds([record], _CTX) == []
+
+def test_phase_deadlock_after_write_mix_uses_mode_not_flag_attribution():
+    """DL_FR→DL_MODE: a phased store after mixed writes reports the software/hardware
+    mode deadlock (not a flag-read attribution), pinning the equivalent replacement."""
+    records = [
+        PhaseAccessRecord(op_kind=1, phase=1, acc_addr=0, acc_src_addr=-1, line=10, region=0),
+        PhaseAccessRecord(op_kind=6, phase=0, acc_addr=0, acc_src_addr=-1, line=11, region=0),
+        PhaseAccessRecord(op_kind=1, phase=0, acc_addr=0, acc_src_addr=-1, line=12, region=0),
+        PhaseAccessRecord(op_kind=6, phase=2, acc_addr=0, acc_src_addr=-1, line=13, region=0),
+    ]
+    findings = run_replay(records, _CTX)
+    kinds = [f.kind for f in findings]
+    assert kinds == ["PHASE_MISMATCH", "PHASE_DEADLOCK"]
+    assert "waits for the hardware unit_flag" in findings[1].message
+    assert "waits for the unit_flag to clear" not in findings[1].message
+    assert "no Final write has set it" not in findings[1].message

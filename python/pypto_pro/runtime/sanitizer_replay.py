@@ -44,7 +44,7 @@ Detections:
 from __future__ import annotations
 
 import collections
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import struct
 from typing import Callable
 
@@ -85,6 +85,7 @@ class Finding:
     hint: str = ""
     level: str = "ERROR"
     hits: int = 1  # how many records raised this exact diagnostic
+    group_key: tuple[int, ...] = ()  # Detector-specific identity kept separate when counting repeated findings.
 
     def __str__(self) -> str:
         loc = f" at {self.location}" if self.location else ""
@@ -325,6 +326,7 @@ def _slice_unaligned_issue(rec: TileAccessRecord, ctx: ReplayContext) -> Finding
         f"L1 {Layout(rec.layout_kind).name} slice start [{rec.off_row}, {rec.off_col}] {detail}",
         ctx.location(rec.line),
         hint=hint,
+        group_key=(rec.region,),
     )
 
 
@@ -367,6 +369,7 @@ def check_tile_bounds(records: list[TileAccessRecord], ctx: ReplayContext) -> li
             message + " — " + "; ".join(violations),
             ctx.location(rec.line),
             hint=hint,
+            group_key=(rec.region,),
         ))
     return findings
 
@@ -402,6 +405,7 @@ def check_mutex_pairing(records: list[MutexAccessRecord], ctx: ReplayContext) ->
                     ctx.location(rec.line),
                     hint="A mutex key must alternate lock and unlock; do not lock "
                          "the same (region, mutex_id, pipe) twice",
+                    group_key=key,
                 ))
                 blocked.add(key)
                 pending.pop(key, None)
@@ -417,6 +421,7 @@ def check_mutex_pairing(records: list[MutexAccessRecord], ctx: ReplayContext) ->
                 ctx.location(rec.line),
                 hint="Every mutex_unlock must be paired with a mutex_lock on the "
                      "same (region, mutex_id, pipe)",
+                group_key=key,
             ))
     for key, lock_line in pending.items():
         region, mutex_id, pipe = key
@@ -427,6 +432,7 @@ def check_mutex_pairing(records: list[MutexAccessRecord], ctx: ReplayContext) ->
             ctx.location(lock_line),
             hint="Every mutex_lock must be followed by a mutex_unlock on the same "
                  "(region, mutex_id, pipe)",
+            group_key=key,
         ))
     return findings
 
@@ -575,6 +581,7 @@ class _PhaseAccState:
 
     seen_phased_write: bool = False
     seen_unspec_write: bool = False
+    seen_unspec_read: bool = False
     flag: int = _PHASE_EXPECT_WRITE
     flag_set_by: tuple[int, PhaseAccessRecord] | None = None
     kchain: _KChainState = field(default_factory=_KChainState)
@@ -588,7 +595,9 @@ class _PhaseRegionState:
     acc_states: dict[int, _PhaseAccState] = field(default_factory=dict)
 
 
-def _phase_issue(record_index: int, finding: Finding) -> _PhaseIssue:
+def _phase_issue(record_index: int, finding: Finding, rec: PhaseAccessRecord) -> _PhaseIssue:
+    # Every phase finding is identified by its (region, acc_addr) timeline.
+    finding.group_key = (rec.region, rec.acc_addr)
     return _PhaseIssue(finding, record_index)
 
 
@@ -616,7 +625,9 @@ def check_phase_state_machine(records: list[PhaseAccessRecord], ctx: ReplayConte
         if acc_state.blocked:
             continue
 
-        mode_result = _check_mode_transition(acc_state, token, ctx)
+        if token.is_write:
+            _close_or_recover_phase_round(acc_state, token)
+        mode_result = _check_round_write_mode_mix(acc_state, token, ctx)
         if mode_result.issue is not None:
             issues.append(mode_result.issue)
         if mode_result.fatal:
@@ -635,8 +646,8 @@ def check_phase_state_machine(records: list[PhaseAccessRecord], ctx: ReplayConte
         k_issue = _check_k_shape(acc_state, token, ctx)
         if k_issue is not None:
             issues.append(k_issue)
-        if not flag_result.fatal:
-            _close_phase_round_if_complete(acc_state, token)
+        if not flag_result.fatal and not token.is_write:
+            _close_or_recover_phase_round(acc_state, token)
         if flag_result.fatal:
             acc_state.blocked = True
             continue
@@ -685,7 +696,7 @@ def _check_in_place_acc_contract(token: _PhaseToken, ctx: ReplayContext) -> _Pha
         message = f"{tile_desc}: dst_tile and acc_tile differ in address: {addr_detail}"
     else:
         message = f"{tile_desc}: dst_tile and acc_tile differ in valid_shape: {shape_detail}"
-    return _phase_issue(token.record_index, Finding(
+    return _phase_issue(token.record_index, rec=token.record, finding=Finding(
         "PHASE_MISMATCH", message, ctx.location(rec.line),
         hint="dst_tile and acc_tile must be the same Tile",
     ))
@@ -694,7 +705,7 @@ def _check_in_place_acc_contract(token: _PhaseToken, ctx: ReplayContext) -> _Pha
 def _mode_mix_write_issue(token: _PhaseToken, tile_desc: str,
                            ctx: ReplayContext) -> _PhaseIssue:
     rec = token.record
-    return _phase_issue(token.record_index, Finding(
+    return _phase_issue(token.record_index, rec=token.record, finding=Finding(
         "PHASE_MISMATCH",
         f"{tile_desc}: matmul ops mix phase and phase-less writes on one block -- the "
         f"hardware unit_flag handshake and the software sync do not order against "
@@ -708,7 +719,7 @@ def _mode_mix_write_issue(token: _PhaseToken, tile_desc: str,
 def _mode_mix_read_issue(token: _PhaseToken, tile_desc: str,
                           ctx: ReplayContext) -> _PhaseIssue:
     rec = token.record
-    return _phase_issue(token.record_index, Finding(
+    return _phase_issue(token.record_index, rec=token.record, finding=Finding(
         "PHASE_MISMATCH",
         f"{tile_desc}: matmul uses phase (hardware unit_flag sync) while a store/move "
         f"on the same block omits STPhase (software sync) -- the two mechanisms mix "
@@ -719,7 +730,7 @@ def _mode_mix_read_issue(token: _PhaseToken, tile_desc: str,
     ))
 
 
-def _check_mode_transition(state: _PhaseAccState, token: _PhaseToken,
+def _check_round_write_mode_mix(state: _PhaseAccState, token: _PhaseToken,
                            ctx: ReplayContext) -> _PhaseCheckResult:
     """Check each operation against the writes in its current round."""
     rec = token.record
@@ -738,7 +749,7 @@ def _check_mode_transition(state: _PhaseAccState, token: _PhaseToken,
     elif not token.is_phased and state.seen_phased_write:
         issue = _mode_mix_read_issue(token, tile_desc, ctx)
     elif token.is_phased and state.seen_unspec_write and not state.seen_phased_write:
-        issue = _phase_issue(token.record_index, Finding(
+        issue = _phase_issue(token.record_index, rec=token.record, finding=Finding(
             "PHASE_DEADLOCK",
             f"{tile_desc}: a phase-less matmul uses software sync, but a phased "
             f"store/move waits for the hardware unit_flag that the matmul never sets",
@@ -759,7 +770,7 @@ def _check_flag_permission(state: _PhaseAccState, token: _PhaseToken,
     if token.is_write:
         if state.flag != _PHASE_EXPECT_WRITE:
             return _PhaseCheckResult(
-                _phase_issue(token.record_index, Finding(
+                _phase_issue(token.record_index, rec=token.record, finding=Finding(
                     "PHASE_DEADLOCK",
                     f"matmul write on {tile_desc} waits for the unit_flag to clear, but it is "
                     f"still set by an unconsumed Final write",
@@ -775,7 +786,7 @@ def _check_flag_permission(state: _PhaseAccState, token: _PhaseToken,
 
     if state.flag != _PHASE_EXPECT_READ:
         return _PhaseCheckResult(
-            _phase_issue(token.record_index, Finding(
+            _phase_issue(token.record_index, rec=token.record, finding=Finding(
                 "PHASE_DEADLOCK",
                 f"store/move read on {tile_desc} waits for the unit_flag to be set, but no "
                 f"Final write has set it",
@@ -812,7 +823,7 @@ def _check_k_shape(state: _PhaseAccState, token: _PhaseToken,
     issue = None
     if rec.op_kind in PHASE_ACC_KINDS:
         if not kchain.round_has_write:
-            issue = _phase_issue(token.record_index, Finding(
+            issue = _phase_issue(token.record_index, rec=token.record, finding=Finding(
                 "PHASE_MISMATCH",
                 f"matmul_acc is the first write of a chain on {tile_desc}: it accumulates "
                 f"onto leftover or uninitialized L0C data instead of overwriting it",
@@ -820,7 +831,7 @@ def _check_k_shape(state: _PhaseAccState, token: _PhaseToken,
                 hint="Start an in-place chain with matmul (overwrite), not matmul_acc",
             ))
     elif kchain.round_has_write and rec.op_kind in PHASE_BIAS_KINDS:
-        issue = _phase_issue(token.record_index, Finding(
+        issue = _phase_issue(token.record_index, rec=token.record, finding=Finding(
             "PHASE_MISMATCH",
             f"matmul_bias appears mid-chain on {tile_desc}: its L0C initialization "
             f"wipes the partial sums accumulated so far",
@@ -828,7 +839,7 @@ def _check_k_shape(state: _PhaseAccState, token: _PhaseToken,
             hint="matmul_bias is only valid as the first block of a K chain",
         ))
     elif kchain.round_has_write and rec.op_kind in PHASE_OVERWRITE_KINDS:
-        issue = _phase_issue(token.record_index, Finding(
+        issue = _phase_issue(token.record_index, rec=token.record, finding=Finding(
             "PHASE_MISMATCH",
             f"matmul appears mid-chain on {tile_desc}: its overwrite discards the "
             f"partial sums accumulated so far",
@@ -840,19 +851,31 @@ def _check_k_shape(state: _PhaseAccState, token: _PhaseToken,
     return issue
 
 
-def _close_phase_round_if_complete(state: _PhaseAccState, token: _PhaseToken) -> None:
-    """Reset mode/K-chain facts only after a result has a valid consumer."""
-    if token.is_write or state.flag != _PHASE_EXPECT_WRITE:
-        return
+def _close_or_recover_phase_round(state: _PhaseAccState, token: _PhaseToken) -> None:
+    """Close a complete round, or recover at a software initialization after a read."""
     rec = token.record
-    hardware_round_closed = token.is_phased and rec.phase == PHASE_FINAL
-    software_round_closed = (
-        not token.is_phased and state.seen_unspec_write and not state.seen_phased_write
-    )
-    if not (hardware_round_closed or software_round_closed):
-        return
+    if token.is_write:
+        software_restart = (
+            not token.is_phased and rec.op_kind not in PHASE_ACC_KINDS and state.seen_unspec_read
+        )
+        if token.is_phased:
+            state.seen_unspec_read = False
+        if not software_restart or state.flag != _PHASE_EXPECT_WRITE:
+            return
+    else:
+        if not token.is_phased and state.kchain.round_has_write:
+            state.seen_unspec_read = True
+        if state.flag != _PHASE_EXPECT_WRITE:
+            return
+        hardware_round_closed = token.is_phased and rec.phase == PHASE_FINAL
+        software_round_closed = (
+            not token.is_phased and state.seen_unspec_write and not state.seen_phased_write
+        )
+        if not (hardware_round_closed or software_round_closed):
+            return
     state.seen_phased_write = False
     state.seen_unspec_write = False
+    state.seen_unspec_read = False
     state.kchain = _KChainState()
 
 
@@ -862,7 +885,7 @@ def _terminal_flag_issue(state: _PhaseAccState, ctx: ReplayContext) -> _PhaseIss
         return None
     record_index, rec = state.flag_set_by
     tile_desc = f"region {rec.region}, Acc tile 0x{rec.acc_addr:x}"
-    return _phase_issue(record_index, Finding(
+    return _phase_issue(record_index, rec=rec, finding=Finding(
         "PHASE_DEADLOCK",
         f"{tile_desc} ends with the unit_flag still set: the Final write has no Final read "
         f"to consume it",
@@ -879,6 +902,12 @@ def _merge_phase_issues(issues: list[_PhaseIssue]) -> list[Finding]:
 # ===========================================================================
 # det 8 -- sync_src/sync_dst pairing (SYNC_*)
 # ===========================================================================
+
+
+def _sync_key_description(key: tuple[int, int, int, int]) -> str:
+    region, set_pipe, wait_pipe, event_id = key
+    return (f"region={region}, event_id={event_id}, set_pipe={pipe_name(set_pipe)}, "
+            f"wait_pipe={pipe_name(wait_pipe)}")
 
 
 def check_sync_pairing(records: list[SyncAccessRecord], ctx: ReplayContext) -> list[Finding]:
@@ -921,12 +950,12 @@ def check_sync_pairing(records: list[SyncAccessRecord], ctx: ReplayContext) -> l
             if not rec.is_src:
                 findings.append(Finding(
                     "SYNC_UNPAIRED_DST",
-                    f"sync_dst on region {rec.region}, {pipe_name(rec.set_pipe)} -> {pipe_name(rec.wait_pipe)}, "
-                    f"event_id {rec.event_id} waits for a flag no sync_src has set "
+                    f"sync_dst on {_sync_key_description(key)} waits for a flag no sync_src has set "
                     f"(deadlock: the wait never completes)",
                     ctx.location(rec.line),
                     hint="Every sync_dst must be preceded by a matching sync_src with the same "
                          "set_pipe, wait_pipe and event_id",
+                    group_key=key,
                 ))
                 # stay expecting src: this dst is still unmatched
             else:
@@ -936,26 +965,26 @@ def check_sync_pairing(records: list[SyncAccessRecord], ctx: ReplayContext) -> l
             if rec.is_src:
                 findings.append(Finding(
                     "SYNC_EVENT_REUSE",
-                    f"sync_src on region {rec.region}, {pipe_name(rec.set_pipe)} -> {pipe_name(rec.wait_pipe)}, "
-                    f"event_id {rec.event_id} fires again before the previous sync_dst "
+                    f"sync_src on {_sync_key_description(key)} fires again before the previous sync_dst "
                     f"consumed the event (the pending flag is overwritten)",
                     ctx.location(rec.line),
                     hint="The same event_id may only be reused after its sync_dst has "
                          "completed the wait",
+                    group_key=key,
                 ))
                 st[1] = rec.line  # the newest src is the pending one
             else:
                 st[0] = True
-    for (region, set_pipe, wait_pipe, event_id), (expecting_src, pending_src_line) in state.items():
+    for key, (expecting_src, pending_src_line) in state.items():
         if not expecting_src:
             findings.append(Finding(
                 "SYNC_UNPAIRED_SRC",
-                f"sync_src on region {region}, {pipe_name(set_pipe)} -> {pipe_name(wait_pipe)}, "
-                f"event_id {event_id} sets a flag no sync_dst waits for "
+                f"sync_src on {_sync_key_description(key)} sets a flag no sync_dst waits for "
                 f"(data race: the consumer runs unordered against the producer)",
                 ctx.location(pending_src_line),
                 hint="Every sync_src must be followed by a matching sync_dst with the same "
                      "set_pipe, wait_pipe and event_id",
+                group_key=key,
             ))
     return findings
 
@@ -1038,14 +1067,12 @@ def decode_regions(region_chunks: list[bytes]) -> list:
 
 
 def run_replay(records: list, ctx: ReplayContext) -> list[Finding]:
-    """Run every registered check over the decoded records.
+    """Run every registered check over the decoded records, then aggregate.
 
-    Records are bucketed by type once (the type is the det_id), so each
-    check receives only its own records. Repeats of the same diagnostic
-    (kind, location, hint) collapse with a count, while dynamic addresses in
-    the message do not turn one source defect into many reports. Different
-    diagnostics raised by the same source record remain visible through their
-    distinct hints.
+    Repeats of the same diagnostic (kind, location, hint, group_key) collapse
+    with a count: message text never participates, so dynamic addresses in the
+    message do not turn one source defect into many reports. Identity fields
+    must ride in group_key, not the message, for the same reason.
     """
     buckets: dict[type, list] = {}
     for rec in records:
@@ -1054,7 +1081,7 @@ def run_replay(records: list, ctx: ReplayContext) -> list[Finding]:
     for det in DETECTIONS:
         for f in det.check(buckets.get(det.record_cls, []), ctx):
             f.level = det.level
-            key = (f.kind, f.location, f.hint)
+            key = (f.kind, f.location, f.hint, f.group_key)
             if key in by_key:
                 by_key[key].hits += 1
             else:
@@ -1062,9 +1089,7 @@ def run_replay(records: list, ctx: ReplayContext) -> list[Finding]:
                 by_key[key] = f
     return [
         f if f.hits == 1
-        else Finding(f.kind, f"{f.message}  (same defect hit {f.hits} times "
-                                f"at this location)", f.location, f.hint, f.level,
-                     f.hits)
+        else replace(f, message=f"{f.message}  (same defect hit {f.hits} times at this location)")
         for f in by_key.values()
     ]
 
