@@ -100,16 +100,20 @@ For developers with Ascend devices, if you want to manually set up an Ascend env
         - Install the CANN toolkit package.
 
             ```bash
-            bash ./Ascend-cann-toolkit_${cann_version}_linux-${arch}.run --install --install-path=${install_path}
+            bash ./Ascend-cann-toolkit_${cann_version}_linux-${arch}.run --install --quiet --install-path=${install_path}
             ```
+
+            > **IMPORTANT**: The preceding command performs a silent installation with `--quiet`, which is suitable for unattended scripts or CI environments without an interactive terminal. Running the command indicates that you have read and accepted all terms of the End User License Agreement (EULA). To view the EULA before installation, remove the `--quiet` parameter to use interactive installation and continue as prompted.
 
         - Install the CANN ops package (dependency in the running state)
 
             The ops package is a dependency in the running state and does not need to be installed if you only compile PyPTO.
 
             ```bash
-            bash ./Ascend-cann-${soc_name}-ops_${cann_version}_linux-${arch}.run --install --install-path=${install_path}
+            bash ./Ascend-cann-${soc_name}-ops_${cann_version}_linux-${arch}.run --install --quiet --install-path=${install_path}
             ```
+
+            > **IMPORTANT**: Same as the toolkit package, running the command indicates that you have read and accepted all terms of the End User License Agreement (EULA). To view the EULA before installation, remove the `--quiet` parameter to use interactive installation.
 
         Variable description:
 

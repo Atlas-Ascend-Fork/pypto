@@ -100,16 +100,20 @@
         - 安装CANN toolkit包
 
             ```bash
-            bash ./Ascend-cann-toolkit_${cann_version}_linux-${arch}.run --install --install-path=${install_path}
+            bash ./Ascend-cann-toolkit_${cann_version}_linux-${arch}.run --install --quiet --install-path=${install_path}
             ```
+
+            > **重要**：上述命令使用`--quiet`进行静默安装，适用于无交互终端的场景。执行该命令即表示您已阅读并同意软件许可协议（EULA）的全部内容；如需在安装前查看EULA，请去掉`--quiet`参数使用交互式安装，按提示确认后继续。
 
         - 安装CANN ops包（运行态依赖）
 
             ops包是运行态依赖，若仅编译PyPTO，可不安装此包。
 
             ```bash
-            bash ./Ascend-cann-${soc_name}-ops_${cann_version}_linux-${arch}.run --install --install-path=${install_path}
+            bash ./Ascend-cann-${soc_name}-ops_${cann_version}_linux-${arch}.run --install --quiet --install-path=${install_path}
             ```
+
+            > **重要**：与toolkit包相同，执行该命令即表示您已阅读并同意软件许可协议（EULA）的全部内容；如需在安装前查看EULA，请去掉`--quiet`参数使用交互式安装。
 
         变量含义说明：
 
