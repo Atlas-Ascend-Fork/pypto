@@ -17,7 +17,7 @@
 
 #include <type_traits>
 
-#ifndef ASCENDC_CPU_DEBUG
+#ifndef PTO_CPU_DEBUG
 #include "impl/utils/sys_macros_impl.h"
 #include "impl/utils/common_types.h"
 #include "impl/utils/debug/pto_debug_types.h"
@@ -37,7 +37,7 @@
 
 namespace pypto::aicore {
 
-template <AscendC::Hardware hardware, typename T, typename U>
+template <pypto::Hardware hardware, typename T, typename U>
 __aicore__ inline void _set_dump_tlv_info(U src, __gm__ DumpTensorTlv* dumpTlv, uint32_t alignDumpLen, uint32_t desc,
                                           uint32_t dump_size)
 {
@@ -71,7 +71,7 @@ __aicore__ inline void _set_dump_shape_info(__gm__ Tlv* dumpTlv, const uint32_t 
     pto_entire_dcci(reinterpret_cast<__gm__ uint64_t*>(dumpTlv));
 }
 
-template <AscendC::Hardware hardware, typename T, typename U, typename Tlv>
+template <pypto::Hardware hardware, typename T, typename U, typename Tlv>
 __aicore__ inline uint32_t _set_dump_tlv_data(U src, __gm__ Tlv* dumpTlv, uint32_t alignDumpLen, uint32_t dump_size)
 {
     __gm__ T* dumpDstAddr = reinterpret_cast<__gm__ T*>(dumpTlv + 1);
@@ -79,55 +79,54 @@ __aicore__ inline uint32_t _set_dump_tlv_data(U src, __gm__ Tlv* dumpTlv, uint32
     if (dumpDstAddr == nullptr) {
         return 1;
     }
-    if (hardware == AscendC::Hardware::GM && src == nullptr) {
+    if (hardware == pypto::Hardware::GM && src == nullptr) {
         return 1;
     }
 
     sync_all();
     uint32_t ret = 0;
     uint32_t dumpLen = 0;
-    if constexpr (hardware == AscendC::Hardware::GM) {
+    if constexpr (hardware == pypto::Hardware::GM) {
         dumpLen = dump_size * sizeof(T);
         ret = mem_copy_gm_to_gm(reinterpret_cast<__gm__ uint8_t*>(dumpDstAddr),
                                 reinterpret_cast<__gm__ const uint8_t*>(src), dumpLen);
-    } else if constexpr (hardware == AscendC::Hardware::UB) {
+    } else if constexpr (hardware == pypto::Hardware::UB) {
         dumpLen = alignDumpLen / PTO_ONE_DATABLOCK_SIZE;
         ret = mem_copy_ub_to_gm_impl(dumpDstAddr, src, static_cast<uint16_t>(dumpLen));
-    } else if constexpr (hardware == AscendC::Hardware::L1) {
+    } else if constexpr (hardware == pypto::Hardware::L1) {
         ret = mem_copy_l1buf_to_gm_impl(dumpDstAddr, src, alignDumpLen);
-    } else if constexpr (hardware == AscendC::Hardware::L0A) {
+    } else if constexpr (hardware == pypto::Hardware::L0A) {
         ret = mem_copy_abuf_to_gm_impl(dumpDstAddr, src, alignDumpLen);
-    } else if constexpr (hardware == AscendC::Hardware::L0B) {
+    } else if constexpr (hardware == pypto::Hardware::L0B) {
         ret = mem_copy_bbuf_to_gm_impl(dumpDstAddr, src, alignDumpLen);
-    } else if constexpr (hardware == AscendC::Hardware::L0C) {
+    } else if constexpr (hardware == pypto::Hardware::L0C) {
         ret = mem_copy_cbuf_to_gm_impl(dumpDstAddr, src, alignDumpLen);
-    } else if constexpr (hardware == AscendC::Hardware::BIAS) {
+    } else if constexpr (hardware == pypto::Hardware::BIAS) {
         ret = mem_copy_biasbuf_to_gm_impl(dumpDstAddr, src, alignDumpLen);
-    } else if constexpr (hardware == AscendC::Hardware::FIXBUF) {
+    } else if constexpr (hardware == pypto::Hardware::FIXBUF) {
         ret = mem_copy_fbuf_to_gm_impl(dumpDstAddr, src, alignDumpLen);
     }
     sync_all();
     return ret;
 }
 
-template <AscendC::Hardware hardware>
+template <pypto::Hardware hardware>
 __aicore__ constexpr inline bool _is_super_tensor_hardware_supported()
 {
-    return hardware == AscendC::Hardware::GM || hardware == AscendC::Hardware::UB ||
-           hardware == AscendC::Hardware::L1 || hardware == AscendC::Hardware::L0C ||
-           hardware == AscendC::Hardware::BIAS || hardware == AscendC::Hardware::FIXBUF;
+    return hardware == pypto::Hardware::GM || hardware == pypto::Hardware::UB || hardware == pypto::Hardware::L1 ||
+           hardware == pypto::Hardware::L0C || hardware == pypto::Hardware::BIAS || hardware == pypto::Hardware::FIXBUF;
 }
 
-template <AscendC::Hardware hardware>
+template <pypto::Hardware hardware>
 __aicore__ constexpr inline uint32_t _get_super_tensor_payload_alignment()
 {
-    if constexpr (hardware == AscendC::Hardware::L0C) {
+    if constexpr (hardware == pypto::Hardware::L0C) {
         return 16U * 16U * sizeof(uint32_t);
     }
     return PTO_ONE_DATABLOCK_SIZE;
 }
 
-template <AscendC::Hardware hardware>
+template <pypto::Hardware hardware>
 __aicore__ inline uint32_t _get_super_tensor_payload_capacity(uint32_t ringBufLen, uint32_t headerLen)
 {
     constexpr uint32_t payloadAlignment = _get_super_tensor_payload_alignment<hardware>();
@@ -137,7 +136,7 @@ __aicore__ inline uint32_t _get_super_tensor_payload_capacity(uint32_t ringBufLe
     return ((ringBufLen - headerLen) / payloadAlignment) * payloadAlignment;
 }
 
-template <AscendC::Hardware hardware, typename T, typename U>
+template <pypto::Hardware hardware, typename T, typename U>
 __aicore__ inline void _set_super_tensor_tlv_info(U src, __gm__ DumpSuperTensorTlv* dumpTlv, uint32_t alignDumpLen,
                                                   uint32_t desc, uint64_t tensorLength, uint32_t dumpSize,
                                                   const uint32_t* shape, uint32_t shapeDim)
@@ -175,7 +174,7 @@ __aicore__ inline void _set_super_tensor_body_tlv_info(__gm__ DumpSuperTensorBod
     pto_entire_dcci(reinterpret_cast<__gm__ uint64_t*>(dumpTlv));
 }
 
-template <AscendC::Hardware hardware, typename T, typename U>
+template <pypto::Hardware hardware, typename T, typename U>
 __aicore__ inline void _pto_dump_super_tensor_impl(U src, uint32_t desc, uint64_t tensorLength, const uint32_t* shape,
                                                    uint32_t shapeDim, __gm__ DebugBlockHeadInfo* blockInfo)
 {
@@ -220,11 +219,11 @@ __aicore__ inline void _pto_dump_super_tensor_impl(U src, uint32_t desc, uint64_
     }
 }
 
-template <AscendC::Hardware hardware, typename T, typename U>
+template <pypto::Hardware hardware, typename T, typename U>
 __aicore__ inline void _pto_dump_impl(U src, uint32_t desc, uint32_t dump_size, const uint32_t* shape,
                                       const uint32_t shapeDim)
 {
-#if !(defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0)
+#if !(defined(PTO_DUMP) && PTO_DUMP == 0)
     __gm__ DebugBlockHeadInfo* blockInfo = get_block_info();
     if (dump_size <= 0 || blockInfo == nullptr) {
         return;
@@ -261,7 +260,7 @@ __aicore__ inline void _pto_dump_impl(U src, uint32_t desc, uint32_t dump_size, 
 
 __aicore__ inline void _pto_dump_shape_impl(const uint32_t shapeDim, const uint32_t* shape)
 {
-#if !(defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0)
+#if !(defined(PTO_DUMP) && PTO_DUMP == 0)
     __gm__ DebugBlockHeadInfo* blockInfo = get_block_info();
     if (blockInfo == nullptr) {
         return;
@@ -285,7 +284,7 @@ __aicore__ inline void _pto_dump_shape_impl(const uint32_t shapeDim, const uint3
 #endif
 }
 
-template <AscendC::Hardware hardware, typename T, typename U>
+template <pypto::Hardware hardware, typename T, typename U>
 __aicore__ inline void _pto_dump_local_impl(U input, uint32_t desc, uint32_t dump_size, const uint32_t* shape,
                                             const uint32_t shapeDim)
 {
@@ -305,11 +304,11 @@ struct DumpWindowRecord {
     uint32_t tlvLen;
 };
 
-template <AscendC::Hardware hardware, typename T, typename U>
+template <pypto::Hardware hardware, typename T, typename U>
 __aicore__ inline bool _prepare_dump_window_record(DumpWindowRecord<T>& record, U src, uint32_t desc, uint32_t dumpSize,
                                                    const uint32_t* shape, uint32_t shapeDim)
 {
-#if defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0
+#if defined(PTO_DUMP) && PTO_DUMP == 0
     return false;
 #else
     record.blockInfo = get_block_info();
@@ -500,7 +499,7 @@ __aicore__ inline void _dump_tensor_window_impl(__gm__ T* input, uint32_t desc, 
     __gm__ T* windowInput = input + (_is_packed_fp4_dump_type<T>() ? logicalOrigin / 2 : logicalOrigin);
     using OutputType = WindowDumpType<T>;
     DumpWindowRecord<OutputType> record{};
-    if (!_prepare_dump_window_record<AscendC::Hardware::GM>(
+    if (!_prepare_dump_window_record<pypto::Hardware::GM>(
             record, windowInput, desc, static_cast<uint32_t>(outputElements), dumpShape, view.rank)) {
         return;
     }
@@ -646,7 +645,7 @@ struct DebugBusWindowChunk {
     }
 };
 
-template <AscendC::Hardware hardware, typename LocalPtr>
+template <pypto::Hardware hardware, typename LocalPtr>
 __aicore__ inline bool _read_local_window_chunk(LocalPtr src, DebugBusWindowChunk& chunk)
 {
 #if __NPU_ARCH__ == 3510 || __NPU_ARCH__ == 9201
@@ -661,7 +660,7 @@ __aicore__ inline bool _read_local_window_chunk(LocalPtr src, DebugBusWindowChun
     constexpr uint32_t modelBase = get_debug_bus_model_base<hardware>();
     const uint64_t localAddr = reinterpret_cast<uint64_t>(src);
     uint32_t srcAddr;
-    if constexpr (hardware == AscendC::Hardware::FIXBUF) {
+    if constexpr (hardware == pypto::Hardware::FIXBUF) {
         const uint64_t fbufType = localAddr >> PTO_DEBUG_BUS_FBUF_TYPE_SHIFT;
         srcAddr = (localAddr & PTO_DEBUG_BUS_FBUF_ADDR_MASK) >> get_debug_bus_local_addr_shift<hardware>();
         if (fbufType == 0U) {
@@ -707,7 +706,7 @@ __aicore__ inline bool _read_local_window_chunk(LocalPtr src, DebugBusWindowChun
 #endif
 }
 
-template <AscendC::Hardware hardware, DumpLayout layout, typename T, typename LocalPtr>
+template <pypto::Hardware hardware, DumpLayout layout, typename T, typename LocalPtr>
 __aicore__ inline bool _pack_debug_bus_window(LocalPtr input, const DumpTensorView& view,
                                               __gm__ WindowDumpType<T>* output)
 {
@@ -777,7 +776,7 @@ __aicore__ inline bool _pack_debug_bus_window(LocalPtr input, const DumpTensorVi
 #endif
 }
 
-template <AscendC::Hardware hardware, DumpLayout layout, typename T, typename SourcePtr>
+template <pypto::Hardware hardware, DumpLayout layout, typename T, typename SourcePtr>
 __aicore__ inline void _dump_tile_window_impl(SourcePtr input, uint32_t desc, const DumpTensorView& view)
 {
     static_assert(layout == DumpLayout::ND || layout == DumpLayout::DN || layout == DumpLayout::NZ ||
@@ -803,7 +802,7 @@ __aicore__ inline void _dump_tile_window_impl(SourcePtr input, uint32_t desc, co
         return;
     }
 
-    if constexpr (hardware == AscendC::Hardware::UB) {
+    if constexpr (hardware == pypto::Hardware::UB) {
         _pack_direct_window<layout, T>(input, view, record.payload);
     } else {
         if (!_pack_debug_bus_window<hardware, layout, T>(input, view, record.payload)) {
@@ -812,14 +811,14 @@ __aicore__ inline void _dump_tile_window_impl(SourcePtr input, uint32_t desc, co
     }
     _publish_dump_window_record(record);
 }
-template <AscendC::Hardware hardware, DumpLayout layout, typename T, typename U>
+template <pypto::Hardware hardware, DumpLayout layout, typename T, typename U>
 __aicore__ inline void _pto_dump_window_impl(U input, uint32_t desc, const DumpTensorView& view)
 {
     uint64_t ctrlValue = get_ctrl();
     set_atomic_none();
     enable_pto_diagnostics();
     if (g_sysPrintFifoSpace != nullptr) {
-        if constexpr (hardware == AscendC::Hardware::GM) {
+        if constexpr (hardware == pypto::Hardware::GM) {
             _dump_tensor_window_impl<layout>(input, desc, view);
         } else {
             _dump_tile_window_impl<hardware, layout, T>(input, desc, view);
@@ -832,92 +831,92 @@ template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_gm(__gm__ T* input, uint32_t desc, uint32_t dump_size,
                                                              const uint32_t* shape, const uint32_t shapeDim)
 {
-    _pto_dump_local_impl<AscendC::Hardware::GM, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<pypto::Hardware::GM, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_ubuf(__ubuf__ T* input, uint32_t desc, uint32_t dump_size,
                                                                const uint32_t* shape, const uint32_t shapeDim)
 {
-    _pto_dump_local_impl<AscendC::Hardware::UB, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<pypto::Hardware::UB, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_abuf(__ca__ T* input, uint32_t desc, uint32_t dump_size,
                                                                const uint32_t* shape, const uint32_t shapeDim)
 {
-    _pto_dump_local_impl<AscendC::Hardware::L0A, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<pypto::Hardware::L0A, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_bbuf(__cb__ T* input, uint32_t desc, uint32_t dump_size,
                                                                const uint32_t* shape, const uint32_t shapeDim)
 {
-    _pto_dump_local_impl<AscendC::Hardware::L0B, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<pypto::Hardware::L0B, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_cbuf(__cc__ T* input, uint32_t desc, uint32_t dump_size,
                                                                const uint32_t* shape, const uint32_t shapeDim)
 {
-    _pto_dump_local_impl<AscendC::Hardware::L0C, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<pypto::Hardware::L0C, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_l1buf(__cbuf__ T* input, uint32_t desc, uint32_t dump_size,
                                                                 const uint32_t* shape, const uint32_t shapeDim)
 {
-    _pto_dump_local_impl<AscendC::Hardware::L1, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<pypto::Hardware::L1, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump(__biasbuf__ T* input, uint32_t desc, uint32_t dump_size,
                                                           const uint32_t* shape, const uint32_t shapeDim)
 {
-    _pto_dump_local_impl<AscendC::Hardware::BIAS, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<pypto::Hardware::BIAS, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump(__fbuf__ T* input, uint32_t desc, uint32_t dump_size,
                                                           const uint32_t* shape, const uint32_t shapeDim)
 {
-    _pto_dump_local_impl<AscendC::Hardware::FIXBUF, T>(input, desc, dump_size, shape, shapeDim);
+    _pto_dump_local_impl<pypto::Hardware::FIXBUF, T>(input, desc, dump_size, shape, shapeDim);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_gm(__gm__ T* input, uint32_t desc, uint32_t dump_size)
 {
-    _pto_dump_local_impl<AscendC::Hardware::GM, T>(input, desc, dump_size, nullptr, 0);
+    _pto_dump_local_impl<pypto::Hardware::GM, T>(input, desc, dump_size, nullptr, 0);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_ubuf(__ubuf__ T* input, uint32_t desc, uint32_t dump_size)
 {
-    _pto_dump_local_impl<AscendC::Hardware::UB, T>(input, desc, dump_size, nullptr, 0);
+    _pto_dump_local_impl<pypto::Hardware::UB, T>(input, desc, dump_size, nullptr, 0);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_abuf(__ca__ T* input, uint32_t desc, uint32_t dump_size)
 {
-    _pto_dump_local_impl<AscendC::Hardware::L0A, T>(input, desc, dump_size, nullptr, 0);
+    _pto_dump_local_impl<pypto::Hardware::L0A, T>(input, desc, dump_size, nullptr, 0);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_bbuf(__cb__ T* input, uint32_t desc, uint32_t dump_size)
 {
-    _pto_dump_local_impl<AscendC::Hardware::L0B, T>(input, desc, dump_size, nullptr, 0);
+    _pto_dump_local_impl<pypto::Hardware::L0B, T>(input, desc, dump_size, nullptr, 0);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_cbuf(__cc__ T* input, uint32_t desc, uint32_t dump_size)
 {
-    _pto_dump_local_impl<AscendC::Hardware::L0C, T>(input, desc, dump_size, nullptr, 0);
+    _pto_dump_local_impl<pypto::Hardware::L0C, T>(input, desc, dump_size, nullptr, 0);
 }
 
 template <typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_l1buf(__cbuf__ T* input, uint32_t desc, uint32_t dump_size)
 {
-    _pto_dump_local_impl<AscendC::Hardware::L1, T>(input, desc, dump_size, nullptr, 0);
+    _pto_dump_local_impl<pypto::Hardware::L1, T>(input, desc, dump_size, nullptr, 0);
 }
 
 template <typename T>
@@ -960,42 +959,42 @@ template <DumpLayout layout, typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_window(__gm__ T* input, uint32_t desc,
                                                                  const DumpTensorView& view)
 {
-    _pto_dump_window_impl<AscendC::Hardware::GM, layout, T>(input, desc, view);
+    _pto_dump_window_impl<pypto::Hardware::GM, layout, T>(input, desc, view);
 }
 
 template <DumpLayout layout, typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_window(__ubuf__ T* input, uint32_t desc,
                                                                  const DumpTensorView& view)
 {
-    _pto_dump_window_impl<AscendC::Hardware::UB, layout, T>(input, desc, view);
+    _pto_dump_window_impl<pypto::Hardware::UB, layout, T>(input, desc, view);
 }
 
 template <DumpLayout layout, typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_window(__cc__ T* input, uint32_t desc,
                                                                  const DumpTensorView& view)
 {
-    _pto_dump_window_impl<AscendC::Hardware::L0C, layout, T>(input, desc, view);
+    _pto_dump_window_impl<pypto::Hardware::L0C, layout, T>(input, desc, view);
 }
 
 template <DumpLayout layout, typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_window(__cbuf__ T* input, uint32_t desc,
                                                                  const DumpTensorView& view)
 {
-    _pto_dump_window_impl<AscendC::Hardware::L1, layout, T>(input, desc, view);
+    _pto_dump_window_impl<pypto::Hardware::L1, layout, T>(input, desc, view);
 }
 
 template <DumpLayout layout, typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_window(__biasbuf__ T* input, uint32_t desc,
                                                                  const DumpTensorView& view)
 {
-    _pto_dump_window_impl<AscendC::Hardware::BIAS, layout, T>(input, desc, view);
+    _pto_dump_window_impl<pypto::Hardware::BIAS, layout, T>(input, desc, view);
 }
 
 template <DumpLayout layout, typename T>
 __aicore__ static __attribute__((noinline)) void pto_dump_window(__fbuf__ T* input, uint32_t desc,
                                                                  const DumpTensorView& view)
 {
-    _pto_dump_window_impl<AscendC::Hardware::FIXBUF, layout, T>(input, desc, view);
+    _pto_dump_window_impl<pypto::Hardware::FIXBUF, layout, T>(input, desc, view);
 }
 
 } // namespace pypto::aicore

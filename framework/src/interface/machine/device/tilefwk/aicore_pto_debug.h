@@ -20,7 +20,6 @@
 #define __PTO_INCLUDE_INTERNAL_HEADERS__
 #define __AICORE_PTO_DEBUG_DEFINED_INTERNAL__
 #endif
-// Skip CANN print_common_head / enable PyPTO vendored adaptations.
 #ifndef PYPTO_PTO_DEBUG
 #define PYPTO_PTO_DEBUG 1
 #endif
@@ -44,7 +43,7 @@
 #define PYPTO_AICORE_PRINTF(fmt, ...) PYPTO_AICORE_PRINTF_WITH_CORE(PYPTO_AICORE_PRINTF_CORE_ID(), fmt, ##__VA_ARGS__)
 
 // Pointer-based dump (PyPTO machine / codegen has no AscendC LocalTensor / GlobalTensor).
-// desc: user tag (e.g. line id); dump_size: element count. Disabled when ASCENDC_DUMP=0.
+// desc: user tag (e.g. line id); dump_size: element count. Disabled when PTO_DUMP=0.
 
 template <typename T>
 INLINE void AicorePtoDumpGm(__gm__ T* input, uint32_t desc, uint32_t dumpSize)

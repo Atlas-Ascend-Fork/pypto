@@ -10,7 +10,7 @@
 
 /*!
  * \file common_types.h
- * \brief PyPTO-vendored subset: AscendC::Hardware for dump position tags.
+ * \brief PyPTO-vendored subset: pypto::Hardware for dump position tags.
  */
 #ifndef IMPL_UTILS_COMMON_TYPES_H
 #define IMPL_UTILS_COMMON_TYPES_H
@@ -18,8 +18,8 @@
 #include <cstdint>
 #include "sys_macros_impl.h"
 
-namespace AscendC {
+namespace pypto {
 enum class Hardware : uint8_t { GM, UB, L1, L0A, L0B, L0C, BIAS, FIXBUF, MAX };
-} // namespace AscendC
+} // namespace pypto
 
 #endif // IMPL_UTILS_COMMON_TYPES_H

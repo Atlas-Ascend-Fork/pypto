@@ -17,10 +17,10 @@
 
 #include <cstdint>
 
-namespace AscendC {
+namespace pypto {
 constexpr int32_t MIX = 0;
 constexpr int32_t AIC = 1;
 constexpr int32_t AIV = 2;
-} // namespace AscendC
+} // namespace pypto
 
 #endif

@@ -32,57 +32,57 @@ constexpr uint32_t PTO_DEBUG_BUS_CHUNK_BYTES = PTO_DEBUG_BUS_CHUNK_WORDS * sizeo
 constexpr uint32_t PTO_DEBUG_BUS_FBUF_TYPE_SHIFT = 16;
 constexpr uint32_t PTO_DEBUG_BUS_FBUF_ADDR_MASK = 0xFFFFU;
 
-template <AscendC::Hardware hardware>
+template <pypto::Hardware hardware>
 __aicore__ inline constexpr uint32_t get_debug_bus_model_base()
 {
-    if constexpr (hardware == AscendC::Hardware::L1) {
+    if constexpr (hardware == pypto::Hardware::L1) {
         return 0x620000U;
-    } else if constexpr (hardware == AscendC::Hardware::L0A) {
+    } else if constexpr (hardware == pypto::Hardware::L0A) {
         return 0x410000U;
-    } else if constexpr (hardware == AscendC::Hardware::L0B) {
+    } else if constexpr (hardware == pypto::Hardware::L0B) {
         return 0x420000U;
-    } else if constexpr (hardware == AscendC::Hardware::L0C) {
+    } else if constexpr (hardware == pypto::Hardware::L0C) {
         return 0x430000U;
-    } else if constexpr (hardware == AscendC::Hardware::BIAS || hardware == AscendC::Hardware::FIXBUF) {
+    } else if constexpr (hardware == pypto::Hardware::BIAS || hardware == pypto::Hardware::FIXBUF) {
         return 0x480000U;
     } else {
         return 0U;
     }
 }
 
-template <AscendC::Hardware hardware>
+template <pypto::Hardware hardware>
 __aicore__ inline constexpr uint64_t get_debug_bus_loop_shift()
 {
-    if constexpr (hardware == AscendC::Hardware::BIAS || hardware == AscendC::Hardware::FIXBUF) {
+    if constexpr (hardware == pypto::Hardware::BIAS || hardware == pypto::Hardware::FIXBUF) {
         return 3U; // 8 bytes
     } else {
         return 5U; // 32 bytes
     }
 }
 
-template <AscendC::Hardware hardware>
+template <pypto::Hardware hardware>
 __aicore__ inline constexpr uint64_t get_debug_bus_loop_steplen()
 {
     return 1U << get_debug_bus_loop_shift<hardware>();
 }
 
-template <AscendC::Hardware hardware>
+template <pypto::Hardware hardware>
 __aicore__ inline constexpr uint32_t get_debug_bus_local_addr_shift()
 {
-    if constexpr (hardware == AscendC::Hardware::L1) {
+    if constexpr (hardware == pypto::Hardware::L1) {
         return 5U; // 32 bytes
     } else {
         return 0U; // 1 byte
     }
 }
 
-template <AscendC::Hardware hardware>
+template <pypto::Hardware hardware>
 __aicore__ inline constexpr uint64_t get_debug_bus_local_addr_steplen()
 {
     return 1U << get_debug_bus_local_addr_shift<hardware>();
 }
 
-template <AscendC::Hardware hardware>
+template <pypto::Hardware hardware>
 __aicore__ inline constexpr uint64_t get_debug_bus_local_step()
 {
     return get_debug_bus_loop_steplen<hardware>() / get_debug_bus_local_addr_steplen<hardware>();
@@ -141,7 +141,7 @@ __aicore__ inline uint64_t get_debug_bus_addr_impl()
     return blockInfo == nullptr ? 0U : blockInfo->debugBusAddr;
 }
 
-template <AscendC::Hardware hardware, typename T, typename U>
+template <pypto::Hardware hardware, typename T, typename U>
 __aicore__ inline uint32_t debug_bus_copy_local_to_gm_impl(__gm__ T* dst, U src, const uint32_t alignDumpBytes,
                                                            const uint64_t debugBusAddr)
 {
@@ -156,7 +156,7 @@ __aicore__ inline uint32_t debug_bus_copy_local_to_gm_impl(__gm__ T* dst, U src,
     uint64_t curLocalBaseAddr = reinterpret_cast<uint64_t>(src);
     uint64_t srcLocalAddr = 0;
 
-    if constexpr (hardware == AscendC::Hardware::FIXBUF) {
+    if constexpr (hardware == pypto::Hardware::FIXBUF) {
         const bool isRelu = (curLocalBaseAddr >> PTO_DEBUG_BUS_FBUF_TYPE_SHIFT) == 0x1;
         const bool isQuant = (curLocalBaseAddr >> PTO_DEBUG_BUS_FBUF_TYPE_SHIFT) == 0x0;
         srcLocalAddr = (curLocalBaseAddr & PTO_DEBUG_BUS_FBUF_ADDR_MASK) >> get_debug_bus_local_addr_shift<hardware>();
@@ -182,7 +182,7 @@ template <typename T>
 __aicore__ inline uint32_t mem_copy_l1buf_to_gm_impl(__gm__ T* dst, __cbuf__ T* src, const uint32_t alignDumpBytes)
 {
 #if defined(__DAV_CUBE__)
-    return debug_bus_copy_local_to_gm_impl<AscendC::Hardware::L1>(dst, src, alignDumpBytes, get_debug_bus_addr_impl());
+    return debug_bus_copy_local_to_gm_impl<pypto::Hardware::L1>(dst, src, alignDumpBytes, get_debug_bus_addr_impl());
 #else
     return 1;
 #endif
@@ -192,7 +192,7 @@ template <typename T>
 __aicore__ inline uint32_t mem_copy_abuf_to_gm_impl(__gm__ T* dst, __ca__ T* src, const uint32_t alignDumpBytes)
 {
 #if defined(__DAV_CUBE__)
-    return debug_bus_copy_local_to_gm_impl<AscendC::Hardware::L0A>(dst, src, alignDumpBytes, get_debug_bus_addr_impl());
+    return debug_bus_copy_local_to_gm_impl<pypto::Hardware::L0A>(dst, src, alignDumpBytes, get_debug_bus_addr_impl());
 #else
     return 1;
 #endif
@@ -202,7 +202,7 @@ template <typename T>
 __aicore__ inline uint32_t mem_copy_bbuf_to_gm_impl(__gm__ T* dst, __cb__ T* src, const uint32_t alignDumpBytes)
 {
 #if defined(__DAV_CUBE__)
-    return debug_bus_copy_local_to_gm_impl<AscendC::Hardware::L0B>(dst, src, alignDumpBytes, get_debug_bus_addr_impl());
+    return debug_bus_copy_local_to_gm_impl<pypto::Hardware::L0B>(dst, src, alignDumpBytes, get_debug_bus_addr_impl());
 #else
     return 1;
 #endif
@@ -241,8 +241,7 @@ template <typename T>
 __aicore__ inline uint32_t mem_copy_biasbuf_to_gm_impl(__gm__ T* dst, __biasbuf__ T* src, const uint32_t alignDumpBytes)
 {
 #if defined(__DAV_CUBE__)
-    return debug_bus_copy_local_to_gm_impl<AscendC::Hardware::BIAS>(dst, src, alignDumpBytes,
-                                                                    get_debug_bus_addr_impl());
+    return debug_bus_copy_local_to_gm_impl<pypto::Hardware::BIAS>(dst, src, alignDumpBytes, get_debug_bus_addr_impl());
 #else
     return 1;
 #endif
@@ -252,8 +251,8 @@ template <typename T>
 __aicore__ inline uint32_t mem_copy_fbuf_to_gm_impl(__gm__ T* dst, __fbuf__ T* src, const uint32_t alignDumpBytes)
 {
 #if defined(__DAV_CUBE__)
-    return debug_bus_copy_local_to_gm_impl<AscendC::Hardware::FIXBUF>(dst, src, alignDumpBytes,
-                                                                      get_debug_bus_addr_impl());
+    return debug_bus_copy_local_to_gm_impl<pypto::Hardware::FIXBUF>(dst, src, alignDumpBytes,
+                                                                    get_debug_bus_addr_impl());
 #else
     return 1;
 #endif

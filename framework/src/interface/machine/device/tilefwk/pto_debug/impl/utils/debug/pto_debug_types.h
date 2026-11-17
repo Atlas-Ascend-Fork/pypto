@@ -22,7 +22,7 @@
 
 #define PTO_SIMD_VF_MAGIC_NUMBER 0xF0A00B0F
 
-#if !defined(IMPL_UTILS_DEBUG_ASC_DEBUG_TYPES_H)
+#if !defined(IMPL_UTILS_DEBUG_PTO_DEBUG_TYPES_INNER_H)
 struct BlockVFBufInfo {
     enum class AssertState : uint8_t {
         IDLE = 0U,
@@ -43,7 +43,7 @@ struct BlockVFBufInfo {
     uint8_t buffer[PTO_SIMD_VF_PRINTF_UBUF_MAX_SIZE];
 };
 
-#ifdef ASCENDC_TRACE_ON
+#ifdef PTO_TRACE_ON
 enum class TraceId : uint32_t {
     KFC_CLIENT_POST_MSG = 0x7001,
     KFC_CLIENT_REV_MSG_GM = 0x7002,

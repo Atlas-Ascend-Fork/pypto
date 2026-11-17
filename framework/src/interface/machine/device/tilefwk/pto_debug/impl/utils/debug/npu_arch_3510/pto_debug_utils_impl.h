@@ -78,14 +78,14 @@ __simd_callee__ constexpr inline DumpTensorDataType get_dump_datatype()
 
 __simd_callee__ inline void enable_pto_diagnostics()
 {
-#if (!defined(ASCENDC_DUMP) || (ASCENDC_DUMP != 0)) || defined(ASCENDC_TIME_STAMP_ON)
+#if (!defined(PTO_DUMP) || (PTO_DUMP != 0)) || defined(PTO_TIME_STAMP_ON)
     static const struct PtoTlv __pto_debug_meta_section__ __attribute__((used, section(".ascend.meta"))) = {{4, 4}, 1};
 #endif
 }
 
 __simd_callee__ inline void enable_pto_assert()
 {
-#if (!defined(ASCENDC_DUMP) || (ASCENDC_DUMP != 0)) || defined(ASCENDC_TIME_STAMP_ON)
+#if (!defined(PTO_DUMP) || (PTO_DUMP != 0)) || defined(PTO_TIME_STAMP_ON)
     static const struct PtoTlv __pto_assert_meta_section__ __attribute__((used, section(".ascend.meta"))) = {{4, 4}, 5};
 #endif
 }
@@ -104,7 +104,7 @@ __simd_callee__ constexpr inline uint32_t get_vf_debug_reserved_ub_size()
 
 __simd_callee__ inline uint64_t get_vf_debug_reserved_ub_addr()
 {
-#if !(defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0)
+#if !(defined(PTO_DUMP) && PTO_DUMP == 0)
     return static_cast<uint64_t>(get_shmem_sz()) - get_vf_debug_reserved_ub_size();
 #else
     return 0;

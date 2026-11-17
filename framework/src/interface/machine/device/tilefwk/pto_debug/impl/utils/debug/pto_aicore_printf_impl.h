@@ -15,7 +15,7 @@
 #ifndef IMPL_UTILS_DEBUG_PTO_AICORE_PRINTF_IMPL_H
 #define IMPL_UTILS_DEBUG_PTO_AICORE_PRINTF_IMPL_H
 
-#ifndef ASCENDC_CPU_DEBUG
+#ifndef PTO_CPU_DEBUG
 #include "impl/utils/debug/pto_debug_utils.h"
 
 #if __NPU_ARCH__ == 2002
@@ -188,40 +188,10 @@ __aicore__ inline void scalar_printf_impl(DumpType debugType, __gm__ const char*
 }
 
 template <class... Args>
-__aicore__ inline void print_common_head()
-{
-    __gm__ DebugBlockHeadInfo* blockInfo = get_block_info();
-    if (blockInfo == nullptr) {
-        return;
-    }
-    __gm__ DebugBlockWriteInfo* writeInfo = get_block_write_info(blockInfo);
-    if (writeInfo == nullptr || writeInfo->packIdx != 0) {
-        return;
-    }
-
-    uint64_t __pto_tStamp = 0;
-    uint64_t __pto_version = 0;
-    __gm__ char* __pto_versionStr = nullptr;
-    pto_debug_get_cann_vserion(__pto_versionStr, __pto_version, __pto_tStamp);
-    if (__pto_tStamp == 0) {
-        scalar_printf_impl(DumpType::DUMP_SCALAR, "CANN timestamp is invalid, timestamp is %llu\n", "", __pto_tStamp);
-    } else {
-        scalar_printf_impl(DumpType::DUMP_SCALAR, "CANN Version: %s, TimeStamp: %llu\n", "",
-                           (__gm__ const char*)(__pto_versionStr), __pto_tStamp);
-    }
-}
-
-template <class... Args>
 __aicore__ inline void printf_impl_common(DumpType debugType, __gm__ const char* fmt, Args&&... args)
 {
     uint64_t ctrlValue = get_ctrl();
     set_atomic_none();
-    // PyPTO vendored copy: skip CANN version/timestamp banner (needs ASC_DEVKIT_*).
-#if !defined(__NPU_DEVICE__) && !defined(PYPTO_PTO_DEBUG)
-    if (debugType != DumpType::DUMP_ASSERT) {
-        print_common_head();
-    }
-#endif
 #ifdef __DAV_VEC__
     scalar_printf_impl(debugType, fmt, "[AIV Block %u/%u] ", pto_debug_get_block_idx(), pto_debug_get_block_total_num(),
                        args...);
@@ -235,7 +205,7 @@ __aicore__ inline void printf_impl_common(DumpType debugType, __gm__ const char*
 template <class... Args>
 __aicore__ inline void printf_impl(__gm__ const char* fmt, Args&&... args)
 {
-#if !(defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0)
+#if !(defined(PTO_DUMP) && PTO_DUMP == 0)
     enable_pto_diagnostics();
     printf_impl_common(DumpType::DUMP_SCALAR, fmt, args...);
 #endif
@@ -244,7 +214,7 @@ __aicore__ inline void printf_impl(__gm__ const char* fmt, Args&&... args)
 template <class... Args>
 __aicore__ static __attribute__((noinline)) void printf_impl_assert(__gm__ const char* fmt, Args&&... args)
 {
-#if !(defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0)
+#if !(defined(PTO_DUMP) && PTO_DUMP == 0)
     enable_pto_assert();
     printf_impl_common(DumpType::DUMP_ASSERT, fmt, args...);
 #endif
@@ -256,7 +226,7 @@ static __attribute__((noinline)) __aicore__ void printf_impl_assert_msg(const __
                                                                         const __gm__ char* __function,
                                                                         const __gm__ char* fmt, Args&&... args)
 {
-#if !(defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0)
+#if !(defined(PTO_DUMP) && PTO_DUMP == 0)
     uint64_t ctrlValue = get_ctrl();
     enable_pto_assert();
     set_atomic_none();
@@ -299,7 +269,7 @@ enum class DumpType : uint8_t {
 template <class... Args>
 __aicore__ inline void printf_impl(__gm__ const char* fmt, Args&&... args)
 {
-#if !(defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0)
+#if !(defined(PTO_DUMP) && PTO_DUMP == 0)
     std::printf(fmt, args...);
 #endif
 }
@@ -307,7 +277,7 @@ __aicore__ inline void printf_impl(__gm__ const char* fmt, Args&&... args)
 template <class... Args>
 __aicore__ static __attribute__((noinline)) void printf_impl_assert(__gm__ const char* fmt, Args&&... args)
 {
-#if !(defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0)
+#if !(defined(PTO_DUMP) && PTO_DUMP == 0)
     std::printf(fmt, args...);
 #endif
 }
@@ -318,7 +288,7 @@ static __attribute__((noinline)) __aicore__ void printf_impl_assert_msg(const __
                                                                         const __gm__ char* __function,
                                                                         const __gm__ char* fmt, Args&&... args)
 {
-#if !(defined(ASCENDC_DUMP) && ASCENDC_DUMP == 0)
+#if !(defined(PTO_DUMP) && PTO_DUMP == 0)
     std::printf("[ASSERT] %s:%u: %s: Assertion '%s' failed. ", __file, __line, __function, __assertion);
     std::printf(fmt, args...);
 #endif

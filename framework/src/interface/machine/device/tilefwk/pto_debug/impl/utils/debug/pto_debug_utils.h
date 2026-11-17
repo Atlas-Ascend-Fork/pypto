@@ -15,11 +15,11 @@
 #ifndef IMPL_UTILS_DEBUG_PTO_DEBUG_UTILS_H
 #define IMPL_UTILS_DEBUG_PTO_DEBUG_UTILS_H
 
-#if !defined(IMPL_UTILS_DEBUG_ASC_DEBUG_UTILS_H)
+#if !defined(IMPL_UTILS_DEBUG_PTO_DEBUG_UTILS_INNER_H)
 inline __gm__ uint8_t* __gm__ g_sysPrintFifoSpace = nullptr;
 #endif
 
-#ifndef ASCENDC_CPU_DEBUG
+#ifndef PTO_CPU_DEBUG
 #include <type_traits>
 
 #include "impl/utils/sys_macros_impl.h"
@@ -45,16 +45,16 @@ inline __gm__ uint8_t* __gm__ g_sysPrintFifoSpace = nullptr;
 namespace pypto::aicore {
 __aicore__ inline void enable_pto_diagnostics()
 {
-#if (!defined(ASCENDC_DUMP) || (ASCENDC_DUMP != 0)) || defined(ASCENDC_TIME_STAMP_ON)
+#if (!defined(PTO_DUMP) || (PTO_DUMP != 0)) || defined(PTO_TIME_STAMP_ON)
     static const struct PtoTlv __pto_debug_meta_section__ __attribute__((used, section(".ascend.meta"))) = {{4, 4}, 1};
-#endif // defined(ASCENDC_DUMP) || defined(ASCENDC_TIME_STAMP_ON)
+#endif // defined(PTO_DUMP) || defined(PTO_TIME_STAMP_ON)
 }
 
 __aicore__ inline void enable_pto_assert()
 {
-#if (!defined(ASCENDC_DUMP) || (ASCENDC_DUMP != 0)) || defined(ASCENDC_TIME_STAMP_ON)
+#if (!defined(PTO_DUMP) || (PTO_DUMP != 0)) || defined(PTO_TIME_STAMP_ON)
     static const struct PtoTlv __pto_assert_meta_section__ __attribute__((used, section(".ascend.meta"))) = {{4, 4}, 5};
-#endif // defined(ASCENDC_DUMP) || defined(ASCENDC_TIME_STAMP_ON)
+#endif // defined(PTO_DUMP) || defined(PTO_TIME_STAMP_ON)
 }
 
 template <typename T, typename U, typename... Args>
@@ -289,27 +289,6 @@ template <typename T>
 __aicore__ constexpr inline DumpTensorDataType get_dump_datatype()
 {
     return get_dump_datatype_impl<T>();
-}
-
-__aicore__ inline void pto_debug_get_cann_vserion(__gm__ char*& versionStr, uint64_t& version, uint64_t& timeStamp)
-{
-#ifdef ASC_DEVKIT_VERSION_STR
-    versionStr = const_cast<__gm__ char*>(ASC_DEVKIT_VERSION_STR);
-#else
-    versionStr = const_cast<__gm__ char*>("Unknown ASC_DEVKIT version");
-#endif
-
-#ifdef ASC_DEVKIT_TIMESTAMP
-    timeStamp = static_cast<uint64_t>(ASC_DEVKIT_TIMESTAMP);
-#else
-    timeStamp = 0;
-#endif
-
-#ifdef ASC_DEVKIT_VERSION
-    version = static_cast<uint64_t>(ASC_DEVKIT_VERSION);
-#else
-    version = 0;
-#endif
 }
 
 } // namespace pypto::aicore

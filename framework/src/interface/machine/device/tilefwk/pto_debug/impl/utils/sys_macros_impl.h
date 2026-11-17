@@ -18,12 +18,7 @@
 #include <cstdint>
 #include "utils/base/sys_constants.h"
 
-#if !defined(ASCENDC_CPU_DEBUG) || ASCENDC_CPU_DEBUG != 1
-#ifdef __ASCC_PRE__
-#ifdef __global__
-#undef __global__
-#endif
-#else
+#if !defined(PTO_CPU_DEBUG) || PTO_CPU_DEBUG != 1
 
 #ifndef __aicore__
 #define __aicore__ [aicore]
@@ -42,7 +37,6 @@
 #endif
 
 #endif
-#endif
 
 #ifndef K_MAX_SHAPE_DIM
 #define K_MAX_SHAPE_DIM 8
@@ -56,12 +50,12 @@
 #define SPLIT_CORE_VEC
 #endif
 
-#if defined(ASCENDC_CPU_DEBUG)
+#if defined(PTO_CPU_DEBUG)
 extern int32_t g_coreType;
-#define PTO_IS_AIV (g_coreType == AscendC::AIV)
-#define PTO_IS_AIC (g_coreType == AscendC::AIC)
-#define PTO_IS_NOT_AIV (g_coreType != AscendC::AIV)
-#define PTO_IS_NOT_AIC (g_coreType != AscendC::AIC)
+#define PTO_IS_AIV (g_coreType == pypto::AIV)
+#define PTO_IS_AIC (g_coreType == pypto::AIC)
+#define PTO_IS_NOT_AIV (g_coreType != pypto::AIV)
+#define PTO_IS_NOT_AIC (g_coreType != pypto::AIC)
 #else
 #if defined(SPLIT_CORE_CUBE)
 #define PTO_IS_AIV constexpr(false)
@@ -146,11 +140,11 @@ extern int32_t g_coreType;
     (__VA_ARGS__)
 
 // PyPTO multi-TU link: never emit a strong g_tilingKey. Tiling-key macros evaluate to 0.
-#ifndef ASCENDC_TILING_KEY_VAR_IMPL
+#ifndef PTO_TILING_KEY_VAR_IMPL
 #ifdef TILING_KEY_VAR
-#define ASCENDC_TILING_KEY_VAR_IMPL TILING_KEY_VAR
+#define PTO_TILING_KEY_VAR_IMPL TILING_KEY_VAR
 #else
-#define ASCENDC_TILING_KEY_VAR_IMPL 0
+#define PTO_TILING_KEY_VAR_IMPL 0
 #endif
 #endif
 
