@@ -10,6 +10,8 @@
 # -----------------------------------------------------------------------------------------------------------
 """Tests for frontend option validation errors."""
 
+import re
+
 import pytest
 
 import pypto
@@ -160,3 +162,25 @@ def test_pass_option_range_error():
 
     with pytest.raises(Exception, match=r"(?s)host\.compile_timeout.*doesn't within the value range"):
         pypto.set_host_options(compile_timeout=-10)
+
+
+@pytest.mark.parametrize(
+    ("setter", "option_name"),
+    (
+        (lambda value: pypto.set_host_options(compile_timeout=value), "host.compile_timeout"),
+        (lambda value: pypto.set_options(host_options={"compile_timeout": value}), "host.compile_timeout"),
+        (lambda value: pypto.set_debug_options(runtime_debug_mode=value), "debug.runtime_debug_mode"),
+        (lambda value: pypto.set_global_config("codegen.parallel_compile", value), "global.codegen.parallel_compile"),
+        (lambda value: pypto.set_options(vec_tile_shapes=[[value]]), "vec_tile_shapes[0][0]"),
+    ),
+)
+@pytest.mark.parametrize("value", [-(1 << 63) - 1, 1 << 63])
+def test_config_integer_outside_int64_reports_python_error(setter, option_name, value):
+    with pytest.raises(ValueError, match=f"Option '{re.escape(option_name)}'.*outside int64 range"):
+        setter(value)
+
+
+def test_options_context_integer_outside_int64_reports_python_error():
+    with pytest.raises(ValueError, match="Option 'host.compile_timeout'.*outside int64 range"):
+        with pypto.options(host_options={"compile_timeout": 1 << 63}):
+            pass

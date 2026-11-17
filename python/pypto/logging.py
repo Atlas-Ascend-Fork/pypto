@@ -77,7 +77,7 @@ def check(condition: bool, message: str) -> None:
 
 
 def internal_check(condition: bool, message: str) -> None:
-    """Check a condition and throw ValueError if it fails."""
+    """Check a condition and throw InternalError if it fails."""
     if not condition:
         pypto_impl.raise_error("InternalError", message)
 

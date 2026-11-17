@@ -47,6 +47,22 @@ _DUMP_FIFO_MAX_SIZE = 64 * 1024 * 1024
 _acl_runtime = None
 
 
+def _check_int64_range(value, option_name):
+    """Report out-of-range integers before pybind11 converts configuration values."""
+    if isinstance(value, bool):
+        return
+    if isinstance(value, int):
+        if not -(1 << 63) <= value < (1 << 63):
+            raise ValueError(f"Option '{option_name}' integer is outside int64 range")
+    elif isinstance(value, (list, tuple)):
+        for index, item in enumerate(value):
+            _check_int64_range(item, f"{option_name}[{index}]")
+    elif isinstance(value, dict):
+        for key, item in value.items():
+            _check_int64_range(key, f"{option_name} key")
+            _check_int64_range(item, f"{option_name}[{key!r}]")
+
+
 def _apply_dump_fifo_option(opts) -> None:
     size = opts.get(_DUMP_FIFO_OPTION)
     if size is None or size == 0:
@@ -824,6 +840,8 @@ class _Options:
         if l1_key in opts and isinstance(opts[l1_key], dict):
             opts[l1_key] = _encode_cube_l1_reuse_side(opts[l1_key])
 
+        for key, value in opts.items():
+            _check_int64_range(value, key)
         return opts
 
     def __enter__(self):
@@ -927,6 +945,7 @@ def get_global_config(key: str):
 
 def set_global_config(key, value):
     """Set global config config."""
+    _check_int64_range(value, "global." + key)
     pypto_impl.SetGlobalConfig({"global." + key: value})
 
 
