@@ -329,6 +329,8 @@ struct HardwareInfo {
           convLayout(convLayoutIn)
     {}
 
+    ~HardwareInfo();
+
     static constexpr auto GetFieldDescriptors()
     {
         return std::make_tuple(reflection::UsualField(&HardwareInfo::blayout, "blayout"),
@@ -339,6 +341,8 @@ struct HardwareInfo {
                                reflection::UsualField(&HardwareInfo::convLayout, "conv_layout"));
     }
 };
+
+inline HardwareInfo::~HardwareInfo() {}
 
 /**
  * \brief Tile view representation
