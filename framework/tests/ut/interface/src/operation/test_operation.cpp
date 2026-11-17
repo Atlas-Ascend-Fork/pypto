@@ -243,6 +243,42 @@ TEST_F(OperationOpsTest, QuantMX_Fp32ToFp4Unsupported)
     }
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
 }
+
+TEST_F(OperationOpsTest, QuantMX_NonPerformanceTileQuantizationAxisAlignment)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    const std::vector<std::pair<DataType, DataType>> dtypePairs = {{DT_FP32, DT_FP8E4M3},
+                                                                   {DT_FP16, DT_FP8E4M3},
+                                                                   {DT_BF16, DT_FP8E4M3},
+                                                                   {DT_FP16, DT_FP4_E2M1},
+                                                                   {DT_BF16, DT_FP4_E2M1}};
+    FUNCTION("QuantMXNonPerformanceTileAlignment")
+    {
+        auto& function = *Program::GetInstance().GetCurrentFunction();
+        for (const auto& [inputDtype, quantDtype] : dtypePairs) {
+            Tensor input(std::make_shared<LogicalTensor>(function, inputDtype, std::vector<int64_t>{128, 128}));
+            for (int64_t axis : {-2, -1, 0, 1}) {
+                for (int64_t tileDim : {32, 64, 96, 128}) {
+                    SCOPED_TRACE(testing::Message() << "input dtype=" << inputDtype << ", quant dtype=" << quantDtype
+                                                    << ", axis=" << axis << ", tile dim=" << tileDim);
+                    const auto normalizedAxis = axis < 0 ? axis + 2 : axis;
+                    std::vector<int64_t> tileShape = {128, 128};
+                    tileShape[normalizedAxis] = tileDim;
+                    TileShape::Current().SetVecTile(tileShape);
+                    if (tileDim % 64 == 0) {
+                        EXPECT_NO_THROW(
+                            (void)QuantMX(input, quantDtype, DequantScaleRoundingMode::ROUND_DOWN, axis, false));
+                    } else {
+                        EXPECT_THROW(QuantMX(input, quantDtype, DequantScaleRoundingMode::ROUND_DOWN, axis, false),
+                                     std::exception);
+                    }
+                }
+            }
+        }
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
 TEST_F(OperationOpsTest, QuantHiF4Bf16)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);

@@ -390,6 +390,9 @@ void CheckQuantMXTileShape(const LogicalTensorPtr& input, const VecTile& vecTile
         << "QuantMX tile shape last dim must be positive.";
 
     if (performanceMode == 0) {
+        CHECK(VectorErrorCode::ERR_PARAM_INVALID, vecTile[vecTile.size() - 1] % QUANT_MX_SCALE_GROUP_COLS == 0)
+            << "QuantMX non-performance mode requires tile shape's last dim to be 64-aligned. Current dim: "
+            << vecTile[vecTile.size() - 1];
         return;
     }
     const int64_t lastDimBytes = vecTile[vecTile.size() - 1] * BytesOf(input->Datatype());
@@ -426,6 +429,9 @@ void CheckQuantMXTileAlignment(const QuantMXTileContext& ctx)
         return;
     }
     if (ctx.performanceMode == 0) {
+        CHECK(VectorErrorCode::ERR_PARAM_INVALID, ctx.input.tileInfo.shape.back() % QUANT_MX_SCALE_GROUP_COLS == 0)
+            << "QuantMX non-performance mode requires tile width to be 64-aligned. Current dim: "
+            << ctx.input.tileInfo.shape.back();
         return;
     }
     const int64_t lastDimBytes = ctx.input.tileInfo.shape.back() * BytesOf(ctx.input.tensor.GetDataType());
@@ -556,7 +562,7 @@ std::tuple<Tensor, Tensor> QuantMX(const Tensor& input, DataType quantDtype, Deq
     const auto& inputShape = input.GetShape();
     const int64_t normalizedAxis = NormalizeQuantMXAxis(axis, inputShape.size());
     const bool isDnAxis = IsQuantMXDnAxis(normalizedAxis, inputShape.size());
-    if (!oldVecTile.tile.empty() && isDnAxis && quantDtype == DT_FP4_E2M1) {
+    if (!oldVecTile.tile.empty()) {
         CheckQuantMXTileShape(input.GetStorage(), oldVecTile, quantDtype, normalizedAxis,
                               static_cast<int64_t>(performanceMode));
     }

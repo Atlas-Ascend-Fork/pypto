@@ -150,7 +150,9 @@ def quant_mx(
     -----
     `axis` may be the last or second-last dimension using either a positive or negative index.
     `mode` defaults to `ROUND_DOWN` (OCP); `ROUND_UP` selects the NV scale algorithm.
-    For `axis=-1`, the quantization-axis tile and view width must be 256-byte aligned.
+    For `axis=-1` and `performance_mode=False`, the input and tile last dimensions must be
+    positive multiples of 64. With `performance_mode=True`, the tile last dimension must
+    equal the view last dimension, and both must be 256-byte aligned.
     For `axis=-2`, the input must have at least two dimensions. The second-last dimension of
     the current input tensor/view shape, runtime valid shape, and tile shape must be a positive
     multiple of 64, with no tail block on that axis. Quantization still uses groups of 32; the
