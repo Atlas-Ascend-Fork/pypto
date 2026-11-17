@@ -64,6 +64,7 @@ void TopKOnBoardFunc(TopKParams& params)
 
     FUNCTION("TOPK_T_TILETENSOR", {input_a, std::get<0>(output), std::get<1>(output)})
     {
+        config::SetSemanticLabel("topk");
         output = TopK(input_a, k, -1, isLargest);
     }
 
@@ -71,7 +72,7 @@ void TopKOnBoardFunc(TopKParams& params)
     std::string res = GenCodeByFunction(*function);
 
     std::string expect = R"(TBitSort<1, 0, 1>(ubTensor_2, ubTensor_0, ubTensor_3); // [opMagic:10006])";
-    CheckStringExist(expect, res);
+    CheckStringExist(expect + "[semanticLabel:topk]", res);
 
     expect = R"(TMrgSort<1, 32, 32>(ubTensor_2, ubTensor_2, ubTensor_6); // [opMagic:10007])";
     CheckStringExist(expect, res);

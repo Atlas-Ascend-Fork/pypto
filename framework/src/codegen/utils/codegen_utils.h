@@ -217,5 +217,20 @@ using SubstMap = std::map<std::string, std::string>;
 
 std::string StringSubstitute(std::string const& in, SubstMap const& subst);
 
+/** Quote arg for /bin/sh: wrap in single quotes; embed ' as '\'' . */
+inline std::string QuoteShellArg(const std::string& arg)
+{
+    std::string escaped = "'";
+    for (char c : arg) {
+        if (c == '\'') {
+            escaped += "'\\''";
+        } else {
+            escaped += c;
+        }
+    }
+    escaped += "'";
+    return escaped;
+}
+
 } // namespace npu::tile_fwk
 #endif

@@ -187,6 +187,7 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
                 tools/scripts/extract_pass_log.py
                 tools/scripts/debug_aicore_error.py
                 tools/scripts/debug_aicore_probe.py
+                tools/scripts/gen_cce_debug_map.py
                 framework/src/machine/compile/scripts/run_to_log.sh
             DESTINATION ${PyPTO_WhlName}/lib/scripts
             COMPONENT pypto

@@ -32,6 +32,8 @@ private:
     CodeGenCtx ctx_;
 };
 
+void InvokeCceDebugMapScript(const std::string& cceDir);
+
 } // namespace npu::tile_fwk
 
 #endif // CODEGEN_H

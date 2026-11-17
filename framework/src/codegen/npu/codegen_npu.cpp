@@ -516,6 +516,48 @@ void CodeGenNPU::DumpCode(const std::string& fileName, std::ostringstream& code)
     }
 }
 
+namespace {
+constexpr const char* GEN_CCE_DEBUG_MAP_SCRIPT = "gen_cce_debug_map.py";
+
+std::string ResolveCceDebugMapScriptPath()
+{
+    const std::string installed = GetPyptoLibPath() + "/scripts/" + GEN_CCE_DEBUG_MAP_SCRIPT;
+    if (IsPathExist(installed)) {
+        return installed;
+    }
+    // Source-tree fallback: framework/src/codegen/npu -> repo root / tools/scripts/
+    std::string srcFile(__FILE__);
+    const auto pos = srcFile.find_last_of('/');
+    std::string srcDir = (pos == std::string::npos) ? "." : srcFile.substr(0, pos);
+    const std::string srcPath = srcDir + "/../../../../tools/scripts/" + GEN_CCE_DEBUG_MAP_SCRIPT;
+    return IsPathExist(srcPath) ? srcPath : "";
+}
+} // namespace
+
+void InvokeCceDebugMapScript(const std::string& cceDir)
+{
+    if (config::GetDebugOption<int64_t>(CFG_COMPILE_DBEUG_MODE) != CFG_DEBUG_ALL) {
+        return;
+    }
+    if (cceDir.empty() || !IsPathExist(cceDir)) {
+        CODEGEN_LOGW("Skip gen_cce_debug_map.py: cceDir unavailable: %s", cceDir.c_str());
+        return;
+    }
+
+    const std::string scriptPath = ResolveCceDebugMapScriptPath();
+    if (scriptPath.empty()) {
+        CODEGEN_LOGW("Skip gen_cce_debug_map.py: script not found under install or source tree");
+        return;
+    }
+
+    const std::string command = "python3 " + QuoteShellArg(scriptPath) + " " + QuoteShellArg(cceDir);
+    if (std::system(command.c_str()) != 0) {
+        CODEGEN_LOGW("Failed to execute gen_cce_debug_map.py for %s", cceDir.c_str());
+        return;
+    }
+    CODEGEN_LOGI("Generated cce debug maps under %s", cceDir.c_str());
+}
+
 void CodeGenNPU::GenExtraAlloc(const std::shared_ptr<SymbolManager>& symbolMgr,
                                const std::shared_ptr<LogicalTensor>& tensor)
 {

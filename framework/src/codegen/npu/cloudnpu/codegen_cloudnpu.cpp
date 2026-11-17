@@ -22,21 +22,6 @@
 #include "utils/file_utils.h"
 
 namespace npu::tile_fwk {
-namespace {
-std::string QuoteShellArg(const std::string& arg)
-{
-    std::string escaped = "'";
-    for (char c : arg) {
-        if (c == '\'') {
-            escaped += "'\\''";
-        } else {
-            escaped += c;
-        }
-    }
-    escaped += "'";
-    return escaped;
-}
-} // namespace
 
 const int PMU_ID_FROM_FUNC_HASH_LEN = 3;
 

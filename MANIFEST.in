@@ -64,3 +64,4 @@ include tools/scripts/machine_perf_trace.py
 include tools/scripts/extract_pass_log.py
 include tools/scripts/debug_aicore_error.py
 include tools/scripts/debug_aicore_probe.py
+include tools/scripts/gen_cce_debug_map.py

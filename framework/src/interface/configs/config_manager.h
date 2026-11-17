@@ -311,6 +311,7 @@ constexpr const char* KEY_AICPU_PERF_GRAPH_PATH = "aicpu_perf_path";
 constexpr const char* KEY_SWIM_GRAPH_PATH = "swim_graph_path";
 constexpr const char* KEY_VERIFY_PATH = "verify_path";
 constexpr const char* KEY_PROGRAM_PATH = "program_file";
+constexpr const char* KEY_KERNEL_AICORE_PATH = "kernel_aicore_path";
 
 struct ConfigStorage;
 

@@ -1081,6 +1081,7 @@ static void RunCodeGenStage(const std::shared_ptr<DyndevFunctionAttribute>& attr
     MonitorManager::Instance().PrintCurrentTotalElapsed("Stage CodeGen cce code generation completed");
     unsigned threadNum = GetCGThreadNum();
     ParallelExecuteAndWait(threadNum, tasks);
+    InvokeCceDebugMapScript(config::GetEmitPath("kernel_aicore"));
 }
 
 static void CompileDyndevFunction(Function* function, FunctionCache& cache, [[maybe_unused]] const std::string& ccePath)
@@ -1167,6 +1168,12 @@ MachineTask* GenCode(MachineTask* task, FunctionCache& cache)
 {
     npu::tile_fwk::CodeGenCtx codeGenCtx("", config::GetEmitPath("kernel_aicore"));
     npu::tile_fwk::CreateDir(codeGenCtx.cceDir, true);
+    if (config::GetDebugOption<int64_t>(CFG_COMPILE_DBEUG_MODE) == CFG_DEBUG_ALL) {
+        const std::string aicorePath = RealPath(codeGenCtx.cceDir);
+        if (!aicorePath.empty()) {
+            config::SetRunDataOption(KEY_KERNEL_AICORE_PATH, aicorePath);
+        }
+    }
     npu::tile_fwk::CodeGen codeGen(codeGenCtx);
     auto function = task->GetFunction();
     /* each leafFunction inside is compiled to a standalone object file.

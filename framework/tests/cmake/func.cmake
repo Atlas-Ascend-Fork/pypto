@@ -261,6 +261,7 @@ function(PTO_Fwk_GTest_AddExe)
             COMMAND ln -sf "${PTO_FWK_SRC_ROOT}/tools/profiling/parse_pipe_time_trace.py" "${InstallScriptsDir}/"
             COMMAND ln -sf "${PTO_FWK_SRC_ROOT}/tools/scripts/machine_perf_trace.py" "${InstallScriptsDir}/"
             COMMAND ln -sf "${PTO_FWK_SRC_ROOT}/tools/scripts/extract_pass_log.py" "${InstallScriptsDir}/"
+            COMMAND ln -sf "${PTO_FWK_SRC_ROOT}/tools/scripts/gen_cce_debug_map.py" "${InstallScriptsDir}/"
             COMMAND ln -sf "${PTO_FWK_SRC_ROOT}/framework/src/machine/compile/scripts/run_to_log.sh" "${InstallScriptsDir}/"
             COMMENT "Soft link of scripts has been created at ${InstallScriptsDir}"
     )

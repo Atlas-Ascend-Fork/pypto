@@ -873,8 +873,13 @@ std::string CodeGenOpNPU::InsertOpComment(std::string& tileOpSourceCode) const
 
     if (config::GetDebugOption<int64_t>(CFG_COMPILE_DBEUG_MODE) == CFG_DEBUG_ALL) {
         tileOpSourceCode.erase(tileOpSourceCode.find_last_not_of(" \n\r\t") + 1);
-        // Add comment after op. e.g. [opmagic:10016]
-        os << " // [opMagic:" << originalOp.GetOpMagic() << "]\n";
+        // Add comment after op. e.g. [opMagic:10016][semanticLabel:kv]
+        os << " // [opMagic:" << originalOp.GetOpMagic() << "]";
+        const auto& label = originalOp.GetSemanticLabelStr();
+        if (!label.empty()) {
+            os << "[semanticLabel:" << label << "]";
+        }
+        os << "\n";
         tileOpSourceCode.append(os.str());
         os.str("");
     }
