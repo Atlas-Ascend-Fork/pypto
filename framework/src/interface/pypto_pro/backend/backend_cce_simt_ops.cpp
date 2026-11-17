@@ -3383,6 +3383,31 @@ REGISTER_BACKEND_OP(BackendCCE, "simt.threadfence_block")
     .f_codegen(MakeSimtThreadfenceBlockCodegenCCE);
 REGISTER_BACKEND_OP(BackendCCE, "simt.threadfence").set_pipe(ir::PipeType::S).f_codegen(MakeSimtThreadfenceCodegenCCE);
 
+std::string MakeSimtNopCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1) << "simt.nop requires one argument";
+    auto count = ir::As<ir::ConstInt>(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, count != nullptr && count->value_ >= 0)
+        << "simt.nop requires a constant non-negative count";
+
+    // The API takes a cycle budget; each SIMT NOP delays 15 cycles, so round the
+    // budget up to the next NOP. Keep one pragma-unrolled loop in the source
+    // instead of expanding the NOPs textually, and inline the instruction so no
+    // AscendC simt_api header is needed.
+    const int64_t nops = (count->value_ + 14) / 15;
+    if (nops > 0) {
+        codegen.Emit("#pragma unroll");
+        codegen.Emit("for (int32_t __nop_i = 0; __nop_i < " + std::to_string(nops) + "; ++__nop_i) {");
+        codegen.Emit("    asm volatile(\"NOP wait:0b0000000 stall:15\" ::);");
+        codegen.Emit("}");
+    }
+    return "";
+}
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.nop").set_pipe(ir::PipeType::S).f_codegen(MakeSimtNopCodegenCCE);
+
 #define REGISTER_SIMT_WARP_BACKEND_OP(OpName, Intrinsic)                          \
     REGISTER_BACKEND_OP(BackendCCE, "simt." OpName)                               \
         .set_pipe(ir::PipeType::S)                                                \

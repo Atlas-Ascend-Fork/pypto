@@ -19,4 +19,5 @@ sync_src
 sync_dst
 wait_cross_core
 wait_pre_task_end
+nop
 ```

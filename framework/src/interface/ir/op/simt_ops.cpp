@@ -644,6 +644,16 @@ REGISTER_OP("simt.threadfence")
         return DeduceSimtSyncType("simt.threadfence", args, kwargs);
     });
 
+REGISTER_OP("simt.nop")
+    .set_op_category("SimtOp")
+    .set_description("Delay execution for N cycles (rounded up to the implementation granularity)")
+    .add_argument("n", "Requested delay in cycles (constant integer in [0, INT32_MAX])")
+    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1) << "simt.nop requires one argument";
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << "simt.nop does not accept keyword arguments";
+        return GetNoneType();
+    });
+
 #define REGISTER_SIMT_LANE_OP(OpName, Description)                                                              \
     REGISTER_OP("simt." OpName)                                                                                 \
         .set_op_category("SimtOp")                                                                              \

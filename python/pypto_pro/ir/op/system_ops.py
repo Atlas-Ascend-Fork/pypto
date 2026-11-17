@@ -31,7 +31,16 @@ from pypto.pypto_impl.ir import (
 )
 
 from ..._errors import InvalidArgument, InvalidOperation, InvalidType, NotSupported
-from .._utils import _get_span_or_capture, _is_int, _normalize_expr, require_const_bool, require_enum, require_int
+from .._limits import INT32_MAX
+from .._utils import (
+    _get_span_or_capture,
+    _is_int,
+    _normalize_expr,
+    require_const_bool,
+    require_const_int,
+    require_enum,
+    require_int,
+)
 from ._op_registry import op_impl
 
 # Hardware resource ranges, inclusive on both ends. These are the single definition of each limit;
@@ -433,6 +442,20 @@ def dsb(*, scope: MemDsb = MemDsb.ALL, span: Span | None = None) -> Call:
     return _ir_core.create_op_call("system.dsb", [], {"scope": scope}, actual_span)
 
 
+def nop(n: Expr, *, span: Span | None = None) -> Call:
+    """Delay execution for approximately ``n`` cycles (``n`` NOP instructions).
+
+    Args:
+        n: Requested delay in cycles; must be a compile-time constant in [0, INT32_MAX].
+        span: Optional source span for debugging (auto-captured if not provided).
+
+    Returns:
+        Call expression for system.nop.
+    """
+    actual_span = _get_span_or_capture(span)
+    return _ir_core.create_op_call("system.nop", [n], {}, actual_span)
+
+
 def icache_preload(prefetch_len: Expr, *, span: Span | None = None) -> Call:
     """Preload subsequent instructions into ICache through AscendC."""
     actual_span = _get_span_or_capture(span)
@@ -714,6 +737,12 @@ def _build_dcci(
 @op_impl("system.dsb")
 def _build_dsb(self, *, scope: MemDsb = MemDsb.ALL, span: Span) -> Call:
     return dsb(scope=scope, span=span)
+
+
+@op_impl("system.nop")
+def _build_nop(self, n, *, span: Span) -> Call:
+    require_const_int(n, subject="n", lower_bound=0, upper_bound=INT32_MAX)
+    return nop(n, span=span)
 
 
 @op_impl("system.icache_preload")

@@ -28,5 +28,6 @@ function _atomic_kernel incast(tensor<16, int32_t, tensor_view<, , ND, %i32_ptr>
     system.dsb(scope=1);
     float %_expr_tmp_4_0 = block.atomic_load(%f32_0, 0);
     block.setval(%fout_0, 0, %_expr_tmp_4_0);
+    system.nop(4);
     return;
 }

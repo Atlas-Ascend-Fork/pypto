@@ -198,6 +198,15 @@ class System:
                 own accesses and never synchronizes other cores.
         """
 
+    @staticmethod
+    @_api_decl
+    def nop(n: int) -> None:
+        """Delay execution for approximately ``n`` cycles.
+
+        Args:
+            n: Requested delay in cycles, as a compile-time constant in [0, INT32_MAX].
+        """
+
     # -----------------------------------------------------------------
     # Mutex buffer-id tokens
     # -----------------------------------------------------------------

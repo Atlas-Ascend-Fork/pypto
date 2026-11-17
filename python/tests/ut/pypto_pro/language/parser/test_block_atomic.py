@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 from pathlib import Path
 
-from pypto_pro._errors import InvalidType, NotSupported
+from pypto_pro._errors import InvalidType, InvalidVal, NotSupported
 import pypto_pro.language as pl
 import pytest
 
@@ -71,6 +71,7 @@ def _atomic_kernel(
         pl.atomic_store(f32, 0, 1.5)
         pl.system.dsb(scope=pl.MemDsb.DDR)
         pl.setval(fout, 0, pl.atomic_load(f32, 0))
+        pl.system.nop(4)
 
 
 def test_atomic_lowering():
@@ -180,4 +181,34 @@ def test_atomic_is_rejected_inside_a_simt_function():
             simt_body[1](i32)
 
     with pytest.raises(NotSupported, match="not supported inside a SIMT function"):
+        _parse(kernel)
+
+
+def test_nop_rejects_a_negative_count():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel():
+        with pl.section_vector():
+            pl.system.nop(-1)
+
+    with pytest.raises(InvalidVal, match="at least 0"):
+        _parse(kernel)
+
+
+def test_nop_requires_a_constant_count():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(n: pl.DT_INT32):
+        with pl.section_vector():
+            pl.system.nop(n)
+
+    with pytest.raises(InvalidType, match="compile-time integer constant"):
+        _parse(kernel)
+
+
+def test_nop_rejects_an_oversized_count():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel():
+        with pl.section_vector():
+            pl.system.nop(2 ** 31)
+
+    with pytest.raises(InvalidVal, match="at most 2147483647"):
         _parse(kernel)

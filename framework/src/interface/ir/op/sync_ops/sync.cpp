@@ -236,6 +236,15 @@ REGISTER_OP("system.dsb")
     .set_attr<int>("scope")
     .f_deduce_type(DeduceUnknownType);
 
+// Register system.nop (NOP instruction padding)
+// Arguments:
+//   - n: requested delay in cycles; compile-time constant, non-negative.
+REGISTER_OP("system.nop")
+    .set_description("Delay execution for N cycles")
+    .set_op_category("SyncOp")
+    .add_argument("n", "Requested delay in cycles (constant integer in [0, INT32_MAX])")
+    .f_deduce_type(DeduceNoneType);
+
 // Register system.dcci (Data Cache Clean and Invalid)
 // Arguments:
 //   - target: TensorType for GM or TileType for UB

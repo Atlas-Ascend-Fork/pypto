@@ -30,8 +30,8 @@ from ..._errors import (
     NotSupported,
     error_class_of_spec_message,
 )
-from .._limits import from_storage_int
-from .._utils import _get_span_or_capture, _to_make_tuple
+from .._limits import INT32_MAX, from_storage_int
+from .._utils import _get_span_or_capture, _to_make_tuple, require_const_int
 from ._op_registry import op_impl
 
 _DIM3_FIELDS = ("x", "y", "z")
@@ -202,6 +202,11 @@ def threadfence_block(span: Span | None = None) -> Call:
 def threadfence(span: Span | None = None) -> Call:
     """Build a device-scoped SIMT memory fence."""
     return _create_simt_call("threadfence", span=span)
+
+
+def nop(n: Expr, span: Span | None = None) -> Call:
+    """Delay execution for approximately ``n`` cycles (``0 <= n <= INT32_MAX``)."""
+    return _create_simt_call("nop", n, span=span)
 
 
 def lane_id(span: Span | None = None) -> Call:
@@ -1563,3 +1568,9 @@ def _build_threadfence_block(self, *, span: Span):
 @op_impl("simt.threadfence")
 def _build_threadfence(self, *, span: Span):
     return threadfence(span=span)
+
+
+@op_impl("simt.nop")
+def _build_nop(self, n, *, span: Span):
+    require_const_int(n, subject="n", lower_bound=0, upper_bound=INT32_MAX)
+    return nop(n, span=span)

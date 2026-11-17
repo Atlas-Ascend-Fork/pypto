@@ -2249,6 +2249,28 @@ static std::string MakeSystemDsbCodegenCCE(const ir::CallPtr& op, codegen::Codeg
 
 REGISTER_BACKEND_OP(BackendCCE, "system.dsb").set_pipe(ir::PipeType::S).f_codegen(MakeSystemDsbCodegenCCE);
 
+static std::string MakeSystemNopCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1) << "system.nop requires one argument";
+    auto count = ir::As<ir::ConstInt>(op->args_[0]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, count != nullptr && count->value_ >= 0)
+        << "system.nop requires a constant non-negative count";
+
+    // The count is a compile-time constant in the IR; keep one pragma-unrolled
+    // loop in the source instead of expanding the NOPs textually.
+    if (count->value_ > 0) {
+        codegen.Emit("#pragma unroll");
+        codegen.Emit("for (int32_t __nop_i = 0; __nop_i < " + std::to_string(count->value_) + "; ++__nop_i) {");
+        codegen.Emit("    asm volatile(\"nop\");");
+        codegen.Emit("}");
+    }
+    return "";
+}
+
+REGISTER_BACKEND_OP(BackendCCE, "system.nop").set_pipe(ir::PipeType::S).f_codegen(MakeSystemNopCodegenCCE);
+
 // ============================================================================
 // Early-start inter-task sync (wait_pre_task_end)
 // ============================================================================

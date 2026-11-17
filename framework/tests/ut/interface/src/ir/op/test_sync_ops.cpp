@@ -133,6 +133,15 @@ TEST(SyncOpsICacheTest, PreloadRejectsFloatingPointScalar)
     EXPECT_THROW((void)reg.Create("system.icache_preload", {prefetchLen}, Sp()), npu::tile_fwk::Error);
 }
 
+TEST(SyncOpsNopTest, NopAcceptsConstantCount)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto count = std::make_shared<ConstInt>(4, DataType::INT64, Sp());
+    auto call = reg.Create("system.nop", {count}, Sp());
+    ASSERT_NE(call, nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
+}
+
 TEST_F(SyncOpsDcciTest, Dcci_TensorTarget_TupleOffset_ReturnsUnknown)
 {
     auto& reg = OpRegistry::GetInstance();

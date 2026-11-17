@@ -1001,6 +1001,68 @@ def test_warp_operations_parse_to_registered_ir_calls():
         assert f"simt.{op_name}" in function_ir
 
 
+@pl.vector_function(mode="simt", max_threads=32)
+def _nop_ops():
+    pl.simt.nop(4)
+    pl.simt.nop(0)
+
+
+@pl.jit
+def _nop_kernel():
+    with pl.section_vector():
+        _nop_ops[32]()
+
+
+def test_simt_nop_parses_with_a_constant_count():
+    program, _ = _nop_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function_ir = str(program.get_function("_nop_ops"))
+
+    assert "simt.nop(4)" in function_ir
+    assert "simt.nop(0)" in function_ir
+
+
+def test_simt_nop_rejects_a_negative_count():
+    @pl.vector_function(mode="simt", max_threads=32)
+    def body():
+        pl.simt.nop(-1)
+
+    @pl.jit
+    def kernel():
+        with pl.section_vector():
+            body[32]()
+
+    with pytest.raises(InvalidVal, match="at least 0"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_simt_nop_requires_a_constant_count():
+    @pl.vector_function(mode="simt", max_threads=32)
+    def body(n):
+        pl.simt.nop(n)
+
+    @pl.jit
+    def kernel(n: pl.DT_INT32):
+        with pl.section_vector():
+            body[32](n)
+
+    with pytest.raises(InvalidType, match="compile-time integer constant"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_simt_nop_rejects_an_oversized_count():
+    @pl.vector_function(mode="simt", max_threads=32)
+    def body():
+        pl.simt.nop(2 ** 31)
+
+    @pl.jit
+    def kernel():
+        with pl.section_vector():
+            body[32]()
+
+    with pytest.raises(InvalidVal, match="at most 2147483647"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
 def test_shuffle_accepts_runtime_controls_with_asc_dtypes():
     @pl.vector_function(mode="simt", max_threads=32)
     def runtime_shuffle(

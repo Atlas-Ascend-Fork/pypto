@@ -605,5 +605,23 @@ TEST(SimtOpsTest, BesselRoundingAndSaturateTypeDeductionContracts)
     EXPECT_THROW((void)registry.Create("simt.jn", {fp32, i32}, Sp()), npu::tile_fwk::Error);
 }
 
+TEST(SimtOpsTest, NopAcceptsConstantCount)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto count = std::make_shared<ConstInt>(4, DataType::INT32, Sp());
+    auto call = registry.Create("simt.nop", {count}, Sp());
+    ASSERT_NE(call, nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
+}
+
+TEST(SimtOpsTest, NopRejectsInvalidArguments)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto count = std::make_shared<ConstInt>(4, DataType::INT32, Sp());
+    EXPECT_THROW((void)registry.Create("simt.nop", {}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.nop", {count, count}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.nop", {count}, Kwargs{{"n", 4}}, Sp()), npu::tile_fwk::Error);
+}
+
 } // namespace ir
 } // namespace pypto

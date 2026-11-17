@@ -688,6 +688,21 @@ def test_simt_warp_codegen_connects_each_operation_family_to_cce():
     assert "asc_" not in function
 
 
+def test_simt_nop_codegen(assert_golden):
+    @pl.vector_function(mode="simt", max_threads=32)
+    def nop_probe():
+        pl.simt.nop(256)
+
+    @pl.jit(auto_mutex=False)
+    def kernel():
+        with pl.section_vector():
+            nop_probe[32]()
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert_golden(program, "vector-ir")
+    assert_golden(_compile_to_cce(kernel), "cce")
+
+
 def test_atomic_add_gm_int64_codegen_uses_element_pointer():
     cpp = _compile_to_cce(_atomic_add_gm_codegen_kernel)
     function = _simt_function_source(cpp, "_atomic_add_gm")

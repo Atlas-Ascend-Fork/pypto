@@ -357,6 +357,91 @@ TEST(BackendCceOpsTest, BarAll)
 }
 
 // ============================================================================
+// NOP ops (tested via DiscardResultAssignStmt)
+// ============================================================================
+
+TEST(BackendCceOpsTest, SystemNopEmitsUnrolledNopLoop)
+{
+    auto call = std::make_shared<const ir::Call>("system.nop", std::vector<ir::ExprPtr>{MakeConstInt(4)},
+                                                 ir::Span::Unknown());
+    const auto* info = BackendCCE::Instance().GetOpInfo("system.nop");
+    ASSERT_NE(info, nullptr);
+    EXPECT_EQ(info->pipe, ir::PipeType::S);
+
+    TestableCCECodegen codegen(ir::SectionKind::Vector);
+    EXPECT_EQ(info->codegenFunc(call, codegen), "");
+    const auto code = codegen.GetEmittedCode();
+    EXPECT_NE(code.find("#pragma unroll"), std::string::npos);
+    EXPECT_NE(code.find("for (int32_t __nop_i = 0; __nop_i < 4; ++__nop_i) {"), std::string::npos);
+    EXPECT_NE(code.find("asm volatile(\"nop\");"), std::string::npos);
+}
+
+TEST(BackendCceOpsTest, SystemNopZeroCountEmitsNothing)
+{
+    auto call = std::make_shared<const ir::Call>("system.nop", std::vector<ir::ExprPtr>{MakeConstInt(0)},
+                                                 ir::Span::Unknown());
+    TestableCCECodegen codegen(ir::SectionKind::Vector);
+    auto code = RunCodegen("system.nop", call, codegen);
+    EXPECT_EQ(code, "");
+}
+
+TEST(BackendCceOpsTest, SystemNopRejectsInvalidArguments)
+{
+    auto no_args = std::make_shared<const ir::Call>("system.nop", std::vector<ir::ExprPtr>{}, ir::Span::Unknown());
+    EXPECT_THROW((void)RunCodegen("system.nop", no_args), npu::tile_fwk::Error);
+
+    auto non_const = std::make_shared<const ir::Call>(
+        "system.nop",
+        std::vector<ir::ExprPtr>{MakeVar("n", std::make_shared<const ir::ScalarType>(ir::DataType::INT64))},
+        ir::Span::Unknown());
+    EXPECT_THROW((void)RunCodegen("system.nop", non_const), npu::tile_fwk::Error);
+
+    auto negative = std::make_shared<const ir::Call>("system.nop", std::vector<ir::ExprPtr>{MakeConstInt(-1)},
+                                                     ir::Span::Unknown());
+    EXPECT_THROW((void)RunCodegen("system.nop", negative), npu::tile_fwk::Error);
+}
+
+TEST(BackendCceOpsTest, SimtNopRoundsCycleBudgetUpToNopGranularity)
+{
+    auto call = std::make_shared<const ir::Call>("simt.nop", std::vector<ir::ExprPtr>{MakeConstInt(256)},
+                                                 ir::Span::Unknown());
+    const auto* info = BackendCCE::Instance().GetOpInfo("simt.nop");
+    ASSERT_NE(info, nullptr);
+    EXPECT_EQ(info->pipe, ir::PipeType::S);
+
+    TestableCCECodegen codegen(ir::SectionKind::Vector);
+    EXPECT_EQ(info->codegenFunc(call, codegen), "");
+    const auto code = codegen.GetEmittedCode();
+    EXPECT_NE(code.find("#pragma unroll"), std::string::npos);
+    EXPECT_NE(code.find("for (int32_t __nop_i = 0; __nop_i < 18; ++__nop_i) {"), std::string::npos);
+    EXPECT_NE(code.find("asm volatile(\"NOP wait:0b0000000 stall:15\" ::);"), std::string::npos);
+}
+
+TEST(BackendCceOpsTest, SimtNopZeroCountEmitsNothing)
+{
+    auto call = std::make_shared<const ir::Call>("simt.nop", std::vector<ir::ExprPtr>{MakeConstInt(0)},
+                                                 ir::Span::Unknown());
+    TestableCCECodegen codegen(ir::SectionKind::Vector);
+    auto code = RunCodegen("simt.nop", call, codegen);
+    EXPECT_EQ(code, "");
+}
+
+TEST(BackendCceOpsTest, SimtNopRejectsInvalidArguments)
+{
+    auto no_args = std::make_shared<const ir::Call>("simt.nop", std::vector<ir::ExprPtr>{}, ir::Span::Unknown());
+    EXPECT_THROW((void)RunCodegen("simt.nop", no_args), npu::tile_fwk::Error);
+
+    auto non_const = std::make_shared<const ir::Call>(
+        "simt.nop", std::vector<ir::ExprPtr>{MakeVar("n", std::make_shared<const ir::ScalarType>(ir::DataType::INT64))},
+        ir::Span::Unknown());
+    EXPECT_THROW((void)RunCodegen("simt.nop", non_const), npu::tile_fwk::Error);
+
+    auto negative = std::make_shared<const ir::Call>("simt.nop", std::vector<ir::ExprPtr>{MakeConstInt(-1)},
+                                                     ir::Span::Unknown());
+    EXPECT_THROW((void)RunCodegen("simt.nop", negative), npu::tile_fwk::Error);
+}
+
+// ============================================================================
 // Mask ops (tested via DiscardResultAssignStmt)
 // ============================================================================
 

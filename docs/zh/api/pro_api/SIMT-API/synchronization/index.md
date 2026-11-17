@@ -8,4 +8,5 @@ synchronization_intro
 syncthreads
 threadfence_block
 threadfence
+nop
 ```

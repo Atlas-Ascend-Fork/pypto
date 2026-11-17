@@ -1,0 +1,10 @@
+program #entry() {
+    function kernel incast() outcast() #entry(false) #type(pro) {
+        simt.launch(32, 1, 1, callee=nop_probe, max_threads=32);
+        return;
+    }
+    function nop_probe incast() outcast() #entry(false) #type(SimtVF) {
+        simt.nop(256);
+        return;
+    }
+}

@@ -13,3 +13,29 @@
 - 原子操作是PIPE_S标量指令，不保证与MTE搬运或其他核的访问顺序，需要时显式插入同步。
 - 接口返回值与`tensor`的元素类型一致。
 - 可作为独立语句调用以丢弃旧值。
+
+## 轮询延时：NOP
+
+[pypto_pro.language.system.nop](../synchronization/nop.md)（SIMD kernel，AIC/AIV均可用）和[pypto_pro.language.simt.nop](../../SIMT-API/synchronization/nop.md)（SIMT函数）请求约`n`个周期的延时，`n`必须是编译期非负整数常量，且不超过`INT32_MAX`（2147483647）。
+
+NOP主要用于控制指令执行时序、降低轮询循环中的访问压力，并有助于规避多个SIMT线程或者多个AiCore并发读写同一地址时的潜在死锁。NOP**不是**同步或内存序原语：它不提供可见性或顺序保证，也不能替代`PipeBarrier`、`set_flag`/`wait_flag`、`dsb`或`dcci`。
+
+对GM中的标志位、原子值或队列状态做自旋等待时，可在循环体插入NOP降低重复访问频率：
+
+```python
+while pl.atomic_load(flag, 0) != expected:
+    pl.system.nop(16)
+```
+
+SIMT函数内的同等写法为`pypto_pro.language.simt.nop(16)`。两种接口的`n`均表示请求的延时周期数。
+
+| 场景 | 建议 |
+| --- | --- |
+| SIMT多线程读写同一地址的竞争、潜在死锁规避 | 推荐 |
+| 自旋等待/轮询循环（flag、原子值、CQ等） | 推荐 |
+| 性能实验中的受控延时 | 一般 |
+| 有明确时序要求的固定延时 | 有条件 |
+| 内存可见性/访问顺序 | 不可用，改用`dcci`/`dsb`或同步接口 |
+| 流水线同步 | 不可用，改用`PipeBarrier`、`set_flag`/`wait_flag` |
+
+固定NOP数量对短等待和长等待都可能不是最优，应按需调整`n`。

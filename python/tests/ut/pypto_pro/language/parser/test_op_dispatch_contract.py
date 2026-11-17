@@ -175,7 +175,10 @@ def runtime(monkeypatch):
     module("pypto.pypto_impl", ir=ir)
     module("pypto.pypto_impl.ir", **ir.__dict__, Call=_Expr, Function=_Expr)
     ir.RoundMode = enum.Enum("RoundMode", ["CAST_NONE"])
-    module("pypto_pro.ir._limits", from_storage_int=lambda value, dtype: value)
+    module(
+        "pypto_pro.ir._limits",
+        INT32_MAX=2 ** 31 - 1, from_storage_int=lambda value, dtype: value,
+    )
     error_names = (
         "CommonExternal", "InvalidArgument", "InvalidOperation", "InvalidShape",
         "InvalidType", "InvalidVal", "NotSupported", "OutOfRange",

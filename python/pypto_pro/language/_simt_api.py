@@ -97,6 +97,16 @@ class Simt:
 
     @staticmethod
     @_api_decl
+    def nop(n: int) -> None:
+        """Delay execution for approximately ``n`` cycles.
+
+        Args:
+            n: Requested delay in cycles, as a compile-time constant in [0, INT32_MAX].
+                The delay is rounded up to the target's implementation granularity.
+        """
+
+    @staticmethod
+    @_api_decl
     def lane_id() -> int:
         """Return the current lane index in the warp as an INT32 Scalar."""
 

@@ -23,6 +23,7 @@ package. Two bands matter:
 from __future__ import annotations
 
 __all__ = [
+    "INT32_MAX",
     "INT64_MAX",
     "INT64_MIN",
     "UINT64_MAX",
@@ -40,6 +41,7 @@ from typing import NamedTuple
 
 from pypto.pypto_impl.ir import DataType
 
+INT32_MAX = 2 ** 31 - 1
 INT64_MIN = -(2 ** 63)
 INT64_MAX = 2 ** 63 - 1
 UINT64_MAX = 2 ** 64 - 1
