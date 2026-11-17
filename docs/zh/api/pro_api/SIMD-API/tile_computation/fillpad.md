@@ -48,9 +48,9 @@ pypto_pro.language.fillpad(out: Tile, src: Tile, *, mode: FillPadMode=FillPadMod
 
 ### L1 Buffer Tile
 
-- 使用NORMAL模式和NZ布局，out与src须为相同Tile类型，包括数据类型、物理Shape、有效Shape和pad配置。
-- 当前L1 Buffer路径用于零填充。使用pypto_pro.language.TilePad.null创建源、目的Tile，不应将UB的其他pad策略直接用于该路径。
-- 调用前须在out中装载需要保留的有效数据。该路径只填充out的padding，不从独立的src复制有效数据；补零边界由out的有效Shape决定，不使用src的运行时有效Shape。
+- 使用NORMAL模式和NZ布局，out与src须为相同Tile类型，包括数据类型、物理Shape、有效Shape的静态类型参数、fractal、compact和pad配置。运行时有效Shape的值不要求相同，补零范围由out决定。
+- 当前L1 Buffer路径用于零填充。源、目的Tile的pad可配置为pypto_pro.language.TilePad.null或pypto_pro.language.TilePad.zero，两者均执行补零；不应将UB的其他pad策略（max、min）直接用于该路径。
+- 调用前须在out中装载需要保留的有效数据。该路径只填充out的padding，不从独立的src复制有效数据；补零边界由out的有效Shape决定，不使用src的运行时有效Shape。当前接口支持的compact模式下，在有效列向上对齐到32字节所覆盖的列块内，补零有效行之后至物理行末尾的部分；对齐边界之后的完整列块补零。有效行内，有效列至该对齐边界之间的元素不保证由本接口清零。
 - 可对已初始化的L1 Buffer Tile调用`pypto_pro.language.fillpad(tile, tile)`，在原有有效数据之外补零。
 - EXPAND和INPLACE模式用于UB Tile，不用于L1 Buffer Tile。
 

@@ -40,7 +40,8 @@ namespace backend {
 
 TEST(BackendCceBlockOutOpsTest, ArgumentDependentPipesKeepTheirCodegenRegistration)
 {
-    for (const auto* name : {"block.move", "block.insert", "block.store", "block.expands", "block.full"}) {
+    for (const auto* name :
+         {"block.move", "block.insert", "block.store", "block.expands", "block.full", "block.fillpad"}) {
         const auto* info = BackendCCE::Instance().GetOpInfo(name);
         ASSERT_NE(info, nullptr) << name;
         EXPECT_FALSE(info->pipe.has_value()) << name;
@@ -1901,14 +1902,27 @@ TEST(BackendCCEBlockOutOps, FillpadWithPadAlias)
 {
     ir::HardwareInfo hw;
     hw.pad = ir::TilePad::zero;
-    auto tile_with_pad = MakeTileType({16, 16}, ir::DataType::FP16, std::nullopt, hw);
-    auto tile_no_pad = MakeTileType();
+    auto tile_with_pad = MakeTileType({16, 16}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Vec), hw);
+    auto tile_no_pad = MakeTileType({16, 16}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Vec));
     auto call = MakeCall("block.fillpad", {MakeVar("dst", tile_no_pad), MakeVar("src", tile_with_pad)});
     auto code = RunCodegen("block.fillpad", call);
     EXPECT_CONTAINS(code, "using __block_fillpad_src_alias_type_");
     EXPECT_CONTAINS(code, "fillpad_src_alias");
     EXPECT_CONTAINS(code, "TASSIGN(__block_fillpad_src_alias_");
     EXPECT_CONTAINS(code, "TFILLPAD(dst.tile, __block_fillpad_src_alias_");
+}
+
+// The Mat (L1) TFILLPAD entry takes one TileData for both operands, so a
+// null-pad source view would break template deduction; the L1 path never reads
+// src, hence no alias there.
+TEST(BackendCCEBlockOutOps, FillpadMatSourceSkipsPadAlias)
+{
+    for (auto pad : {ir::TilePad::null, ir::TilePad::zero}) {
+        ir::HardwareInfo hw(ir::TileLayout::col_major, ir::TileLayout::row_major, 512, pad);
+        auto matTile = MakeTileType({16, 16}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Mat), hw);
+        auto call = MakeCall("block.fillpad", {MakeVar("dst", matTile), MakeVar("src", matTile)});
+        EXPECT_EQ(RunCodegen("block.fillpad", call), ReadCodegenGolden("fillpad_mat.pypto"));
+    }
 }
 
 TEST(BackendCCEBlockOutOps, FillpadInplace)

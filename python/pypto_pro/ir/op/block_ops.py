@@ -19,7 +19,6 @@ from __future__ import annotations
 import ast
 from collections.abc import Sequence
 from dataclasses import dataclass
-import enum
 import struct
 from typing import Any, Optional
 
@@ -33,6 +32,7 @@ from pypto.pypto_impl.ir import (
     ConstInt,
     DataType,
     Expr,
+    FillPadMode,
     Layout,
     MemorySpace,
     QuantMode,
@@ -114,14 +114,6 @@ _BLOCK_OP_NAMESPACE = "block"
 def block_ir_op(op_name: str) -> str:
     """Return the IR name for the explicit-output block DSL ops."""
     return f"{_BLOCK_OP_NAMESPACE}.{op_name}"
-
-
-class FillPadMode(enum.Enum):
-    """Fill-pad operating mode (lowered to different IR op names)."""
-
-    NORMAL = 0
-    EXPAND = 1
-    INPLACE = 2
 
 
 def _l2_cache_mode_attr(
@@ -1853,6 +1845,11 @@ def _ir_fillpad(self,
         raise InvalidType(f"fillpad: unsupported dtype {out_dt}, supported: b4/b8/b16/b32")
     if out_dt is not None and src_dt is not None and out_dt.get_bit() != src_dt.get_bit():
         raise InvalidType(f"fillpad: dtype size mismatch between dst ({out_dt}) and src ({src_dt})")
+    # Mat shares one ISA TileData type; Vec allows different pad/valid-shape types.
+    # Unwrap mutex counts, which are not part of the ISA TileData type.
+    if out.type.memref.memory_space_ == MemorySpace.Mat:
+        if not _ir_core.structural_equal(unwrap_type(out.type), unwrap_type(src.type), enable_auto_mapping=False):
+            raise InvalidType("fillpad: src and out Mat (L1) tile types must match", span=span)
     name = {
         FillPadMode.NORMAL: "fillpad",
         FillPadMode.EXPAND: "fillpad_expand",

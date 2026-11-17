@@ -34,6 +34,7 @@
 #include "ir/expr.h"
 #include "ir/kind_traits.h"
 #include "ir/memref.h"
+#include "ir/op/op_common.h"
 #include "ir/op_attr_types.h"
 #include "ir/pipe.h"
 #include "ir/type.h"
@@ -1065,8 +1066,15 @@ static std::string MakeBlockOutFillIndexCodegenCCE(const ir::CallPtr& op, codege
 
 static bool NeedsNullPadSourceAliasCCE(const ir::TileTypePtr& tileType)
 {
-    return tileType != nullptr && tileType->hardwareInfo_.has_value() &&
-           tileType->hardwareInfo_.value().pad != ir::TilePad::null;
+    if (tileType == nullptr || !tileType->hardwareInfo_.has_value() ||
+        tileType->hardwareInfo_.value().pad == ir::TilePad::null) {
+        return false;
+    }
+    // Mat (L1) TFILLPAD takes a single TileData for both operands, so rewriting
+    // the source pad to null would make the two argument types differ and fail
+    // template deduction. The L1 path never reads src, so the alias buys nothing.
+    // Preserve the existing alias behavior unless the source is known to be Mat.
+    return ir::GetTileMemSpace(tileType) != ir::MemorySpace::Mat;
 }
 
 static std::pair<int64_t, int64_t> GetTileRowsCols(const ir::TileTypePtr& tileType)
@@ -1597,11 +1605,11 @@ REGISTER_BACKEND_OP(BackendCCE, "block.full").f_codegen([](const ir::CallPtr& op
     return MakeBlockOutExpandsCodegenCCE(op, codegen);
 });
 
-REGISTER_BACKEND_OP(BackendCCE, "block.fillpad")
-    .set_pipe(ir::PipeType::V)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeBlockOutFillpadCodegenCCE(op, codegen);
-    });
+// The pipe is derived from the destination memory space: a Mat (L1) fillpad is
+// issued on the copy-in pipe (MTE2), a Vec (UB) one on V.
+REGISTER_BACKEND_OP(BackendCCE, "block.fillpad").f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+    return MakeBlockOutFillpadCodegenCCE(op, codegen);
+});
 
 REGISTER_BACKEND_OP(BackendCCE, "block.fillpad_inplace")
     .set_pipe(ir::PipeType::V)

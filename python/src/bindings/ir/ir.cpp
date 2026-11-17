@@ -608,6 +608,11 @@ void BindTypeClass(py::module_& ir)
         .value("Partial", ir::AccPhase::Partial, "Partial drain")
         .value("Final", ir::AccPhase::Final, "Final drain");
 
+    py::enum_<ir::FillPadMode>(ir, "FillPadMode", "Fill-pad operating mode")
+        .value("NORMAL", ir::FillPadMode::NORMAL, "Normal fill-pad mode for Vec and Mat tiles")
+        .value("EXPAND", ir::FillPadMode::EXPAND, "Copy and pad into an equal or larger tile")
+        .value("INPLACE", ir::FillPadMode::INPLACE, "Pad tiles sharing the same address");
+
     py::enum_<ir::AccToVecMode>(ir, "AccToVecMode", "Accumulator to vector transfer mode")
         .value("SingleModeVec0", ir::AccToVecMode::SingleModeVec0, "Single vector sub-core 0")
         .value("SingleModeVec1", ir::AccToVecMode::SingleModeVec1, "Single vector sub-core 1")

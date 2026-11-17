@@ -35,6 +35,7 @@ from pypto.ir import (
     AccPhase,
     AccToVecMode,
     AtomicType,
+    FillPadMode,
     QuantMode,
     ReluPreMode,
     RoundMode,
@@ -43,7 +44,6 @@ from pypto.ir import (
     TLoadL2Hint,
     TStoreL2Hint,
 )
-from pypto_pro.ir.op.block_ops import FillPadMode
 
 from .._errors import InvalidOperation
 from . import Layout, MemorySpace, TilePad

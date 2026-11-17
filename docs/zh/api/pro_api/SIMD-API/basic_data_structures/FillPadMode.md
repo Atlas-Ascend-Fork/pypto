@@ -19,7 +19,7 @@ fillpad接口使用的填充模式枚举，用于指定源Tile与目标Tile的�
 ## 原型定义
 
 ```python
-class FillPadMode(enum.Enum):
+class FillPadMode:
     NORMAL = 0   # 源Tile与目标Tile的形状相同、地址不同。
     EXPAND = 1   # 目标Tile的各维形状不小于源Tile，并填充扩展区域。
     INPLACE = 2  # 源Tile与目标Tile的形状相同，并共享同一地址。

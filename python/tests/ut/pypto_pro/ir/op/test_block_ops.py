@@ -382,6 +382,95 @@ def test_load_with_dynamic_valid_shape():
     assert "block.set_validshape" in ir_str
 
 
+def _parse_fillpad_tiles(dst_type, src_type, mode=pl.FillPadMode.NORMAL):
+    dst_addr = 0 if mode == pl.FillPadMode.INPLACE else 4096
+    src_shape, dst_shape = tuple(src_type.shape), tuple(dst_type.shape)
+    src_dtype, dst_dtype = src_type.dtype, dst_type.dtype
+    src_space, dst_space = src_type.target_memory, dst_type.target_memory
+    src_valid, dst_valid = src_type.valid_shape, dst_type.valid_shape
+    src_layout, dst_layout = src_type.layout, dst_type.layout
+    src_fractal, dst_fractal = src_type.fractal, dst_type.fractal
+    src_pad, dst_pad = src_type.pad, dst_type.pad
+    src_compact, dst_compact = src_type.compact, dst_type.compact
+
+    @pl.jit(arch="3510", auto_mutex=True)
+    def fillpad_kernel(_jit_entry: pl.DT_INT64):
+        src_tile_type = pl.TileType(
+            shape=src_shape, dtype=src_dtype, target_memory=src_space,
+            valid_shape=src_valid, layout=src_layout, fractal=src_fractal,
+            pad=src_pad, compact=src_compact,
+        )
+        dst_tile_type = pl.TileType(
+            shape=dst_shape, dtype=dst_dtype, target_memory=dst_space,
+            valid_shape=dst_valid, layout=dst_layout, fractal=dst_fractal,
+            pad=dst_pad, compact=dst_compact,
+        )
+        src = pl.make_tile(src_tile_type, addr=0)
+        dst_group = pl.make_tile_group(type=dst_tile_type, addrs=dst_addr, mutex_ids=[[1, 2]])
+        dst = dst_group.current()
+        pl.fillpad(dst, src, mode=mode)
+
+    kind = ir.SectionKind.Cube if dst_space == pl.MemorySpace.Mat else ir.SectionKind.Vector
+    return fillpad_kernel.to_kernel_def().parse_target_program(kind)[0]
+
+
+@pytest.mark.parametrize("valid_shape", [None, [-1, -1], [5, 7]])
+def test_fillpad_mat_unwraps_mutex_and_preserves_valid_shape(valid_shape):
+    dst = pl.TileType(
+        shape=[16, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat,
+        valid_shape=valid_shape, pad=pl.TilePad.zero,
+    )
+    src = pl.TileType(
+        shape=[16, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat,
+        valid_shape=[-1, -1] if valid_shape is None else valid_shape, pad=pl.TilePad.zero,
+    )
+    assert "block.fillpad" in str(_parse_fillpad_tiles(dst, src))
+
+
+@pytest.mark.parametrize(
+    "change",
+    [
+        {"shape": [32, 32]},
+        {"dtype": pl.DT_BF16},
+        {"pad": pl.TilePad.null},
+        {"valid_shape": [5, 7]},
+        {"fractal": 1024},
+        {"compact": 0},
+    ],
+)
+def test_fillpad_mat_rejects_different_tile_types(change):
+    fields = dict(
+        shape=[16, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, pad=pl.TilePad.zero,
+    )
+    dst = pl.TileType(**fields)
+    src = pl.TileType(**{**fields, **change})
+    with pytest.raises(InvalidType, match=r"Mat \(L1\) tile types must match"):
+        _parse_fillpad_tiles(dst, src)
+
+
+@pytest.mark.parametrize("dst_shape", [[8, 32], [32, 32], [16, 16], [16, 64]])
+def test_fillpad_vec_normal_rejects_different_physical_shape(dst_shape):
+    dst = pl.TileType(
+        shape=dst_shape, dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, pad=pl.TilePad.zero,
+    )
+    src = pl.TileType(shape=[16, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+    with pytest.raises(InvalidShape, match="src and out tile rows/cols must match"):
+        _parse_fillpad_tiles(dst, src)
+
+
+@pytest.mark.parametrize("mode", [pl.FillPadMode.NORMAL, pl.FillPadMode.INPLACE, pl.FillPadMode.EXPAND])
+def test_fillpad_vec_allows_different_pad_and_valid_shape(mode):
+    dst = pl.TileType(
+        shape=[32, 32] if mode == pl.FillPadMode.EXPAND else [16, 32],
+        dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec, pad=pl.TilePad.zero,
+    )
+    src = pl.TileType(
+        shape=[16, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec,
+        valid_shape=[5, 7], pad=pl.TilePad.null,
+    )
+    assert "block.fillpad" in str(_parse_fillpad_tiles(dst, src, mode))
+
+
 def test_fillpad_accepts_empty_valid_region_from_tile_group():
     @pl.jit(arch="3510", auto_mutex=False)
     def main(_jit_entry: pl.DT_INT64):

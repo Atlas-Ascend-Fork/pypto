@@ -136,6 +136,8 @@ PYPTO_DECLARE_ENUM(STPhase, Unspecified, Partial, Final)
 
 PYPTO_DECLARE_ENUM(AccPhase, Unspecified, Partial, Final)
 
+PYPTO_DECLARE_ENUM(FillPadMode, NORMAL, EXPAND, INPLACE)
+
 PYPTO_DECLARE_ENUM(AccToVecMode, SingleModeVec0, SingleModeVec1, DualModeSplitM, DualModeSplitN)
 
 PYPTO_DECLARE_ENUM(RoundMode, CAST_NONE, CAST_RINT, CAST_ROUND, CAST_FLOOR, CAST_CEIL, CAST_TRUNC, CAST_ODD)

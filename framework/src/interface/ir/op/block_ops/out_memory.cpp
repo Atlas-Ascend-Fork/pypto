@@ -32,6 +32,8 @@
 #include "ir/expr.h"
 #include "ir/kind_traits.h"
 #include "ir/memref.h"
+#include "ir/op/op_common.h"
+#include "ir/op_attr_types.h"
 #include "ir/op_registry.h"
 #include "ir/transforms/structural_comparison.h"
 #include "ir/type.h"
@@ -48,34 +50,50 @@ using npu::tile_fwk::ExternalError;
 
 static TypePtr DeduceBlockOutFillPadType([[maybe_unused]] const std::vector<ExprPtr>& args,
                                          [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
-                                         const std::string& opName, bool allowExpand,
-                                         bool requireSharedBackingStorage = false)
+                                         const std::string& opName, FillPadMode mode)
 {
     auto resultType = DeduceBlockOutType(args, kwargs, opName, 2);
+    CheckTileArg(args, 0, opName, {MemorySpace::Vec, MemorySpace::Mat});
+    CheckTileArg(args, 1, opName, {MemorySpace::Vec, MemorySpace::Mat});
+
     auto outType = As<TileType>(args[0]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, outType) << opName << ": out must be TileType";
     auto srcType = As<TileType>(args[1]->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, srcType) << opName << ": src must be TileType";
     PRO_IR_CHECK(ExternalError::INVALID_VAL, outType->hardwareInfo_.has_value())
         << opName << ": out tile must carry hardware_info metadata";
+
+    MemorySpace outSpace = (*outType->memref_)->memorySpace_;
+    MemorySpace srcSpace = (*srcType->memref_)->memorySpace_;
+    PRO_IR_CHECK(ExternalError::INVALID_OPERATION, outSpace == srcSpace)
+        << opName << ": src must live in the same memory space as out, but got src=" << MemorySpaceToString(srcSpace)
+        << ", out=" << MemorySpaceToString(outSpace);
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, outSpace != MemorySpace::Mat || mode == FillPadMode::NORMAL)
+        << opName << ": Mat (L1) tiles only support NORMAL mode";
 
     HardwareInfo hw = outType->hardwareInfo_.value();
     int padValue = static_cast<int>(hw.pad);
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT,
                  padValue >= static_cast<int>(TilePad::null) && padValue <= static_cast<int>(TilePad::min))
         << opName << ": out.hardware_info.pad must be one of TilePad.null/zero/max/min";
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, padValue != static_cast<int>(TilePad::null))
-        << opName << ": out.hardware_info.pad must not be TilePad.null";
+    if (outSpace == MemorySpace::Mat) {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT,
+                     hw.convLayout < 0 && hw.blayout == TileLayout::col_major && hw.slayout == TileLayout::row_major)
+            << opName << ": Mat (L1) tiles must use NZ layout";
+        // The L1 path fills zero for both TilePad.null and TilePad.zero and has
+        // no way to express max/min.
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, hw.pad == TilePad::null || hw.pad == TilePad::zero)
+            << opName << ": out.hardware_info.pad must be TilePad.null or TilePad.zero for a Mat (L1) tile";
+    } else {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, padValue != static_cast<int>(TilePad::null))
+            << opName << ": out.hardware_info.pad must not be TilePad.null";
+    }
 
-    if (requireSharedBackingStorage) {
-        PRO_IR_CHECK(ExternalError::INVALID_OPERATION, srcType->memref_.has_value() && outType->memref_.has_value())
+    if (mode == FillPadMode::INPLACE) {
+        PRO_IR_CHECK(ExternalError::INVALID_OPERATION,
+                     structural_equal((*srcType->memref_)->addr_, (*outType->memref_)->addr_))
             << opName << ": src and out must share backing storage";
-        auto srcMemref = srcType->memref_.value();
-        auto outMemref = outType->memref_.value();
-        PRO_IR_CHECK(ExternalError::INVALID_OPERATION, srcMemref->memorySpace_ == outMemref->memorySpace_ &&
-                                                           structural_equal(srcMemref->addr_, outMemref->addr_))
-            << opName << ": src and out must share backing storage";
+    }
 
+    if (outSpace == MemorySpace::Vec && mode != FillPadMode::EXPAND) {
         PRO_IR_CHECK(ExternalError::INVALID_SHAPE, srcType->shape_.size() == 0x2 && outType->shape_.size() == 0x2)
             << opName << ": src/out tile shapes must be rank-2";
         auto srcRows = As<ConstInt>(srcType->shape_[0]);
@@ -89,7 +107,7 @@ static TypePtr DeduceBlockOutFillPadType([[maybe_unused]] const std::vector<Expr
             << opName << ": src and out tile rows/cols must match";
     }
 
-    if (allowExpand) {
+    if (mode == FillPadMode::EXPAND) {
         PRO_IR_CHECK(ExternalError::INVALID_SHAPE, srcType->shape_.size() == 0x2 && outType->shape_.size() == 0x2)
             << opName << ": src/out tile shapes must be rank-2";
 
@@ -276,12 +294,13 @@ REGISTER_OP("block.full")
 // block.fillpad: (out, src_tile) -> NoneType
 REGISTER_OP("block.fillpad")
     .set_op_category("BlockOp")
-    .set_description("Block explicit-output fill-with-padding: copy src tile into out and pad remaining elements.")
+    .set_description("Block explicit-output fill-with-padding: Vec copies src data and pads out; "
+                     "Mat only zero-pads out using its valid shape, without copying src data.")
     .add_argument("out", "Pre-allocated destination tile (TileType)")
     .add_argument("src", "Source tile (TileType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutFillPadType(args, kwargs, "block.fillpad", false);
+        return DeduceBlockOutFillPadType(args, kwargs, "block.fillpad", FillPadMode::NORMAL);
     });
 
 // block.fillpad_inplace: (out, src_tile) -> NoneType
@@ -294,7 +313,7 @@ REGISTER_OP("block.fillpad_inplace")
     .add_argument("src", "Source tile (TileType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutFillPadType(args, kwargs, "block.fillpad_inplace", false, true);
+        return DeduceBlockOutFillPadType(args, kwargs, "block.fillpad_inplace", FillPadMode::INPLACE);
     });
 
 // block.fillpad_expand: (out, src_tile) -> NoneType
@@ -306,7 +325,7 @@ REGISTER_OP("block.fillpad_expand")
     .add_argument("src", "Source tile (TileType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutFillPadType(args, kwargs, "block.fillpad_expand", true);
+        return DeduceBlockOutFillPadType(args, kwargs, "block.fillpad_expand", FillPadMode::EXPAND);
     });
 
 // block.set_validshape: (tile, row, col) -> NoneType

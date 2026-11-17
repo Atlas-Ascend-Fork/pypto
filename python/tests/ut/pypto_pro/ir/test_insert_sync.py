@@ -48,6 +48,26 @@ def calls(program, name):
                 yield value
 
 
+@pytest.mark.parametrize("is_mat", [False, True])
+def test_fillpad_sync_uses_the_tile_memory_space(is_mat):
+    from pypto_pro.ir.op.block_ops import make_mutex_tile_expr
+
+    allocated = make_mutex_tile_expr(
+        [16, 16], pl.DT_FP16, pl.MemorySpace.Mat if is_mat else pl.MemorySpace.Vec,
+        addr=0, layout=pl.NZ if is_mat else pl.ND, pad=pl.TilePad.zero, mutex_ids=[3],
+    )
+    span = allocated.span
+    tile = ir.Var("tile", allocated.type, span)
+    fillpad = ir.create_op_call("block.fillpad", [tile, tile], {}, span)
+    function = ir.Function("fillpad_sync", [tile], [], ir.AssignStmt([], fillpad, span), span)
+    program = ir.Pass.insert_sync()(ir.Program([function], "fillpad_sync", span, ir.IRDebugInfo()))
+    locks = list(calls(program, "system.mutex_lock_dyn"))
+    unlocks = list(calls(program, "system.mutex_unlock_dyn"))
+    assert len(locks) == len(unlocks) == 1
+    expected = ir.PipeType.MTE2 if is_mat else ir.PipeType.V
+    assert all(int(call.kwargs["pipe"]) == int(expected) for call in locks + unlocks)
+
+
 @pytest.mark.parametrize(
     "valid_shape,ctor",
     [(None, "32, 64"), ([-1, -1], "32, 64"), ([16, 48], ""), ([-1, 48], "32"), ([16, -1], "64")],

@@ -276,6 +276,7 @@ from pypto.ir import (
     DataCopyMode,
     DcciDst,
     DuplicatePos,
+    FillPadMode,
     HistType,
     IndexOrder,
     LoadDist,
@@ -308,7 +309,7 @@ from pypto.pypto_impl.ir import (
     PipeType,
     TilePad,
 )
-from pypto_pro.ir.op.block_ops import FillPadMode, TileType
+from pypto_pro.ir.op.block_ops import TileType
 from pypto_pro.ir.op.ptr_ops import addptr, make_ptr, make_tensor, tensor_view
 from pypto_pro.runtime import SkCap, jit, pipeline
 

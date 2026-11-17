@@ -18,6 +18,7 @@
 #include <any>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <utility>
 #include <vector>
@@ -1513,11 +1514,28 @@ TEST_F(BlockOpsOutMemoryTest, BlockInitOutput_NonTensorFirst_Throws)
 // out_memory.cpp: block.fillpad, block.fillpad_expand
 // ============================================================================
 
+namespace {
+ExprPtr MakeFillPadTile(const std::string& name, std::vector<int64_t> dims, MemorySpace space, int64_t addr,
+                        TilePad pad, DataType dtype = DataType::FP16,
+                        std::optional<HardwareInfo> hardware = std::nullopt,
+                        std::optional<TileView> view = std::nullopt)
+{
+    auto addrExpr = std::make_shared<ConstInt>(addr, DataType::INDEX, Sp());
+    auto memref = std::make_shared<MemRef>(space, addrExpr, uint64_t(1024));
+    HardwareInfo hw = hardware.value_or(space == MemorySpace::Mat ?
+                                            HardwareInfo(TileLayout::col_major, TileLayout::row_major, 512, pad) :
+                                            HardwareInfo(TileLayout::row_major, TileLayout::none_box, 512, pad));
+    hw.pad = pad;
+    auto type = std::make_shared<TileType>(dims, dtype, memref, view, hw);
+    return std::make_shared<Var>(name, type, Sp());
+}
+} // namespace
+
 TEST_F(BlockOpsOutMemoryTest, BlockFillpad_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
-    auto src = MakeTileVarWithHwInfo("src", {16, 32}, DataType::FP16, TilePad::zero);
-    auto out = MakeTileVarWithHwInfo("out", {16, 32}, DataType::FP16, TilePad::zero);
+    auto src = MakeFillPadTile("src", {16, 32}, MemorySpace::Vec, 0, TilePad::zero);
+    auto out = MakeFillPadTile("out", {16, 32}, MemorySpace::Vec, 1024, TilePad::zero);
     auto call = reg.Create("block.fillpad", {out, src}, Sp());
     EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
@@ -1533,16 +1551,16 @@ TEST_F(BlockOpsOutMemoryTest, BlockFillpad_NoHardwareInfo_Throws)
 TEST_F(BlockOpsOutMemoryTest, BlockFillpad_PadNull_Throws)
 {
     auto& reg = OpRegistry::GetInstance();
-    auto src = MakeTileVar("src", {16, 32}, DataType::FP16);
-    auto out = MakeTileVarWithHwInfo("out", {16, 32}, DataType::FP16, TilePad::null);
+    auto src = MakeFillPadTile("src", {16, 32}, MemorySpace::Vec, 0, TilePad::zero);
+    auto out = MakeFillPadTile("out", {16, 32}, MemorySpace::Vec, 1024, TilePad::null);
     EXPECT_THROW((void)reg.Create("block.fillpad", {out, src}, Sp()), npu::tile_fwk::Error);
 }
 
 TEST_F(BlockOpsOutMemoryTest, BlockFillpadExpand_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
-    auto src = MakeTileVarWithHwInfo("src", {16, 32}, DataType::FP16, TilePad::zero);
-    auto out = MakeTileVarWithHwInfo("out", {32, 64}, DataType::FP16, TilePad::zero);
+    auto src = MakeFillPadTile("src", {16, 32}, MemorySpace::Vec, 0, TilePad::zero);
+    auto out = MakeFillPadTile("out", {32, 64}, MemorySpace::Vec, 1024, TilePad::zero);
     auto call = reg.Create("block.fillpad_expand", {out, src}, Sp());
     EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
@@ -1550,8 +1568,8 @@ TEST_F(BlockOpsOutMemoryTest, BlockFillpadExpand_ReturnsNone)
 TEST_F(BlockOpsOutMemoryTest, BlockFillpadExpand_SrcLargerThanOut_Throws)
 {
     auto& reg = OpRegistry::GetInstance();
-    auto src = MakeTileVarWithHwInfo("src", {32, 64}, DataType::FP16, TilePad::zero);
-    auto out = MakeTileVarWithHwInfo("out", {16, 32}, DataType::FP16, TilePad::zero);
+    auto src = MakeFillPadTile("src", {32, 64}, MemorySpace::Vec, 0, TilePad::zero);
+    auto out = MakeFillPadTile("out", {16, 32}, MemorySpace::Vec, 1024, TilePad::zero);
     EXPECT_THROW((void)reg.Create("block.fillpad_expand", {out, src}, Sp()), npu::tile_fwk::Error);
 }
 
@@ -1570,12 +1588,113 @@ TEST_F(BlockOpsOutMemoryTest, BlockFillpadInplace_ReturnsNone)
     EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
-TEST_F(BlockOpsOutMemoryTest, BlockFillpadInplace_NoMemRef_Throws)
+// The ISA Mat (L1) TFILLPAD entry fills zero for both TilePad.null and
+// TilePad.zero, and has no way to express max/min.
+TEST_F(BlockOpsOutMemoryTest, BlockFillpad_MatPadZero_Deduces)
 {
     auto& reg = OpRegistry::GetInstance();
-    auto src = MakeTileVarWithHwInfo("src", {16, 32}, DataType::FP16, TilePad::zero);
-    auto out = MakeTileVarWithHwInfo("out", {16, 32}, DataType::FP16, TilePad::zero);
+    auto src = MakeFillPadTile("src", {16, 16}, MemorySpace::Mat, 0, TilePad::zero);
+    auto out = MakeFillPadTile("out", {16, 16}, MemorySpace::Mat, 512, TilePad::zero);
+    EXPECT_NE(As<NoneType>(reg.Create("block.fillpad", {out, src}, Sp())->GetType()), nullptr);
+}
+
+TEST_F(BlockOpsOutMemoryTest, BlockFillpad_MatPadNull_Deduces)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto src = MakeFillPadTile("src", {16, 16}, MemorySpace::Mat, 0, TilePad::null);
+    auto out = MakeFillPadTile("out", {16, 16}, MemorySpace::Mat, 512, TilePad::null);
+    EXPECT_NE(As<NoneType>(reg.Create("block.fillpad", {out, src}, Sp())->GetType()), nullptr);
+}
+
+TEST_F(BlockOpsOutMemoryTest, BlockFillpad_MatPadMax_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto src = MakeFillPadTile("src", {16, 16}, MemorySpace::Mat, 0, TilePad::max);
+    auto out = MakeFillPadTile("out", {16, 16}, MemorySpace::Mat, 512, TilePad::max);
+    EXPECT_THROW((void)reg.Create("block.fillpad", {out, src}, Sp()), npu::tile_fwk::Error);
+}
+
+// EXPAND/INPLACE exist only for Vec (UB) tiles in the ISA.
+TEST_F(BlockOpsOutMemoryTest, BlockFillpadExpand_MatTile_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto src = MakeFillPadTile("src", {16, 16}, MemorySpace::Mat, 0, TilePad::zero);
+    auto out = MakeFillPadTile("out", {16, 32}, MemorySpace::Mat, 512, TilePad::zero);
+    EXPECT_THROW((void)reg.Create("block.fillpad_expand", {out, src}, Sp()), npu::tile_fwk::Error);
+}
+
+TEST_F(BlockOpsOutMemoryTest, BlockFillpadInplace_MatTile_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto src = MakeFillPadTile("src", {16, 16}, MemorySpace::Mat, 0, TilePad::zero);
+    auto out = MakeFillPadTile("out", {16, 16}, MemorySpace::Mat, 0, TilePad::zero);
     EXPECT_THROW((void)reg.Create("block.fillpad_inplace", {out, src}, Sp()), npu::tile_fwk::Error);
+}
+
+// src and out must live in the same memory space.
+TEST_F(BlockOpsOutMemoryTest, BlockFillpad_CrossSpace_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto src = MakeFillPadTile("src", {16, 16}, MemorySpace::Mat, 0, TilePad::zero);
+    auto out = MakeFillPadTile("out", {16, 16}, MemorySpace::Vec, 512, TilePad::zero);
+    try {
+        (void)reg.Create("block.fillpad", {out, src}, Sp());
+        FAIL() << "Expected a cross-space fillpad error";
+    } catch (const npu::tile_fwk::Error& error) {
+        EXPECT_NE(std::string(error.what()).find("src=Mat, out=Vec"), std::string::npos);
+    }
+}
+
+// Same-space is not enough: fillpad only supports Vec and Mat.
+TEST_F(BlockOpsOutMemoryTest, BlockFillpad_AccTile_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto src = MakeFillPadTile("src", {16, 16}, MemorySpace::Acc, 0, TilePad::zero);
+    auto out = MakeFillPadTile("out", {16, 16}, MemorySpace::Acc, 512, TilePad::zero);
+    EXPECT_THROW((void)reg.Create("block.fillpad", {out, src}, Sp()), npu::tile_fwk::Error);
+}
+
+TEST_F(BlockOpsOutMemoryTest, BlockFillpad_MatInvalidLayout_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    for (const auto& hw : {HardwareInfo(TileLayout::row_major, TileLayout::none_box),
+                           HardwareInfo(TileLayout::col_major, TileLayout::none_box),
+                           HardwareInfo(TileLayout::row_major, TileLayout::col_major)}) {
+        auto src = MakeFillPadTile("src", {16, 16}, MemorySpace::Mat, 0, TilePad::zero, DataType::FP16, hw);
+        auto out = MakeFillPadTile("out", {16, 16}, MemorySpace::Mat, 512, TilePad::zero, DataType::FP16, hw);
+        EXPECT_THROW((void)reg.Create("block.fillpad", {out, src}, Sp()), npu::tile_fwk::Error);
+    }
+}
+
+TEST_F(BlockOpsOutMemoryTest, BlockFillpad_VecAllowsDifferentPadAndValidShape)
+{
+    auto& reg = OpRegistry::GetInstance();
+    TileView valid({std::make_shared<ConstInt>(int64_t(5), DataType::INDEX, Sp()),
+                    std::make_shared<ConstInt>(int64_t(7), DataType::INDEX, Sp())});
+    for (const std::string name : {"block.fillpad", "block.fillpad_inplace", "block.fillpad_expand"}) {
+        for (auto srcPad : {TilePad::null, TilePad::zero, TilePad::max, TilePad::min}) {
+            for (auto dstPad : {TilePad::zero, TilePad::max, TilePad::min}) {
+                auto src = MakeFillPadTile("src", {16, 16}, MemorySpace::Vec, 0, srcPad, DataType::FP16, std::nullopt,
+                                           valid);
+                auto shape = name == "block.fillpad_expand" ? std::vector<int64_t>{16, 32} :
+                                                              std::vector<int64_t>{16, 16};
+                auto out = MakeFillPadTile("out", shape, MemorySpace::Vec, name == "block.fillpad_inplace" ? 0 : 1024,
+                                           dstPad);
+                EXPECT_NE(As<NoneType>(reg.Create(name, {out, src}, Sp())->GetType()), nullptr);
+            }
+        }
+    }
+}
+
+TEST_F(BlockOpsOutMemoryTest, BlockFillpad_VecAllModesRejectNullDestinationPad)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto src = MakeFillPadTile("src", {16, 16}, MemorySpace::Vec, 0, TilePad::null);
+    for (const std::string name : {"block.fillpad", "block.fillpad_inplace", "block.fillpad_expand"}) {
+        auto out = MakeFillPadTile("out", {16, 16}, MemorySpace::Vec, name == "block.fillpad_inplace" ? 0 : 1024,
+                                   TilePad::null);
+        EXPECT_THROW((void)reg.Create(name, {out, src}, Sp()), npu::tile_fwk::Error);
+    }
 }
 
 // ============================================================================

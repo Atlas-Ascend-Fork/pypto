@@ -60,7 +60,7 @@ std::optional<PipeType> Pipe(const CallPtr& call)
     }
     if ((name == "block.store" || name == "block.store_tile") && call->args_.size() > 1)
         return Memory(call->args_[1]) == MemorySpace::Acc ? PipeType::FIX : PipeType::MTE3;
-    if ((name == "block.expands" || name == "block.full") && !call->args_.empty())
+    if ((name == "block.expands" || name == "block.full" || name == "block.fillpad") && !call->args_.empty())
         return Memory(call->args_[0]) == MemorySpace::Mat ? PipeType::MTE2 : PipeType::V;
     return std::nullopt;
 }
