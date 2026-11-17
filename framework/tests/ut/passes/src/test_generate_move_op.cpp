@@ -25,6 +25,7 @@
 #include "passes/tile_graph_pass/data_path/generate_move_op.h"
 #include "passes/tile_graph_pass/data_path/convert_op_inserter.h"
 #include "interface/configs/config_manager.h"
+#include "interface/operation/operation_impl.h"
 #include <fstream>
 #include <vector>
 #include <string>
@@ -1419,6 +1420,72 @@ TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvViewPathRefreshSrcOffset)
     // 两者同为 4 维, spill 侧的维数闸门挡不住记反。
     EXPECT_EQ(l0cCopyUbOp.GetVectorIntAttribute(OpAttributeKey::l0cTileShape), ubShape);
     EXPECT_NE(l0cCopyUbOp.GetVectorIntAttribute(OpAttributeKey::l0cTileShape), tfShape);
+}
+
+// W 尾块 VIEW 路径: realCutW 须按 view 窗口的有效 W (ubValid 末维) 刷新, 而非沿用
+// transFormat 继承的 L1 tile 级值。若沿用 16, InferFunc 反推 validH = 128/16 = 8 会把
+// (16,8) 窗口挤压成 (8,16), 且 copy 循环行数 realM/realCutW = 128/16 = 8 只搬窗口上半。
+TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvViewPathUpdatesRealCutW)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "l0CCopyUBConvUpdRealCutW",
+                                           "l0CCopyUBConvUpdRealCutW", nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("l0CCopyUBConvUpdRealCutW", func);
+
+    std::vector<int64_t> l0cShape{256, 32};
+    std::vector<int64_t> tfShape{1, 32, 16, 16};
+    std::vector<int64_t> ubShape{1, 16, 16, 8};
+    auto convOutput = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_NZ, l0cShape);
+    auto transFormatOutput = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_ND, tfShape);
+    auto ubOutput = CreateTestLogicalTensor(MEM_UB, TileOpFormat::TILEOP_ND, ubShape);
+    // W 尾块 chunk: ubDst 有效形状 (1,16,16,8), 末维 8 即本 copy 的有效 W
+    ubOutput->UpdateDynValidShape({SymbolicScalar(1), SymbolicScalar(16), SymbolicScalar(16), SymbolicScalar(8)});
+
+    auto& transFormatOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_TRANS_FORMAT_L0C, {convOutput},
+                                                         {transFormatOutput});
+    transFormatOp.SetAttribute(OpAttributeKey::isConv, true);
+    std::vector<SymbolicScalar> blockValidMN = {SymbolicScalar(256), SymbolicScalar(32)};
+    transFormatOp.SetAttribute(OpAttributeKey::l0cValidMN, blockValidMN);
+    // 继承自 conv tile 的 L1 级 realCutW (W 尾块场景应为 8 而非 16)
+    transFormatOp.SetAttribute(Conv::LoadStoreConvOpAttributeKey::realCutW, SymbolicScalar(16));
+
+    auto& l0cCopyUbOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_L0C_COPY_UB, {transFormatOutput}, {ubOutput});
+    // VIEW 路径: 4 维 NCHW 源偏移 (n=0, c=16, h=0, w=16), 目的偏移 4 维零
+    std::vector<OpImmediate> viewFromOffset = {
+        OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(16)),
+        OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(16))};
+    std::vector<OpImmediate> ubShapeImm = {OpImmediate::Specified(IRBuilder().CreateConstInt(ubShape[0])),
+                                           OpImmediate::Specified(IRBuilder().CreateConstInt(ubShape[1])),
+                                           OpImmediate::Specified(IRBuilder().CreateConstInt(ubShape[2])),
+                                           OpImmediate::Specified(IRBuilder().CreateConstInt(ubShape[3]))};
+    auto viewAttr = std::make_shared<CopyOpAttribute>(
+        viewFromOffset, MEM_UB, ubShapeImm, OpImmediate::Specified(transFormatOutput->tensor->GetDynRawShape()),
+        ubShapeImm);
+    viewAttr->SetToOffset(
+        {OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(0)),
+         OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(0))});
+    l0cCopyUbOp.SetOpAttribute(viewAttr);
+
+    GenerateMoveOp pass;
+    EXPECT_EQ(pass.ProcessL0CCopyUBConv(l0cCopyUbOp), SUCCESS);
+
+    EXPECT_EQ(l0cCopyUbOp.GetOpcode(), Opcode::OP_L0C_COPY_UB_CONV);
+    EXPECT_TRUE(transFormatOp.IsDeleted());
+    EXPECT_EQ(l0cCopyUbOp.GetIOperands()[0], convOutput);
+
+    // L0C_VALID_MN 按 view 窗口刷新: m = 1*16*8 = 128 (W 尾块只计入有效列), n = 16
+    auto validMN = l0cCopyUbOp.GetAttr<std::vector<SymbolicScalar>>(OpAttributeKey::l0cValidMN);
+    ASSERT_NE(validMN, nullptr);
+    ASSERT_EQ(validMN->size(), 2);
+    EXPECT_TRUE((*validMN)[0].ConcreteValid());
+    EXPECT_EQ((*validMN)[0].Concrete(), 128);
+    EXPECT_TRUE((*validMN)[1].ConcreteValid());
+    EXPECT_EQ((*validMN)[1].Concrete(), 16);
+
+    // realCutW 必须刷新为窗口有效 W (ubValid 末维 = 8)
+    SymbolicScalar realCutWAttr;
+    ASSERT_TRUE(l0cCopyUbOp.GetAttr(Conv::LoadStoreConvOpAttributeKey::realCutW, realCutWAttr));
+    EXPECT_TRUE(realCutWAttr.ConcreteValid());
+    EXPECT_EQ(realCutWAttr.Concrete(), 8);
 }
 
 // INSERT (小搬大) 路径: 落点侧这一片是 transFormatOutput, 与 VIEW 路相反; 取成 op 输出的整块,

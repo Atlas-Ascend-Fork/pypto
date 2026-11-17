@@ -1381,9 +1381,6 @@ void L0CCopyUBConvInferFunc(Operation* op, std::vector<std::vector<SymbolicScala
         }
         outShape.push_back(validH);
         outShape.push_back(validW);
-        // 大搬小场景需要更新op的RealM和RealCutW参数
-        op->SetAttribute(Conv::LoadStoreConvOpAttributeKey::realCutW, validW);
-        op->SetAttribute(OpAttributeKey::l0cValidMN, std::vector<SymbolicScalar>{validRows, validN});
     } else {
         // 本 copy 的窗口范围 (n=1, c, [d=1,] h, w), 以 toOffset 平移后与已有 valid 按维取 max
         std::vector<SymbolicScalar> extent;

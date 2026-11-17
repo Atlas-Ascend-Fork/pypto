@@ -1245,5 +1245,57 @@ TEST_F(InferShapeTest, L0CCopyUBConvInsertPathMergesProducerWindow)
     EXPECT_EQ(outValid[3].Concrete(), 6);
 }
 
+// VIEW (大搬小) 路径 InferFunc 只是 l0cValidMN/realCutW 的消费者: 按维裁剪推导本窗口的 NCHW valid,
+// 不得把裁剪结果回写 op 属性 (属性刷新由 GenerateMoveOp 按view窗口负责)。
+// 若恢复回写 (旧实现写 l0cValidMN={validRows,validN}、realCutW=validW), 矩阵级 (M,N) 与切割宽
+// 会被 UB tile 形状裁剪, 后续 copy 循环与 producer 窗口合并将读到被破坏的源数据。
+TEST_F(InferShapeTest, L0CCopyUBConvViewPathDoesNotRewriteL0cAttrs)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "l0c_conv_view_keep_attrs",
+                                               "l0c_conv_view_keep_attrs", nullptr);
+    // L0C 源块 (M=256, N=32) 远大于 UB tile 窗口; realCutW=12 为切割级宽度, 跨越本 tile 的 W=8
+    const std::vector<int64_t> l0cShape = {256, 32};
+    const std::vector<int64_t> ubShape = {1, 16, 8, 8};
+    auto l0cInput = IRBuilder().CreateTensorVar(DT_FP16, l0cShape, SymbolicScalar::FromConcrete(l0cShape));
+    auto ubOutput = IRBuilder().CreateTensorVar(DT_FP16, ubShape, SymbolicScalar::FromConcrete(ubShape));
+    auto copyAttr = CreateCopyOutAttribute(MEM_UB, OpImmediate::Specified({0, 0, 0, 0}),
+                                           OpImmediate::Specified(ubShape), OpImmediate::Specified(ubShape));
+    auto& convCopyOp = PassOperationUtils::AddOperation(
+        *function, Opcode::OP_L0C_COPY_UB_CONV, {l0cInput}, {ubOutput},
+        [&copyAttr](Operation& op) {
+            op.SetOpAttribute(copyAttr);
+            op.SetAttribute(OpAttributeKey::l0cValidMN,
+                            std::vector<SymbolicScalar>{SymbolicScalar(256), SymbolicScalar(32)});
+            op.SetAttribute(Conv::LoadStoreConvOpAttributeKey::realCutW, SymbolicScalar(12));
+        },
+        ir::Span::Unknown(), false);
+    AppendFunctionIO(function, {l0cInput}, {ubOutput});
+
+    InferShapeRegistry::GetInstance().CallInferShapeFunc(&convCopyOp);
+
+    // 窗口 NCHW valid 按维裁剪推导: n=1, c=min(32,16)=16, h=min(256,8*8)/min(12,8)=64/8=8, w=min(12,8)=8
+    const auto& outValid = ubOutput->GetDynValidShape();
+    ASSERT_EQ(outValid.size(), 4U);
+    EXPECT_EQ(outValid[0].Concrete(), 1);
+    EXPECT_EQ(outValid[1].Concrete(), 16);
+    EXPECT_EQ(outValid[2].Concrete(), 8);
+    EXPECT_EQ(outValid[3].Concrete(), 8);
+
+    // 属性保持矩阵级源值不变: l0cValidMN 仍为 (256,32) 而非裁剪后的 (64,16)
+    auto validMN = convCopyOp.GetAttr<std::vector<SymbolicScalar>>(OpAttributeKey::l0cValidMN);
+    ASSERT_NE(validMN, nullptr);
+    ASSERT_EQ(validMN->size(), 2U);
+    EXPECT_TRUE((*validMN)[0].ConcreteValid());
+    EXPECT_EQ((*validMN)[0].Concrete(), 256);
+    EXPECT_TRUE((*validMN)[1].ConcreteValid());
+    EXPECT_EQ((*validMN)[1].Concrete(), 32);
+
+    // realCutW 仍为切割级 12, 而非裁剪后的 8
+    SymbolicScalar realCutWAttr;
+    ASSERT_TRUE(convCopyOp.GetAttr(Conv::LoadStoreConvOpAttributeKey::realCutW, realCutWAttr));
+    EXPECT_TRUE(realCutWAttr.ConcreteValid());
+    EXPECT_EQ(realCutWAttr.Concrete(), 12);
+}
+
 } // namespace tile_fwk
 } // namespace npu

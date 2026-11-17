@@ -18,6 +18,7 @@
 #include "interface/function/function.h"
 #include "interface/tensor/irbuilder.h"
 #include "interface/operation/operation.h"
+#include "interface/operation/operation_impl.h"
 #include "interface/tensor/irbuilder.h"
 #include "interface/tensor/logical_tensor.h"
 #include "tilefwk/tilefwk.h"
@@ -617,6 +618,8 @@ Status GenerateMoveOp::ProcessL0CCopyUBConv(Operation& op) const
 
     std::shared_ptr<CopyOpAttribute> copyAttr;
     std::vector<SymbolicScalar> l0cValidMN;
+    SymbolicScalar l0cValidW;
+    bool needUpdateL0cValidW = false;
 
     const auto& ubFromOffset = copyAttrUb->GetFromOffset();
     bool isViewPath = ubFromOffset.size() >= SHAPE_DIM4;
@@ -671,6 +674,9 @@ Status GenerateMoveOp::ProcessL0CCopyUBConv(Operation& op) const
                 validM = validM * ubValid[i];
             }
             l0cValidMN = {validM, validN};
+            // VIEW (等大/大搬小) 路径，需要根据outdyn shape更新realCutW
+            l0cValidW = ubValid.back();
+            needUpdateL0cValidW = true;
         }
     }
 
@@ -682,6 +688,9 @@ Status GenerateMoveOp::ProcessL0CCopyUBConv(Operation& op) const
 
     if (!l0cValidMN.empty()) {
         op.SetAttribute(OpAttributeKey::l0cValidMN, l0cValidMN);
+        if (needUpdateL0cValidW) {
+            op.SetAttribute(Conv::LoadStoreConvOpAttributeKey::realCutW, l0cValidW);
+        }
     }
 
     // 落点侧这一片: INSERT 路 (小搬大) 是 transFormatOutput, VIEW 路 (大搬小) 反过来是 ubDst。
