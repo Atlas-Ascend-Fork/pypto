@@ -21,7 +21,7 @@
 
 Tile通过[pypto_pro.language.make_tile](../../SIMD-API/resource_management/make_tile.md)或[pypto_pro.language.make_tile_group](../../SIMD-API/resource_management/make_tile_group.md)创建。
 
-打印结果直接输出到终端。全量和窗口均只输出请求范围内的数据，并保留对应layout的物理存储顺序。
+打印结果直接输出到终端。全量和窗口均只输出请求范围内的数据。默认按物理顺序输出；指定逻辑顺序时，按逻辑坐标顺序输出。
 
 ## 函数原型
 
@@ -34,6 +34,7 @@ pypto_pro.language.dump_data(
     workspace: Optional[Tensor] = None,
     loc: bool = False,
     flag: Optional[str] = None,
+    logical_order: bool = False,
 ) -> None
 ```
 
@@ -47,6 +48,7 @@ pypto_pro.language.dump_data(
 | workspace | 输入 | 保留参数，无需传入。 |
 | loc | 输入 | 可选，是否在输出前打印源文件/行号，取值为True或False（默认）。 |
 | flag | 输入 | 可选，字符串标签，必须是编译时常量，不能是运行时变量。提供时在dump输出前单独打印一行[flag] 标签内容，用于区分多个dump点的输出。 |
+| logical_order | 输入 | 可选，编译时布尔常量。False（默认）按物理顺序输出，True按逻辑坐标顺序输出。 |
 
 ## 约束说明
 
@@ -70,6 +72,38 @@ import torch_npu
 
 ## 调用示例
 
+### 逻辑顺序输出
+
+需要按逻辑坐标顺序查看数据时，可显式指定：
+
+```python
+import pypto_pro.language as pl
+
+
+@pl.jit(auto_mutex=True)
+def dump_data_logical_order_kernel(a: pl.Tensor[[16, 32], pl.DT_FP16]):
+    group = pl.make_tile_group(
+        type=pl.TileType(shape=[16, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
+        addrs=0x0000,
+        mutex_ids=[0],
+    )
+    with pl.section_cube():
+        tile = group.current()
+        pl.load(tile, a, [0, 0])
+        pl.dump_data(tile, offsets=[1, 8], shapes=[4, 16], logical_order=True, flag="logical_window")
+```
+
+按逻辑顺序的窗口dump输出示例：
+
+```text
+[AIC Block 0/1] [flag] logical_window
+[AIC Block 0/1] [dump_tile] Data Type: float16, Layout: NZ, Order: logical, Memory Space: L1 Buffer, Source Shape: [16, 32], Offsets: [1, 8], Shape: [4, 16], Valid Shape: [4, 16]
+[AIC Block 0] DumpTensor: desc=<dump_id>, addr=0x<address>, data_type=float16, position=L1, dump_size=64
+[[40.000000,41.000000,...,55.000000],
+...,
+[136.000000,137.000000,...,151.000000]]
+```
+
 ### Tensor输入
 
 ```python
@@ -89,7 +123,7 @@ def dump_data_tensor_full_kernel(
 全量dump输出示例：
 
 ```text
-[AIV Block 0/1] [dump_tensor] Data Type: int32, Layout: ND, Source Shape: [16], Offsets: [0], Shape: [16]
+[AIV Block 0/1] [dump_tensor] Data Type: int32, Layout: ND, Order: physical, Source Shape: [16], Offsets: [0], Shape: [16]
 [AIV Block 0] DumpTensor: desc=<dump_id>, addr=0x<address>, data_type=int32, position=GM, dump_size=16
 [0,10,20,30,40,50,60,70,80,90,100,110,120,130,140,150]
 ```
@@ -116,7 +150,7 @@ pl.dump_data(out, flag="checkpoint_A")
 
 ```text
 [AIV Block 0/1] [flag] checkpoint_A
-[AIV Block 0/1] [dump_tensor] Data Type: int32, Layout: ND, Source Shape: [16], Offsets: [0], Shape: [16]
+[AIV Block 0/1] [dump_tensor] Data Type: int32, Layout: ND, Order: physical, Source Shape: [16], Offsets: [0], Shape: [16]
 [AIV Block 0] DumpTensor: desc=<dump_id>, addr=0x<address>, data_type=int32, position=GM, dump_size=16
 [0,10,20,30,40,50,60,70,80,90,100,110,120,130,140,150]
 ```
@@ -151,7 +185,7 @@ def dump_data_tile_full_kernel(
 全量dump输出示例：
 
 ```text
-[AIV Block 0/1] [dump_tile] Data Type: int32, Layout: ND, Memory Space: UB, Source Shape: [8, 8], Offsets: [0, 0], Shape: [8, 8], Valid Shape: [8, 8]
+[AIV Block 0/1] [dump_tile] Data Type: int32, Layout: ND, Order: physical, Memory Space: UB, Source Shape: [8, 8], Offsets: [0, 0], Shape: [8, 8], Valid Shape: [8, 8]
 [AIV Block 0] DumpTensor: desc=<dump_id>, addr=0x<address>, data_type=int32, position=UB, dump_size=64
 [[0,2,4,6,8,10,12,14],
 [16,18,20,22,24,26,28,30],
@@ -215,7 +249,7 @@ def dump_data_cube_tiles_kernel(
 窗口模式输出示例（offsets=[16, 16], shapes=[8, 8]）：
 
 ```text
-[AIC Block 0/1] [dump_tile] Data Type: float32, Layout: NZ, Memory Space: L0C Buffer, Source Shape: [64, 64], Offsets: [16, 16], Shape: [8, 8], Valid Shape: [8, 8]
+[AIC Block 0/1] [dump_tile] Data Type: float32, Layout: NZ, Order: physical, Memory Space: L0C Buffer, Source Shape: [64, 64], Offsets: [16, 16], Shape: [8, 8], Valid Shape: [8, 8]
 [AIC Block 0] DumpTensor: desc=<dump_id>, addr=0x<address>, data_type=float32, position=L0C, dump_size=64
 [[<value_0>,<value_1>,...,<value_7>],
 ...,

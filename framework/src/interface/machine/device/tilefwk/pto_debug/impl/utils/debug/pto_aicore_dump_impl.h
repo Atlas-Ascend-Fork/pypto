@@ -435,7 +435,7 @@ __aicore__ inline void _pack_gm_window(__gm__ T* input, const DumpTensorView& vi
                     inputOffset += view.stride[colAxis];
                 }
             }
-        } else {
+        } else if (view.physicalOrder) {
             const int64_t c0 = view.stride[colAxis];
             const int64_t rowBegin = view.offsets[rowAxis];
             const int64_t rowEnd = rowBegin + view.shape[rowAxis];
@@ -458,6 +458,14 @@ __aicore__ inline void _pack_gm_window(__gm__ T* input, const DumpTensorView& vi
                             ++inputOffset;
                         }
                     }
+                }
+            }
+        } else {
+            for (int64_t row = 0; row < view.shape[rowAxis]; ++row) {
+                for (int64_t col = 0; col < view.shape[colAxis]; ++col) {
+                    const int64_t inputOffset = _get_gm_matrix_offset<layout>(
+                        view, batchOffset, view.offsets[rowAxis] + row, view.offsets[colAxis] + col);
+                    _copy_window_element<T>(input, inputOffset, output, outputOffset++);
                 }
             }
         }
@@ -500,7 +508,7 @@ __aicore__ inline void _dump_tensor_window_impl(__gm__ T* input, uint32_t desc, 
     _publish_dump_window_record(record);
 }
 
-template <DumpLayout layout>
+template <DumpLayout layout, AscendC::Hardware hardware>
 __aicore__ inline void _get_local_window_coordinate(const DumpTensorView& view, int64_t physicalOffset, int64_t& row,
                                                     int64_t& col)
 {
@@ -549,7 +557,13 @@ __aicore__ inline void _get_local_window_coordinate(const DumpTensorView& view, 
 
         int64_t rowInBlock;
         int64_t colInBlock;
-        if constexpr (innerRowMajor) {
+        if constexpr (hardware == AscendC::Hardware::L0C) {
+            // The L0C debug-bus stream exposes each 16x16 NZ block in 2-row x 4-column microblocks.
+            const int64_t pairWidth = 2 * view.innerCols;
+            const int64_t offsetInPair = offsetInBlock % pairWidth;
+            rowInBlock = (offsetInBlock / pairWidth) * 2 + (offsetInPair % 8) / 4;
+            colInBlock = (offsetInPair / 8) * 4 + offsetInPair % 4;
+        } else if constexpr (innerRowMajor) {
             rowInBlock = offsetInBlock / view.innerCols;
             colInBlock = offsetInBlock % view.innerCols;
         } else {
@@ -571,13 +585,16 @@ __aicore__ inline void _pack_direct_window(SourcePtr input, const DumpTensorView
     const int64_t rowEnd = rowBegin + view.shape[view.rank - 2U];
     const int64_t colBegin = view.offsets[view.rank - 1U];
     const int64_t colEnd = colBegin + view.shape[view.rank - 1U];
-    uint64_t outputOffset = 0U;
+    uint64_t physicalOutputOffset = 0U;
     for (int64_t physicalOffset = 0; physicalOffset < rows * cols; ++physicalOffset) {
         int64_t row;
         int64_t col;
-        _get_local_window_coordinate<layout>(view, physicalOffset, row, col);
+        _get_local_window_coordinate<layout, AscendC::Hardware::UB>(view, physicalOffset, row, col);
         if (row >= rowBegin && row < rowEnd && col >= colBegin && col < colEnd) {
-            _copy_window_element<T>(input, physicalOffset, output, outputOffset++);
+            const uint64_t outputOffset = view.physicalOrder ?
+                                              physicalOutputOffset++ :
+                                              static_cast<uint64_t>((row - rowBegin) * view.shape[1] + col - colBegin);
+            _copy_window_element<T>(input, physicalOffset, output, outputOffset);
         }
     }
 }
@@ -712,14 +729,14 @@ __aicore__ inline bool _pack_debug_bus_window(LocalPtr input, const DumpTensorVi
     const int64_t rowEnd = rowBegin + view.shape[view.rank - 2U];
     const int64_t colBegin = view.offsets[view.rank - 1U];
     const int64_t colEnd = colBegin + view.shape[view.rank - 1U];
-    uint64_t outputOffset = 0U;
+    uint64_t physicalOutputOffset = 0U;
     DebugBusWindowChunk chunk{};
     for (int64_t physicalBase = 0; physicalBase < physicalNumel; physicalBase += logicalElementsPerChunk) {
         uint64_t windowMask = 0U;
         for (uint32_t inner = 0U; inner < logicalElementsPerChunk && physicalBase + inner < physicalNumel; ++inner) {
             int64_t row;
             int64_t col;
-            _get_local_window_coordinate<layout>(view, physicalBase + inner, row, col);
+            _get_local_window_coordinate<layout, hardware>(view, physicalBase + inner, row, col);
             if (row >= rowBegin && row < rowEnd && col >= colBegin && col < colEnd) {
                 windowMask |= 1ULL << inner;
             }
@@ -736,10 +753,17 @@ __aicore__ inline bool _pack_debug_bus_window(LocalPtr input, const DumpTensorVi
         for (uint32_t inner = 0U; inner < logicalElementsPerChunk && physicalBase + inner < physicalNumel; ++inner) {
             if ((windowMask & (1ULL << inner)) != 0U) {
                 const uint64_t value = chunk.bits(inner * elementBits, elementBits);
+                int64_t row;
+                int64_t col;
+                _get_local_window_coordinate<layout, hardware>(view, physicalBase + inner, row, col);
+                const uint64_t outputOffset = view.physicalOrder ?
+                                                  physicalOutputOffset++ :
+                                                  static_cast<uint64_t>((row - rowBegin) * view.shape[1] + col -
+                                                                        colBegin);
                 if constexpr (_is_packed_fp4_dump_type<T>()) {
-                    output[outputOffset++] = _decode_fp4_dump_value<T>(static_cast<uint8_t>(value));
+                    output[outputOffset] = _decode_fp4_dump_value<T>(static_cast<uint8_t>(value));
                 } else {
-                    output[outputOffset++] = get_scalar_bitcode_value<uint64_t, T>(value);
+                    output[outputOffset] = get_scalar_bitcode_value<uint64_t, T>(value);
                 }
             }
         }

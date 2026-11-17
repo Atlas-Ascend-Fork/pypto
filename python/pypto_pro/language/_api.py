@@ -1526,6 +1526,7 @@ def dump_data(
     workspace: Optional[Tensor] = None,
     loc: bool = False,
     flag: Optional[str] = None,
+    logical_order: bool = False,
 ) -> None:
     """Print Tensor or Tile contents for debugging.
 
@@ -1541,6 +1542,8 @@ def dump_data(
         loc: Show source location
         flag: Optional compile-time string label printed as a standalone marker line
               before the dump output, to distinguish multiple dump sites
+        logical_order: False (default) prints window values in physical order;
+            True prints the same values in logical coordinate order
     """
 
 

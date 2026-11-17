@@ -42,6 +42,7 @@ struct DumpTensorView {
     uint32_t rank;
     int64_t innerRows;
     int64_t innerCols;
+    bool physicalOrder = true;
 };
 } // namespace pypto::aicore
 

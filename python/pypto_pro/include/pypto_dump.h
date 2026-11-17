@@ -110,18 +110,18 @@ __aicore__ inline const __gm__ char* PyptoDumpTensorMetadataFormat()
 {
     static_assert(Rank >= 1U && Rank <= 5U, "dump tensor rank must be in the range [1, 5]");
     if constexpr (Rank == 1U) {
-        return "[dump_tensor] Data Type: %s, Layout: %s, Source Shape: [%d], Offsets: [%d], Shape: [%d]\n";
+        return "[dump_tensor] Data Type: %s, Layout: %s, Order: %s, Source Shape: [%d], Offsets: [%d], Shape: [%d]\n";
     } else if constexpr (Rank == 2U) {
-        return "[dump_tensor] Data Type: %s, Layout: %s, Source Shape: [%d, %d], Offsets: [%d, %d], "
+        return "[dump_tensor] Data Type: %s, Layout: %s, Order: %s, Source Shape: [%d, %d], Offsets: [%d, %d], "
                "Shape: [%d, %d]\n";
     } else if constexpr (Rank == 3U) {
-        return "[dump_tensor] Data Type: %s, Layout: %s, Source Shape: [%d, %d, %d], Offsets: [%d, %d, %d], "
+        return "[dump_tensor] Data Type: %s, Layout: %s, Order: %s, Source Shape: [%d, %d, %d], Offsets: [%d, %d, %d], "
                "Shape: [%d, %d, %d]\n";
     } else if constexpr (Rank == 4U) {
-        return "[dump_tensor] Data Type: %s, Layout: %s, Source Shape: [%d, %d, %d, %d], "
+        return "[dump_tensor] Data Type: %s, Layout: %s, Order: %s, Source Shape: [%d, %d, %d, %d], "
                "Offsets: [%d, %d, %d, %d], Shape: [%d, %d, %d, %d]\n";
     } else {
-        return "[dump_tensor] Data Type: %s, Layout: %s, Source Shape: [%d, %d, %d, %d, %d], "
+        return "[dump_tensor] Data Type: %s, Layout: %s, Order: %s, Source Shape: [%d, %d, %d, %d, %d], "
                "Offsets: [%d, %d, %d, %d, %d], Shape: [%d, %d, %d, %d, %d]\n";
     }
 }
@@ -132,8 +132,8 @@ __aicore__ inline void PyptoPrintTensorMetadata(const pypto::aicore::DumpTensorV
 {
     constexpr uint32_t rank = sizeof...(Indices);
     pypto::aicore::printf(PyptoDumpTensorMetadataFormat<rank>(), PyptoDumpDtypeName<T>(), PyptoDumpLayoutName<Layout>(),
-                          static_cast<int>(view.sourceShape[Indices])..., static_cast<int>(view.offsets[Indices])...,
-                          static_cast<int>(view.shape[Indices])...);
+                          view.physicalOrder ? "physical" : "logical", static_cast<int>(view.sourceShape[Indices])...,
+                          static_cast<int>(view.offsets[Indices])..., static_cast<int>(view.shape[Indices])...);
 }
 
 template <pypto::aicore::DumpLayout Layout, uint32_t Rank, typename T>
@@ -146,7 +146,7 @@ __aicore__ inline void PyptoDumpTensor(__gm__ T* src, uint32_t desc, const pypto
 
 template <pypto::aicore::DumpLayout Layout, typename T>
 __aicore__ inline void PyptoDumpTileWindow(T& src, uint32_t desc, int rowOffset, int colOffset, int requestedRows,
-                                           int requestedCols)
+                                           int requestedCols, bool physicalOrder = true)
 {
     pipe_barrier(PIPE_ALL);
 
@@ -161,18 +161,19 @@ __aicore__ inline void PyptoDumpTileWindow(T& src, uint32_t desc, int rowOffset,
                               (requestedCols < availableCols ? requestedCols : availableCols) :
                               0;
 
-    pypto::aicore::printf("[dump_tile] Data Type: %s, Layout: %s, Memory Space: %s, Source Shape: [%d, %d], "
+    pypto::aicore::printf("[dump_tile] Data Type: %s, Layout: %s, Order: %s, Memory Space: %s, Source Shape: [%d, %d], "
                           "Offsets: [%d, %d], Shape: [%d, %d], Valid Shape: [%d, %d]\n",
                           PyptoDumpDtypeName<typename T::DType>(), PyptoDumpLayoutName<Layout>(),
-                          PyptoDumpMemoryName<T>(), T::Rows, T::Cols, rowOffset, colOffset, requestedRows,
-                          requestedCols, validRows, validCols);
+                          physicalOrder ? "physical" : "logical", PyptoDumpMemoryName<T>(), T::Rows, T::Cols, rowOffset,
+                          colOffset, requestedRows, requestedCols, validRows, validCols);
 
     const int64_t sourceShape[2] = {T::Rows, T::Cols};
     const int64_t offsets[2] = {rowOffset, colOffset};
     const int64_t shape[2] = {validRows, validCols};
     constexpr int64_t innerRows = T::isBoxedLayout ? T::InnerRows : 1;
     constexpr int64_t innerCols = T::isBoxedLayout ? T::InnerCols : 1;
-    const pypto::aicore::DumpTensorView view = {sourceShape, offsets, shape, nullptr, 2U, innerRows, innerCols};
+    const pypto::aicore::DumpTensorView view = {sourceShape, offsets,   shape,     nullptr,
+                                                2U,          innerRows, innerCols, physicalOrder};
     if constexpr (T::Loc == pto::TileType::Bias) {
         pypto::aicore::pto_dump_window<Layout>(reinterpret_cast<__biasbuf__ typename T::DType*>(src.data()), desc,
                                                view);

@@ -268,6 +268,7 @@ REGISTER_OP("debug.dump_tensor")
     .add_argument("shapes", "Optional shape per dimension (MakeTuple of integer scalars)")
     .set_attr<bool>("show_location")
     .set_attr<std::string>("dump_flag")
+    .set_attr<bool>("logical_order")
     .f_deduce_type([](const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceDebugDumpType<TensorType>(args, "debug.dump_tensor", "TensorType");
@@ -282,6 +283,7 @@ REGISTER_OP("debug.dump_tile")
     .add_argument("shapes", "Optional shape per dimension (MakeTuple of integer scalars)")
     .set_attr<bool>("show_location")
     .set_attr<std::string>("dump_flag")
+    .set_attr<bool>("logical_order")
     .f_deduce_type([](const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceDebugDumpType<TileType>(args, "debug.dump_tile", "TileType");

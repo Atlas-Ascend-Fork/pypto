@@ -25,13 +25,14 @@ def test_dump_data_accepts_legacy_workspace_without_ir_operand(monkeypatch):
         tile_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ)
         tile = pl.make_tile(tile_type, addr=0x0000)
         pl.dump_data(tile, workspace=workspace)
+        pl.dump_data(tile, logical_order=True)
 
     program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
     func = program.get_function(main.__name__)
     calls = [stmt.value for stmt in func.body.stmts if (isinstance(stmt, ir.AssignStmt) and not stmt.targets)]
-    assert len(calls) == 1
-    assert calls[0].name == "debug.dump_tile"
-    assert len(calls[0].args) == 1
+    assert len(calls) == 2
+    assert all(call.name == "debug.dump_tile" and len(call.args) == 1 for call in calls)
+    assert calls[1].kwargs["logical_order"] is True
 
     printed = str(func)
     printed = re.sub(r"memref_id=\d+", "memref_id=<id>", printed)

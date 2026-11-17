@@ -1201,6 +1201,13 @@ TEST(BackendCceOpsTest, DebugDumpTensorStaticNdWindow)
     EXPECT_NE(generated.find("pypto::aicore::DumpLayout::ND"), std::string::npos);
     EXPECT_NE(generated.find("PYPTO_DUMP_TENSOR("), std::string::npos);
     EXPECT_NE(generated.find(", data.data(),"), std::string::npos);
+    EXPECT_NE(generated.find(", true};"), std::string::npos);
+
+    Kwargs logical_kwargs = {{"logical_order", true}};
+    auto logical_call = std::make_shared<const ir::Call>("debug.dump_tensor", call->args_, logical_kwargs,
+                                                         ir::Span::Unknown());
+    auto logical_generated = RunCodegen("debug.dump_tensor", logical_call);
+    EXPECT_NE(logical_generated.find(", false};"), std::string::npos);
 }
 
 TEST(BackendCceOpsTest, DebugDumpTensorOneDimensionalWindowKeepsRank)
@@ -1433,7 +1440,7 @@ TEST(BackendCceOpsTest, DebugDumpTileFullAndWindow)
     const auto full_generated = RunCodegen("debug.dump_tile", full_call);
     EXPECT_NE(full_generated.find("PYPTO_DUMP_TILE_WINDOW(pypto::aicore::DumpLayout::ND, tile.tile,"),
               std::string::npos);
-    EXPECT_NE(full_generated.find(", 0, 0, 16, 32);"), std::string::npos);
+    EXPECT_NE(full_generated.find(", 0, 0, 16, 32, true);"), std::string::npos);
 
     auto window_call = std::make_shared<const ir::Call>(
         "debug.dump_tile",
@@ -1442,7 +1449,13 @@ TEST(BackendCceOpsTest, DebugDumpTileFullAndWindow)
         ir::Span::Unknown());
     auto generated = RunCodegen("debug.dump_tile", window_call);
     EXPECT_NE(generated.find("PYPTO_DUMP_TILE_WINDOW(pypto::aicore::DumpLayout::ND, tile.tile,"), std::string::npos);
-    EXPECT_NE(generated.find(", 2, 3, 8, 12);"), std::string::npos);
+    EXPECT_NE(generated.find(", 2, 3, 8, 12, true);"), std::string::npos);
+
+    Kwargs logical_kwargs = {{"logical_order", true}};
+    auto logical_call = std::make_shared<const ir::Call>("debug.dump_tile", window_call->args_, logical_kwargs,
+                                                         ir::Span::Unknown());
+    auto logical_generated = RunCodegen("debug.dump_tile", logical_call);
+    EXPECT_NE(logical_generated.find(", 2, 3, 8, 12, false);"), std::string::npos);
 }
 
 TEST(BackendCceOpsTest, DebugDumpCubeTileWindowsWithoutWorkspace)
@@ -1463,7 +1476,7 @@ TEST(BackendCceOpsTest, DebugDumpCubeTileWindowsWithoutWorkspace)
         auto generated = RunCodegen("debug.dump_tile", call, codegen);
         EXPECT_NE(generated.find("PYPTO_DUMP_TILE_WINDOW(pypto::aicore::DumpLayout::ND, " + name + ".tile,"),
                   std::string::npos);
-        EXPECT_NE(generated.find(", 1, 2, 8, 16);"), std::string::npos);
+        EXPECT_NE(generated.find(", 1, 2, 8, 16, true);"), std::string::npos);
     }
 }
 

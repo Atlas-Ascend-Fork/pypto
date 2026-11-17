@@ -193,6 +193,7 @@ def dump_data(
     span: Span | None = None,
     section: _ir_core.SectionKind | None = None,
     flag: str | None = None,
+    logical_order: bool = False,
 ) -> Call:
     """Print a Tensor or Tile, or a logical window of it, for debugging."""
     actual_span = _get_span_or_capture(span)
@@ -200,6 +201,11 @@ def dump_data(
     data_type = data.type
     if flag is not None and not isinstance(flag, str):
         raise InvalidType(f"debug.dump_data requires str flag, but got {type(flag).__name__}", span=actual_span)
+    if not isinstance(logical_order, bool):
+        raise InvalidType(
+            f"debug.dump_data requires bool logical_order, but got {type(logical_order).__name__}",
+            span=actual_span,
+        )
     if not isinstance(data_type, (TensorType, TileType)):
         raise InvalidType(
             f"debug.dump_data requires Tensor or Tile input, but got {type(data_type).__name__}", span=actual_span,
@@ -214,6 +220,8 @@ def dump_data(
         raise InvalidArgument("debug.dump_data offsets and shapes must be provided together", span=actual_span)
 
     dump_kwargs: dict[str, Any] = {"show_location": show_location}
+    if logical_order:
+        dump_kwargs["logical_order"] = True
     if flag:
         dump_kwargs["dump_flag"] = flag
 
@@ -336,11 +344,14 @@ def trap(*, span: Span | None = None) -> Call:
 @op_impl("dump_data")
 def _build_dump_data(
     self, data: Expr, offsets: Expr | None = None, shapes: Expr | None = None, *,
-    workspace: Expr | None = None, loc: Expr | None = None, flag: str | None = None, span: Span,
+    workspace: Expr | None = None, loc: Expr | None = None, flag: str | None = None,
+    logical_order: Expr | None = None, span: Span,
 ) -> Call:
     loc = False if loc is None else require_const_bool(loc, subject="loc")
+    logical_order = False if logical_order is None else require_const_bool(logical_order, subject="logical_order")
     return dump_data(
-        data, offsets, shapes, workspace=workspace, loc=loc, flag=flag, section=self.target, span=span,
+        data, offsets, shapes, workspace=workspace, loc=loc, flag=flag, logical_order=logical_order,
+        section=self.target, span=span,
     )
 
 

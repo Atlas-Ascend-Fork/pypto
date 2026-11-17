@@ -45,7 +45,9 @@ def dump_data_tensor_kernel(
             out[i] = i * 2
         if sub_id == 0:
             pl.dump_data(out, flag="tensor_full")
+            pl.dump_data(out, logical_order=True, flag="tensor_full_logical")
             pl.dump_data(out, offsets=[8], shapes=[8], flag="tensor_window")
+            pl.dump_data(out, offsets=[8], shapes=[8], logical_order=True, flag="tensor_window_logical")
             pl.dump_data(out, loc=True, flag="tensor_loc")
 
 
@@ -80,6 +82,7 @@ def dump_data_vec_kernel(
         if sub_id == 0:
             pl.dump_data(result, flag="vec_full")
             pl.dump_data(result, offsets=[4, 3], shapes=[8, 9], flag="vec_window")
+            pl.dump_data(result, offsets=[4, 3], shapes=[8, 9], logical_order=True, flag="vec_window_logical")
             pl.dump_data(result, offsets=[0, 0], shapes=[8, 8], loc=True, flag="vec_loc")
         pl.store(out, result, [0, 0])
 
@@ -262,8 +265,8 @@ def test_dump_data_control_flow():
 @pl.jit(auto_mutex=True)
 def dump_data_cube_levels_kernel(
     a: pl.Tensor[[16, 16], pl.DT_FP16],
-    b: pl.Tensor[[16, 16], pl.DT_FP16],
-    out: pl.Tensor[[16, 16], pl.DT_FP32],
+    b: pl.Tensor[[16, 32], pl.DT_FP16],
+    out: pl.Tensor[[16, 32], pl.DT_FP32],
 ):
     a_l1_group = pl.make_tile_group(
         type=pl.TileType(shape=[16, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
@@ -271,7 +274,7 @@ def dump_data_cube_levels_kernel(
         mutex_ids=[0],
     )
     b_l1_group = pl.make_tile_group(
-        type=pl.TileType(shape=[16, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        type=pl.TileType(shape=[16, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ),
         addrs=0x2000,
         mutex_ids=[1],
     )
@@ -281,12 +284,12 @@ def dump_data_cube_levels_kernel(
         mutex_ids=[2],
     )
     b_l0b_group = pl.make_tile_group(
-        type=pl.TileType(shape=[16, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right),
+        type=pl.TileType(shape=[16, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Right),
         addrs=0x0000,
         mutex_ids=[3],
     )
     acc_group = pl.make_tile_group(
-        type=pl.TileType(shape=[16, 16], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc),
+        type=pl.TileType(shape=[16, 32], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Acc, layout=pl.NZ),
         addrs=0x0000,
         mutex_ids=[4],
     )
@@ -299,22 +302,25 @@ def dump_data_cube_levels_kernel(
         acc = acc_group.current()
         pl.load(a_l1, a, [0, 0])
         pl.load(b_l1, b, [0, 0])
-        pl.dump_data(a_l1, flag="l1_full")
-        pl.dump_data(a_l1, offsets=[4, 3], shapes=[8, 9], flag="l1_window")
+        pl.dump_data(b_l1, logical_order=True, flag="l1_full")
+        pl.dump_data(b_l1, offsets=[1, 8], shapes=[4, 16], logical_order=True, flag="l1_window")
+        pl.dump_data(b_l1, offsets=[1, 8], shapes=[4, 16], flag="l1_window_physical")
         pl.move(a_l0a, a_l1)
         pl.move(b_l0b, b_l1)
         pl.matmul(acc, a_l0a, b_l0b)
-        pl.dump_data(acc, flag="l0c_full")
-        pl.dump_data(acc, offsets=[4, 3], shapes=[8, 9], flag="l0c_window")
+        pl.dump_data(acc, logical_order=True, flag="l0c_full")
+        pl.dump_data(acc, offsets=[1, 8], shapes=[4, 16], logical_order=True, flag="l0c_window")
+        pl.dump_data(acc, offsets=[1, 8], shapes=[4, 16], flag="l0c_window_physical")
         pl.store(out, acc, [0, 0])
 
 
 @pytest.mark.soc("950", "960")
 def test_dump_data_cube_levels():
+    # Device dump output can bypass pytest fd capture; validate execution and numerical output here.
     _check_npu()
-    a = torch.randn(16, 16, device=ST_DEVICE, dtype=torch.float16)
-    b = torch.randn(16, 16, device=ST_DEVICE, dtype=torch.float16)
-    out = torch.zeros(16, 16, device=ST_DEVICE, dtype=torch.float32)
+    a = torch.eye(16, device=ST_DEVICE, dtype=torch.float16)
+    b = torch.arange(16 * 32, device=ST_DEVICE, dtype=torch.float16).reshape(16, 32)
+    out = torch.zeros(16, 32, device=ST_DEVICE, dtype=torch.float32)
     dump_data_cube_levels_kernel[None, DEBUG_BLOCK_DIM](a, b, out)
     torch.npu.synchronize()
     expected = torch.matmul(a.float(), b.float())

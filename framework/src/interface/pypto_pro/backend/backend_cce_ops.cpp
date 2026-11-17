@@ -273,8 +273,10 @@ static std::string MakeDebugDumpTensorCodegenCCE(const ir::CallPtr& op, codegen:
     const std::string viewName = metadataPrefix + "_view";
     const std::string innerRows = isNz ? "16" : "1";
     const std::string innerCols = isNz ? strideName + "[" + std::to_string(rank - 1) + "]" : "1";
+    const bool logicalOrder = op->GetKwarg<bool>("logical_order", false);
     codegen.Emit("const pypto::aicore::DumpTensorView " + viewName + " = {" + sourceShapeName + ", " + offsetsName +
-                 ", " + shapeName + ", " + strideName + ", " + rankStr + "U, " + innerRows + ", " + innerCols + "};");
+                 ", " + shapeName + ", " + strideName + ", " + rankStr + "U, " + innerRows + ", " + innerCols +
+                 (logicalOrder ? ", false" : ", true") + "};");
     codegen.Emit("PYPTO_DUMP_TENSOR(" + layout + ", " + rankStr + ", " + basePtr + ", " + std::to_string(debugId) +
                  ", " + viewName + ");");
     return "";
@@ -355,10 +357,12 @@ static std::string MakeDebugDumpTileCodegenCCE(const ir::CallPtr& op, codegen::C
         << "debug.dump_tile has an unsupported Tile layout";
     const std::string layoutName = ir::EnumToString(tileLayout.value());
     const std::string layout = "pypto::aicore::DumpLayout::" + layoutName.substr(layoutName.find("::") + 2);
+    const bool logicalOrder = op->GetKwarg<bool>("logical_order", false);
 
     EmitDumpMetadataCCE(codegen, op, "dump_tile");
-    codegen.Emit("PYPTO_DUMP_TILE_WINDOW(" + layout + ", " +
-                 JoinExpressions({src, std::to_string(debugId), rowOffset, colOffset, rows, cols}, ", ") + ");");
+    std::vector<std::string> dumpArgs = {src, std::to_string(debugId), rowOffset, colOffset, rows, cols};
+    dumpArgs.emplace_back(logicalOrder ? "false" : "true");
+    codegen.Emit("PYPTO_DUMP_TILE_WINDOW(" + layout + ", " + JoinExpressions(dumpArgs, ", ") + ");");
     return "";
 }
 
