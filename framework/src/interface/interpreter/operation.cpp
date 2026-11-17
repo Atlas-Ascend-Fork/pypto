@@ -98,9 +98,39 @@ static int64_t GetAsParameterCoaIndex(const RawSymbolicScalarPtr& value)
     return -1;
 }
 
+namespace {
+// True when the expression tree references RUNTIME_COA_GET_PARAM*, i.e. needs caller linearArgList.
+bool ContainsCoaRef(const RawSymbolicScalarPtr& ss)
+{
+    if (ss->IsExpressionCall("RUNTIME_COA_GET_PARAM_OFFSET") ||
+        ss->IsExpressionCall("RUNTIME_COA_GET_PARAM_VALID_SHAPE") ||
+        ss->IsExpressionCall("RUNTIME_COA_GET_PARAM_RAW_SHAPE") || ss->IsExpressionCall("RUNTIME_COA_GET_PARAM")) {
+        return true;
+    }
+    if (ss->Kind() == SymbolicScalarKind::T_SCALAR_SYMBOLIC_EXPRESSION) {
+        auto expr = std::static_pointer_cast<RawSymbolicExpression>(ss);
+        for (const auto& operand : expr->OperandList()) {
+            if (ContainsCoaRef(operand)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+} // namespace
+
 std::vector<int64_t> OperationInterpreter::EvaluateOpImmediate(FunctionFrame* frame,
                                                                const std::vector<OpImmediate>& opImmList)
 {
+    // Fetch caller linearArgList lazily and only when the expression actually references COA params.
+    static const std::vector<SymbolicScalar> emptyLinearArgList;
+    const std::vector<SymbolicScalar>* cachedList = nullptr;
+    auto getLinearArgList = [&]() -> const std::vector<SymbolicScalar>& {
+        if (cachedList == nullptr) {
+            cachedList = (frame->callopAttr != nullptr) ? &frame->callopAttr->GetLinearArgList() : &emptyLinearArgList;
+        }
+        return *cachedList;
+    };
     std::vector<int64_t> result;
     for (auto& opImm : opImmList) {
         int64_t res = 0;
@@ -108,15 +138,19 @@ std::vector<int64_t> OperationInterpreter::EvaluateOpImmediate(FunctionFrame* fr
             auto opImmValue = opImm.GetSpecifiedValue();
             auto coaIndex = GetAsParameterCoaIndex(opImmValue.Raw());
             if (coaIndex != -1) {
-                auto attr = frame->callopAttr->GetLinearArgList()[coaIndex];
-                res = EvaluateSymbolicScalar(attr);
+                auto attr = getLinearArgList()[coaIndex];
+                res = ContainsCoaRef(attr.Raw()) ? evaluateSymbol->EvaluateSymbolicScalar(attr, getLinearArgList()) :
+                                                   EvaluateSymbolicScalar(attr);
+            } else if (ContainsCoaRef(opImmValue.Raw())) {
+                res = evaluateSymbol->EvaluateSymbolicScalar(opImm.GetSpecifiedValue(), getLinearArgList());
             } else {
                 res = EvaluateSymbolicScalar(opImm.GetSpecifiedValue());
             }
         } else {
             int index = opImm.GetParameterIndex();
-            auto attr = frame->callopAttr->GetLinearArgList()[index];
-            res = EvaluateSymbolicScalar(attr);
+            auto attr = getLinearArgList()[index];
+            res = ContainsCoaRef(attr.Raw()) ? evaluateSymbol->EvaluateSymbolicScalar(attr, getLinearArgList()) :
+                                               EvaluateSymbolicScalar(attr);
         }
         result.push_back(res);
     }
