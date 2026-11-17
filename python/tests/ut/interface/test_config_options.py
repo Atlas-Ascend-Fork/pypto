@@ -12,6 +12,8 @@
 
 import inspect
 
+import pytest
+
 import pypto
 from pypto.experimental import (
     get_operation_options,
@@ -19,6 +21,7 @@ from pypto.experimental import (
     set_operation_options,
     set_runtime_options,
 )
+from pypto.frontend.parser.entry import JitCallableWrapper
 
 
 def test_print_options():
@@ -70,6 +73,70 @@ def test_host_option():
     pypto.set_host_options(compile_timeout=1000)
     host_option = pypto.get_host_options()
     assert host_option["compile_timeout"] == 1000
+
+
+@pytest.mark.parametrize("debug_options", [None, {"runtime_debug_mode": 1}])
+@pytest.mark.parametrize("cache_hashes", [("kernel", 1), (("source",), None, None)])
+def test_jit_refreshes_runtime_debug_mode(monkeypatch, debug_options, cache_hashes):
+    pypto.reset_options()
+    wrapper = object.__new__(JitCallableWrapper)
+    wrapper._original_func = lambda: None
+    wrapper._host_options = {"compile_stage": 0, "compile_monitor_enable": 0, "compile_timeout": 600}
+    wrapper._explicit_compile_monitor_enable = None
+    wrapper._debug_options = None if debug_options is None else dict(debug_options)
+    wrapper._explicit_runtime_debug_mode = (debug_options or {}).get("runtime_debug_mode")
+    wrapper._cache_hashes = cache_hashes
+
+    monkeypatch.setattr(pypto.pypto_impl, "KernelModule", lambda module: object())
+    monkeypatch.setattr(JitCallableWrapper, "_kernel_module_cache", {})
+    try:
+        pypto.set_debug_options(runtime_debug_mode=3)
+        wrapper._get_or_create_kmodule({})
+        first_module = wrapper.kmodule
+        assert wrapper._debug_options["runtime_debug_mode"] == (3 if debug_options is None else 1)
+        wrapper._get_or_create_kmodule({})
+        assert wrapper.kmodule is first_module
+
+        pypto.set_debug_options(runtime_debug_mode=0)
+        wrapper._get_or_create_kmodule({})
+        assert wrapper._debug_options["runtime_debug_mode"] == (0 if debug_options is None else 1)
+        assert (wrapper.kmodule is first_module) == (debug_options is not None)
+    finally:
+        pypto.reset_options()
+
+
+@pytest.mark.parametrize("explicit_mode", [None, 1])
+@pytest.mark.parametrize("cache_hashes", [("kernel", 1), (("source",), None, None)])
+def test_jit_refreshes_compile_monitor_enable(monkeypatch, explicit_mode, cache_hashes):
+    pypto.reset_options()
+    wrapper = object.__new__(JitCallableWrapper)
+    wrapper._original_func = lambda: None
+    wrapper._host_options = None if explicit_mode is None else {"compile_monitor_enable": explicit_mode}
+    wrapper._explicit_compile_monitor_enable = explicit_mode
+    wrapper._debug_options = None
+    wrapper._explicit_runtime_debug_mode = None
+    wrapper._cache_hashes = cache_hashes
+
+    monkeypatch.setattr(
+        pypto.pypto_impl,
+        "KernelModule",
+        lambda module: {"compile_monitor_enable": module._host_options["compile_monitor_enable"]},
+    )
+    monkeypatch.setattr(JitCallableWrapper, "_kernel_module_cache", {})
+    try:
+        pypto.set_host_options(compile_monitor_enable=2)
+        wrapper._get_or_create_kmodule({})
+        first_module = wrapper.kmodule
+        assert first_module["compile_monitor_enable"] == (2 if explicit_mode is None else explicit_mode)
+        wrapper._get_or_create_kmodule({})
+        assert wrapper.kmodule is first_module
+
+        pypto.set_host_options(compile_monitor_enable=0)
+        wrapper._get_or_create_kmodule({})
+        assert wrapper.kmodule["compile_monitor_enable"] == (0 if explicit_mode is None else explicit_mode)
+        assert (wrapper.kmodule is first_module) == (explicit_mode is not None)
+    finally:
+        pypto.reset_options()
 
 
 def test_reset_option():

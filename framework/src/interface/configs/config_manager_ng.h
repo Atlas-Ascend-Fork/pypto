@@ -123,9 +123,9 @@ public:
     const std::any& GetAnyConfig(const std::string& key) const;
 
     /**
-     * \brief Returns a map of all configuration key-value pairs.
+     * \brief Returns configuration key-value pairs matching prefix, or all pairs if prefix is empty.
      */
-    const std::map<std::string, std::any> GetAllConfig() const;
+    const std::map<std::string, std::any> GetAllConfig(const std::string& prefix = "") const;
 
     /**
      * \brief Get the typed config value with the specific key.

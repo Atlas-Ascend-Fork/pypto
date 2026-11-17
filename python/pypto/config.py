@@ -499,8 +499,9 @@ def get_host_options() -> Dict[str, Union[str, int, List[int], Dict[int, int]]]:
     Dict[str, Union[str, int, List[int], Dict[int, int]]]
         All host options
     """
-    scope = get_current_scope()
-    return scope.get_host_options()
+    prefix = "host."
+    options = pypto_impl.CurrentScope().GetAllConfig(prefix)
+    return {key[len(prefix):]: value for key, value in options.items()}
 
 
 def set_codegen_options(
@@ -658,10 +659,11 @@ def get_debug_options() -> Dict[str, Union[str, int, List[str], List[int], Dict[
     Returns
     -------
     Dict[str, Union[str, int, List[int], Dict[int, int]]]
-        All verify options
+        All debug options
     """
-    scope = get_current_scope()
-    return scope.get_debug_options()
+    prefix = "debug."
+    options = pypto_impl.CurrentScope().GetAllConfig(prefix)
+    return {key[len(prefix):]: value for key, value in options.items()}
 
 
 def get_generic_options() -> Dict[str, Union[str, bool]]:

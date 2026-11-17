@@ -36,8 +36,7 @@ namespace {
 
 inline bool DumpEnabled()
 {
-    static const bool cached = (config::GetDebugOption<int64_t>(CFG_RUNTIME_DBEUG_MODE) == CFG_RUNTIME_DEBUG_VERIFY);
-    return cached;
+    return config::GetDebugOption<int64_t>(CFG_RUNTIME_DBEUG_MODE) == CFG_RUNTIME_DEBUG_VERIFY;
 }
 
 /// CSV-quote a string per RFC4180 (wrap with ", double inner ").

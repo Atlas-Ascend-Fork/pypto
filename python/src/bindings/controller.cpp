@@ -588,20 +588,22 @@ void BindControllerScopeClasses(py::module_& m)
                 return AnyToPyObject(scope.GetAnyConfig(key));
             },
             py::arg("key"))
-        .def("GetAllConfig",
-             [](const ConfigScope& scope) -> py::dict {
-                 py::dict result;
-                 auto config_map = scope.GetAllConfig();
+        .def(
+            "GetAllConfig",
+            [](const ConfigScope& scope, const std::string& prefix) -> py::dict {
+                py::dict result;
+                auto config_map = scope.GetAllConfig(prefix);
 
-                 for (const auto& [key, val] : config_map) {
-                     try {
-                         result[py::str(key)] = AnyToPyObject(val);
-                     } catch (const py::type_error& e) {
-                         PYPTO_LOGW("Warning: Skipping key '%s' - %s", key.c_str(), e.what());
-                     }
-                 }
-                 return result;
-             })
+                for (const auto& [key, val] : config_map) {
+                    try {
+                        result[py::str(key)] = AnyToPyObject(val);
+                    } catch (const py::type_error& e) {
+                        PYPTO_LOGW("Warning: Skipping key '%s' - %s", key.c_str(), e.what());
+                    }
+                }
+                return result;
+            },
+            py::arg("prefix") = "")
         .def("HasConfig", &ConfigScope::HasConfig, py::arg("key"))
         .def(
             "Type",

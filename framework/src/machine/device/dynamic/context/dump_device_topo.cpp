@@ -28,11 +28,7 @@ namespace npu::tile_fwk::dynamic::topo_dump {
 
 #ifndef __DEVICE__
 
-bool DumpEnabled()
-{
-    static const bool cached = (config::GetDebugOption<int64_t>(CFG_RUNTIME_DBEUG_MODE) == CFG_RUNTIME_DEBUG_VERIFY);
-    return cached;
-}
+bool DumpEnabled() { return config::GetDebugOption<int64_t>(CFG_RUNTIME_DBEUG_MODE) == CFG_RUNTIME_DEBUG_VERIFY; }
 
 namespace {
 

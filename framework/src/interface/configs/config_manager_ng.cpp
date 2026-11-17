@@ -315,12 +315,14 @@ std::string ConfigScope::ToString() const
     return os.str();
 }
 
-const std::map<std::string, std::any> ConfigScope::GetAllConfig() const
+const std::map<std::string, std::any> ConfigScope::GetAllConfig(const std::string& prefix) const
 {
     std::map<std::string, std::any> values;
     auto scope = this;
     while (scope) {
-        for (auto& [key, val] : scope->values_) {
+        for (auto it = scope->values_.lower_bound(prefix);
+             it != scope->values_.end() && it->first.compare(0, prefix.size(), prefix) == 0; ++it) {
+            const auto& [key, val] = *it;
             if (!values.count(key)) {
                 values[key] = val;
             }

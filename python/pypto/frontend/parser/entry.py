@@ -285,10 +285,12 @@ class JitCallableWrapper:
         # Handling options
         self._codegen_options = None if codegen_options is None else dict(codegen_options)
         self._host_options = None if host_options is None else dict(host_options)
+        self._explicit_compile_monitor_enable = (host_options or {}).get("compile_monitor_enable")
         self._runtime_options = runtime_options or {}
         self._pass_options = None if pass_options is None else dict(pass_options)
         self._verify_options = None if verify_options is None else dict(verify_options)
         self._debug_options = None if debug_options is None else dict(debug_options)
+        self._explicit_runtime_debug_mode = (debug_options or {}).get("runtime_debug_mode")
         self._generic_options = None if generic_options is None else dict(generic_options)
 
         self._set_run_mode()
@@ -572,26 +574,25 @@ class JitCallableWrapper:
         return result
 
     def _ensure_debug_options(self) -> None:
-        """Ensure _debug_options is initialized with runtime_debug_mode from global config."""
+        """Use the JIT runtime_debug_mode or refresh it from global config."""
         if self._debug_options is None:
             self._debug_options = {}
-        if "runtime_debug_mode" not in self._debug_options:
-            self._debug_options["runtime_debug_mode"] = pypto.get_debug_options().get("runtime_debug_mode", 0)
+        self._debug_options["runtime_debug_mode"] = (
+            pypto.get_debug_options().get("runtime_debug_mode", 0)
+            if self._explicit_runtime_debug_mode is None else self._explicit_runtime_debug_mode
+        )
 
     def _ensure_host_options(self) -> None:
-        """Ensure _host_options is initialized from global config."""
+        """Initialize host options and refresh compile_monitor_enable when not set in JIT."""
+        host_options = pypto.get_host_options()
         if self._host_options is None:
             self._host_options = {}
-        if "compile_stage" not in self._host_options:
-            self._host_options["compile_stage"] = pypto.get_host_options().get(
-                "compile_stage", pypto.CompStage.ALL_COMPLETE
-            )
-        if "compile_monitor_enable" not in self._host_options:
-            self._host_options["compile_monitor_enable"] = pypto.get_host_options().get(
-                "compile_monitor_enable", 1
-            )
-        if "compile_timeout" not in self._host_options:
-            self._host_options["compile_timeout"] = pypto.get_host_options().get("compile_timeout", 600)
+        self._host_options.setdefault("compile_stage", host_options["compile_stage"])
+        self._host_options["compile_monitor_enable"] = (
+            host_options["compile_monitor_enable"]
+            if self._explicit_compile_monitor_enable is None else self._explicit_compile_monitor_enable
+        )
+        self._host_options.setdefault("compile_timeout", host_options["compile_timeout"])
 
     def _get_or_create_kmodule(self, non_tensor_values: dict[str, Any]) -> None:
         """Set self.kwargs and resolve kmodule from cache or create new."""
@@ -949,14 +950,23 @@ class JitCallableWrapper:
             return None
 
         non_tensor_hash = self._make_hashable(non_tensor_values) if non_tensor_values else None
+        runtime_debug_mode = self._debug_options["runtime_debug_mode"]
+        compile_monitor_enable = self._host_options["compile_monitor_enable"]
         if len(self._cache_hashes) == 2:
-            # Globally-defined function: cache key is (func_name, non_tensor_hash)
+            # Include options captured by KernelModule when it is created.
             fun_name, global_func_id = self._cache_hashes
             combined_key = f"{fun_name}::{global_func_id}"
-            return (combined_key, non_tensor_hash)
+            return (combined_key, runtime_debug_mode, compile_monitor_enable, non_tensor_hash)
 
         source_code, options_hash, captured_locals_hash = self._cache_hashes
-        return (source_code, options_hash, captured_locals_hash, non_tensor_hash)
+        return (
+            source_code,
+            options_hash,
+            captured_locals_hash,
+            runtime_debug_mode,
+            compile_monitor_enable,
+            non_tensor_hash,
+        )
 
     def _set_run_mode(self) -> None:
         """Configure the runtime execution mode (NPU or SIM).
