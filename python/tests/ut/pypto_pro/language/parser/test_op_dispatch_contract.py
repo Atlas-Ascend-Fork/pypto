@@ -1451,20 +1451,20 @@ def test_storage_only_scalar_validation_uses_automatic_span(runtime):
     assert caught.value.span is span
 
 
-@pytest.mark.parametrize("target,maximum", [("cube", 15), ("vector", 7)])
-@pytest.mark.parametrize("offset", [0, 1])
-def test_icache_preload_uses_target_bounds_and_automatic_span(runtime, target, maximum, offset):
+@pytest.mark.parametrize("target,limit", [("cube", 15), ("vector", 7)])
+@pytest.mark.parametrize("delta", [0, 1])
+def test_icache_preload_uses_target_bound_and_automatic_span(runtime, target, limit, delta):
     helpers = runtime.load_functions(
         "ir/op/system_ops.py", ("_build_icache_preload",),
         MAX_AIC_ICACHE_PRELOAD_LEN=15, MAX_AIV_ICACHE_PRELOAD_LEN=7,
         icache_preload=lambda value, span: value,
     )
     parser = types.SimpleNamespace(target=target)
-    value = _ConstInt(maximum + offset)
+    value = _ConstInt(limit + delta)
     span = _Span()
     with runtime.errors.current_span(span):
-        if offset:
-            with pytest.raises(runtime.errors.InvalidVal, match=f"at most {maximum}") as caught:
+        if delta:
+            with pytest.raises(runtime.errors.InvalidVal, match=f"at most {limit}") as caught:
                 helpers._build_icache_preload(parser, value, span=span)
             assert caught.value.span is span
         else:

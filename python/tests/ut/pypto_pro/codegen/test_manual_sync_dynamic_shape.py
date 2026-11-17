@@ -309,6 +309,8 @@ def _mutex_kernel(
         pl.system.mutex_unlock(pipe=pl.PipeType.MTE2, mutex_id=10)
         pl.system.mutex_lock(pipe=pl.PipeType.MTE2, mutex_id=10)
         pl.system.mutex_unlock(pipe=pl.PipeType.MTE2, mutex_id=10)
+
+    with pl.section_cube():
         if x.shape[0] > 0:
             pl.system.mutex_lock(pipe=pl.PipeType.M, mutex_id=11)
             pl.system.mutex_unlock(pipe=pl.PipeType.M, mutex_id=11)

@@ -471,7 +471,7 @@ void CCECodegen::ResetFunctionGenerationState()
 
 std::string CCECodegen::BuildVfFunctionSignature(const ir::FunctionPtr& func)
 {
-    const bool isSimt = IsSimtFuncType(func->funcType_);
+    const bool isSimt = ir::IsSimtFuncType(func->funcType_);
     std::ostringstream sig;
     if (func->funcType_ == ir::FunctionType::SIMT_VF) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, func->HasAttr(ir::kMaxThreadsAttr))
@@ -546,7 +546,7 @@ std::string CCECodegen::BuildVfFunctionSignature(const ir::FunctionPtr& func)
 void CCECodegen::GenerateVfFunction(const ir::FunctionPtr& func)
 {
     PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
-                      func != nullptr && (IsSimtFuncType(func->funcType_) || IsSimdFuncType(func->funcType_)))
+                      func != nullptr && ir::IsVectorFunction(func->funcType_))
         << "GenerateVfFunction expects a SIMT_VF/SIMT_CALLEE/SIMT_KERNEL/SIMD_VF/SIMD_CALLEE function";
 
     ResetFunctionGenerationState();
@@ -2069,7 +2069,7 @@ ir::FunctionPtr CCECodegen::FindCallableCallee(const std::string& name) const
 
 std::string CCECodegen::GenerateVfCalleeCall(const ir::CallPtr& op, const ir::FunctionPtr& callee)
 {
-    const bool isSimt = IsSimtFuncType(callee->funcType_);
+    const bool isSimt = ir::IsSimtFuncType(callee->funcType_);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == callee->params_.size())
         << (isSimt ? "SIMT callee '" : "SIMD callee '") << callee->name_ << "' expects " << callee->params_.size()
         << " arguments, got " << op->args_.size();

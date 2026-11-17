@@ -667,14 +667,6 @@ def _ir_init_output(self,
     span: Span | None = None,
 ) -> Expr:
     actual_span = span or _span()
-    # Sectionless code is also parsed for Cube, where this Vector-pipe op is invalid.
-    if self.target != _ir_core.SectionKind.Vector:
-        raise InvalidOperation(
-            "init_output must be called inside 'with pl.section_vector():'",
-            hint="init_output is a Vector-pipe op; a sectionless kernel is shared by Cube and "
-                 "Vector, which emits it into the Cube (AIC) target and fails to compile.",
-        )
-
     if not isinstance(tensor.type, _ir_core.TensorType):
         raise InvalidVal(f"init_output: tensor must be a Tensor, got {type(tensor.type).__name__}")
     tensor_dtype = getattr(tensor.type, "dtype", None)

@@ -48,14 +48,16 @@ def test_cube_intra_block_sync_uses_cv_ratio(kernel, arch, expected_calls, codeg
 @pytest.mark.parametrize("mode", [pl.CrossCoreSyncMode.INTER_BLOCK, pl.CrossCoreSyncMode.INTER_SUBBLOCK])
 def test_cross_block_sync_codegen_matches_jit(arch, dynamic, mode, monkeypatch, codegen_9201, assert_golden):
     monkeypatch.setenv("PYPTOPRO_JIT_ARCH", str(arch))
+    use_cube = mode == pl.CrossCoreSyncMode.INTER_BLOCK
 
     @pl.jit(auto_mutex=False)
     def kernel(event_id: pl.DT_INT32):
-        with pl.section_cube():
-            if dynamic:
-                pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=event_id, sync_mode=mode)
-            else:
-                pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=3, sync_mode=mode)
+        if use_cube:
+            with pl.section_cube():
+                if dynamic:
+                    pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=event_id, sync_mode=mode)
+                else:
+                    pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=3, sync_mode=mode)
         with pl.section_vector():
             if dynamic:
                 pl.system.set_cross_core(pipe=pl.PipeType.MTE3, event_id=event_id, sync_mode=mode)
@@ -64,7 +66,12 @@ def test_cross_block_sync_codegen_matches_jit(arch, dynamic, mode, monkeypatch, 
 
     kernel_def = kernel.to_kernel_def()
     cube, vector = codegen_9201(kernel_def, arch)
-    for target, result in ((ir.SectionKind.Cube, cube), (ir.SectionKind.Vector, vector)):
+    assert (cube is not None) == use_cube
+    assert vector is not None
+    targets = [(ir.SectionKind.Vector, vector)]
+    if use_cube:
+        targets.append((ir.SectionKind.Cube, cube))
+    for target, result in targets:
         program, _ = kernel_def.parse_target_program(target)
         assert_golden(program, f"{target.name.lower()}-ir")
         raw = CCECodegen(target).generate_single(program, arch)

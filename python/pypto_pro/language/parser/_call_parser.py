@@ -852,13 +852,6 @@ class CallParserMixin:
         Match VF instructions by namespace so newly added operations inherit
         the same restriction.
         """
-        if self.target == ir.SectionKind.Vector and op_name in {
-            "system.bar_m", "system.bar_mte1", "system.bar_fix"
-        }:
-            raise NotSupported(
-                f"pl.{op_name}() requires a Cube section; the current target is Vector",
-                hint="Place the barrier with its Cube operations; use cross-core synchronization for a handover",
-            )
         in_vf = self._current_func_type in (ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee)
         if op_name.startswith("vf."):
             if not in_vf:

@@ -262,8 +262,8 @@ def test_sync_rejects_aic_only_path_in_vector_section(arch):
         func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
-@pytest.mark.parametrize("prefetch_len", [-1, 8])
-def test_icache_preload_validates_vector_range(prefetch_len):
+@pytest.mark.parametrize("prefetch_len", [-1, 16])
+def test_icache_preload_rejects_out_of_range_length(prefetch_len):
     @pl.jit(auto_mutex=False)
     def func(_jit_entry: pl.DT_INT64):
         pl.system.icache_preload(prefetch_len)
@@ -548,6 +548,18 @@ def test_control_flow_float_event_id_expression_is_rejected_by_parser():
 def test_mutex_rejects_non_public_kwargs(builder, kwarg, value):
     with pytest.raises(TypeError, match=rf"unexpected keyword argument '{kwarg}'"):
         builder(pipe=pl.PipeType.MTE2, mutex_id=_const_int(0), **{kwarg: value})
+
+
+@pytest.mark.parametrize("target", [ir.SectionKind.Cube, ir.SectionKind.Vector])
+def test_dcci_rejects_mat_tile_during_parse(target):
+    @pl.jit(auto_mutex=False)
+    def kernel():
+        tt = pl.TileType(shape=[16, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ)
+        tile = pl.make_tile(tt, addr=0)
+        pl.system.dcci(tile)
+
+    with pytest.raises(InvalidOperation, match=r"target Tile must be in Vec memory \(UB\), got Mat"):
+        kernel.to_kernel_def().parse_target_program(target)
 
 
 def test_dcci_gm_tensor_rejects_float_scalar_offset():

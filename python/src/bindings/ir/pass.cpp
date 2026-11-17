@@ -148,6 +148,8 @@ void BindPasses(py::module_& m)
         .def_static("litenpu_dynamic_to_static", &pass::LitenpuDynamicToStatic,
                     "Convert device-side (Kirin) dynamic expressions to static (loop unroll)")
         .def_static("allocate_mutex_ids", &pass::AllocateMutexIds, "Allocate AUTO mutex IDs from tile declarations")
+        .def_static("validate_target_ops", &pass::ValidateTargetOps, py::arg("target"),
+                    "Validate operations in a projected Cube or Vector program")
         .def_static("insert_sync", &pass::InsertSync, "Insert mutex synchronization from tile bindings")
         .def_static("sanitizer", &pass::Sanitizer,
                     "Create a sanitizer instrumentation pass (stateless; every check value travels in the records)");

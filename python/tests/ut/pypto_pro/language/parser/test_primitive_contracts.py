@@ -11,7 +11,7 @@
 """Public scalar aliases and core-side barriers have complete DSL contracts."""
 
 from pypto_pro import ir
-from pypto_pro._errors import NotSupported
+from pypto_pro._errors import InvalidShape
 import pypto_pro.language as pl
 import pytest
 
@@ -42,8 +42,16 @@ def test_cube_barriers_remain_supported():
 
 
 @pytest.mark.parametrize("which", [0, 1, 2])
-def test_cube_only_barriers_reject_vector_target_with_location(which):
-    with pytest.raises(NotSupported) as caught:
-        _vector_barrier(which).to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    assert "requires a Cube section" in caught.value.message
-    assert caught.value.span["filename"] == __file__
+def test_cube_only_barriers_parse_before_target_validation(which):
+    program, matched = _vector_barrier(which).to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert matched and program is not None
+
+
+def test_init_output_bounds_checked_before_cube_placement():
+    @pl.jit(auto_mutex=False)
+    def kernel(out: pl.Tensor[[1, 64], pl.DT_FP32]):
+        with pl.section_cube():
+            pl.init_output(out, offset=1, size=64, value=0)
+
+    with pytest.raises(InvalidShape, match="exceeds tensor element count"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Cube)

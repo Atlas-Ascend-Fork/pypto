@@ -59,6 +59,21 @@ enum class FunctionType : uint8_t {
     SIMD_TILE_CALLEE = 10 ///< Tile instructions expanded into a SIMD helper
 };
 
+/// True for a SIMT function type (`__simt_vf__` / `__simt_callee__` / `__simt_kernel__`).
+[[nodiscard]] inline bool IsSimtFuncType(FunctionType type)
+{
+    return type == FunctionType::SIMT_VF || type == FunctionType::SIMT_CALLEE || type == FunctionType::SIMT_KERNEL;
+}
+
+/// True for a SIMD vector function or callee, including its tile-level form.
+[[nodiscard]] inline bool IsSimdFuncType(FunctionType type)
+{
+    return type == FunctionType::SIMD_VF || type == FunctionType::SIMD_CALLEE || type == FunctionType::SIMD_TILE_VF ||
+           type == FunctionType::SIMD_TILE_CALLEE;
+}
+
+[[nodiscard]] inline bool IsVectorFunction(FunctionType type) { return IsSimtFuncType(type) || IsSimdFuncType(type); }
+
 /**
  * \brief Convert FunctionType to string
  * \param type The function type

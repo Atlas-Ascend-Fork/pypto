@@ -84,19 +84,6 @@ struct StructDefinition {
     bool requiresVolatile = false;
 };
 
-/// True for a SIMT function type (`__simt_vf__` / `__simt_callee__` / `__simt_kernel__`).
-[[nodiscard]] inline bool IsSimtFuncType(ir::FunctionType type)
-{
-    return type == ir::FunctionType::SIMT_VF || type == ir::FunctionType::SIMT_CALLEE ||
-           type == ir::FunctionType::SIMT_KERNEL;
-}
-
-/// True for a SIMD VF function type (`__simd_vf__` / `__simd_callee__`).
-[[nodiscard]] inline bool IsSimdFuncType(ir::FunctionType type)
-{
-    return type == ir::FunctionType::SIMD_VF || type == ir::FunctionType::SIMD_CALLEE;
-}
-
 /**
  * \brief CCE code generator for converting PyPTO IR to pto-isa C++ code
  *
@@ -170,10 +157,10 @@ public:
     /// True when currently generating code inside a VF section (CCE __VEC_SCOPE__).
     [[nodiscard]] bool IsInVFSection() const { return inVfSection_; }
     /// True when emitting a 3510 SIMT VF, callee, or SIMT kernel body.
-    [[nodiscard]] bool IsInSimtContext() const { return IsSimtFuncType(currentFunctionType_); }
+    [[nodiscard]] bool IsInSimtContext() const { return ir::IsSimtFuncType(currentFunctionType_); }
     [[nodiscard]] ir::FunctionType GetCurrentKernelType() const { return currentKernelType_; }
     /// True when emitting a `__simd_vf__` or `__simd_callee__` body.
-    [[nodiscard]] bool IsInSimdContext() const { return IsSimdFuncType(currentFunctionType_); }
+    [[nodiscard]] bool IsInSimdContext() const { return ir::IsSimdFuncType(currentFunctionType_); }
     int GetTileOffsetCounter() { return tileOffsetCounter_++; }
     /// Resolve a VF tile expr to its `__ubuf__` pointer code. In the standalone
     /// function model a plain tile Var is a `__ubuf__` pointer parameter and a

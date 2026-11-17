@@ -244,7 +244,7 @@ def _declares(line: str, pattern: re.Pattern) -> bool:
             and re.fullmatch(r"(?:\[\d+\])?(?: = .*)?;", suffix) is not None)
 
 
-def _assert_merge_slot_declaration_invariants(cpp: str) -> None:
+def _assert_merge_slot_declaration_invariants(body: str) -> None:
     """Each return slot is declared once, immediately before the structure that merges it.
 
     Both halves matter. A slot declared inside the body it merges would die at the closing
@@ -252,7 +252,7 @@ def _assert_merge_slot_declaration_invariants(cpp: str) -> None:
     business seeing it — so every level splices its own declarations in front of its own
     structure rather than hoisting them to function scope.
     """
-    lines = _cube_body(cpp).splitlines()
+    lines = body.splitlines()
     declarations = [
         (i, _RETURN_SLOT_RE.search(line).group(1))
         for i, line in enumerate(lines)
@@ -277,7 +277,7 @@ def _assert_merge_slot_declaration_invariants(cpp: str) -> None:
 
 
 def test_cce_merge_var_declarations_precede_their_control_flow():
-    _assert_merge_slot_declaration_invariants(_compile_to_cce(_inline_return_kernel))
+    _assert_merge_slot_declaration_invariants(_cube_body(_compile_to_cce(_inline_return_kernel)))
 
 
 def test_cce_inner_loop_slots_are_not_hoisted_to_function_scope():
@@ -389,9 +389,10 @@ def _tile_return_kernel(a: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP16]):
     tile_type = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
     tile_a = pl.make_tile(tile_type, addr=0x0000)
     tile_b = pl.make_tile(tile_type, addr=0x4000)
-    picked = _ret_tile(a.shape[0], tile_a, tile_b)
-    pl.load(picked, a, [0, 0])
-    pl.store(a, picked, [0, 0])
+    with pl.section_vector():
+        picked = _ret_tile(a.shape[0], tile_a, tile_b)
+        pl.load(picked, a, [0, 0])
+        pl.store(a, picked, [0, 0])
 
 
 @pl.jit
@@ -465,7 +466,12 @@ def test_cce_struct_array_return_uses_one_backing_array():
 
 
 def test_cce_tile_return_merges_through_a_typed_slot():
-    body = _cube_body(_compile_to_cce(_tile_return_kernel))
+    from pypto_pro.runtime.jit import _parse_and_codegen_targets
+
+    cube, vector = _parse_and_codegen_targets(_tile_return_kernel.to_kernel_def(), NpuArch.DAV_3510, "")
+    assert cube is None and vector is not None
+    body = vector.content
+    _assert_merge_slot_declaration_invariants(body)
 
     # The declaration needs the tile type and nothing else: no constructor arguments and no
     # TASSIGN, because the slot is immediately overwritten by a whole-object copy of one of
@@ -625,15 +631,14 @@ def test_cce_else_only_return_resolves_the_slot_type():
         _struct_return_kernel,
         _struct_in_tuple_return_kernel,
         _struct_array_return_kernel,
-        _tile_return_kernel,
         _then_only_return_kernel,
         _else_only_return_kernel,
         _both_branches_return_kernel,
     ],
     ids=[
-        "named_tuple", "struct", "struct_in_tuple", "struct_array", "tile",
+        "named_tuple", "struct", "struct_in_tuple", "struct_array",
         "then_only", "else_only", "both_branches",
     ],
 )
 def test_cce_merge_slots_keep_their_declaration_invariants(kernel):
-    _assert_merge_slot_declaration_invariants(_compile_to_cce(kernel))
+    _assert_merge_slot_declaration_invariants(_cube_body(_compile_to_cce(kernel)))

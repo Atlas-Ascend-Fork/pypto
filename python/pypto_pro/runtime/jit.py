@@ -1782,6 +1782,17 @@ def _parse_and_codegen_targets(
     required_dynamic_ub_size = _infer_dynamic_ub_size(requires_simt, max_vec_tile_end)
 
     for target in targets:
+        if matched.get(target) and programs.get(target) is not None:
+            try:
+                ir.Pass.validate_target_ops(target)(programs[target])
+            except ValueError as exc:
+                message = str(exc)
+                wrapper = error_class_of_spec_message(message)
+                if wrapper is None:
+                    raise
+                raise wrapper(message) from None
+
+    for target in targets:
         if matched.get(target) and programs.get(target) is not None and has_tile_function[target]:
             programs[target], _ = ir.PGOVFRun(programs[target], None)
 

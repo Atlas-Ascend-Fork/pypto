@@ -2608,6 +2608,10 @@ class Pass:
         """Allocate AUTO mutex IDs from declarations in a target program."""
 
     @staticmethod
+    def validate_target_ops(target: SectionKind) -> Pass:
+        """Check the core placement of operations in a target program."""
+
+    @staticmethod
     def insert_sync() -> Pass:
         """Insert mutex synchronization from allocated tile bindings."""
 

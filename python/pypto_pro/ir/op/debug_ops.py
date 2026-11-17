@@ -351,7 +351,7 @@ def _build_dump_data(
     logical_order = False if logical_order is None else require_const_bool(logical_order, subject="logical_order")
     return dump_data(
         data, offsets, shapes, workspace=workspace, loc=loc, flag=flag, logical_order=logical_order,
-        section=self.target, span=span,
+        span=span,
     )
 
 

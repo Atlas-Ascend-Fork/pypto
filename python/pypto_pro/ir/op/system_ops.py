@@ -418,6 +418,14 @@ def dcci(
         Call expression for system.dcci.
     """
     actual_span = _get_span_or_capture(span)
+    target_type = target.type
+    if isinstance(target_type, _ir_core.TileType):
+        memory_space = target_type.memref.memory_space_
+        if memory_space != _ir_core.MemorySpace.Vec:
+            raise InvalidOperation(
+                f"pl.system.dcci: target Tile must be in Vec memory (UB), got {memory_space.name}",
+                span=actual_span,
+            )
     args: list[Expr] = [target]
     if offset is not None and not isinstance(getattr(offset, "type", None), _ir_core.NoneType):
         args.append(offset)

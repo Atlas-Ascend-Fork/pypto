@@ -13,7 +13,7 @@ import textwrap
 from types import SimpleNamespace
 
 from pypto_pro import ir
-from pypto_pro._errors import InvalidArgument, InvalidOperation, InvalidType, NotSupported, PyptoProError
+from pypto_pro._errors import InvalidArgument, InvalidOperation, InvalidType, PyptoProError
 import pypto_pro.language as pl
 from pypto_pro.language import Vf as vf  # noqa: N813
 from pypto_pro.language.parser._ast_parser import ASTParser
@@ -70,8 +70,17 @@ def test_simd_tile_preserves_op_argument_validation(body, error):
 @pytest.mark.parametrize("func_type", [ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee])
 @pytest.mark.parametrize("barrier", ["bar_m", "bar_mte1", "bar_fix"])
 def test_simd_tile_preserves_vector_section_barrier_validation(func_type, barrier):
-    with pytest.raises(NotSupported, match="requires a Cube section; the current target is Vector"):
-        _parse_body(f"pl.system.{barrier}()", func_type=func_type)
+    function = _parse_body(f"pl.system.{barrier}()", func_type=func_type)
+    program = ir.Program([function], "validate", function.span)
+    with pytest.raises(ValueError, match=r"cannot execute on Vector\. Supported cores for this call: Cube\."):
+        ir.Pass.validate_target_ops(ir.SectionKind.Vector)(program)
+
+
+@pytest.mark.parametrize("func_type", [ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee])
+def test_cube_validation_skips_simd_tile_definition(func_type):
+    function = _parse_body("pl.neg(dst, src)", func_type=func_type, tile_params=True)
+    program = ir.Program([function], "validate", function.span)
+    ir.Pass.validate_target_ops(ir.SectionKind.Cube)(program)
 
 
 @pytest.mark.parametrize("func_type", [ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee])

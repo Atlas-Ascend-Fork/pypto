@@ -37,9 +37,6 @@ def _compile_to_cce(kernel) -> str:
 def _sync_all_mix_kernel(
     a: pl.Tensor[[64, 128], pl.DT_FP16],
 ):
-    tile_type = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
-    tile_a = pl.make_tile(tile_type, addr=0x0000)
-    pl.load(tile_a, a, [0, 0])
     pl.system.sync_all()
 
 
@@ -47,10 +44,8 @@ def _sync_all_mix_kernel(
 def _sync_all_aiv_only_kernel(
     a: pl.Tensor[[64, 128], pl.DT_FP16],
 ):
-    tile_type = pl.TileType(shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
-    tile_a = pl.make_tile(tile_type, addr=0x0000)
-    pl.load(tile_a, a, [0, 0])
-    pl.system.sync_all(core_type=pl.SyncCoreType.AIV_ONLY)
+    with pl.section_vector():
+        pl.system.sync_all(core_type=pl.SyncCoreType.AIV_ONLY)
 
 
 # ---------------------------------------------------------------------------

@@ -61,8 +61,9 @@ def _sel_kernel(x: pl.Tensor[[64, 128], pl.DT_FP16]):
     out = pl.make_tile(tt, addr=0xC000)
     mask_t = pl.TileType(shape=[64, 32], dtype=pl.DT_INT8, target_memory=pl.MemorySpace.Vec)
     mask = pl.make_tile(mask_t, addr=0x10000)
-    pl.load(lhs, x, [0, 0])
-    pl.select(out, mask, lhs, rhs, tmp)
+    with pl.section_vector():
+        pl.load(lhs, x, [0, 0])
+        pl.select(out, mask, lhs, rhs, tmp)
 
 
 @pl.jit
@@ -73,8 +74,9 @@ def _sels_kernel(x: pl.Tensor[[64, 128], pl.DT_FP16]):
     out = pl.make_tile(tt, addr=0x8000)
     mask_t = pl.TileType(shape=[64, 32], dtype=pl.DT_INT8, target_memory=pl.MemorySpace.Vec)
     mask = pl.make_tile(mask_t, addr=0xC000)
-    pl.load(src, x, [0, 0])
-    pl.select(out, mask, src, 0.0, tmp)
+    with pl.section_vector():
+        pl.load(src, x, [0, 0])
+        pl.select(out, mask, src, 0.0, tmp)
 
 
 @pl.jit(auto_mutex=True)
