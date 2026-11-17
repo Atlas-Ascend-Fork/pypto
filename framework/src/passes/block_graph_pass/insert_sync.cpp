@@ -567,7 +567,82 @@ Status PipeSync::PipeDispatch(const std::vector<Operation*>& opLogPtr, std::vect
         FindDep(opRef, opLogPtr, i, dataDependencySearcher);
         EnqueueOp(opRef, opLogPtr, syncedOpLog);
     }
+    RemoveRedundantAivDependencies();
     return SUCCESS;
+}
+
+void PipeSync::RemoveRedundantAivDependencies()
+{
+    if (IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
+        return;
+    }
+    auto crossesAivCores = [](const DepOp& set, const DepOp& wait) {
+        return set.selfPipeCore.core == CoreType::AIV && wait.selfPipeCore.core == CoreType::AIV &&
+               set.selfPipeCore.aivCore != wait.selfPipeCore.aivCore;
+    };
+    auto singlePipe = [](const DepOp& op) { return op.selfPipeCore.pipeStart == op.selfPipeCore.pipeEnd; };
+    std::vector<size_t> nextInPipe;
+    for (auto& source : depOps_) {
+        if (!singlePipe(source)) {
+            continue;
+        }
+        std::vector<size_t> candidates;
+        for (auto waitIdx : source.setPipe) {
+            if (crossesAivCores(source, depOps_[waitIdx])) {
+                candidates.push_back(waitIdx);
+            }
+        }
+        if (candidates.empty()) {
+            continue;
+        }
+        if (nextInPipe.empty()) {
+            nextInPipe.assign(depOps_.size(), SIZE_MAX);
+            std::map<PipeCoreRealEx, size_t, PipeCoreRealExCompare> lastInPipe;
+            for (const auto& op : depOps_) {
+                if (!singlePipe(op)) {
+                    continue;
+                }
+                const auto& core = op.selfPipeCore;
+                const PipeCoreRealEx pipe(core.pipeStart, core.core, core.aivCore);
+                auto last = lastInPipe.find(pipe);
+                if (last != lastInPipe.end()) {
+                    nextInPipe[last->second] = op.idx;
+                }
+                lastInPipe[pipe] = op.idx;
+            }
+        }
+        // latestPipeDep_ cannot represent an old producer's history after a newer
+        // operation has updated that pipe. Prove redundancy from retained edges.
+        std::vector<bool> reached(depOps_.size(), false);
+        std::vector<size_t> pending{source.idx};
+        reached[source.idx] = true;
+        while (!pending.empty()) {
+            const auto idx = pending.back();
+            pending.pop_back();
+            auto enqueue = [&](size_t next) {
+                // Never justify one unsupported edge with another. A multi-pipe
+                // operation also does not prove entry-to-exit hardware ordering.
+                if (next <= idx || reached[next] || !singlePipe(depOps_[next]) ||
+                    crossesAivCores(depOps_[idx], depOps_[next])) {
+                    return;
+                }
+                reached[next] = true;
+                pending.push_back(next);
+            };
+            for (auto next : depOps_[idx].setPipe) {
+                enqueue(next);
+            }
+            // Only the same physical core, subcore and pipe share this FIFO.
+            if (nextInPipe[idx] != SIZE_MAX) {
+                enqueue(nextInPipe[idx]);
+            }
+        }
+        for (auto waitIdx : candidates) {
+            if (reached[waitIdx]) {
+                RemoveOpDep(source, depOps_[waitIdx]);
+            }
+        }
+    }
 }
 
 void PipeSync::InitIssueQueue()

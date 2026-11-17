@@ -5374,6 +5374,119 @@ TEST_F(InsertSyncTest, A5CrossCoreDrainPreservesPendingIntraAndOtherCore)
     EXPECT_EQ(ps.ValidateEventReuse(ordered), SUCCESS);
 }
 
+TEST_F(InsertSyncTest, RedundantAivDependencyUsesOldProducerPath)
+{
+    NpuArchScope archScope(NPUArch::DAV_2201);
+    for (auto source : {AIVCore::AIV0, AIVCore::AIV1}) {
+        const auto target = source == AIVCore::AIV0 ? AIVCore::AIV1 : AIVCore::AIV0;
+        PipeSync ps;
+        for (const auto& pipe : {PipeSync::PipeCore{PIPE_MTE2, PIPE_MTE2, CoreType::AIV, source},
+                                 PipeSync::PipeCore{PIPE_MTE3, PIPE_MTE3, CoreType::AIV, source},
+                                 PipeSync::PipeCore{PIPE_MTE1, PIPE_MTE1, CoreType::AIC, AIVCore::UNSPECIFIED},
+                                 PipeSync::PipeCore{PIPE_M, PIPE_M, CoreType::AIC, AIVCore::UNSPECIFIED},
+                                 PipeSync::PipeCore{PIPE_M, PIPE_M, CoreType::AIC, AIVCore::UNSPECIFIED},
+                                 PipeSync::PipeCore{PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED},
+                                 PipeSync::PipeCore{PIPE_V, PIPE_V, CoreType::AIV, target},
+                                 PipeSync::PipeCore{PIPE_MTE3, PIPE_MTE3, CoreType::AIV, target}}) {
+            ps.depOps_.emplace_back(ps.depOps_.size(), pipe);
+        }
+        ps.latestPipeDep_[{PIPE_MTE2, CoreType::AIV, source}].waitIdx = 0;
+        for (const auto& edge :
+             {std::pair<size_t, size_t>{0, 1}, {1, 2}, {2, 3}, {2, 4}, {3, 5}, {5, 6}, {6, 7}, {0, 7}}) {
+            ps.UpdateDep(ps.depOps_[edge.second], ps.depOps_[edge.first]);
+        }
+        // The newer M operation must not supply its summary to the old producer.
+        ASSERT_EQ(ps.depOps_[0].setPipe, (std::vector<size_t>{1, 7}));
+        ps.RemoveRedundantAivDependencies();
+        EXPECT_EQ(ps.depOps_[0].setPipe, (std::vector<size_t>{1}));
+        EXPECT_EQ(ps.depOps_[7].waitPipe, (std::vector<size_t>{6}));
+        EXPECT_FALSE(ps.AnalyzeIntraEventCapacity(ps.depOps_[0]).has_value());
+        EXPECT_EQ(ps.depOps_[3].setPipe, (std::vector<size_t>{5}));
+    }
+}
+
+TEST_F(InsertSyncTest, RedundantAivDependencyUsesPhysicalPipeFifo)
+{
+    NpuArchScope archScope(NPUArch::DAV_2201);
+    PipeSync ps;
+    for (const auto& pipe : {PipeSync::PipeCore{PIPE_MTE3, PIPE_MTE3, CoreType::AIV, AIVCore::AIV1},
+                             PipeSync::PipeCore{PIPE_MTE1, PIPE_MTE1, CoreType::AIC, AIVCore::UNSPECIFIED},
+                             PipeSync::PipeCore{PIPE_MTE1, PIPE_MTE1, CoreType::AIC, AIVCore::UNSPECIFIED},
+                             PipeSync::PipeCore{PIPE_FIX, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED},
+                             PipeSync::PipeCore{PIPE_MTE3, PIPE_MTE3, CoreType::AIV, AIVCore::AIV0}}) {
+        ps.depOps_.emplace_back(ps.depOps_.size(), pipe);
+    }
+    for (const auto& edge : {std::pair<size_t, size_t>{0, 1}, {2, 3}, {3, 4}, {0, 4}}) {
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[edge.first], ps.depOps_[edge.second]), SUCCESS);
+    }
+    ps.RemoveRedundantAivDependencies();
+    EXPECT_EQ(ps.depOps_[0].setPipe, (std::vector<size_t>{1}));
+    EXPECT_EQ(ps.depOps_[4].waitPipe, (std::vector<size_t>{3}));
+    EXPECT_FALSE(ps.AnalyzeIntraEventCapacity(ps.depOps_[0]).has_value());
+}
+
+TEST_F(InsertSyncTest, RedundantAivDependencyCannotUseAnotherVectorFifo)
+{
+    NpuArchScope archScope(NPUArch::DAV_2201);
+    PipeSync ps;
+    for (const auto& pipe : {PipeSync::PipeCore{PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV1},
+                             PipeSync::PipeCore{PIPE_MTE3, PIPE_MTE3, CoreType::AIV, AIVCore::AIV1},
+                             PipeSync::PipeCore{PIPE_MTE3, PIPE_MTE3, CoreType::AIV, AIVCore::AIV0},
+                             PipeSync::PipeCore{PIPE_V, PIPE_V, CoreType::AIV, AIVCore::AIV0}}) {
+        ps.depOps_.emplace_back(ps.depOps_.size(), pipe);
+    }
+    for (const auto& edge : {std::pair<size_t, size_t>{0, 1}, {2, 3}, {0, 3}}) {
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[edge.first], ps.depOps_[edge.second]), SUCCESS);
+    }
+    ps.RemoveRedundantAivDependencies();
+    EXPECT_EQ(ps.depOps_[0].setPipe, (std::vector<size_t>{1, 3}));
+    EXPECT_TRUE(ps.AnalyzeIntraEventCapacity(ps.depOps_[0]).has_value());
+}
+
+TEST_F(InsertSyncTest, RedundantAivDependencyKeepsNecessaryEdges)
+{
+    NpuArchScope archScope(NPUArch::DAV_2201);
+    PipeSync ps;
+    ps.depOps_.emplace_back(0, PipeSync::PipeCore{PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV1});
+    ps.depOps_.emplace_back(1, PipeSync::PipeCore{PIPE_MTE3, PIPE_MTE3, CoreType::AIV, AIVCore::AIV0});
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[1]), SUCCESS);
+    ps.RemoveRedundantAivDependencies();
+    EXPECT_EQ(ps.depOps_[0].setPipe, (std::vector<size_t>{1}));
+    EXPECT_EQ(ps.depOps_[1].waitPipe, (std::vector<size_t>{0}));
+    ASSERT_TRUE(ps.AnalyzeIntraEventCapacity(ps.depOps_[0]).has_value());
+}
+
+TEST_F(InsertSyncTest, RedundantAivDependencyCannotUseUnsupportedPath)
+{
+    NpuArchScope archScope(NPUArch::DAV_2201);
+    PipeSync ps;
+    ps.depOps_.emplace_back(0, PipeSync::PipeCore{PIPE_V, PIPE_V, CoreType::AIV, AIVCore::AIV1});
+    ps.depOps_.emplace_back(1, PipeSync::PipeCore{PIPE_V, PIPE_V, CoreType::AIV, AIVCore::AIV0});
+    ps.depOps_.emplace_back(2, PipeSync::PipeCore{PIPE_MTE3, PIPE_MTE3, CoreType::AIV, AIVCore::AIV0});
+    for (const auto& edge : {std::pair<size_t, size_t>{0, 1}, {1, 2}, {0, 2}}) {
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[edge.first], ps.depOps_[edge.second]), SUCCESS);
+    }
+    ps.RemoveRedundantAivDependencies();
+    EXPECT_EQ(ps.depOps_[0].setPipe, (std::vector<size_t>{1, 2}));
+    EXPECT_EQ(ps.depOps_[2].waitPipe, (std::vector<size_t>{1, 0}));
+    EXPECT_TRUE(ps.AnalyzeIntraEventCapacity(ps.depOps_[0]).has_value());
+}
+
+TEST_F(InsertSyncTest, RedundantAivDependencyCannotBridgeMultiplePipes)
+{
+    NpuArchScope archScope(NPUArch::DAV_2201);
+    PipeSync ps;
+    ps.depOps_.emplace_back(0, PipeSync::PipeCore{PIPE_MTE2, PIPE_MTE2, CoreType::AIV, AIVCore::AIV1});
+    ps.depOps_.emplace_back(1, PipeSync::PipeCore{PIPE_MTE1, PIPE_FIX, CoreType::AIC, AIVCore::UNSPECIFIED});
+    ps.depOps_.emplace_back(2, PipeSync::PipeCore{PIPE_MTE3, PIPE_MTE3, CoreType::AIV, AIVCore::AIV0});
+    for (const auto& edge : {std::pair<size_t, size_t>{0, 1}, {1, 2}, {0, 2}}) {
+        ASSERT_EQ(ps.AddOpDep(ps.depOps_[edge.first], ps.depOps_[edge.second]), SUCCESS);
+    }
+    ps.RemoveRedundantAivDependencies();
+    EXPECT_EQ(ps.depOps_[0].setPipe, (std::vector<size_t>{1, 2}));
+    EXPECT_TRUE(ps.AnalyzeIntraEventCapacity(ps.depOps_[0]).has_value());
+}
+
 #undef private
 
 } // namespace tile_fwk

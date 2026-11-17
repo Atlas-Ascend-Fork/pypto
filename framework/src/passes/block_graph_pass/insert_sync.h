@@ -277,6 +277,7 @@ private:
     bool CheckWarDependency(const Operation& opSet, const Operation& opWait);
     bool HasDataDependency(const Operation& opSet, const Operation& opWait);
     void UpdateDep(DepOp& currOp, DepOp& prevOp);
+    void RemoveRedundantAivDependencies();
     bool IgnorableIntraPipeDep(size_t prev, size_t curr, const std::vector<Operation*>& opLogPtr);
     void FindDep(DepOp& op, const std::vector<Operation*>& opLogPtr, size_t idx,
                  DataDependencySearcher& dataDependencySearcher);
