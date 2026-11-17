@@ -1356,3 +1356,20 @@ def test_multi_source_assemble_in_symbolic_if_is_yielded():
     return_vars = if_stmts[0].return_vars
     assert len(return_vars) == 1
     assert return_vars[0].name.startswith("out")
+
+
+def test_nested_function_return_in_symbolic_if_is_rejected():
+    def kernel(x, out):
+        pypto.set_vec_tile_shapes(16, 16)
+
+        def helper(t, i):
+            if i == 0:
+                return t * 1.0
+            return t * 0.5
+
+        pypto.assemble(helper(x, pypto.SymbolicScalar("i")), [0, 0], out)
+
+    x = pypto.Tensor(shape=(32, 32), dtype=pypto.DT_FP32)
+    out = pypto.Tensor(shape=(32, 32), dtype=pypto.DT_FP32)
+    with pytest.raises(Exception, match="return inside a symbolic if branch"):
+        pil.compile(kernel, x, out, create_new_logical_tensor=True)

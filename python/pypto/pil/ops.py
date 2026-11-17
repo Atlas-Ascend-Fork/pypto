@@ -505,6 +505,12 @@ def loop_impl(ctx: BuildContext, body: Block, loop):
 
 
 def _if_else_stmt(cond, then_block: Block, else_block: Block, ctx: BuildContext):
+    if then_block.jump is Jump.RETURN or else_block.jump is Jump.RETURN:
+        raise ValueError(
+            "return inside a symbolic if branch is not supported; "
+            "write the result to an out parameter instead"
+        )
+
     scope = Scope.current()
 
     saved = dict(scope.locals)
