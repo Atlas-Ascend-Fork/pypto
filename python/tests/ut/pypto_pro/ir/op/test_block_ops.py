@@ -2562,3 +2562,248 @@ def test_expand_div_rejects_unsupported_dtype(dtype):
             pl.expand_div(out, src, vec, dim=0)
 
         main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+# ---------------------------------------------------------------------------
+# Shift amount domain (shl/shr)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "dtype,value,match",
+    [
+        (pl.DT_INT8, 100, r"pl\.shl shift amount must be at most 7, got 100"),
+        (pl.DT_INT8, 8, r"pl\.shl shift amount must be at most 7, got 8"),
+        (pl.DT_INT32, 40, r"pl\.shl shift amount must be at most 31, got 40"),
+        (pl.DT_INT32, -1, r"pl\.shl shift amount must be at least 0, got -1"),
+        (pl.DT_UINT16, 16, r"pl\.shl shift amount must be at most 15, got 16"),
+    ],
+)
+def test_shl_rejects_literal_outside_lhs_width(dtype, value, match):
+    with pytest.raises(InvalidVal, match=match):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            tile_type = pl.TileType(shape=[1, 64], dtype=dtype, target_memory=pl.MemorySpace.Vec)
+            lhs = pl.make_tile(tile_type, addr=0x0000)
+            out = pl.make_tile(tile_type, addr=0x1000)
+            with pl.section_vector():
+                pl.shl(out, lhs, value)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize(
+    "dtype,value,match",
+    [
+        (pl.DT_INT32, 40, r"pl\.shr shift amount must be at most 31, got 40"),
+        (pl.DT_INT32, -1, r"pl\.shr shift amount must be at least 0, got -1"),
+    ],
+)
+def test_shr_rejects_literal_outside_lhs_width(dtype, value, match):
+    with pytest.raises(InvalidVal, match=match):
+
+        @pl.jit(auto_mutex=False)
+        def main(_jit_entry: pl.DT_INT64):
+            tile_type = pl.TileType(shape=[1, 64], dtype=dtype, target_memory=pl.MemorySpace.Vec)
+            lhs = pl.make_tile(tile_type, addr=0x0000)
+            out = pl.make_tile(tile_type, addr=0x1000)
+            with pl.section_vector():
+                pl.shr(out, lhs, value)
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("dtype,value", [(pl.DT_INT32, 0), (pl.DT_INT32, 31), (pl.DT_INT8, 7)])
+def test_shl_accepts_literal_inside_lhs_width(dtype, value):
+    @pl.jit(auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[1, 64], dtype=dtype, target_memory=pl.MemorySpace.Vec)
+        lhs = pl.make_tile(tile_type, addr=0x0000)
+        out = pl.make_tile(tile_type, addr=0x1000)
+        with pl.section_vector():
+            pl.shl(out, lhs, value)
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "block.shls" in str(program.get_function(main.__name__))
+
+
+@pytest.mark.parametrize("value", [0, 31])
+def test_shr_accepts_literal_inside_lhs_width(value):
+    @pl.jit(auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[1, 64], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
+        lhs = pl.make_tile(tile_type, addr=0x0000)
+        out = pl.make_tile(tile_type, addr=0x1000)
+        with pl.section_vector():
+            pl.shr(out, lhs, value)
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "block.shrs" in str(program.get_function(main.__name__))
+
+
+def test_shl_runtime_scalar_stays_unchecked():
+    @pl.jit(auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64, amount: pl.DT_INT32):
+        tile_type = pl.TileType(shape=[1, 64], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
+        lhs = pl.make_tile(tile_type, addr=0x0000)
+        out = pl.make_tile(tile_type, addr=0x1000)
+        with pl.section_vector():
+            pl.shl(out, lhs, amount)
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "block.shls" in str(program.get_function(main.__name__))
+
+
+def test_shr_tile_rhs_stays_unchecked():
+    @pl.jit(auto_mutex=False)
+    def main(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[1, 64], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
+        lhs = pl.make_tile(tile_type, addr=0x0000)
+        rhs = pl.make_tile(tile_type, addr=0x0800)
+        out = pl.make_tile(tile_type, addr=0x1000)
+        with pl.section_vector():
+            pl.shr(out, lhs, rhs)
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "block.shr" in str(program.get_function(main.__name__))
+
+
+# ---------------------------------------------------------------------------
+# Runtime scalar dtype contract (axpy / cmps)
+# ---------------------------------------------------------------------------
+
+
+def test_axpy_rejects_runtime_scalar_of_mismatched_dtype():
+    # A runtime scalar keeps the dtype it was declared with, so an INT64 Var multiplier
+    # against an FP16 src is rejected instead of silently reaching the hardware.
+    with pytest.raises(
+        InvalidType, match=r"pl\.axpy multiplier: unsupported dtype int64, supported: fp16"
+    ):
+
+        @pl.jit(auto_mutex=False)
+        def main(src: pl.Tensor[[64, 64], pl.DT_FP16], alpha: pl.DT_INT64, output: pl.Tensor[[64, 64], pl.DT_FP16]):
+            tile_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+            src_tile = pl.make_tile(tile_type, addr=0x0000)
+            out_tile = pl.make_tile(tile_type, addr=0x2000)
+            pl.load(src_tile, src, [0, 0])
+            pl.axpy(out_tile, src_tile, alpha)
+            _test_result = pl.store(output, out_tile, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_axpy_accepts_runtime_scalar_matching_src_dtype():
+    @pl.jit(auto_mutex=False)
+    def main(src: pl.Tensor[[64, 64], pl.DT_FP16], alpha: pl.DT_FP16, output: pl.Tensor[[64, 64], pl.DT_FP16]):
+        tile_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        src_tile = pl.make_tile(tile_type, addr=0x0000)
+        out_tile = pl.make_tile(tile_type, addr=0x2000)
+        pl.load(src_tile, src, [0, 0])
+        pl.axpy(out_tile, src_tile, alpha)
+        _test_result = pl.store(output, out_tile, [0, 0])
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "block.axpy" in str(program.get_function(main.__name__))
+
+
+def test_axpy_half_upconvert_path_rejects_fp32_runtime_scalar():
+    # On the fp16->fp32 path TAXPY keeps a half scalar, so the multiplier's runtime
+    # dtype has to stay fp16 (the src dtype) rather than the out dtype.
+    with pytest.raises(
+        InvalidType, match=r"pl\.axpy multiplier: unsupported dtype fp32, supported: fp16"
+    ):
+
+        @pl.jit(auto_mutex=False)
+        def main(
+            src: pl.Tensor[[64, 64], pl.DT_FP16],
+            alpha: pl.DT_FP32,
+            output: pl.Tensor[[64, 64], pl.DT_FP32],
+        ):
+            src_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+            out_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+            src_tile = pl.make_tile(src_type, addr=0x0000)
+            out_tile = pl.make_tile(out_type, addr=0x2000)
+            pl.load(src_tile, src, [0, 0])
+            pl.axpy(out_tile, src_tile, alpha)
+            _test_result = pl.store(output, out_tile, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_axpy_half_upconvert_path_accepts_fp16_runtime_scalar():
+    @pl.jit(auto_mutex=False)
+    def main(
+        src: pl.Tensor[[64, 64], pl.DT_FP16],
+        alpha: pl.DT_FP16,
+        output: pl.Tensor[[64, 64], pl.DT_FP32],
+    ):
+        src_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        out_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        src_tile = pl.make_tile(src_type, addr=0x0000)
+        out_tile = pl.make_tile(out_type, addr=0x2000)
+        pl.load(src_tile, src, [0, 0])
+        pl.axpy(out_tile, src_tile, alpha)
+        _test_result = pl.store(output, out_tile, [0, 0])
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "block.axpy" in str(program.get_function(main.__name__))
+
+
+def test_axpy_runtime_scalar_rejection_keeps_literal_path():
+    # A literal settles in the IR storage dtypes, so it keeps being checked by value
+    # representability only -- an in-range fp16 multiplier still builds.
+    @pl.jit(auto_mutex=False)
+    def main(src: pl.Tensor[[64, 64], pl.DT_FP16], output: pl.Tensor[[64, 64], pl.DT_FP16]):
+        tile_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        src_tile = pl.make_tile(tile_type, addr=0x0000)
+        out_tile = pl.make_tile(tile_type, addr=0x2000)
+        pl.load(src_tile, src, [0, 0])
+        pl.axpy(out_tile, src_tile, 2.0)
+        _test_result = pl.store(output, out_tile, [0, 0])
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "block.axpy" in str(program.get_function(main.__name__))
+
+
+def test_cmps_rejects_runtime_scalar_of_mismatched_dtype():
+    # A runtime comparison operand keeps the dtype it was declared with, so an INT64
+    # Var against an FP16 lhs is rejected instead of slipping through the literal check.
+    with pytest.raises(
+        InvalidType, match=r"pl\.cmps comparison operand: unsupported dtype int64, supported: fp16"
+    ):
+
+        @pl.jit(auto_mutex=False)
+        def main(
+            src: pl.Tensor[[32, 32], pl.DT_FP16],
+            scalar: pl.DT_INT64,
+            output: pl.Tensor[[32, 32], pl.DT_UINT8],
+        ):
+            tile_type = pl.TileType(shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+            mask_type = pl.TileType(shape=[32, 32], dtype=pl.DT_UINT8, target_memory=pl.MemorySpace.Vec)
+            tile_a = pl.make_tile(tile_type, addr=0x0000)
+            mask = pl.make_tile(mask_type, addr=0x1000)
+            pl.load(tile_a, src, [0, 0])
+            pl.eq(mask, tile_a, scalar)
+            _test_result = pl.store(output, mask, [0, 0])
+
+        main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_cmps_accepts_runtime_scalar_matching_lhs_dtype():
+    @pl.jit(auto_mutex=False)
+    def main(
+        src: pl.Tensor[[32, 32], pl.DT_FP16],
+        scalar: pl.DT_FP16,
+        output: pl.Tensor[[32, 32], pl.DT_UINT8],
+    ):
+        tile_type = pl.TileType(shape=[32, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        mask_type = pl.TileType(shape=[32, 32], dtype=pl.DT_UINT8, target_memory=pl.MemorySpace.Vec)
+        tile_a = pl.make_tile(tile_type, addr=0x0000)
+        mask = pl.make_tile(mask_type, addr=0x1000)
+        pl.load(tile_a, src, [0, 0])
+        pl.eq(mask, tile_a, scalar)
+        _test_result = pl.store(output, mask, [0, 0])
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert "block.cmps" in str(program.get_function(main.__name__))

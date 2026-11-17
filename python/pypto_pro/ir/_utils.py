@@ -34,6 +34,7 @@ __all__ = [
     "require_int",
     "require_list",
     "require_scalar_dtype",
+    "require_scalar_with_dtype",
     "unwrap_type",
 ]
 
@@ -232,6 +233,33 @@ def require_dtypes_match(
             raise InvalidType(
                 f"{subject}: dtype mismatch at index {index}: expected {expected_dtype}, got {dtype}",
             )
+
+
+def require_scalar_with_dtype(
+    value: _ir.Expr,
+    expected_dtype: DataType | None,
+    *,
+    subject: str,
+) -> None:
+    """Require a scalar operand and check it against *expected_dtype*.
+
+    A literal (``ConstInt``/``ConstFloat``) settles in the IR storage dtypes, so only
+    its value is checked for representability in *expected_dtype*; a runtime scalar
+    keeps the dtype it was declared with, which has to match *expected_dtype* exactly,
+    and any other operand is rejected as not a scalar. A ``None`` expected dtype
+    leaves the operand unchecked.
+    """
+    if expected_dtype is None:
+        return
+    if isinstance(value, (_ir.ConstInt, _ir.ConstFloat)):
+        from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
+
+        check_const_expr_fits_dtype(value, expected_dtype, subject=subject)
+        return
+    value_type = getattr(value, "type", None)
+    if not isinstance(value_type, _ir.ScalarType):
+        raise InvalidType(f"{subject} must be a scalar operand, got {value_type}")
+    require_dtype_in(value_type.dtype, (expected_dtype,), subject=subject)
 
 
 def unwrap_type(ty: _ir.Type) -> _ir.Type:

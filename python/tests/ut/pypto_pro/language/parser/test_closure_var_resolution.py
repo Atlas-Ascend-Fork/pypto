@@ -158,7 +158,7 @@ def test_dynamic_tensor_shape_value():
         tile_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
         o = pl.make_tile(tile_type, addr=0)
         s = pl.make_tile(tile_type, addr=512)
-        pl.axpy(o, s, x.shape[0])
+        pl.axpy(o, s, x.shape[0] * 1.0)
         _test_result = o
 
     func_program, _ = func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)

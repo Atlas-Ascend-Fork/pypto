@@ -17,7 +17,7 @@ from pypto.pypto_impl import ir as _ir_core
 from pypto.pypto_impl.ir import Expr, Span
 
 from ..._errors import InvalidType
-from .._utils import require_dtype_in, require_dtypes_match, require_scalar_dtype
+from .._utils import require_dtype_in, require_dtypes_match, require_int, require_scalar_dtype
 from ._op_registry import op_impl, op_impl_ast
 
 
@@ -172,6 +172,14 @@ def _ir_shl(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None) 
     rhs_type = getattr(rhs, "type", None)
     rhs_dt = getattr(rhs_type, "dtype", None) if isinstance(rhs_type, _ir_core.TileType) else None
     require_dtypes_match([getattr(lhs.type, "dtype", None), rhs_dt], dt, subject="shl")
+    # The shift amount is bounded by the lhs element width (shl API reference).
+    # require_int validates the value only when rhs is a literal: a runtime
+    # integer scalar passes unchecked, and the tile-tile rhs (data, not a
+    # constant) is skipped by the tile guard.
+    lhs_dtype = getattr(lhs.type, "dtype", None)
+    if lhs_dtype is not None and not isinstance(rhs_type, _ir_core.TileType):
+        bits = lhs_dtype.get_bit()
+        require_int(rhs, subject="pl.shl shift amount", lower_bound=0, upper_bound=bits - 1)
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="shl", scalar_op="shls", span=span)
 
 
@@ -187,6 +195,14 @@ def _ir_shr(self, out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None) 
     rhs_type = getattr(rhs, "type", None)
     rhs_dt = getattr(rhs_type, "dtype", None) if isinstance(rhs_type, _ir_core.TileType) else None
     require_dtypes_match([getattr(lhs.type, "dtype", None), rhs_dt], dt, subject="shr")
+    # The shift amount is bounded by the lhs element width (shr API reference).
+    # require_int validates the value only when rhs is a literal: a runtime
+    # integer scalar passes unchecked, and the tile-tile rhs (data, not a
+    # constant) is skipped by the tile guard.
+    lhs_dtype = getattr(lhs.type, "dtype", None)
+    if lhs_dtype is not None and not isinstance(rhs_type, _ir_core.TileType):
+        bits = lhs_dtype.get_bit()
+        require_int(rhs, subject="pl.shr shift amount", lower_bound=0, upper_bound=bits - 1)
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="shr", scalar_op="shrs", span=span)
 
 

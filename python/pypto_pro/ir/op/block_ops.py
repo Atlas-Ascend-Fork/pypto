@@ -63,6 +63,7 @@ from pypto_pro.ir._utils import (
     require_enum,
     require_int,
     require_scalar_dtype,
+    require_scalar_with_dtype,
     unwrap_type,
 )
 
@@ -1130,10 +1131,10 @@ def _ir_axpy(self, out: Expr, src: Expr, alpha: Expr, *, span: Span | None = Non
     # dtype lets an fp16-infinite multiplier such as 70000.0 through on the fp16->fp32 path.
     # A reachable src with no src dtype implies out has none either (the mismatch check
     # above rejects every other combination), so src_dt alone carries the scalar dtype.
+    # A literal settles in the IR storage dtypes and is value-checked against that src
+    # dtype, while a runtime multiplier carries a declared dtype that has to match it.
     actual_span = span or _span()
-    from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
-
-    check_const_expr_fits_dtype(alpha, src_dt, api="pl.axpy")
+    require_scalar_with_dtype(alpha, src_dt, subject="pl.axpy multiplier")
     return _ir_core.create_op_call(block_ir_op("axpy"), [out, src, alpha], {}, actual_span)
 
 
@@ -1920,9 +1921,10 @@ def _ir_cmp(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, cmp_mo
 def _ir_cmps(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, cmp_mode: int | Expr = 0) -> Expr:
     dt = getattr(lhs.type, "dtype", None)
     require_dtype_in(dt, _CMP_DTYPES, subject="cmps")
-    from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
-
-    check_const_expr_fits_dtype(rhs, dt, api="pl.cmps")
+    # A literal settles in the IR storage dtypes and is value-checked against the lhs
+    # element dtype, while a runtime comparison operand carries a declared dtype that
+    # has to match it.
+    require_scalar_with_dtype(rhs, dt, subject="pl.cmps comparison operand")
     if _is_int(cmp_mode):
         cmp_mode = _normalize_expr(cmp_mode, span)
     cmp_mode = require_const_int(cmp_mode, subject="cmp_mode")
