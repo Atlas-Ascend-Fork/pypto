@@ -291,6 +291,34 @@ TEST_F(TestMonitorWatchdog, DetailModeInitWritesNoThresholdBannerToFile)
     EXPECT_EQ(segment.find("Threshold:"), std::string::npos);
 }
 
+TEST_F(TestMonitorWatchdog, Mode1TimeoutWritesWarningToLogFile)
+{
+    COMPILER_EVENT("MONITOR_LOG_MARK_BEGIN_TIMEOUT");
+    MonitorManager::Instance().Initialize(true, 1, false);
+    MonitorManager::Instance().impl_->StopMonitoring();
+    {
+        std::lock_guard<std::mutex> lock(MonitorManager::Instance().mutex_);
+        MonitorManager::Instance().totalTimeoutEmitted_ = false;
+        MonitorManager::Instance().totalStart_ = std::chrono::steady_clock::now() - std::chrono::seconds(2);
+        MonitorManager::Instance().stageStart_ = MonitorManager::Instance().totalStart_;
+    }
+    MonitorManager::Instance().CheckAndEmitTotalTimeout();
+    MonitorManager::Instance().CheckAndEmitTotalTimeout();
+    COMPILER_EVENT("MONITOR_LOG_MARK_END_TIMEOUT");
+    MonitorManager::Instance().NotifyCompilationFinished();
+
+    const std::string segment = ReadLogBetweenMarkers("MONITOR_LOG_MARK_BEGIN_TIMEOUT", "MONITOR_LOG_MARK_END_TIMEOUT");
+    EXPECT_NE(segment.find("[Compiler Monitor] Compile timeout"), std::string::npos);
+    EXPECT_NE(segment.find("Threshold: 1s"), std::string::npos);
+    EXPECT_NE(segment.find("pypto.set_host_options(compile_timeout=...)"), std::string::npos);
+    EXPECT_NE(segment.find("Total elapsed:"), std::string::npos);
+    EXPECT_NE(segment.find("Stage elapsed:"), std::string::npos);
+
+    const auto firstHit = segment.find("Compile timeout");
+    ASSERT_NE(firstHit, std::string::npos);
+    EXPECT_EQ(segment.find("Compile timeout", firstHit + 1), std::string::npos);
+}
+
 TEST_F(TestMonitorWatchdog, Mode1TimeoutWritesNoWarningToScreen)
 {
     MonitorManager::Instance().Initialize(true, 1, false);
