@@ -1904,6 +1904,243 @@ TEST_F(InsertSyncTest, ConsumedPoolAdvancesReturningWaitBeforeDraining)
     }
     EXPECT_EQ(ps.ValidateEventReuse(ordered), SUCCESS);
     EXPECT_TRUE(AllIntraEventSchedulesAreSafe(flags));
+    const auto lastFlag = std::max_element(flags.begin(), flags.end(), [](const Operation* a, const Operation* b) {
+        return a->GetOpMagic() < b->GetOpMagic();
+    });
+    ASSERT_NE(lastFlag, flags.end());
+    EXPECT_EQ((*lastFlag)->GetOpMagic() - original.back()->GetOpMagic(), static_cast<int>(flags.size()));
+}
+
+TEST_F(InsertSyncTest, RangeSearchPruningPreservesInclusiveBoundariesAndDuplicateStarts)
+{
+    RangeSearchTree tree;
+    tree.Insert(10, 20, 1);
+    tree.Insert(20, 30, 2);
+    tree.Insert(40, 50, 3);
+    tree.Insert(10, 15, 4);
+    EXPECT_EQ(tree.GetCovered(20, 20), (std::set<int>{1, 2}));
+    EXPECT_EQ(tree.GetCovered(0, 10), (std::set<int>{1, 4}));
+    EXPECT_EQ(tree.GetCovered(45, 45), (std::set<int>{3}));
+    EXPECT_TRUE(tree.GetCovered(0, 9).empty());
+    EXPECT_TRUE(tree.GetCovered(60, 70).empty());
+    tree.Insert(0, 100, 5);
+    EXPECT_EQ(tree.GetCovered(80, 90), (std::set<int>{5}));
+    RangeSearchTree empty;
+    EXPECT_TRUE(empty.GetCovered(0, 100).empty());
+}
+
+TEST_F(InsertSyncTest, PendingWaitRetargetPreservesEventGenerationAndFrozenProof)
+{
+    auto funcs = SetupDebugFunc("PendingWaitRetargetPreservesEventGenerationAndFrozenProof");
+    auto& function = *funcs.second;
+    PipeSync ps;
+    const PipeSync::PipePairEx forward{{PIPE_MTE2, CoreType::AIV, AIVCore::AIV0},
+                                       {PIPE_MTE3, CoreType::AIV, AIVCore::AIV0}};
+    const PipeSync::PipePairEx reverse{forward.second, forward.first};
+    const auto resource = ps.GetEventResource(forward, 1);
+    const auto returning = ps.GetEventResource(reverse, 1);
+    auto& set = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_SRC, {}, {});
+    auto& wait = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_DST, {}, {});
+    auto& returnSet = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_SRC, {}, {});
+    auto& returnWait = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_DST, {}, {});
+    ASSERT_EQ(ps.eventState_.Allocate(resource, forward, 0, 1), SUCCESS);
+    ASSERT_EQ(ps.eventState_.RecordSet(resource, forward, 0, 1, set, true), SUCCESS);
+    ASSERT_EQ(ps.eventState_.Consume(0, 1, wait), SUCCESS);
+    ASSERT_EQ(ps.eventState_.Allocate(returning, reverse, 1, 6), SUCCESS);
+    ASSERT_EQ(ps.eventState_.RecordSet(returning, reverse, 1, 6, returnSet, true), SUCCESS);
+    const auto id = ps.eventState_.Find(1, 6)->id;
+
+    EXPECT_FALSE(ps.eventState_.RetargetPendingWait(1, 6, 1));
+    EXPECT_FALSE(ps.eventState_.RetargetPendingWait(1, 6, 7));
+    ASSERT_TRUE(ps.eventState_.RetargetPendingWait(1, 6, 4));
+    EXPECT_EQ(ps.eventState_.Find(1, 6), nullptr);
+    const auto* moved = ps.eventState_.Find(1, 4);
+    ASSERT_NE(moved, nullptr);
+    EXPECT_TRUE(moved->id == id);
+    EXPECT_EQ(moved->setOp, &returnSet);
+    EXPECT_EQ(moved->waitOp, nullptr);
+    EXPECT_TRUE(ps.eventState_.CanAllocate(resource, moved->setSnapshot));
+    EXPECT_FALSE(ps.eventState_.CanAllocate(returning, {}));
+    ASSERT_TRUE(ps.eventState_.RetargetPendingWait(1, 4, 3));
+    EXPECT_EQ(ps.eventState_.Find(1, 4), nullptr);
+    moved = ps.eventState_.Find(1, 3);
+    ASSERT_NE(moved, nullptr);
+    EXPECT_TRUE(moved->id == id);
+    EXPECT_TRUE(ps.eventState_.CanAllocate(resource, moved->setSnapshot));
+    ASSERT_EQ(ps.eventState_.Consume(1, 3, returnWait), SUCCESS);
+    const auto consumed = ps.eventState_.Known(forward.first);
+    EXPECT_TRUE(ps.eventState_.CanAllocate(resource, consumed));
+    EXPECT_FALSE(ps.eventState_.RetargetPendingWait(1, 3, 2));
+    EXPECT_EQ(ps.eventState_.Find(1, 3)->waitOp, &returnWait);
+    const auto oldGeneration = ps.eventState_.Find(0, 1)->id.generation;
+    ASSERT_EQ(ps.eventState_.Allocate(resource, forward, 2, 3, consumed), SUCCESS);
+    EXPECT_GT(ps.eventState_.Find(2, 3)->id.generation, oldGeneration);
+    EXPECT_EQ(ps.eventState_.FindActive(resource), ps.eventState_.Find(2, 3));
+    auto& nextSet = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_SRC, {}, {});
+    auto& nextWait = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_DST, {}, {});
+    ASSERT_EQ(ps.eventState_.RecordSet(resource, forward, 2, 3, nextSet, true), SUCCESS);
+    ASSERT_EQ(ps.eventState_.Consume(2, 3, nextWait), SUCCESS);
+    ASSERT_EQ(ps.eventState_.Allocate(returning, reverse, 3, 8, ps.eventState_.Known(reverse.first)), SUCCESS);
+    EXPECT_GT(ps.eventState_.Find(3, 8)->id.generation, id.generation);
+    EXPECT_FALSE(ps.eventState_.RetargetPendingWait(1, 3, 2));
+    EXPECT_EQ(ps.eventState_.FindActive(returning), ps.eventState_.Find(3, 8));
+}
+
+TEST_F(InsertSyncTest, PendingWaitRetargetRejectsInvalidStatesAndDestinationCollision)
+{
+    auto funcs = SetupDebugFunc("PendingWaitRetargetRejectsInvalidStatesAndDestinationCollision");
+    auto& function = *funcs.second;
+    for (int scenario = 0; scenario < 6; ++scenario) {
+        SCOPED_TRACE(scenario);
+        PipeSync ps;
+        PipeSync::PipePairEx pipes{{PIPE_MTE2, CoreType::AIV, AIVCore::AIV0},
+                                   {PIPE_MTE3, CoreType::AIV, AIVCore::AIV0}};
+        if (scenario == 1) {
+            pipes.first = {PIPE_M, CoreType::AIC, AIVCore::AIV0};
+        }
+        const auto resource = ps.GetEventResource(pipes, 1);
+        auto& set = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_SRC, {}, {});
+        auto& wait = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_DST, {}, {});
+        if (scenario != 1) {
+            ASSERT_EQ(ps.eventState_.Allocate(resource, pipes, 1, 8), SUCCESS);
+        }
+        if (scenario != 0) { // An allocated event without an emitted set cannot move.
+            ASSERT_EQ(ps.eventState_.RecordSet(resource, pipes, 1, 8, set, scenario != 1), SUCCESS);
+        }
+        if (scenario == 2) {
+            ASSERT_EQ(ps.eventState_.CancelPending(1, 8), SUCCESS);
+        } else if (scenario == 3 || scenario == 4) {
+            ASSERT_EQ(ps.eventState_.Consume(1, 8, wait), SUCCESS);
+            if (scenario == 4) {
+                ASSERT_EQ(ps.eventState_.RetireConsumed(1, 8), SUCCESS);
+            }
+        } else if (scenario == 5) {
+            ASSERT_EQ(ps.eventState_.Allocate(ps.GetEventResource(pipes, 2), pipes, 1, 4), SUCCESS);
+        }
+        const auto before = ps.eventState_.Instances().front();
+        EXPECT_FALSE(ps.eventState_.RetargetPendingWait(1, 8, 4));
+        const auto* after = &ps.eventState_.Instances().front();
+        if (scenario == 2) {
+            EXPECT_EQ(ps.eventState_.Find(1, 8), nullptr);
+            EXPECT_EQ(ps.eventState_.FindActive(resource), nullptr);
+        } else {
+            EXPECT_EQ(ps.eventState_.Find(1, 8), after);
+        }
+        EXPECT_TRUE(after->id == before.id);
+        EXPECT_EQ(after->state, before.state);
+        EXPECT_EQ(after->setOp, before.setOp);
+        EXPECT_EQ(after->waitOp, before.waitOp);
+        if (scenario == 5) {
+            ASSERT_NE(ps.eventState_.Find(1, 4), nullptr);
+            EXPECT_EQ(ps.eventState_.Find(1, 4)->id.resource.eventId, 2);
+        } else {
+            EXPECT_EQ(ps.eventState_.Find(1, 4), nullptr);
+        }
+    }
+}
+
+TEST_F(InsertSyncTest, PendingReturnRejectsUnsafeChangesWithoutMutatingDependencies)
+{
+    auto funcs = SetupDebugFunc("PendingReturnRejectsUnsafeChangesWithoutMutatingDependencies");
+    auto& function = *funcs.second;
+    for (int scenario = 0; scenario < 7; ++scenario) {
+        SCOPED_TRACE(scenario);
+        NpuArchScope archScope(scenario == 6 ? NPUArch::DAV_3113 : NPUArch::DAV_3510);
+        PipeSync ps;
+        PipeSync::PipePairEx forward{{PIPE_MTE2, CoreType::AIV, AIVCore::AIV0},
+                                     {PIPE_MTE3, CoreType::AIV, AIVCore::AIV0}};
+        if (scenario == 6) {
+            forward.second.core = CoreType::AIC; // Lite treats this as intra-core, but it must retain replay.
+        }
+        const PipeSync::PipePairEx reverse{forward.second, forward.first};
+        for (size_t i = 0; i < 6; ++i) {
+            const auto& pipe = i % 2 == 0 ? forward.first : forward.second;
+            ps.depOps_.emplace_back(i, PipeSync::PipeCore{pipe.pipe, pipe.pipe, pipe.core, pipe.aivCore});
+            ps.oriOpList_.push_back(&IRBuilder().CreateTensorOpStmt(function, Opcode::OP_VEC_DUP, {}, {}));
+        }
+        ps.depOps_[1].setPipe = {4};
+        ps.depOps_[4].waitPipe = {1};
+        ps.depOps_[0].issued = true;
+        ps.depOps_[1].issued = true;
+        ps.orderedOpList_.push(2);
+        auto& set = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_SRC, {}, {});
+        auto& wait = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_DST, {}, {});
+        auto& returnSet = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_SRC, {}, {});
+        ASSERT_EQ(ps.eventState_.Allocate(ps.GetEventResource(forward, 1), forward, 0, 1), SUCCESS);
+        ASSERT_EQ(ps.eventState_.RecordSet(ps.GetEventResource(forward, 1), forward, 0, 1, set, true), SUCCESS);
+        ASSERT_EQ(ps.eventState_.Consume(0, 1, wait), SUCCESS);
+        ASSERT_EQ(ps.eventState_.Allocate(ps.GetEventResource(reverse, 1), reverse, 1, 4), SUCCESS);
+        ASSERT_EQ(ps.eventState_.RecordSet(ps.GetEventResource(reverse, 1), reverse, 1, 4, returnSet, true), SUCCESS);
+        ps.setWaitPairMap_[{1, 4}] = 1;
+        ps.setOpMap[&returnSet] = ps.oriOpList_[4];
+        auto plan = ps.depOps_;
+        if (scenario == 0) {
+            plan[1].setPipe.clear(); // A pending merge changed the saved edge.
+        } else if (scenario == 1) {
+            ps.depOps_[4].issued = true;
+        } else if (scenario == 2) {
+            ps.depOps_[4].selfPipeCore.pipeEnd = PIPE_V;
+        } else if (scenario == 3) {
+            ps.depOps_[4].selfPipeCore.aivCore = AIVCore::AIV1;
+        } else if (scenario == 4) {
+            ps.setWaitPairMap_[{1, 4}] = 2;
+        } else if (scenario == 5) {
+            ps.depOps_[1].setPipe.push_back(2);
+            ps.depOps_[2].waitPipe.push_back(1);
+        }
+        const auto oldTargets = ps.depOps_[1].setPipe;
+        const auto oldSources = ps.depOps_[2].waitPipe;
+        const auto oldPlanTargets = plan[1].setPipe;
+        EXPECT_FALSE(ps.AdvanceReturningWaitInPlace(plan, {2, 3, forward, 1, 0}));
+        EXPECT_EQ(ps.depOps_[1].setPipe, oldTargets);
+        EXPECT_EQ(ps.depOps_[2].waitPipe, oldSources);
+        EXPECT_EQ(plan[1].setPipe, oldPlanTargets);
+        EXPECT_NE(ps.eventState_.Find(1, 4), nullptr);
+        EXPECT_EQ(ps.eventState_.Find(1, 2), nullptr);
+        EXPECT_EQ(ps.setOpMap.at(&returnSet), ps.oriOpList_[4]);
+    }
+}
+
+TEST_F(InsertSyncTest, PendingReturnPreservesFrozenCrossCoreProof)
+{
+    NpuArchScope archScope(NPUArch::DAV_3510);
+    auto funcs = SetupDebugFunc("PendingReturnPreservesFrozenCrossCoreProof");
+    auto& function = *funcs.second;
+    PipeSync ps;
+    const PipeSync::PipePairEx forward{{PIPE_MTE2, CoreType::AIV, AIVCore::AIV0},
+                                       {PIPE_MTE3, CoreType::AIV, AIVCore::AIV0}};
+    const PipeSync::PipePairEx reverse{forward.second, forward.first};
+    for (size_t i = 0; i < 6; ++i) {
+        const auto& pipe = i % 2 == 0 ? forward.first : forward.second;
+        ps.depOps_.emplace_back(i, PipeSync::PipeCore{pipe.pipe, pipe.pipe, pipe.core, pipe.aivCore});
+        ps.oriOpList_.push_back(&IRBuilder().CreateTensorOpStmt(function, Opcode::OP_VEC_DUP, {}, {}));
+    }
+    ps.depOps_[1].setPipe = {4};
+    ps.depOps_[4].waitPipe = {1};
+    ps.depOps_[0].issued = true;
+    ps.depOps_[1].issued = true;
+    ps.orderedOpList_.push(2);
+    auto& set = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_SRC, {}, {});
+    auto& wait = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_DST, {}, {});
+    auto& returnSet = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_SRC, {}, {});
+    ASSERT_EQ(ps.eventState_.Allocate(ps.GetEventResource(forward, 1), forward, 0, 1), SUCCESS);
+    ASSERT_EQ(ps.RecordEventSet(forward, 1, 0, 1, set), SUCCESS);
+    ASSERT_EQ(ps.RecordEventWait(0, 1, wait), SUCCESS);
+    ps.crossCoreConsumed_[reverse.first][0] = 7;
+    ASSERT_EQ(ps.eventState_.Allocate(ps.GetEventResource(reverse, 1), reverse, 1, 4), SUCCESS);
+    ASSERT_EQ(ps.RecordEventSet(reverse, 1, 1, 4, returnSet), SUCCESS);
+    ps.crossCoreConsumed_[reverse.first][0] = 9;
+    ps.setWaitPairMap_[{1, 4}] = 1;
+    ps.setOpMap[&returnSet] = ps.oriOpList_[4];
+    auto plan = ps.depOps_;
+
+    ASSERT_TRUE(ps.AdvanceReturningWaitInPlace(plan, {2, 3, forward, 1, 0}));
+    EXPECT_EQ(ps.crossCoreSnapshots_.count({1, 4}), 0U);
+    EXPECT_EQ(ps.ProjectCrossCoreConsumption(2)[0], 7U);
+    auto& returnWait = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_SYNC_DST, {}, {});
+    ASSERT_EQ(ps.RecordEventWait(1, 2, returnWait), SUCCESS);
+    EXPECT_EQ(ps.crossCoreConsumed_[reverse.second][0], 7U);
+    EXPECT_EQ(ps.crossCoreSnapshots_.count({1, 2}), 0U);
 }
 
 TEST_F(InsertSyncTest, ConsumedPoolReturnsProofBeforeMergingIssuedDependencies)

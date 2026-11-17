@@ -97,7 +97,9 @@ void RangeSearchTree::OverlapSearch(const Interval& interval, std::set<int>& res
         if (currPtr->left != nullptr && currPtr->left->max >= interval.start) {
             intervalStack.push_back(currPtr->left);
         }
-        intervalStack.push_back(currPtr->right);
+        if (currPtr->interval.start <= interval.end) {
+            intervalStack.push_back(currPtr->right);
+        }
     }
 }
 
@@ -152,7 +154,7 @@ void DataDependencySearcher::CheckRAWSearchTree(Operation* opWait, std::set<int>
         MemoryType readMemoryType = tensor->GetMemoryTypeOriginal();
         int readDDRmemId = tensor->memoryrange.memId;
         if (readDDRmemId != -1 && writeDdrMemMap.count(readDDRmemId) > 0) {
-            std::set<int> found = writeDdrMemMap[readDDRmemId];
+            const auto& found = writeDdrMemMap[readDDRmemId];
             res.insert(found.begin(), found.end());
         }
         if (rawSearchTree_.count(readMemoryType) > 0) {
@@ -171,7 +173,7 @@ void DataDependencySearcher::CheckWARSearchTree(Operation* opWait, std::set<int>
         MemoryType writeMemoryType = tensor->GetMemoryTypeOriginal();
         int writeDDRmemId = tensor->memoryrange.memId;
         if (writeDDRmemId != -1 && readDdrMemMap.count(writeDDRmemId) > 0) {
-            std::set<int> found = readDdrMemMap[writeDDRmemId];
+            const auto& found = readDdrMemMap[writeDDRmemId];
             res.insert(found.begin(), found.end());
         }
         if (warSearchTree_.count(writeMemoryType) > 0) {
@@ -977,6 +979,26 @@ Status PipeSyncTypes::EventInstanceTracker::MergePending(size_t set1, size_t wai
     eventInstanceByDep_[{set2, wait1}] = index;
     eventInstances_[index].waitIdx = wait1;
     return SUCCESS;
+}
+
+bool PipeSyncTypes::EventInstanceTracker::RetargetPendingWait(size_t setIdx, size_t waitIdx, size_t earlierWaitIdx)
+{
+    const auto* instance = Find(setIdx, waitIdx);
+    if (instance == nullptr || !instance->intraCore || instance->state != InstanceState::Allocated ||
+        instance->setOp == nullptr || instance->waitOp != nullptr || setIdx >= earlierWaitIdx ||
+        earlierWaitIdx >= waitIdx || Find(setIdx, earlierWaitIdx) != nullptr) {
+        return false;
+    }
+    const auto* active = FindActive(instance->id.resource);
+    if (active == nullptr || !(active->id == instance->id) ||
+        slots_[instance->slot].generation != instance->id.generation) {
+        return false;
+    }
+    const auto index = eventInstanceByDep_.at({setIdx, waitIdx});
+    eventInstanceByDep_.erase({setIdx, waitIdx});
+    eventInstanceByDep_[{setIdx, earlierWaitIdx}] = index;
+    eventInstances_[index].waitIdx = earlierWaitIdx;
+    return true;
 }
 
 PipeSync::ConsumedInstances PipeSync::ProjectConsumedInstances(const DepOp& op, const PipeCoreRealEx& source) const
@@ -2015,6 +2037,98 @@ bool PipeSync::MergeDependenciesForReplay(std::vector<DepOp>& plan, const PipePa
     return false;
 }
 
+bool PipeSync::ReturnsEventCapacity(const EventInstance& instance, const IntraEventCapacityFailure& failure,
+                                    const ConsumedInstances& consumed) const
+{
+    if (!instance.intraCore || instance.state != InstanceState::Allocated || instance.setOp == nullptr ||
+        instance.pipes.second != failure.pipes.first || instance.setIdx >= failure.setIdx ||
+        instance.waitIdx <= failure.setIdx) {
+        return false;
+    }
+    for (const auto& proof : instance.setSnapshot) {
+        const auto& resource = eventState_.ProofResource(proof);
+        if (resource == GetEventResource(failure.pipes, resource.eventId) && eventState_.HasActive(resource) &&
+            eventState_.CanAllocate(resource, instance.setSnapshot) && !eventState_.CanAllocate(resource, consumed)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool PipeSync::AdvanceReturningWaitInPlace(std::vector<DepOp>& plan, const IntraEventCapacityFailure& failure)
+{
+    const auto blocked = failure.setIdx;
+    const auto& target = depOps_[blocked].selfPipeCore;
+    if (orderedOpList_.empty() || orderedOpList_.front() != blocked || depOps_[blocked].issued ||
+        target.pipeStart != target.pipeEnd ||
+        PipeCoreRealEx(target.pipeStart, target.core, target.aivCore) != failure.pipes.first) {
+        return false;
+    }
+    const auto consumed = ProjectConsumedInstances(depOps_[blocked], failure.pipes.first);
+    for (const auto& instance : eventState_.Instances()) {
+        if (!ReturnsEventCapacity(instance, failure, consumed)) {
+            continue;
+        }
+        const auto set = instance.setIdx;
+        const auto wait = instance.waitIdx;
+        // Restrict the fast path to one logical core and one destination FIFO.
+        // Lite dependencies across logical core types retain replay recovery.
+        if (!depOps_[set].issued || depOps_[wait].issued || depOps_[wait].selfPipeCore != target ||
+            instance.pipes.first.core != instance.pipes.second.core ||
+            instance.pipes.first.aivCore != instance.pipes.second.aivCore) {
+            continue;
+        }
+        const auto mapping = setWaitPairMap_.find({set, wait});
+        const auto setOp = setOpMap.find(instance.setOp);
+        auto hasEdge = [set, wait, blocked](const std::vector<DepOp>& deps) {
+            const auto& targets = deps[set].setPipe;
+            const auto& sources = deps[wait].waitPipe;
+            return std::find(targets.begin(), targets.end(), wait) != targets.end() &&
+                   std::find(targets.begin(), targets.end(), blocked) == targets.end() &&
+                   std::find(sources.begin(), sources.end(), set) != sources.end() &&
+                   std::find(deps[blocked].waitPipe.begin(), deps[blocked].waitPipe.end(), set) ==
+                       deps[blocked].waitPipe.end();
+        };
+        if (!hasEdge(depOps_) || !hasEdge(plan) || mapping == setWaitPairMap_.end() ||
+            mapping->second != instance.id.resource.eventId || setWaitPairMap_.count({set, blocked}) != 0 ||
+            crossCoreSnapshots_.count({set, blocked}) != 0 || setOp == setOpMap.end() ||
+            setOp->second != oriOpList_[wait]) {
+            continue;
+        }
+        auto moveEdge = [set, wait, blocked](std::vector<DepOp>& deps) {
+            auto& targets = deps[set].setPipe;
+            *std::find(targets.begin(), targets.end(), wait) = blocked;
+            auto& sources = deps[wait].waitPipe;
+            sources.erase(std::remove(sources.begin(), sources.end(), set), sources.end());
+            deps[blocked].waitPipe.push_back(set);
+        };
+        auto candidate = plan;
+        moveEdge(candidate);
+        std::vector<size_t> order;
+        if (!BuildReplayIssueOrder(candidate, order) || !eventState_.RetargetPendingWait(set, wait, blocked)) {
+            continue;
+        }
+        // The set and its frozen consumption proof remain unchanged. Only its
+        // unissued wait moves earlier; destination FIFO still covers the old wait.
+        const auto eventId = mapping->second;
+        setWaitPairMap_.erase(mapping);
+        setWaitPairMap_[{set, blocked}] = eventId;
+        setOp->second = oriOpList_[blocked];
+        auto snapshot = crossCoreSnapshots_.extract({set, wait});
+        if (!snapshot.empty()) {
+            snapshot.key() = {set, blocked};
+            crossCoreSnapshots_.insert(std::move(snapshot));
+        }
+        moveEdge(depOps_);
+        plan = std::move(candidate);
+        replayRank_.clear();
+        APASS_LOG_DEBUG_F(Elements::Operation, "Advanced pending event wait from %zu to %zu for set %zu.", wait,
+                          blocked, set);
+        return true;
+    }
+    return false;
+}
+
 bool PipeSync::AdvanceReturningWaitForReplay(std::vector<DepOp>& plan, const IntraEventCapacityFailure& failure,
                                              std::vector<size_t>& order) const
 {
@@ -2025,23 +2139,7 @@ bool PipeSync::AdvanceReturningWaitForReplay(std::vector<DepOp>& plan, const Int
     }
     const auto consumed = ProjectConsumedInstances(depOps_[blocked], source);
     for (const auto& instance : eventState_.Instances()) {
-        if (!instance.intraCore || instance.state != InstanceState::Allocated || instance.setOp == nullptr) {
-            continue;
-        }
-        if (instance.pipes.second != source || instance.setIdx >= blocked || instance.waitIdx <= blocked) {
-            continue;
-        }
-        bool returnsSlot = false;
-        for (const auto& proof : instance.setSnapshot) {
-            const auto& resource = eventState_.ProofResource(proof);
-            if (resource == GetEventResource(failure.pipes, resource.eventId) && eventState_.HasActive(resource) &&
-                eventState_.CanAllocate(resource, instance.setSnapshot) &&
-                !eventState_.CanAllocate(resource, consumed)) {
-                returnsSlot = true;
-                break;
-            }
-        }
-        if (!returnsSlot) {
+        if (!ReturnsEventCapacity(instance, failure, consumed)) {
             continue;
         }
         const auto set = instance.setIdx;
@@ -2200,6 +2298,12 @@ Status PipeSync::IssueSyncOp(Function& function, const std::vector<Operation*>& 
             if (eventIdDeadlockEnterTimes + 1 >= EVENTID_DEADLOCK_ENTER_TIME && !orderedOpList_.empty()) {
                 const auto failure = AnalyzeIntraEventCapacity(depOps_[orderedOpList_.front()]);
                 std::vector<size_t> replayOrder;
+                if (failure && AdvanceReturningWaitInPlace(replayPlan, *failure)) {
+                    eventIdDeadlock = false;
+                    mergeSearchExhausted = false;
+                    eventIdDeadlockEnterTimes = 0;
+                    continue;
+                }
                 if (failure && (AdvanceReturningWaitForReplay(replayPlan, *failure, replayOrder) ||
                                 MergeDependenciesForReplay(replayPlan, failure->pipes, replayOrder) ||
                                 AddReturningDependencyForReplay(replayPlan, *failure, replayOrder))) {

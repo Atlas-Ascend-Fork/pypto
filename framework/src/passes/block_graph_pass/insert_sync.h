@@ -215,6 +215,9 @@ private:
     void RestoreOpDeps(const std::unordered_map<size_t, DepOp>& originalDeps);
     bool MergeDependenciesForReplay(std::vector<DepOp>& plan, const PipePairEx& pipes,
                                     std::vector<size_t>& order) const;
+    bool ReturnsEventCapacity(const EventInstance& instance, const IntraEventCapacityFailure& failure,
+                              const ConsumedInstances& consumed) const;
+    bool AdvanceReturningWaitInPlace(std::vector<DepOp>& plan, const IntraEventCapacityFailure& failure);
     bool AdvanceReturningWaitForReplay(std::vector<DepOp>& plan, const IntraEventCapacityFailure& failure,
                                        std::vector<size_t>& order) const;
     static bool RewriteReturningDependency(std::vector<DepOp>& candidate, size_t consumer,

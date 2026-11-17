@@ -362,6 +362,7 @@ struct PipeSyncTypes {
         Status Consume(size_t setIdx, size_t waitIdx, Operation& syncOp);
         Status CancelPending(size_t setIdx, size_t waitIdx);
         Status MergePending(size_t set1, size_t wait1, size_t set2, size_t wait2);
+        bool RetargetPendingWait(size_t setIdx, size_t waitIdx, size_t earlierWaitIdx);
         Status RetireConsumed(size_t setIdx, size_t waitIdx);
         void ForgetProofs();
 
