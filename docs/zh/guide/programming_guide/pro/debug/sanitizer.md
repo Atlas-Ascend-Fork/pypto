@@ -7,10 +7,10 @@ Kernel中的内存访问错误（GM越界、tile越界、片上地址重叠、mu
 ## 使用约束
 
 - 仅供调试使用：插桩与检测会改变Kernel执行开销，性能测量前应在@pypto_pro.language.jit()中移除sanitizer=True。
-- 每次启动Kernel会在GM上分配约1GB的日志缓冲，同一位置的重复缺陷会聚合为一条并计数。
+- 每次启动Kernel会在GM上分配约1GB的日志缓冲，同一位置同类缺陷（身份键相同）聚合为一条并计数；身份键不同则分别报告。
 - pypto_pro.language.Ptr只携带地址、不携带所指内存的大小，以指针为源的视图无法获知源大小，不做声明shape超出源的检查。
 - sync配对检测暂不支持跨核。配对检查在单个执行核（region）内进行，分处不同核的sync_src与sync_dst不会被配对，两侧会各自被判为漏配对并报告。
-- 检测覆盖Kernel主体内的访问与声明；SIMT线程块内的所有访问（GM/tile/mutex/相位/sync）均不检测。
+- 检测覆盖Kernel主体内的访问与声明；SIMT线程块内的GM/tile标量访问与原子操作同样插桩检测。
 
 ## 操作步骤
 
@@ -41,7 +41,7 @@ PyPTO Sanitizer: 1 issue(s) detected
       Hint: The tile valid_shape plus the loop offsets must stay inside the tensor logical shape on every dimension
 ```
 
-每个检出项由类型、消息、源码位置和Hint组成：消息描述违规事实（含访问参数与逐维越界判定），源码位置为检出项对应的源码文件与行号，可直接定位问题语句，Hint为该类问题的修复提示。同一位置的重复缺陷（如循环中每轮迭代都越界）聚合为一条，并以`same defect hit N times at this location`标注次数。
+每个检出项由类型、消息、源码位置和Hint组成：消息描述违规事实（含访问参数与逐维越界判定），源码位置为检出项对应的源码文件与行号，可直接定位问题语句，Hint为该类问题的修复提示。同一位置同类缺陷（如循环中每轮迭代都越界）聚合为一条，并以`same defect hit N times at this location`标注次数；身份键（region、Acc tile地址、mutex_id、event_id等）不同则分别报告。
 
 各检测类型及其级别如下，其中ERROR为确定性错误，必须解决；WARNING为可疑问题，需人工确认是否需要处理：
 
@@ -53,8 +53,10 @@ PyPTO Sanitizer: 1 issue(s) detected
 | MUTEX_UNLOCK_BEFORE_LOCK / UNPAIRED_MUTEX_LOCK / MUTEX_DOUBLE_LOCK | ERROR | mutex_lock/mutex_unlock未按相同(region, mutex_id, pipe)严格交替配对（无锁解锁、锁后未解锁、重复加锁）。 |
 | PHASE_MISMATCH | ERROR | 相位（AccPhase/STPhase，硬件unit_flag同步）使用错误：matmul_acc/matmul_mx_acc的dst与acc不是同一Tile（原地契约）；同一Acc tile上混用带phase与不带phase的读写（硬件握手与软件同步互不排序）；K链结构错误（链首误用matmul_acc累加到残留值、matmul/matmul_bias出现在链中段覆盖或清空部分和）。 |
 | PHASE_DEADLOCK | ERROR | 相位状态机死锁：Final写后无Final读消费（flag悬挂）、带STPhase的读等待从未置位的flag、写等待未清零的flag。 |
-| SYNC_UNPAIRED_SRC / SYNC_UNPAIRED_DST | ERROR | sync_src/sync_dst未按相同(region, set_pipe, wait_pipe, event_id)配对（src悬空为数据竞争，dst悬空为死锁）。 |
+| SYNC_UNPAIRED_SRC | ERROR | sync_src发出后无配对sync_dst等待，数据竞争。 |
 | SYNC_EVENT_REUSE | ERROR | sync_dst完成等待前，同一event_id被sync_src再次置位（悬空flag被覆盖）。 |
+| GM/TILE_OUT_OF_BOUNDS (SIMT) | ERROR | SIMT线程块内的标量访问越界（data[tid]等，按运行时线程坐标判定）。 |
+| TILE_SLICE_UNALIGNED | ERROR | Mat空间tile切片起点未对齐到32字节边界（ND/DN）或分形内块（NZ/ZN）。 |
 
 ### 关闭内存检测
 
@@ -273,7 +275,7 @@ PyPTO Sanitizer: 1 issue(s) detected
 
 ### mutex配对错误
 
-mutex配对错误包含三类：无锁解锁、锁后未解锁、重复加锁。
+mutex配对错误包含三类：无锁解锁、锁后未解锁、重复加锁。同一位置同类缺陷仅当（执行核，mutex_id，pipe）均相同时聚合；任何字段不同都分别输出。
 
 #### 无锁解锁
 
@@ -327,7 +329,7 @@ PyPTO Sanitizer: 1 issue(s) detected
 
 ### 相位（AccPhase/STPhase）错误
 
-相位检测针对matmul的AccPhase与store/move/insert的STPhase（硬件unit_flag同步）。检测包含两类：PHASE_MISMATCH（原地契约违反、同步机制混用、K链结构错误）与PHASE_DEADLOCK（flag状态机死锁）。原地契约指matmul_acc/matmul_mx_acc的dst与acc必须为同一Tile，即原地累加。以下示例均为Cube段matmul场景，未覆盖原地契约违反子类。
+相位检测针对matmul的AccPhase与store/move/insert的STPhase（硬件unit_flag同步）。同一位置同类缺陷仅当（执行核，Acc tile地址）均相同时聚合；不同核或不同Acc tile的违规分别报告。检测包含两类：PHASE_MISMATCH（原地契约违反、同步机制混用、K链结构错误）与PHASE_DEADLOCK（flag状态机死锁）。原地契约指matmul_acc/matmul_mx_acc的dst与acc必须为同一Tile，即原地累加。以下示例均为Cube段matmul场景，未覆盖原地契约违反子类。
 
 #### matmul带相位、store漏配相位
 
@@ -358,8 +360,10 @@ def phase_mixed_sync_kernel(a: pypto_pro.language.Tensor[[64, 64], pypto_pro.lan
 
 ```text
 ===== kernel 'phase_mixed_sync_kernel' launch 3e7f1a2b (./build/phase_mixed_sync_kernel__3510__d0/tk_none) =====
-PyPTO Sanitizer: 1 issue(s) detected
-[1/1] PHASE_MISMATCH: region 0, Acc tile 0x0: matmul uses phase (hardware unit_flag sync) while a store/move on the same block omits STPhase (software sync) -- the two mechanisms mix and Fixpipe may read data before the matmul finishes at demo.py:82
+PyPTO Sanitizer: 2 issue(s) detected
+[1/2] PHASE_DEADLOCK: region 0, Acc tile 0x0 ends with the unit_flag still set: the Final write has no Final read to consume it at demo.py:82
+      Hint: A Final write must be followed by a Final read (store/move) in the same chain
+[2/2] PHASE_MISMATCH: region 0, Acc tile 0x0: matmul uses phase (hardware unit_flag sync) while a store/move on the same block omits STPhase (software sync) -- the two mechanisms mix and Fixpipe may read data before the matmul finishes at demo.py:82
       Hint: When any matmul of a chain uses phase, the consuming store/move must use STPhase as well
 ```
 
@@ -420,9 +424,11 @@ PyPTO Sanitizer: 1 issue(s) detected
 
 ```text
 ===== kernel 'phase_acc_chain_head_kernel' launch 41ab09f7 (./build/phase_acc_chain_head_kernel__3510__d0/tk_none) =====
-PyPTO Sanitizer: 1 issue(s) detected
-[1/1] PHASE_MISMATCH: matmul_acc is the first write of a chain on region 0, Acc tile 0x0: it accumulates onto leftover or uninitialized L0C data instead of overwriting it at demo.py:118
+PyPTO Sanitizer: 2 issue(s) detected
+[1/2] PHASE_MISMATCH: matmul_acc is the first write of a chain on region 0, Acc tile 0x0: it accumulates onto leftover or uninitialized L0C data instead of overwriting it at demo.py:118
       Hint: Start an in-place chain with matmul (overwrite), not matmul_acc
+[2/2] PHASE_DEADLOCK: store/move read on region 0, Acc tile 0x0 waits for the unit_flag to be set, but no Final write has set it at demo.py:120
+      Hint: The last matmul of the chain must use AccPhase.Final before an STPhase read
 ```
 
 字段解读：
@@ -434,7 +440,9 @@ PyPTO Sanitizer: 1 issue(s) detected
 
 ### sync配对错误
 
-sync检测覆盖sync_src/sync_dst的配对错误。sync_src与sync_dst的region、set_pipe、wait_pipe、event_id四个参数完全相同才构成一对。配对错误包含三类：SYNC_UNPAIRED_SRC（src发出后无配对dst等待，数据竞争）、SYNC_UNPAIRED_DST（dst要等的配对src不存在，死锁）、SYNC_EVENT_REUSE（dst完成等待前同一event_id被再次置位）。
+sync检测覆盖sync_src/sync_dst的配对错误。sync_src与sync_dst的region、set_pipe、wait_pipe、event_id四个参数完全相同才构成一对。配对错误包含两类：SYNC_UNPAIRED_SRC（src发出后无配对dst等待，数据竞争）和SYNC_EVENT_REUSE（dst完成等待前同一event_id被再次置位）。
+
+同类错误在同一源码位置重复出现时，仅将region、event_id、set_pipe、wait_pipe四个字段均相同的诊断合并并附命中次数；任何字段不同都分别输出。
 
 #### 漏写sync_dst
 
@@ -459,7 +467,7 @@ def sync_missing_dst_kernel(a: pypto_pro.language.Tensor[[64, 64], pypto_pro.lan
 ```text
 ===== kernel 'sync_missing_dst_kernel' launch 8d40e6b2 (./build/sync_missing_dst_kernel__3510__d0/tk_none) =====
 PyPTO Sanitizer: 1 issue(s) detected
-[1/1] SYNC_UNPAIRED_SRC: sync_src on region 0, MTE2 -> V, event_id 0 sets a flag no sync_dst waits for (data race: the consumer runs unordered against the producer) at demo.py:217
+[1/1] SYNC_UNPAIRED_SRC: sync_src on region=0, event_id=0, set_pipe=MTE2, wait_pipe=V sets a flag no sync_dst waits for (data race: the consumer runs unordered against the producer) at demo.py:217
       Hint: Every sync_src must be followed by a matching sync_dst with the same set_pipe, wait_pipe and event_id
 ```
 
@@ -470,7 +478,6 @@ PyPTO Sanitizer: 1 issue(s) detected
 
 结论：demo.py第217行的sync_src置位event 0后没有sync_dst等待，需要紧随其后补上sync_dst(set_pipe=MTE2, wait_pipe=V, event_id=0)，保证add执行时搬运已完成。
 
-与漏写sync_dst相对称，出现sync_dst但它前面没有任何一个配对的sync_src时，报告SYNC_UNPAIRED_DST。它要等的flag从未被置位，这次等待永远不会完成（死锁）。
 
 #### event未消费就复用
 
@@ -488,7 +495,7 @@ pypto_pro.language.system.sync_dst(set_pipe=pypto_pro.language.PipeType.MTE2, wa
 ```text
 ===== kernel 'sync_event_reuse_kernel' launch 6a3b5c7e (./build/sync_event_reuse_kernel__3510__d0/tk_none) =====
 PyPTO Sanitizer: 1 issue(s) detected
-[1/1] SYNC_EVENT_REUSE: sync_src on region 0, MTE2 -> V, event_id 0 fires again before the previous sync_dst consumed the event (the pending flag is overwritten) at demo.py:232
+[1/1] SYNC_EVENT_REUSE: sync_src on region=0, event_id=0, set_pipe=MTE2, wait_pipe=V fires again before the previous sync_dst consumed the event (the pending flag is overwritten) at demo.py:232
       Hint: The same event_id may only be reused after its sync_dst has completed the wait
 ```
 
@@ -498,3 +505,120 @@ PyPTO Sanitizer: 1 issue(s) detected
 - the pending flag is overwritten：硬件flag只有一个比特，第二次置位盖掉第一次，等待方无法区分自己等到的是哪一次。
 
 结论：demo.py第232行（i=1轮）的sync_src在sync_dst等待event 0之前再次置位同一事件；复用同一event_id前，必须先让配对的sync_dst完成等待，或为新一轮搬运换用新的event_id。
+
+### SIMT标量访问越界
+
+SIMT线程块（@pypto_pro.language.vector_function(mode="simt")）内的GM标量访问（data[tid]）和原子操作（pl.simt.atomic_add等）同样被插桩。线程坐标在运行时求值，越界以线程坐标记录的形式进入报告，检出类型与Kernel主体共用GM_OUT_OF_BOUNDS或TILE_OUT_OF_BOUNDS。
+
+#### SIMT标量访问越界
+
+示例说明：SIMT线程块内data[tid]的线程坐标tid超出tensor的64个元素（64线程launch访问[64]的tensor，tid=64时越界）。
+
+```python
+@pypto_pro.language.jit(sanitizer=True, auto_mutex=False)
+def simt_oob_kernel(data: pypto_pro.language.Tensor[[64], pypto_pro.language.DT_INT32]):
+    @pypto_pro.language.vector_function(mode="simt", max_threads=128)
+    def read_thread(data):
+        tid = pypto_pro.language.simt.linear_thread_idx()
+        _value = data[tid]
+    with pypto_pro.language.section_vector():
+        read_thread[128](data)
+```
+
+```text
+===== kernel 'simt_oob_kernel' launch a1b2c3d4 (./build/simt_oob_kernel__3510__d0/tk_none) =====
+PyPTO Sanitizer: 1 issue(s) detected
+[1/1] GM_OUT_OF_BOUNDS: scalar access dim0: index 64 is outside [0, 64) of Tensor logical shape; this is a logical bound, not the backing allocation size  (same defect hit 64 times at this location) at demo.py:12
+      Hint: Keep scalar index for dim0 within the Tensor logical shape
+```
+
+字段解读：
+
+- index：越界的线程坐标（首个被报告的线程，此处为tid=64）。
+- same defect hit 64 times：128线程中tid在[64,128)的64个线程都触发了同一位置的越界，聚合为一条并标注命中次数。
+- logical bound：逻辑边界（tensor声明shape），不是底层分配大小。
+
+结论：demo.py第12行的data[tid]在128线程下tid可取到127，而tensor只有64个元素，需要按tensor大小截断线程坐标或改用更小的max_threads。
+
+### Mat空间tile切片越界与起点不对齐
+
+Mat空间tile（即L1 Buffer上的tile）的切片操作（tile[r:r+h, c:c+w]）在运行时检测两类问题：切片窗口超出父tile的运行时valid_shape（TILE_OUT_OF_BOUNDS），以及切片起点未对齐到物理布局要求的边界（TILE_SLICE_UNALIGNED）。切片的起点、窗口和父tile运行时valid_shape均以运行时表达式记录，由设备在切片执行前求值，动态偏移（如循环变量计算出的起点）同样被覆盖。
+
+#### 切片窗口越界
+
+示例说明：父tile声明为[64, 64]并设valid_shape为[51, 99]，切片取[16:48, 40:107]，列方向40 + 67 = 107超出运行时valid_shape的99。
+
+```python
+@pypto_pro.language.jit(sanitizer=True, auto_mutex=False)
+def slice_oob_kernel(a: pypto_pro.language.Tensor[[64, 128], pypto_pro.language.DT_FP16]):
+    tile = pypto_pro.language.make_tile(pypto_pro.language.TileType(
+        shape=[64, 128], dtype=pypto_pro.language.DT_FP16,
+        target_memory=pypto_pro.language.MemorySpace.Mat, layout=pypto_pro.language.ND), addr=0x8000)
+    with pypto_pro.language.section_cube():
+        pypto_pro.language.set_validshape(tile, [51, 99])
+        # 违规点：列起点40 + 窗口67 = 107 > 运行时valid_shape 99
+        view = tile[16:48, 40:107]
+```
+
+```text
+===== kernel 'slice_oob_kernel' launch b2c3d4e5 (./build/slice_oob_kernel__3510__d0/tk_none) =====
+PyPTO Sanitizer: 1 issue(s) detected
+[1/1] TILE_OUT_OF_BOUNDS: L1 slice window [32, 67] at offsets [16, 40] is invalid for the parent Tile's runtime valid_shape [51, 99] — dim1: offset 40 + valid_shape 67 = 107 > 99 (over by 8) at demo.py:18
+      Hint: Keep the slice within the parent Tile's runtime valid_shape
+```
+
+字段解读：
+
+- L1 slice window后的方括号：切片的行列窗口大小（终点减起点）。
+- at offsets后的方括号：切片起点坐标。
+- parent Tile's runtime valid_shape后的方括号：父tile在切片执行时刻的运行时有效形状。
+- dim1: offset 40 + valid_shape 67 = 107 > 99：列方向40（起点）加67（窗口）超出99（运行时界）共8个元素。
+
+结论：demo.py第18行的切片在列方向越界，列窗口67加上起点40超出父tile运行时valid_shape的99。需要缩小列窗口或降低起点，使其落在运行时有效范围内。
+
+#### 切片起点不对齐（ND/DN 32字节对齐）
+
+示例说明：ND布局的Mat空间tile切片起点未落在32字节边界上。FP16 dtype下，列起点必须是16的倍数才能保证切片首地址按32字节对齐。
+
+```python
+# ND布局、FP16、tile基址0x8000（已对齐），列起点30：30×16bit=480bit=60字节，非32的倍数
+view = tile[16:48, 30:46]
+```
+
+```text
+===== kernel 'slice_unaligned_kernel' launch c3d4e5f6 (./build/slice_unaligned_kernel__3510__d0/tk_none) =====
+PyPTO Sanitizer: 1 issue(s) detected
+[1/1] TILE_SLICE_UNALIGNED: L1 ND slice start [16, 30] bit address 295392 is not 32-byte (256-bit) aligned at demo.py:22
+      Hint: Align the slice start address to 32 bytes, including sub-byte element offsets
+```
+
+字段解读：
+
+- bit address：切片首元素的绝对地址（以bit记），由父tile当前地址、物理布局stride和dtype位宽计算。
+- is not 32-byte (256-bit) aligned：该地址不能被256整除（32字节 = 256bit）。
+- sub-byte element offsets：FP4等半字节dtype的奇数元素偏移会落在字节中间，按bit记录可精确判定。
+
+结论：demo.py第22行的切片列起点30在FP16下产生的地址283104不能被256整除（295392 mod 256 = 224），需要将列起点调整为16的倍数（如30改为32）。
+
+#### 切片起点不对齐（NZ/ZN分形内块对齐）
+
+示例说明：NZ布局的Mat空间tile切片起点未落在分形内块边界上。FP16下NZ内块为(16, 16)，行列起点都必须是16的倍数。
+
+```python
+# NZ布局、FP16，内块(16, 16)，行起点8：8 mod 16 ≠ 0
+view = tile[8:24, 16:32]
+```
+
+```text
+===== kernel 'slice_nz_unaligned_kernel' launch d4e5f6a7 (./build/slice_nz_unaligned_kernel__3510__d0/tk_none) =====
+PyPTO Sanitizer: 1 issue(s) detected
+[1/1] TILE_SLICE_UNALIGNED: L1 NZ slice start [8, 16] is unaligned to the [16, 16] fractal inner block at demo.py:25
+      Hint: Start fractal slices at multiples of the inner block, as the static slice contract requires
+```
+
+字段解读：
+
+- is unaligned to the [16, 16] fractal inner block：起点[8, 16]中行方向8不是内块行数16的倍数（列方向16已对齐）。
+- fractal inner block：NZ/ZN布局的分形内块大小，由dtype位宽决定（FP16为(16, 16)，INT8为(16, 32)等）；ZN布局行列含义转置。
+
+结论：demo.py第25行的切片行起点8未对齐到NZ内块的行边界16，需要将行起点调整为16的倍数（如8改为16），或改用ND布局（仅需32字节地址对齐）。
