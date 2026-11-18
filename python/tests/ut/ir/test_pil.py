@@ -8,6 +8,7 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 from dataclasses import dataclass, replace
 import logging as std_logging
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -15,6 +16,10 @@ import pytest
 import pypto
 from pypto import ir, logging, pil
 from pypto.pil.ops import has_scalar, is_loop_end_impl
+
+from .test_common import check_snapshot
+
+_GOLDEN_DIR = Path(__file__).parent / "test_pil_data"
 
 # ---------- Ops compile tests ----------
 
@@ -1373,3 +1378,18 @@ def test_nested_function_return_in_symbolic_if_is_rejected():
     out = pypto.Tensor(shape=(32, 32), dtype=pypto.DT_FP32)
     with pytest.raises(Exception, match="return inside a symbolic if branch"):
         pil.compile(kernel, x, out, create_new_logical_tensor=True)
+
+
+def test_symbolic_composite_condition_is_supported():
+    def kernel(x, out):
+        pypto.set_vec_tile_shapes(16, 16)
+        i = pypto.SymbolicScalar("i")
+        if 0 <= i < 2:
+            pypto.assemble(x, [0, 0], out)
+        if i > 0 and i < 2:
+            pypto.assemble(x, [16, 16], out)
+
+    x = pypto.Tensor(shape=(16, 16), dtype=pypto.DT_FP32)
+    out = pypto.Tensor(shape=(32, 32), dtype=pypto.DT_FP32)
+    func = pil.compile(kernel, x, out, create_new_logical_tensor=True)
+    check_snapshot(func, _GOLDEN_DIR / "test_symbolic_composite_condition.pypto")

@@ -513,6 +513,11 @@ def _if_else_stmt(cond, then_block: Block, else_block: Block, ctx: BuildContext)
 
     scope = Scope.current()
 
+    def as_expr(val):
+        if isinstance(val, bool):
+            val = pypto.SymbolicScalar(int(val))
+        return ctx.unwrap(val)
+
     saved = dict(scope.locals)
     store_names = then_block.store_names | else_block.store_names
     yield_var_names = carriable_names(scope, store_names)
@@ -520,6 +525,13 @@ def _if_else_stmt(cond, then_block: Block, else_block: Block, ctx: BuildContext)
     # surface in branch.store_names during dispatch. Collect them as they are
     # discovered so they are branch-carried like plain names.
     discovered: list[str] = []
+
+    is_expr = (
+        then_block.jump is Jump.END_BRANCH
+        and else_block.jump is Jump.END_BRANCH
+        and then_block.result is not None
+        and else_block.result is not None
+    )
 
     def _trace_branch(branch: Block, branch_name: str, yield_vars_out: list):
         # Isolate the C++ config scope (vec/cube tile shapes, pass options, ...) so
@@ -541,8 +553,12 @@ def _if_else_stmt(cond, then_block: Block, else_block: Block, ctx: BuildContext)
                         continue
                     discovered.append(name)
                 branch_names = yield_var_names + discovered
-                yield_vars_out.extend(ctx.unwrap(scope.resolve_local(n)) for n in branch_names)
-                _add_jump_stmt(ctx, branch.jump, list(yield_vars_out))
+                branch_operands = []
+                if is_expr:
+                    branch_operands.append(as_expr(scope.resolve(branch.result)))
+                branch_operands.extend(ctx.unwrap(scope.resolve_local(n)) for n in branch_names)
+                yield_vars_out.extend(branch_operands)
+                _add_jump_stmt(ctx, branch.jump, branch_operands)
             return branch_body
         finally:
             pypto_impl.EndScope()
@@ -558,27 +574,40 @@ def _if_else_stmt(cond, then_block: Block, else_block: Block, ctx: BuildContext)
     # A slot only written by one branch: the other branch never yielded it —
     # its pre-if value (restored by the Journal rollback) is the correct yield.
     all_names = yield_var_names + discovered
+    value_slots = 1 if is_expr else 0
     for yield_vars in (then_yield_vars, else_yield_vars):
-        missing = discovered[len(yield_vars) - len(yield_var_names):]
+        name_slots = len(yield_vars) - value_slots
+        missing = discovered[name_slots - len(yield_var_names):]
         yield_vars.extend(ctx.unwrap(scope.resolve_local(n)) for n in missing)
 
-    yield_vars = []
-    for i, name in enumerate(all_names):
-        if ir.type_equal(then_yield_vars[i], else_yield_vars[i]):
-            var = ctx.create_var_like(name, then_yield_vars[i])
-            if isinstance(then_yield_vars[i], ir.LogicalTensor) and not ctx.in_loop_unroll:
-                _merge_valid_shape(var, cond, then_yield_vars[i].valid_shape, else_yield_vars[i].valid_shape)
-        elif isinstance(then_yield_vars[i].type, ir.NoneType):
-            var = ctx.create_var_like(name, else_yield_vars[i])
-        elif isinstance(else_yield_vars[i].type, ir.NoneType):
-            var = ctx.create_var_like(name, then_yield_vars[i])
+    def merge_var(name: str, then_expr, else_expr):
+        if ir.type_equal(then_expr, else_expr):
+            var = ctx.create_var_like(name, then_expr)
+            if isinstance(then_expr, ir.LogicalTensor) and not ctx.in_loop_unroll:
+                _merge_valid_shape(var, cond, then_expr.valid_shape, else_expr.valid_shape)
+        elif isinstance(then_expr.type, ir.NoneType):
+            var = ctx.create_var_like(name, else_expr)
+        elif isinstance(else_expr.type, ir.NoneType):
+            var = ctx.create_var_like(name, then_expr)
         else:
             var = ctx.poison(name, then_block.span)
+        return var
+
+    yield_vars = []
+    value_var = None
+    if is_expr:
+        value_var = merge_var(f"$if_value_{then_block.id}", then_yield_vars[0], else_yield_vars[0])
+        yield_vars.append(value_var)
+    for i, name in enumerate(all_names):
+        idx = i + value_slots
+        var = merge_var(name, then_yield_vars[idx], else_yield_vars[idx])
         yield_vars.append(var)
         scope.store(name, ctx.wrap(var))
 
     if_stmt = ctx.create_if_stmt(ctx.unwrap(cond), then_body, else_body, yield_vars, ctx.span)
     ctx.emit(if_stmt)
+
+    return ctx.wrap(value_var) if value_var is not None else None
 
 
 @impl("pil.if_else")
@@ -590,8 +619,7 @@ def if_else_impl(ctx: BuildContext, cond, then_block: Block, else_block: Block):
             block = then_block if cond.concrete() else else_block
             return dispatch_block(block, True)
         else:
-            _if_else_stmt(cond, then_block, else_block, ctx)
-            return None
+            return _if_else_stmt(cond, then_block, else_block, ctx)
     else:
         block = then_block if cond else else_block
         return dispatch_block(block, True)
