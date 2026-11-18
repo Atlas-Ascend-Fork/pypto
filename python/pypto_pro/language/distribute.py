@@ -33,6 +33,8 @@ __all__ = [
     "CHANNEL_UB_BYTES",
     "NotifyOp",
     "Protocol",
+    "UrmaOption",
+    "ReduceOp",
     "Cmp",
 ]
 
@@ -54,12 +56,56 @@ class NotifyOp(enum.IntEnum):
     ATOMIC_ADD = 1
 
 
+class ReduceOp(enum.IntEnum):
+    """Element-wise reduction mode of :meth:`Channel.write_reduce`.
+
+    The values are the engine's wire codes; the declaration order is locked to the
+    vendor enum.
+    """
+
+    MAX = 0x8
+    MIN = 0x9
+    SUM = 0xA
+
+
 class Protocol(enum.IntFlag):
     """Engine plane selection for a registered memory region: UB_MEM (direct peer-VA),
     URMA (jetty/WQE). Combine with ``|`` to register on both planes."""
 
     UB_MEM = 1
     URMA = 2
+
+
+class UrmaOption(enum.IntFlag):
+    """URMA WQE control flags (subset of ``WqeEntry`` in hcomm_common.h).
+
+    The value is the packed WQE flag byte (``odr:3, fence:1, cqe:1``), keeping the hcomm
+    bit layout; the ``se`` and ``inlineEn`` bits are not exposed. These flags matter only
+    on the UB_CTP/URMA plane — on RoCE only ``FENCE`` and ``CQE`` take effect.
+
+    Attributes:
+        ODR_NONE: ``odr[1:0]=00``; no execution-order requirement between WQEs.
+        ODR_RELAX: ``odr[1:0]=01``; relaxed execution order — a later WQE may start before
+            an earlier one completes. Mutually exclusive with ``ODR_STRONG``.
+        ODR_STRONG: ``odr[1:0]=10``; strong execution order — WQEs execute in issue order.
+            Mutually exclusive with ``ODR_RELAX``.
+        ODR_IN_ORDER_COMPLETION: ``odr[2]=1``; completion records (CQEs) are reported in
+            issue order.
+        FENCE: the WQE waits for all previously issued WQEs to complete before it runs.
+        CQE: the WQE reports one completion record; channel drain accounting depends on
+            it, so it must be set.
+        DEFAULT: hcomm's ``URMA_DEFAULT_CFG`` (``0x2D``): relaxed execution order,
+            in-order completion, fenced, one completion record.
+    """
+
+    ODR_NONE = 0  # odr[1:0]=00: WQEs may execute in any order
+    ODR_RELAX = 1 << 0  # odr[1:0]=01: relaxed execution order
+    ODR_STRONG = 1 << 1  # odr[1:0]=10: strong (issue) execution order
+    ODR_IN_ORDER_COMPLETION = 1 << 2  # odr[2]=1: CQEs reported in issue order
+    FENCE = 1 << 3  # wait for all previously issued WQEs to complete
+    CQE = 1 << 5  # generate one completion record per WQE
+
+    DEFAULT = ODR_RELAX | ODR_IN_ORDER_COMPLETION | FENCE | CQE  # 0x2D, URMA_DEFAULT_CFG
 
 
 CHANNEL_UB_BYTES = 256  # one channel's UB scratch (peer descriptor + jetty bookkeeping + SQE)
@@ -94,7 +140,8 @@ class Channel(NamedTuple):
 
     @_api_decl
     def write(self, dst, src, /, *, submit: bool = True,
-              timeout: int | None = None) -> None:
+              timeout: int | None = None,
+              option: UrmaOption = UrmaOption.DEFAULT) -> None:
         """Async write into the channel's peer window (device-only).
 
         The destination peer is fixed when the channel is opened
@@ -104,6 +151,40 @@ class Channel(NamedTuple):
         byte length a multiple of 32) or one scalar word of the destination dtype.
         ``submit=False`` stages the WQE for a later :meth:`submit`; ``True`` (default)
         publishes it.
+
+        ``option`` controls the WQE control flags of the issued WQEs. The scalar
+        form always sets ``inlineEn`` (no SGE), so ``option`` only contributes its
+        order/fence/completion bits there.
+        """
+
+    @_api_decl
+    def read(self, dst, src, /, *, submit: bool = True,
+             timeout: int | None = None,
+             option: UrmaOption = UrmaOption.DEFAULT) -> None:
+        """Async read from the channel's peer window into a local tensor (device-only).
+
+        ``src`` is a remote pointer from :meth:`remote_ptr` (or advanced from one
+        with pointer arithmetic); ``dst`` is a local GM tensor receiving the bytes
+        (<= 256 MiB, byte length a multiple of 32). The engine writes ``dst``, so
+        its contents are readable only after :meth:`drain`. ``submit=False`` stages
+        the WQE for a later :meth:`submit`; ``True`` (default) publishes it.
+        ``option`` controls the WQE control flags of the issued WQEs.
+        """
+
+    @_api_decl
+    def write_reduce(self, dst, src, /, *, op: ReduceOp, submit: bool = True,
+                     timeout: int | None = None,
+                     option: UrmaOption = UrmaOption.DEFAULT) -> None:
+        """Async engine-side reduction of a local tensor into the peer's window (device-only).
+
+        Element-wise reduces ``src`` (a local GM tensor) into the remote ``dst``
+        pointer per ``op`` — ``pld.ReduceOp.SUM/MAX/MIN``. Supported dtypes:
+        int8/int16/int32/uint32/float16/float32/bfloat16. Concurrent reduces from
+        several ranks into one target are hardware-serialized; the result is not
+        ordered against other engine ops — :meth:`drain` first.
+        ``submit=False`` stages the WQE for a later :meth:`submit`. ``option``
+        controls the WQE control flags; the engine's UDF flag for the reduce fields
+        is always set on top of it.
         """
 
     @_api_decl
@@ -149,8 +230,37 @@ class Channel(NamedTuple):
         """
 
     @_api_decl
+    def atomic_fetch_add(self, dst, fetch, val, /, *, submit: bool = True,
+                   timeout: int | None = None,
+                   option: UrmaOption = UrmaOption.DEFAULT) -> None:
+        """Remote fetch-and-add of one aligned integer word (device-only).
+
+        ``dst`` is a remote pointer to the target word (int32/uint32/int64/uint64,
+        naturally aligned — misaligned destinations trap). The engine adds ``val``
+        and writes the **previous** remote value into ``fetch``, a local one-element
+        GM tensor of the same dtype — readable only after :meth:`drain`.
+        ``submit=False`` stages the WQE for a later :meth:`submit`. ``option``
+        controls the WQE control flags of the issued WQEs.
+        """
+
+    @_api_decl
+    def atomic_cas(self, dst, fetch, expected, desired, /, *, submit: bool = True,
+                   timeout: int | None = None,
+                   option: UrmaOption = UrmaOption.DEFAULT) -> None:
+        """Remote compare-and-swap of one aligned integer word (device-only).
+
+        Swaps ``desired`` into ``dst`` when the remote word equals ``expected``
+        and writes the **previous** value into ``fetch`` (local one-element tensor,
+        same dtype) either way — success iff ``fetch == expected``. The target must
+        be naturally aligned; misaligned destinations trap. Readable only after
+        :meth:`drain`. ``submit=False`` stages the WQE for a later :meth:`submit`.
+        ``option`` controls the WQE control flags of the issued WQEs.
+        """
+
+    @_api_decl
     def write_notify(self, dst, src, signal, val, /, *,
-                     timeout: int | None = None) -> None:
+                     timeout: int | None = None,
+                     option: UrmaOption = UrmaOption.DEFAULT) -> None:
         """Fused write whose completion writes the signal in hardware (device-only).
 
         ``dst`` is a remote pointer from :meth:`remote_ptr`. ``signal`` is the
@@ -162,7 +272,8 @@ class Channel(NamedTuple):
         ``signal`` came from :meth:`remote_ptr`. Hardware writes ``val`` to that
         address when the payload lands, so data is visible before the signal —
         never spell this as ``write`` + ``notify``. ``src`` must be a local GM
-        tensor (no scalar form).
+        tensor (no scalar form). ``option`` controls the WQE control flags of the
+        fused write WQE.
         """
 
     @_api_decl

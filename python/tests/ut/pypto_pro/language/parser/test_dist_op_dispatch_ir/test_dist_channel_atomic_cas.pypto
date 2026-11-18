@@ -1,0 +1,6 @@
+function kernel incast( %win_0, tensor<1 x 8, int64_t, tensor_view<, , ND, %dst_ptr>> %dst_0, tensor<1, int64_t, tensor_view<, , ND, %fetch_ptr>> %fetch_0) outcast() #entry(false) #type(pro) {
+    int64_t %ch_0 = dist.channel(%win_0, 1, ub_addr=64);
+    ptr<int64_t> %dst_rptr_0 = channel.remote_ptr(%ch_0, ptr.make_ptr(%dst_0));
+    channel.atomic_cas(%ch_0, %dst_rptr_0, %fetch_0, 3, 4, submit=true, timeout_cycles=0, option=45);
+    return;
+}

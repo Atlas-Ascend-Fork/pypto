@@ -233,6 +233,12 @@ bool IsSupportedIndexDType(const DataType& dtype)
            dtype == DataType::UINT64;
 }
 
+bool IsSupportedReduceDType(const DataType& dtype)
+{
+    return dtype == DataType::INT8 || dtype == DataType::INT16 || dtype == DataType::INT32 ||
+           dtype == DataType::UINT32 || dtype == DataType::FP16 || dtype == DataType::FP32 || dtype == DataType::BF16;
+}
+
 const auto kIsNumericScalar = [](const ExprPtr& expr) {
     auto scalar = As<ScalarType>(expr->GetType());
     return scalar != nullptr && (scalar->dtype_.IsInt() || scalar->dtype_.IsFloat());
@@ -279,10 +285,11 @@ void CheckChannelOperand(const std::vector<ExprPtr>& args, const char* opName)
 struct ChannelWriteKwargs {
     bool submit = true;
     int timeoutCycles = 0;
+    int option = 0x2D;
 };
 
 ChannelWriteKwargs ParseChannelWriteKwargs(const std::vector<std::pair<std::string, std::any>>& kwargs,
-                                           const char* opName, bool requireSubmit)
+                                           const char* opName, bool requireSubmit, bool allowCustomOption)
 {
     ChannelWriteKwargs parsed;
     bool hasSubmit = false;
@@ -296,6 +303,10 @@ ChannelWriteKwargs ParseChannelWriteKwargs(const std::vector<std::pair<std::stri
             PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
                 << opName << " 'timeout_cycles' must be a compile-time constant integer";
             parsed.timeoutCycles = std::any_cast<int>(value);
+        } else if (name == "option") {
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+                << opName << " 'option' must be a compile-time constant integer";
+            parsed.option = std::any_cast<int>(value);
         } else {
             PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, false)
                 << opName << " does not accept keyword argument '" << name << "'";
@@ -307,6 +318,18 @@ ChannelWriteKwargs ParseChannelWriteKwargs(const std::vector<std::pair<std::stri
     // 0 = wait forever at the op layer; the backend emits INT64_MAX for the engine template.
     PRO_IR_CHECK(ExternalError::INVALID_VAL, parsed.timeoutCycles >= 0)
         << opName << " timeout_cycles must be >= 0 (0 = wait forever), but got " << parsed.timeoutCycles;
+    // WQE flag byte: odr[2:0], fence[3], cqe[5]; cqe is required for drain accounting.
+    PRO_IR_CHECK(ExternalError::INVALID_VAL, parsed.option >= 0 && (parsed.option & ~0x2F) == 0)
+        << opName << " option sets unsupported WQE flag bits, got " << parsed.option;
+    PRO_IR_CHECK(ExternalError::INVALID_VAL, (parsed.option & 0x20) != 0)
+        << opName << " option must include cqe (drain waits for one completion per WQE), got " << parsed.option;
+    PRO_IR_CHECK(ExternalError::INVALID_VAL, (parsed.option & 0x3) != 0x3)
+        << opName << " option cannot set the relaxed and strong order bits together, got " << parsed.option;
+    if (!allowCustomOption) {
+        PRO_IR_CHECK(ExternalError::INVALID_VAL, parsed.option == 0x2D)
+            << opName << " rides hcomm's fixed WQE config, so 'option' must be 0x2D (UrmaOption.DEFAULT), got "
+            << parsed.option;
+    }
     return parsed;
 }
 
@@ -322,14 +345,14 @@ TypePtr DeduceDistChannelWriteType(const std::vector<ExprPtr>& args,
                                    const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x4)
-        << "dist.channel_write requires 4 arguments [channel, dst_ptr, num_bytes, tensor], but got " << args.size();
-    CheckChannelOperand(args, "dist.channel_write");
-    (void)ChannelDstPtrDType(args, 1, "dist.channel_write");
+        << "channel.write requires 4 arguments [channel, dst_ptr, num_bytes, tensor], but got " << args.size();
+    CheckChannelOperand(args, "channel.write");
+    (void)ChannelDstPtrDType(args, 1, "channel.write");
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[2]))
-        << "dist.channel_write num_bytes must be an integer scalar, but got " << args[2]->GetType()->TypeName();
+        << "channel.write num_bytes must be an integer scalar, but got " << args[2]->GetType()->TypeName();
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[3]->GetType()))
-        << "dist.channel_write tensor must be a TensorType, but got " << args[3]->GetType()->TypeName();
-    (void)ParseChannelWriteKwargs(kwargs, "dist.channel_write", true);
+        << "channel.write tensor must be a TensorType, but got " << args[3]->GetType()->TypeName();
+    (void)ParseChannelWriteKwargs(kwargs, "channel.write", true, true);
     return GetNoneType();
 }
 
@@ -337,21 +360,21 @@ TypePtr DeduceDistChannelWriteIndexedType(const std::vector<ExprPtr>& args,
                                           const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x7)
-        << "dist.channel_write_indexed requires 7 arguments [channel, dst_ptr, tensor, count, row_bytes, "
+        << "channel.write_indexed requires 7 arguments [channel, dst_ptr, tensor, count, row_bytes, "
            "src_indices, dst_indices], but got "
         << args.size();
-    CheckChannelOperand(args, "dist.channel_write_indexed");
-    (void)ChannelDstPtrDType(args, 1, "dist.channel_write_indexed");
+    CheckChannelOperand(args, "channel.write_indexed");
+    (void)ChannelDstPtrDType(args, 1, "channel.write_indexed");
     for (size_t i : {size_t{3}, size_t{4}}) {
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[i]))
-            << "dist.channel_write_indexed argument " << i << " must be an integer scalar, but got "
+            << "channel.write_indexed argument " << i << " must be an integer scalar, but got "
             << args[i]->GetType()->TypeName();
     }
     auto tensorType = As<TensorType>(args[2]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensorType != nullptr)
-        << "dist.channel_write_indexed tensor must be a TensorType, but got " << args[2]->GetType()->TypeName();
+        << "channel.write_indexed tensor must be a TensorType, but got " << args[2]->GetType()->TypeName();
     PRO_IR_CHECK(ExternalError::INVALID_SHAPE, !tensorType->shape_.empty())
-        << "dist.channel_write_indexed tensor must have a row axis";
+        << "channel.write_indexed tensor must have a row axis";
 
     // An index side is a 1-D int32/int64 UB Tile, or the 0 sentinel when that side
     // uses the row number j directly. Presence is a compile-time property.
@@ -365,12 +388,12 @@ TypePtr DeduceDistChannelWriteIndexedType(const std::vector<ExprPtr>& args,
         if (tileType == nullptr) {
             const auto sentinel = As<ConstInt>(args[i]);
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, sentinel != nullptr && sentinel->value_ == 0)
-                << "dist.channel_write_indexed " << name << " must be a Tile or the compile-time 0 sentinel, but got "
+                << "channel.write_indexed " << name << " must be a Tile or the compile-time 0 sentinel, but got "
                 << args[i]->GetType()->TypeName();
             continue;
         }
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsSupportedIndexDType(tileType->dtype_))
-            << "dist.channel_write_indexed " << name << " must be an INT32/INT64/UINT32/UINT64 Tile, but got "
+            << "channel.write_indexed " << name << " must be an INT32/INT64/UINT32/UINT64 Tile, but got "
             << tileType->dtype_.ToString();
         // A 1-D logical table is spelled [N] or, because tile allocation only takes
         // rank-2 shapes, [N, 1] / [1, N] with a static unit axis.
@@ -381,12 +404,12 @@ TypePtr DeduceDistChannelWriteIndexedType(const std::vector<ExprPtr>& args,
             isOneDimensional = (first != nullptr && first->value_ == 1) || (second != nullptr && second->value_ == 1);
         }
         PRO_IR_CHECK(ExternalError::INVALID_SHAPE, isOneDimensional)
-            << "dist.channel_write_indexed " << name
+            << "channel.write_indexed " << name
             << " must be a 1-D row-index Tile ([N] or the rank-2 [N, 1] / [1, N] spelling), but got rank "
             << tileType->shape_.size();
         PRO_IR_CHECK(ExternalError::INVALID_TYPE,
                      tileType->memref_.has_value() && (*tileType->memref_)->memorySpace_ == MemorySpace::Vec)
-            << "dist.channel_write_indexed " << name << " must live in UB (MemorySpace::Vec)";
+            << "channel.write_indexed " << name << " must live in UB (MemorySpace::Vec)";
         if (i == 5) {
             hasSrcIndex = true;
             srcIndexDType = tileType->dtype_;
@@ -396,22 +419,22 @@ TypePtr DeduceDistChannelWriteIndexedType(const std::vector<ExprPtr>& args,
         }
     }
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, hasSrcIndex || hasDstIndex)
-        << "dist.channel_write_indexed requires src_indices or dst_indices; use dist.channel_write for a "
+        << "channel.write_indexed requires src_indices or dst_indices; use channel.write for a "
            "contiguous copy";
     // The device helper has one IndexT, so both tables must be read at the same element size.
     PRO_IR_CHECK(ExternalError::INVALID_TYPE,
                  !srcIndexDType.has_value() || !dstIndexDType.has_value() || *srcIndexDType == *dstIndexDType)
-        << "dist.channel_write_indexed src_indices and dst_indices must share one dtype, but got "
+        << "channel.write_indexed src_indices and dst_indices must share one dtype, but got "
         << (srcIndexDType.has_value() ? srcIndexDType->ToString() : "none") << " and "
         << (dstIndexDType.has_value() ? dstIndexDType->ToString() : "none");
 
     if (const auto rowBytes = As<ConstInt>(args[4])) {
         PRO_IR_CHECK(ExternalError::INVALID_VAL, rowBytes->value_ > 0)
-            << "dist.channel_write_indexed row_bytes must be positive, but got " << rowBytes->value_;
+            << "channel.write_indexed row_bytes must be positive, but got " << rowBytes->value_;
         PRO_IR_CHECK(ExternalError::INVALID_VAL, rowBytes->value_ % 32 == 0)
-            << "dist.channel_write_indexed row_bytes must be a multiple of 32 bytes, but got " << rowBytes->value_;
+            << "channel.write_indexed row_bytes must be a multiple of 32 bytes, but got " << rowBytes->value_;
         PRO_IR_CHECK(ExternalError::INVALID_VAL, rowBytes->value_ <= 256 * 1024 * 1024)
-            << "dist.channel_write_indexed row_bytes must be <= 256 MiB, but got " << rowBytes->value_;
+            << "channel.write_indexed row_bytes must be <= 256 MiB, but got " << rowBytes->value_;
     }
 
     // Static capacity cross-check when both the count and the table length are known.
@@ -439,10 +462,10 @@ TypePtr DeduceDistChannelWriteIndexedType(const std::vector<ExprPtr>& args,
     };
     if (const auto count = As<ConstInt>(args[3])) {
         PRO_IR_CHECK(ExternalError::INVALID_VAL, count->value_ >= 0)
-            << "dist.channel_write_indexed count must be >= 0, but got " << count->value_;
+            << "channel.write_indexed count must be >= 0, but got " << count->value_;
         auto checkCapacity = [&count](const std::optional<int64_t>& capacity, const char* subject) {
             PRO_IR_CHECK(ExternalError::INVALID_VAL, !capacity.has_value() || count->value_ <= *capacity)
-                << "dist.channel_write_indexed count " << count->value_ << " exceeds the " << subject << " capacity "
+                << "channel.write_indexed count " << count->value_ << " exceeds the " << subject << " capacity "
                 << (capacity.has_value() ? *capacity : 0);
         };
         if (hasSrcIndex) {
@@ -454,7 +477,7 @@ TypePtr DeduceDistChannelWriteIndexedType(const std::vector<ExprPtr>& args,
             checkCapacity(indexCapacity(args[6]), "dst_indices");
         }
     }
-    (void)ParseChannelWriteKwargs(kwargs, "dist.channel_write_indexed", true);
+    (void)ParseChannelWriteKwargs(kwargs, "channel.write_indexed", true, false);
     return GetNoneType();
 }
 
@@ -462,9 +485,9 @@ TypePtr DeduceDistChannelSubmitType(const std::vector<ExprPtr>& args,
                                     const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x1)
-        << "dist.channel_submit requires 1 argument (the channel), but got " << args.size();
-    CheckChannelOperand(args, "dist.channel_submit");
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << "dist.channel_submit accepts no keyword arguments";
+        << "channel.submit requires 1 argument (the channel), but got " << args.size();
+    CheckChannelOperand(args, "channel.submit");
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << "channel.submit accepts no keyword arguments";
     return GetNoneType();
 }
 
@@ -472,21 +495,21 @@ TypePtr DeduceDistChannelDrainType(const std::vector<ExprPtr>& args,
                                    const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x1)
-        << "dist.channel_drain requires 1 argument (the channel), but got " << args.size();
-    CheckChannelOperand(args, "dist.channel_drain");
+        << "channel.drain requires 1 argument (the channel), but got " << args.size();
+    CheckChannelOperand(args, "channel.drain");
     int timeoutCycles = 0;
     for (const auto& [name, value] : kwargs) {
         if (name == "timeout_cycles") {
             PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
-                << "dist.channel_drain 'timeout_cycles' must be a compile-time constant integer";
+                << "channel.drain 'timeout_cycles' must be a compile-time constant integer";
             timeoutCycles = std::any_cast<int>(value);
             continue;
         }
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, false)
-            << "dist.channel_drain does not accept keyword argument '" << name << "'";
+            << "channel.drain does not accept keyword argument '" << name << "'";
     }
     PRO_IR_CHECK(ExternalError::INVALID_VAL, timeoutCycles >= 0)
-        << "dist.channel_drain timeout_cycles must be >= 0 (0 = wait forever), but got " << timeoutCycles;
+        << "channel.drain timeout_cycles must be >= 0 (0 = wait forever), but got " << timeoutCycles;
     return GetNoneType();
 }
 
@@ -494,10 +517,10 @@ TypePtr DeduceDistChannelIsExclusiveType(const std::vector<ExprPtr>& args,
                                          const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x1)
-        << "dist.channel_is_exclusive requires 1 argument (the channel), but got " << args.size();
-    CheckChannelOperand(args, "dist.channel_is_exclusive");
+        << "channel.is_exclusive requires 1 argument (the channel), but got " << args.size();
+    CheckChannelOperand(args, "channel.is_exclusive");
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty())
-        << "dist.channel_is_exclusive accepts no keyword arguments";
+        << "channel.is_exclusive accepts no keyword arguments";
     return std::make_shared<ScalarType>(DataType::BOOL);
 }
 
@@ -520,11 +543,10 @@ TypePtr DeduceDistChannelRemotePtrType(const std::vector<ExprPtr>& args,
                                        const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x2)
-        << "dist.channel_remote_ptr requires 2 arguments [channel, ptr], but got " << args.size();
-    CheckChannelOperand(args, "dist.channel_remote_ptr");
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty())
-        << "dist.channel_remote_ptr accepts no keyword arguments";
-    return std::make_shared<PtrType>(ChannelDstPtrDType(args, 1, "dist.channel_remote_ptr"));
+        << "channel.remote_ptr requires 2 arguments [channel, ptr], but got " << args.size();
+    CheckChannelOperand(args, "channel.remote_ptr");
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << "channel.remote_ptr accepts no keyword arguments";
+    return std::make_shared<PtrType>(ChannelDstPtrDType(args, 1, "channel.remote_ptr"));
 }
 } // namespace
 
@@ -540,13 +562,13 @@ REGISTER_OP("dist.channel")
         return DeduceDistChannelType(args, kwargs);
     });
 
-REGISTER_OP("dist.channel_write")
+REGISTER_OP("channel.write")
     .set_op_category("DistOp")
     .set_description("Async GM tensor -> remote window write through the channel's URMA jetty "
                      "(destination bound at channel creation); submit=true publishes immediately, "
                      "submit=false stages the WQE")
     .add_argument("channel", "Channel handle (opaque integer token)")
-    .add_argument("dst_ptr", "Destination remote pointer from dist.channel_remote_ptr (PtrType)")
+    .add_argument("dst_ptr", "Destination remote pointer from channel.remote_ptr (PtrType)")
     .add_argument("num_bytes", "Transfer length in bytes (integer scalar)")
     .add_argument("tensor", "Local GM source tensor (TensorType)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
@@ -554,13 +576,13 @@ REGISTER_OP("dist.channel_write")
         return DeduceDistChannelWriteType(args, kwargs);
     });
 
-REGISTER_OP("dist.channel_write_indexed")
+REGISTER_OP("channel.write_indexed")
     .set_op_category("DistOp")
     .set_description("Async indexed row writes through the channel's URMA jetty: row j copies "
                      "src[src_indices[j]] to dst[dst_indices[j]] (missing table -> j); index tables "
                      "are 1-D int32/int64/uint32/uint64 UB Tiles, count is a runtime scalar")
     .add_argument("channel", "Channel handle (opaque integer token)")
-    .add_argument("dst_ptr", "Destination remote pointer from dist.channel_remote_ptr (PtrType)")
+    .add_argument("dst_ptr", "Destination remote pointer from channel.remote_ptr (PtrType)")
     .add_argument("tensor", "Local GM source tensor (TensorType)")
     .add_argument("count", "Runtime number of valid rows (integer scalar)")
     .add_argument("row_bytes", "Bytes of one row payload, used as the row stride (integer scalar)")
@@ -571,7 +593,7 @@ REGISTER_OP("dist.channel_write_indexed")
         return DeduceDistChannelWriteIndexedType(args, kwargs);
     });
 
-REGISTER_OP("dist.channel_submit")
+REGISTER_OP("channel.submit")
     .set_op_category("DistOp")
     .set_description("Publish the channel's deferred write-engine WQEs (doorbell); ordering, not completion")
     .add_argument("channel", "Channel handle (opaque integer token)")
@@ -580,7 +602,7 @@ REGISTER_OP("dist.channel_submit")
         return DeduceDistChannelSubmitType(args, kwargs);
     });
 
-REGISTER_OP("dist.channel_drain")
+REGISTER_OP("channel.drain")
     .set_op_category("DistOp")
     .set_description("Block until the channel's previously enqueued writes complete; timeout traps")
     .add_argument("channel", "Channel handle (opaque integer token)")
@@ -589,7 +611,7 @@ REGISTER_OP("dist.channel_drain")
         return DeduceDistChannelDrainType(args, kwargs);
     });
 
-REGISTER_OP("dist.channel_is_exclusive")
+REGISTER_OP("channel.is_exclusive")
     .set_op_category("DistOp")
     .set_description("True when the channel rides the calling AIV's private queue (multi-issuer "
                      "topology); false for a per-peer jetty")
@@ -612,7 +634,7 @@ REGISTER_OP("dist.remote_ptr")
         return DeduceDistRemotePtrType(args, kwargs);
     });
 
-REGISTER_OP("dist.channel_remote_ptr")
+REGISTER_OP("channel.remote_ptr")
     .set_op_category("DistOp")
     .set_description("Typed pointer to a registered region in the channel's peer (URMA plane), resolved "
                      "from a local pointer into that region; pass the result to ch.write*")
@@ -628,20 +650,92 @@ TypePtr DeduceDistChannelWriteValueType(const std::vector<ExprPtr>& args,
                                         const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3)
-        << "dist.channel_write_value requires 3 arguments [channel, dst_ptr, value], but got " << args.size();
-    CheckChannelOperand(args, "dist.channel_write_value");
-    const DataType dstDType = ChannelDstPtrDType(args, 1, "dist.channel_write_value");
+        << "channel.write_value requires 3 arguments [channel, dst_ptr, value], but got " << args.size();
+    CheckChannelOperand(args, "channel.write_value");
+    const DataType dstDType = ChannelDstPtrDType(args, 1, "channel.write_value");
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, kIsNumericScalar(args[2]))
-        << "dist.channel_write_value value must be a numeric scalar, but got " << args[2]->GetType()->TypeName();
+        << "channel.write_value value must be a numeric scalar, but got " << args[2]->GetType()->TypeName();
 
-    (void)ParseChannelWriteKwargs(kwargs, "dist.channel_write_value", true);
+    (void)ParseChannelWriteKwargs(kwargs, "channel.write_value", true, true);
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsSupportedScalarDType(dstDType))
-        << "dist.channel_write_value does not support dtype " << dstDType.ToString()
+        << "channel.write_value does not support dtype " << dstDType.ToString()
         << "; supported: INT32/UINT32/INT64/UINT64/FP32";
     const auto valueType = As<ScalarType>(args[2]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, !(dstDType.IsInt() && valueType->dtype_.IsFloat()))
-        << "dist.channel_write_value integer destination requires an integer value, but got "
+        << "channel.write_value integer destination requires an integer value, but got "
         << valueType->dtype_.ToString();
+    return GetNoneType();
+}
+
+TypePtr DeduceDistChannelReadType(const std::vector<ExprPtr>& args,
+                                  const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x4)
+        << "channel.read requires 4 arguments [channel, src_ptr, num_bytes, tensor], but got " << args.size();
+    CheckChannelOperand(args, "channel.read");
+    (void)ChannelDstPtrDType(args, 1, "channel.read");
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[2]))
+        << "channel.read num_bytes must be an integer scalar, but got " << args[2]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[3]->GetType()))
+        << "channel.read destination must be a TensorType, but got " << args[3]->GetType()->TypeName();
+    (void)ParseChannelWriteKwargs(kwargs, "channel.read", true, true);
+    return GetNoneType();
+}
+
+TypePtr DeduceDistChannelWriteReduceType(const std::vector<ExprPtr>& args,
+                                         const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x4)
+        << "channel.write_reduce requires 4 arguments [channel, dst_ptr, num_bytes, tensor], but got " << args.size();
+    CheckChannelOperand(args, "channel.write_reduce");
+    (void)ChannelDstPtrDType(args, 1, "channel.write_reduce");
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[2]))
+        << "channel.write_reduce num_bytes must be an integer scalar, but got " << args[2]->GetType()->TypeName();
+    const auto tensorType = As<TensorType>(args[3]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensorType)
+        << "channel.write_reduce source must be a TensorType, but got " << args[3]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsSupportedReduceDType(tensorType->dtype_))
+        << "channel.write_reduce does not support dtype " << tensorType->dtype_.ToString()
+        << "; supported: INT8/INT16/INT32/UINT32/FP16/FP32/BF16";
+    bool hasReduceOp = false;
+    int reduceOp = 0;
+    bool hasOption = false;
+    int option = 0x2D;
+    for (const auto& [name, value] : kwargs) {
+        if (name == "reduce_op") {
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+                << "channel.write_reduce 'reduce_op' must be a compile-time ReduceOp";
+            reduceOp = std::any_cast<int>(value);
+            hasReduceOp = true;
+        } else if (name == "submit") {
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(bool))
+                << "channel.write_reduce 'submit' must be a compile-time bool";
+        } else if (name == "timeout_cycles") {
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+                << "channel.write_reduce 'timeout_cycles' must be a compile-time constant integer";
+        } else if (name == "option") {
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+                << "channel.write_reduce 'option' must be a compile-time constant integer";
+            option = std::any_cast<int>(value);
+            hasOption = true;
+        } else {
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, false)
+                << "channel.write_reduce does not accept keyword argument '" << name << "'";
+        }
+    }
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, hasReduceOp)
+        << "channel.write_reduce requires the reduce_op keyword (pld.ReduceOp.SUM/MAX/MIN)";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, reduceOp == 0x8 || reduceOp == 0x9 || reduceOp == 0xA)
+        << "channel.write_reduce reduce_op must be a pld.ReduceOp member (SUM=10/MAX=8/MIN=9), got " << reduceOp;
+    if (hasOption) {
+        // Same WQE flag-byte validation ParseChannelWriteKwargs applies to the writes.
+        PRO_IR_CHECK(ExternalError::INVALID_VAL, option >= 0 && (option & ~0x2F) == 0)
+            << "channel.write_reduce option sets unsupported WQE flag bits, got " << option;
+        PRO_IR_CHECK(ExternalError::INVALID_VAL, (option & 0x20) != 0)
+            << "channel.write_reduce option must include cqe (drain waits for one completion per WQE), got " << option;
+        PRO_IR_CHECK(ExternalError::INVALID_VAL, (option & 0x3) != 0x3)
+            << "channel.write_reduce option cannot set the relaxed and strong order bits together, got " << option;
+    }
     return GetNoneType();
 }
 
@@ -649,48 +743,99 @@ TypePtr DeduceDistChannelWriteNotifyType(const std::vector<ExprPtr>& args,
                                          const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x6)
-        << "dist.channel_write_notify requires 6 arguments [channel, dst_ptr, num_bytes, tensor, signal_ptr, val], "
+        << "channel.write_notify requires 6 arguments [channel, dst_ptr, num_bytes, tensor, signal_ptr, val], "
            "but got "
         << args.size();
-    CheckChannelOperand(args, "dist.channel_write_notify");
-    (void)ChannelDstPtrDType(args, 1, "dist.channel_write_notify");
+    CheckChannelOperand(args, "channel.write_notify");
+    (void)ChannelDstPtrDType(args, 1, "channel.write_notify");
     for (size_t i : {size_t{2}, size_t{5}}) {
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[i]))
-            << "dist.channel_write_notify argument " << i << " must be an integer scalar, but got "
+            << "channel.write_notify argument " << i << " must be an integer scalar, but got "
             << args[i]->GetType()->TypeName();
     }
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsAtomicIntPtr(args[4], /*allow_32=*/false))
-        << "dist.channel_write_notify signal address must be a 64-bit integer pointer "
+        << "channel.write_notify signal address must be a 64-bit integer pointer "
            "(INT64/UINT64; the hardware notify value is 64-bit), but got "
         << args[4]->GetType()->TypeName();
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TensorType>(args[3]->GetType()))
-        << "dist.channel_write_notify tensor must be a TensorType, but got " << args[3]->GetType()->TypeName();
-    (void)ParseChannelWriteKwargs(kwargs, "dist.channel_write_notify", false);
+        << "channel.write_notify tensor must be a TensorType, but got " << args[3]->GetType()->TypeName();
+    (void)ParseChannelWriteKwargs(kwargs, "channel.write_notify", false, true);
+    return GetNoneType();
+}
+
+TypePtr DeduceDistChannelAtomicFetchAddType(const std::vector<ExprPtr>& args,
+                                            const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x4)
+        << "channel.atomic_fetch_add requires 4 arguments [channel, dst_ptr, fetch_tensor, value], but got "
+        << args.size();
+    CheckChannelOperand(args, "channel.atomic_fetch_add");
+    const DataType dstDType = ChannelDstPtrDType(args, 1, "channel.atomic_fetch_add");
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsAtomicDType(dstDType))
+        << "channel.atomic_fetch_add destination must point at a 32/64-bit integer word, but got dtype "
+        << dstDType.ToString();
+    const auto fetchType = As<TensorType>(args[2]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, fetchType)
+        << "channel.atomic_fetch_add fetch destination must be a TensorType, but got "
+        << args[2]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, fetchType->dtype_ == dstDType)
+        << "channel.atomic_fetch_add fetch dtype must match the destination pointer (" << dstDType.ToString()
+        << "), but got " << fetchType->dtype_.ToString();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[3]))
+        << "channel.atomic_fetch_add value must be an integer scalar, but got " << args[3]->GetType()->TypeName();
+    (void)ParseChannelWriteKwargs(kwargs, "channel.atomic_fetch_add", true, true);
+    return GetNoneType();
+}
+
+TypePtr DeduceDistChannelAtomicCasType(const std::vector<ExprPtr>& args,
+                                       const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x5)
+        << "channel.atomic_cas requires 5 arguments [channel, dst_ptr, fetch_tensor, expected, desired], but "
+           "got "
+        << args.size();
+    CheckChannelOperand(args, "channel.atomic_cas");
+    const DataType dstDType = ChannelDstPtrDType(args, 1, "channel.atomic_cas");
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsAtomicDType(dstDType))
+        << "channel.atomic_cas destination must point at a 32/64-bit integer word, but got dtype "
+        << dstDType.ToString();
+    const auto fetchType = As<TensorType>(args[2]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, fetchType)
+        << "channel.atomic_cas fetch destination must be a TensorType, but got " << args[2]->GetType()->TypeName();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, fetchType->dtype_ == dstDType)
+        << "channel.atomic_cas fetch dtype must match the destination pointer (" << dstDType.ToString() << "), but got "
+        << fetchType->dtype_.ToString();
+    for (size_t i : {size_t{3}, size_t{4}}) {
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[i]))
+            << "channel.atomic_cas argument " << i << " must be an integer scalar, but got "
+            << args[i]->GetType()->TypeName();
+    }
+    (void)ParseChannelWriteKwargs(kwargs, "channel.atomic_cas", true, true);
     return GetNoneType();
 }
 
 } // namespace
 
-REGISTER_OP("dist.channel_write_value")
+REGISTER_OP("channel.write_value")
     .set_op_category("DistOp")
     .set_description("Async scalar-word write into the peer's window through the channel's jetty "
                      "(inline WQE; destination bound at channel creation); the value dtype is the "
                      "destination pointer's element type")
     .add_argument("channel", "Channel handle (opaque integer token)")
-    .add_argument("dst_ptr", "Destination remote pointer from dist.channel_remote_ptr (PtrType)")
+    .add_argument("dst_ptr", "Destination remote pointer from channel.remote_ptr (PtrType)")
     .add_argument("value", "Scalar word to write (numeric scalar)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceDistChannelWriteValueType(args, kwargs);
     });
 
-REGISTER_OP("dist.channel_write_notify")
+REGISTER_OP("channel.write_notify")
     .set_op_category("DistOp")
     .set_description("Async GM tensor -> remote window write fused with a hardware notify on payload "
                      "completion (one WriteWithNotify WQE, born published; destination bound at channel "
                      "creation)")
     .add_argument("channel", "Channel handle (opaque integer token)")
-    .add_argument("dst_ptr", "Destination remote pointer from dist.channel_remote_ptr (PtrType)")
+    .add_argument("dst_ptr", "Destination remote pointer from channel.remote_ptr (PtrType)")
     .add_argument("num_bytes", "Transfer length in bytes (integer scalar)")
     .add_argument("tensor", "Local GM source tensor (TensorType)")
     .add_argument("signal_ptr", "Signal address, a 64-bit integer pointer (INT64/UINT64)")
@@ -698,6 +843,63 @@ REGISTER_OP("dist.channel_write_notify")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceDistChannelWriteNotifyType(args, kwargs);
+    });
+
+REGISTER_OP("channel.atomic_fetch_add")
+    .set_op_category("DistOp")
+    .set_description("Async remote fetch-and-add of one aligned 32/64-bit integer word (FAA WQE; the "
+                     "PREVIOUS remote value lands in the local fetch tensor, readable after "
+                     "channel.drain)")
+    .add_argument("channel", "Channel handle (opaque integer token)")
+    .add_argument("dst_ptr", "Target remote pointer from channel.remote_ptr (PtrType)")
+    .add_argument("fetch_tensor", "Local one-element GM tensor receiving the previous value (TensorType)")
+    .add_argument("value", "Addend (integer scalar)")
+    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceDistChannelAtomicFetchAddType(args, kwargs);
+    });
+
+REGISTER_OP("channel.atomic_cas")
+    .set_op_category("DistOp")
+    .set_description("Async remote compare-and-swap of one aligned 32/64-bit integer word (CAS WQE; the "
+                     "PREVIOUS remote value lands in the local fetch tensor either way — success iff it "
+                     "equals expected; readable after channel.drain)")
+    .add_argument("channel", "Channel handle (opaque integer token)")
+    .add_argument("dst_ptr", "Target remote pointer from channel.remote_ptr (PtrType)")
+    .add_argument("fetch_tensor", "Local one-element GM tensor receiving the previous value (TensorType)")
+    .add_argument("expected", "Compare value (integer scalar)")
+    .add_argument("desired", "Swap value (integer scalar)")
+    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceDistChannelAtomicCasType(args, kwargs);
+    });
+
+REGISTER_OP("channel.read")
+    .set_op_category("DistOp")
+    .set_description("Async remote window -> local GM tensor read through the channel's jetty (one "
+                     "READ WQE per 256 MiB chunk; destination bound at channel creation); the fetched "
+                     "bytes are readable after channel.drain")
+    .add_argument("channel", "Channel handle (opaque integer token)")
+    .add_argument("src_ptr", "Source remote pointer from channel.remote_ptr (PtrType)")
+    .add_argument("num_bytes", "Transfer length in bytes (integer scalar)")
+    .add_argument("tensor", "Local GM destination tensor (TensorType)")
+    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceDistChannelReadType(args, kwargs);
+    });
+
+REGISTER_OP("channel.write_reduce")
+    .set_op_category("DistOp")
+    .set_description("Async engine-side element-wise reduction of a local GM tensor into the peer's "
+                     "window (one WRITE_WITH_REDUCE WQE per 256 MiB chunk; destination bound at channel "
+                     "creation; concurrent reduces to one target are hardware-serialized)")
+    .add_argument("channel", "Channel handle (opaque integer token)")
+    .add_argument("dst_ptr", "Destination remote pointer from channel.remote_ptr (PtrType)")
+    .add_argument("num_bytes", "Transfer length in bytes (integer scalar)")
+    .add_argument("tensor", "Local GM source tensor (TensorType)")
+    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceDistChannelWriteReduceType(args, kwargs);
     });
 
 } // namespace ir

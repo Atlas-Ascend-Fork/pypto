@@ -1590,7 +1590,8 @@ class ExpressionParserMixin:
         return None
 
     _CHANNEL_METHODS = frozenset(
-        {"remote_ptr", "write", "write_indexed", "write_notify", "submit", "drain", "is_exclusive"}
+        {"remote_ptr", "write", "read", "write_reduce", "atomic_fetch_add", "atomic_cas", "write_indexed",
+         "write_notify", "submit", "drain", "is_exclusive"}
     )
 
     def _route_channel_method(self, node: ast.Call):
@@ -1604,13 +1605,15 @@ class ExpressionParserMixin:
             return None
         from ..distribute import Channel
 
-        if isinstance(node.func.value, ast.Name):
-            binding = self.local_binding(node.func.value.id)
-            if binding is None:
-                return None
-            receiver = binding[1]
-        else:
-            receiver = self.parse_expression(node.func.value)
+        if not isinstance(node.func.value, ast.Name):
+            # A channel handle is always a bound variable; any other receiver shape
+            # (e.g. pl.simt.atomic_cas, unrelated to the channel op of the same name)
+            # cannot be a channel, so leave it to the regular dispatch without parsing.
+            return None
+        binding = self.local_binding(node.func.value.id)
+        if binding is None:
+            return None
+        receiver = binding[1]
         if not isinstance(receiver, Channel):
             return None
         span = self.span_tracker.get_span(node)

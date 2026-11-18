@@ -1,0 +1,6 @@
+function kernel incast( %win_0, tensor<1 x 8, bfloat16_t, tensor_view<, , ND, %dst_ptr>> %dst_0, tensor<1 x 8, bfloat16_t, tensor_view<, , ND, %src_ptr>> %src_0) outcast() #entry(false) #type(pro) {
+    int64_t %ch_0 = dist.channel(%win_0, 1, ub_addr=64);
+    ptr<bfloat16_t> %dst_rptr_0 = channel.remote_ptr(%ch_0, ptr.make_ptr(%dst_0));
+    channel.write_reduce(%ch_0, %dst_rptr_0, (((16 mul 1) mul 8) div 8), %src_0, reduce_op=8, submit=true, timeout_cycles=0, option=45);
+    return;
+}

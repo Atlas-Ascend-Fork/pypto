@@ -589,6 +589,10 @@ def write_indexed_repeat_kernel(win: pld.Window,
         me, nr = win.rank(), win.nrank()
         ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
         dst = ch.remote_ptr(wi)
+        # Barrier BEFORE the write: a rank may only start launch K's write once every
+        # host has finished launch K-1's payload check — otherwise the peer's next
+        # launch overwrites the rows this rank is still reading on the host.
+        pld.barrier(win, _WI_DRAIN_TIMEOUT)
         ch.write_indexed(dst, src, src_indices=it_src, count=_WI_ROWS)
         ch.drain(_WI_DRAIN_TIMEOUT)
         pld.barrier(win, _WI_DRAIN_TIMEOUT)
@@ -619,6 +623,8 @@ def write_indexed_one_kernel(win: pld.Window,
         me, nr = win.rank(), win.nrank()
         ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
         dst = ch.remote_ptr(wi)
+        # Same barrier-before-write contract as the repeat kernel (see above).
+        pld.barrier(win, _WI_DRAIN_TIMEOUT)
         # One indexed row per launch, so consecutive launches advance the SQ head
         # by one and the second launch reuses physical slot 1.
         ch.write_indexed(dst, src, src_indices=it_src, count=1)
@@ -653,7 +659,10 @@ def write_indexed_repeat_worker(rank, nrank):
         prev_rows = torch.arange(_WI_ROWS, dtype=torch.float32) + prev * 10 + it * 100
         exp = prev_rows.view(-1, 1).repeat(1, _WI_ELEMS).to(torch.bfloat16)[perm_a]
         payload = buf.view(torch.bfloat16).view(-1, _WI_ELEMS).cpu()
-        assert torch.equal(payload[0:_WI_ROWS], exp), f"[rank {rank}] repeat {it} gather mismatch"
+        assert torch.equal(payload[0:_WI_ROWS], exp), (
+            f"[rank {rank}] repeat {it} gather mismatch: got {payload[0, :4].tolist()}..., "
+            f"expected {exp[0, :4].tolist()}... (rank {prev}'s rows permuted by {perm_a[:4].tolist()}...)"
+        )
         assert torch.equal(out.cpu(), exp), f"[rank {rank}] repeat {it} readback mismatch"
 
     # count=1 twice: launch 0 lands in SQ slot 0, launch 1 in slot 1.
@@ -1099,6 +1108,84 @@ def test_two_regions(world_size: int = 4):
 
 
 @pl.jit(auto_mutex=True)
+def write_signal_composed_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                                 sig: pl.Tensor[[_SIG_SLOTS], pl.DT_INT64],
+                                 src: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE],
+                                 out_a: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE],
+                                 out_b: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE]):
+    """Composed signal: payload write, then a scalar write(signal, value) on the same channel.
+
+    Phase a publishes both WQEs with one doorbell (payload staged with ``submit=False``);
+    phase b publishes the payload with its own doorbell and drains it before the signal
+    write, so the release does not depend on the default FENCE bit alone. The consumer
+    loads the payload immediately after each ``wait`` — reading stale bytes here means
+    the release did not hold.
+    """
+    with pl.section_vector():
+        tile_type = pl.TileType(shape=[1, _SHIFT_N], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec)
+        tg = pl.make_tile_group(type=tile_type, addrs=_SHIFT_N * 2, mutex_ids=[0])
+        t2 = tg.current()
+        me, nr = win.rank(), win.nrank()
+        peer = (me + 1) % nr
+        prev = (me + nr - 1) % nr
+        ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
+        dst = ch.remote_ptr(ws)
+        sig_rptr = ch.remote_ptr(sig)
+        # Phase a: one doorbell for payload + signal.
+        ch.write(dst, src, submit=False)
+        ch.write(pl.addptr(sig_rptr, me), me + 1)
+        pld.wait(pl.addptr(pl.make_ptr(sig), prev), prev + 1, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
+        local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
+        pl.load(t2, local_view, [0, 0])                    # my window now holds the previous rank's data
+        pl.store(out_a, t2, [0, 0])
+        # Phase b: payload published by its own doorbell, drained before the signal write.
+        ch.write(pl.addptr(dst, _SHIFT_N * 2), src)
+        ch.drain()
+        ch.write(pl.addptr(sig_rptr, nr + me), me + 1)
+        pld.wait(pl.addptr(pl.make_ptr(sig), nr + prev), prev + 1, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
+        offset_view = pl.make_tensor(pl.addptr(pld.remote_ptr(win, ws, me), _SHIFT_N * 2), [1, _SHIFT_N],
+                                     dtype=_SHIFT_DTYPE)
+        pl.load(t2, offset_view, [0, 0])
+        pl.store(out_b, t2, [0, 0])
+        pld.barrier(win)                                   # all writes completed before any rank exits
+
+
+def write_signal_composed_worker(rank, nrank):
+    win, ws, sig, src, out_a = _shift_setup(rank, nrank, with_signal=True)
+    out_b = torch.zeros_like(out_a)
+    write_signal_composed_kernel[None, 1](win, ws, sig, src, out_a, out_b)
+    torch.npu.synchronize()
+    expected = torch.full((1, _SHIFT_N), float((rank - 1) % nrank), dtype=torch.bfloat16)
+    prev = (rank - 1) % nrank
+    assert torch.equal(out_a.cpu(), expected), (
+        f"[rank {rank}] composed signal (one doorbell) got {out_a.cpu()[0, :3].tolist()}..., "
+        f"expected rank {prev}'s data visible when the signal word arrived"
+    )
+    assert torch.equal(out_b.cpu(), expected), (
+        f"[rank {rank}] composed signal (two doorbells) got {out_b.cpu()[0, :3].tolist()}..., "
+        f"expected rank {prev}'s data visible when the signal word arrived"
+    )
+    # The producer wrote its value into its slot of my signal buffer in both phases.
+    assert sig.cpu()[prev].item() == prev + 1, (
+        f"[rank {rank}] signal slot {prev} got {sig.cpu()[prev].item()}, expected {prev + 1}"
+    )
+    assert sig.cpu()[nrank + prev].item() == prev + 1, (
+        f"[rank {rank}] signal slot {nrank + prev} got {sig.cpu()[nrank + prev].item()}, expected {prev + 1}"
+    )
+    print(f"[rank {rank}] write_signal_composed ok (signals {sig.cpu()[prev].item()}, "
+          f"{sig.cpu()[nrank + prev].item()})", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_write_signal_composed(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(write_signal_composed_worker, args=(nprocs,), nprocs=nprocs)
+
+
+@pl.jit(auto_mutex=True)
 def write_notify_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
                         sig: pl.Tensor[[_SIG_SLOTS], pl.DT_INT64],
                         src: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE],
@@ -1145,6 +1232,256 @@ def write_notify_worker(rank, nrank):
 def test_write_notify(world_size: int = 4):
     nprocs = min(world_size, torch.npu.device_count())
     torch.multiprocessing.spawn(write_notify_worker, args=(nprocs,), nprocs=nprocs)
+
+
+@pl.jit(auto_mutex=True)
+def channel_read_ring_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                             src: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE],
+                             out_a: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE],
+                             out_b: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE]):
+    """ch.read pulls the predecessor's window row into a local GM tensor.
+
+    Every rank seeds its own window through the UB_MEM view first, so the engine
+    read has known data to pull. Phase a publishes with ``submit=True``; phase b
+    stages with ``submit=False`` and publishes via :meth:`submit`. The fetched
+    bytes are engine-written, so each phase drains before the barrier.
+    """
+    with pl.section_vector():
+        tile_type = pl.TileType(shape=[1, _SHIFT_N], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec)
+        tg = pl.make_tile_group(type=tile_type, addrs=_SHIFT_N * 2, mutex_ids=[0])
+        t2 = tg.current()
+        me, nr = win.rank(), win.nrank()
+        prev = (me + nr - 1) % nr
+        pl.load(t2, src, [0, 0])
+        pl.store(pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE), t2, [0, 0])
+        pld.barrier(win)                                   # my seed row is visible to the peers' engines
+        ch = pld.channel(win, _CH_UB_ADDR, peer=prev)
+        peer_ws = ch.remote_ptr(ws)
+        ch.read(out_a, peer_ws)                            # submit=True: publish immediately
+        ch.drain()
+        ch.read(out_b, peer_ws, submit=False)              # same row, staged and published later
+        ch.submit()
+        ch.drain()
+        pld.barrier(win)                                   # all engine writes complete before any rank exits
+
+
+def channel_read_ring_worker(rank, nrank):
+    win, ws, src, out = _shift_setup(rank, nrank)
+    out_b = torch.zeros_like(out)
+    channel_read_ring_kernel[None, 1](win, ws, src, out, out_b)
+    torch.npu.synchronize()
+    prev = (rank - 1) % nrank
+    expected = torch.full((1, _SHIFT_N), float(prev), dtype=torch.bfloat16)
+    for name, got in (("submit=True", out), ("submit=False", out_b)):
+        assert torch.equal(got.cpu(), expected), (
+            f"[rank {rank}] ch.read ({name}) got {got.cpu()[0, :3].tolist()}..., "
+            f"expected rank {prev}'s seed row"
+        )
+    print(f"[rank {rank}] channel_read_ring ok (from rank {prev})", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_channel_read_ring(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(channel_read_ring_worker, args=(nprocs,), nprocs=nprocs)
+
+
+_RED_N = 64  # int32/fp32 words per rank slot (256 B, a 32-byte multiple)
+
+
+@pl.jit(auto_mutex=True)
+def write_reduce_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                        src_a: pl.Tensor[[1, _RED_N], pl.DT_INT32],
+                        src_b: pl.Tensor[[1, _RED_N], pl.DT_INT32],
+                        src_f: pl.Tensor[[1, _RED_N], pl.DT_FP32]):
+    """Engine-side reductions into the successor's per-rank slots.
+
+    Each rank owns slot ``me`` of its successor's int32 region and slot ``me`` of
+    its fp32 region. Rounds: SUM(me+1) -> MAX(me+10) -> 3 x SUM(1) on the int32
+    slot, then SUM(me+1) on the fp32 slot. Each round drains before the next so
+    the host sees exactly the accumulated sequence.
+    """
+    with pl.section_vector():
+        me, nr = win.rank(), win.nrank()
+        peer = (me + 1) % nr
+        ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
+        ws_rptr = ch.remote_ptr(ws)
+        dst32 = pl.make_ptr(pl.addptr(ws_rptr, me * _RED_N * 4), pl.DT_INT32)
+        ch.write_reduce(dst32, src_a, op=pld.ReduceOp.SUM)
+        ch.drain()
+        ch.write_reduce(dst32, src_b, op=pld.ReduceOp.MAX)
+        ch.drain()
+        for _ in pl.range(3):
+            ch.write_reduce(dst32, src_a, op=pld.ReduceOp.SUM)
+            ch.drain()
+        dstf = pl.make_ptr(pl.addptr(ws_rptr, nr * _RED_N * 4 + me * _RED_N * 4), pl.DT_FP32)
+        ch.write_reduce(dstf, src_f, op=pld.ReduceOp.SUM)
+        ch.drain()
+        pld.barrier(win)
+
+
+def write_reduce_worker(rank, nrank):
+    torch.npu.set_device(rank)
+    group = init_dist(rank, nrank)
+    win = pld.create_window(group)
+    ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
+    pld.register_memory(win, ws, "ws", _PROTOCOL)
+    win.connect()
+    src_a = torch.full((1, _RED_N), float(rank + 1), dtype=torch.int32).npu()
+    src_b = torch.full((1, _RED_N), float(rank + 10), dtype=torch.int32).npu()
+    src_f = torch.full((1, _RED_N), float(rank + 1), dtype=torch.float32).npu()
+    write_reduce_kernel[None, 1](win, ws, src_a, src_b, src_f)
+    torch.npu.synchronize()
+    prev = (rank - 1) % nrank
+    words = ws.view(torch.int32)
+    slot = words[prev * _RED_N:(prev + 1) * _RED_N]
+    # SUM(prev+1) -> MAX(prev+10) -> 3 x SUM(prev+1): the slot folds every round,
+    # so the final value is (prev+10) + 3*(prev+1) = 4*prev + 13.
+    expected_int = 4 * prev + 13
+    assert torch.all(slot == expected_int).item(), (
+        f"[rank {rank}] write_reduce int32 slot got {slot[0].item()}, expected {expected_int}"
+    )
+    floats = ws.view(torch.float32)[nrank * _RED_N + prev * _RED_N:(nrank + 1) * _RED_N + prev * _RED_N]
+    assert torch.all(floats == float(prev + 1)).item(), (
+        f"[rank {rank}] write_reduce fp32 slot got {floats[0].item()}, expected {prev + 1}"
+    )
+    # Other ranks' slots stay zero: each slot has exactly one producer.
+    other = (prev + 1) % nrank
+    stray = words[other * _RED_N:(other + 1) * _RED_N]
+    assert torch.all(stray == 0).item(), f"[rank {rank}] stray reduce into slot {other}"
+    print(f"[rank {rank}] write_reduce ok (int32 {expected_int}, fp32 {prev + 1})", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_write_reduce_sum_max_min(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(write_reduce_worker, args=(nprocs,), nprocs=nprocs)
+
+
+@pl.jit(auto_mutex=True)
+def atomic_race_kernel(win: pld.Window, tgt: pl.Tensor[[8], pl.DT_INT64],
+                       fetch: pl.Tensor[[1], pl.DT_INT64]):
+    """Three issuers race one target word; a probe CAS reveals the winner.
+
+    Ranks 1..3 open channels to peer 0, so their FAA and CAS genuinely meet on
+    rank 0's words (rank 0 rides peer 1's channel and always wins its own
+    single-racer CAS on rank 1's words). Word 1 starts at 99: exactly one racer
+    swaps its ``me + 100`` in. The trailing probe CAS succeeds only on the word
+    that still holds the racer's own value — i.e. only for the winner — and the
+    winner's probe resets the word to 0.
+    """
+    with pl.section_vector():
+        me = win.rank()
+        ch = pld.channel(win, _CH_UB_ADDR, peer=0 if me != 0 else 1)
+        rptr = ch.remote_ptr(tgt)
+        ch.atomic_fetch_add(rptr, fetch, 1)
+        ch.drain()
+        ch.atomic_cas(pl.addptr(rptr, 1), fetch, 99, me + 100)
+        ch.drain()
+        ch.atomic_cas(pl.addptr(rptr, 1), fetch, me + 100, 0)
+        ch.drain()
+        pld.barrier(win)
+
+
+def _atomic_setup(rank, nrank):
+    torch.npu.set_device(rank)
+    group = init_dist(rank, nrank)
+    win = pld.create_window(group)
+    tgt = torch.zeros(8, dtype=torch.int64, device='npu')
+    tgt[1] = 99
+    pld.register_memory(win, tgt, "tgt", _PROTOCOL)
+    win.connect()
+    return win, tgt
+
+
+def atomic_race_worker(rank, nrank):
+    win, tgt = _atomic_setup(rank, nrank)
+    fetch = torch.zeros(1, dtype=torch.int64, device='npu')
+    atomic_race_kernel[None, 1](win, tgt, fetch)
+    torch.npu.synchronize()
+    me = rank
+    # The probe CAS succeeded iff this rank won the race: fetch == our desired value.
+    probe = fetch.cpu()[0].item()
+    won = probe == me + 100
+    probe_t = torch.tensor([probe], dtype=torch.int64, device='npu')
+    gathered = [torch.zeros(1, dtype=torch.int64, device='npu') for _ in range(nrank)]
+    dist.all_gather(gathered, probe_t)
+    probes = [g.cpu()[0].item() for g in gathered]
+    if me == 0:
+        winners = [r for r in range(1, nrank) if probes[r] == r + 100]
+        assert len(winners) == 1, (
+            f"[rank {me}] atomic_cas race winners {winners} (probes {probes}) — exactly one expected"
+        )
+        assert probes[0] == 100, f"[rank {me}] rank 0 must win its CAS, probe {probes[0]}"
+    # Word 0: three adds on rank 0 (ranks 1..3), one on rank 1 (rank 0), zero elsewhere.
+    # Word 1: reset to 0 by the winner's probe on ranks 0 and 1; ranks 2..3 stay at 99.
+    expected_faa = 3 if me == 0 else (1 if me == 1 else 0)
+    assert tgt.cpu()[0].item() == expected_faa, (
+        f"[rank {me}] word 0 got {tgt.cpu()[0].item()}, expected {expected_faa}"
+    )
+    expected_word1 = 0 if me in (0, 1) else 99
+    assert tgt.cpu()[1].item() == expected_word1, (
+        f"[rank {me}] word 1 got {tgt.cpu()[1].item()}, expected {expected_word1}"
+    )
+    print(f"[rank {me}] atomic_race ok (probe {probe}, won={won})", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_atomic_add_cas_race(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(atomic_race_worker, args=(nprocs,), nprocs=nprocs)
+
+
+@pl.jit(auto_mutex=True)
+def atomic_faa_loop_kernel(win: pld.Window, tgt: pl.Tensor[[8], pl.DT_INT64],
+                           fetch: pl.Tensor[[1], pl.DT_INT64]):
+    """512 staged FAAs (+1) on the successor's word 2: pressure publish and SQ wrap."""
+    with pl.section_vector():
+        me = win.rank()
+        peer = (me + 1) % win.nrank()
+        ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
+        word2 = pl.addptr(ch.remote_ptr(tgt), 2)
+        for _ in pl.range(512):
+            ch.atomic_fetch_add(word2, fetch, 1, submit=False)
+        ch.submit()
+        ch.drain()
+        pld.barrier(win)
+
+
+def atomic_faa_loop_worker(rank, nrank):
+    win, tgt = _atomic_setup(rank, nrank)
+    fetch = torch.zeros(1, dtype=torch.int64, device='npu')
+    atomic_faa_loop_kernel[None, 1](win, tgt, fetch)
+    torch.npu.synchronize()
+    me = rank
+    # Rank r's successor is (r+1)%nr, so word 2 of rank r receives exactly one loop
+    # (from rank r-1): each rank's word 2 total is 512, and rank 0 is the sole issuer
+    # on rank 1's word 2, making its fetch sequence deterministic (0..511).
+    got = tgt.cpu()[2].item()
+    assert got == 512, f"[rank {me}] word 2 got {got}, expected 512"
+    if me == 0:
+        # Sole issuer on rank 1's word 2: the k-th FAA fetches k-1, so the last fetch is 511.
+        last = fetch.cpu()[0].item()
+        assert last == 511, f"[rank {me}] final fetch {last}, expected 511"
+    print(f"[rank {me}] atomic_faa_loop ok (word2 {got})", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_atomic_faa_loop(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(atomic_faa_loop_worker, args=(nprocs,), nprocs=nprocs)
 
 
 @pl.jit(auto_mutex=True)
@@ -1680,6 +2017,11 @@ if __name__ == '__main__':
     test_write_value()
     test_two_regions()
     test_write_notify()
+    test_write_signal_composed()
+    test_channel_read_ring()
+    test_write_reduce_sum_max_min()
+    test_atomic_add_cas_race()
+    test_atomic_faa_loop()
     test_channel_exclusive()
     test_notify_wait()
     test_all_gather_signals()

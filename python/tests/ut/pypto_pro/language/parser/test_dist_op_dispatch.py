@@ -15,7 +15,7 @@ from pathlib import Path
 import re
 
 from pypto_pro import ir
-from pypto_pro._errors import InvalidArgument, InvalidOperation, InvalidType, InvalidVal
+from pypto_pro._errors import InvalidArgument, InvalidOperation, InvalidShape, InvalidType, InvalidVal
 import pypto_pro.language as pl
 import pypto_pro.language.distribute as pld
 import pytest
@@ -52,6 +52,25 @@ def test_protocol_enum_members():
     assert {m.name for m in pld.Protocol} == {"UB_MEM", "URMA"}
     assert issubclass(pld.Protocol, enum.IntFlag)
     assert int(pld.Protocol.UB_MEM | pld.Protocol.URMA) == 3
+
+
+# =============================================================================
+# UrmaOption — the WQE control flag set (mirrors hcomm WqeEntry)
+# =============================================================================
+
+
+def test_urma_option_enum_members():
+    assert issubclass(pld.UrmaOption, enum.IntFlag)
+    assert set(pld.UrmaOption.__members__) == {
+        "ODR_NONE", "ODR_RELAX", "ODR_STRONG", "ODR_IN_ORDER_COMPLETION", "FENCE", "CQE", "DEFAULT",
+    }
+    assert int(pld.UrmaOption.ODR_NONE) == 0
+    assert int(pld.UrmaOption.ODR_RELAX) == 1 << 0
+    assert int(pld.UrmaOption.ODR_STRONG) == 1 << 1
+    assert int(pld.UrmaOption.ODR_IN_ORDER_COMPLETION) == 1 << 2
+    assert int(pld.UrmaOption.FENCE) == 1 << 3
+    assert int(pld.UrmaOption.CQE) == 1 << 5
+    assert int(pld.UrmaOption.DEFAULT) == 0x2D
 
 
 # =============================================================================
@@ -311,6 +330,181 @@ def test_dist_channel_write_value():
             ch.write(rptr, 7)
     _assert_ir(kernel, "test_dist_channel_write_value")
 
+def test_dist_channel_read():
+    """An engine read takes a local GM destination and a remote source pointer."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            src_rptr = ch.remote_ptr(src)
+            ch.read(dst, src_rptr, submit=False, timeout=101)
+    _assert_ir(kernel, "test_dist_channel_read")
+
+def test_channel_read_requires_a_tensor_destination():
+    """The fetched bytes land in a local GM tensor, not in another remote pointer."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            dst_rptr = ch.remote_ptr(dst)
+            src_rptr = ch.remote_ptr(src)
+            ch.read(dst_rptr, src_rptr)
+
+    with pytest.raises(InvalidType) as caught:
+        _parse(kernel)
+    assert "must be a kernel GM tensor" in str(caught.value)
+
+def test_channel_read_rejects_strided_destination():
+    """The engine writes num_bytes contiguously, so a strided view must not be accepted."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 16], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            src_rptr = ch.remote_ptr(src)
+            view = pl.make_tensor(dst, [1, 8], [16, 1])
+            ch.read(view, src_rptr)
+
+    with pytest.raises(InvalidShape) as caught:
+        _parse(kernel)
+    assert "ch.read destination must be dense row-major" in str(caught.value)
+
+def test_channel_write_rejects_strided_source():
+    """The engine reads num_bytes contiguously, so a strided view must not be accepted."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 16], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            view = pl.make_tensor(src, [1, 8], [16, 1])
+            ch.write(ch.remote_ptr(dst), view)
+
+    with pytest.raises(InvalidShape) as caught:
+        _parse(kernel)
+    assert "ch.write source must be dense row-major" in str(caught.value)
+
+def test_dist_channel_write_reduce():
+    """Engine reduction carries the wire reduce_op from a supported source dtype."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_BF16],
+               src: pl.Tensor[[1, 8], pl.DT_BF16]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            dst_rptr = ch.remote_ptr(dst)
+            ch.write_reduce(dst_rptr, src, op=pld.ReduceOp.MAX)
+    _assert_ir(kernel, "test_dist_channel_write_reduce")
+
+def test_channel_write_reduce_rejects_unsupported_dtype():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT64],
+               src: pl.Tensor[[1, 8], pl.DT_INT64]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            dst_rptr = ch.remote_ptr(dst)
+            ch.write_reduce(dst_rptr, src, op=pld.ReduceOp.SUM)
+
+    with pytest.raises(InvalidType) as caught:
+        _parse(kernel)
+    assert "does not support dtype" in str(caught.value)
+
+def test_channel_write_reduce_requires_op():
+    """The reduction mode is explicit: a lossy MAX/MIN is never a silent default."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            dst_rptr = ch.remote_ptr(dst)
+            ch.write_reduce(dst_rptr, src)
+
+    with pytest.raises(InvalidArgument) as caught:
+        _parse(kernel)
+    assert "requires op=pld.ReduceOp.SUM/MAX/MIN" in str(caught.value)
+
+def test_channel_write_reduce_rejects_bad_op():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            dst_rptr = ch.remote_ptr(dst)
+            ch.write_reduce(dst_rptr, src, op=1)
+
+    with pytest.raises(InvalidVal) as caught:
+        _parse(kernel)
+    assert "pld.ReduceOp member" in str(caught.value)
+
+def test_dist_channel_atomic_fetch_add():
+    """Fetch-and-add takes the previous remote value into a local one-element tensor."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT64],
+               fetch: pl.Tensor[[1], pl.DT_INT64]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            dst_rptr = ch.remote_ptr(dst)
+            ch.atomic_fetch_add(dst_rptr, fetch, 5, submit=False, timeout=101)
+    _assert_ir(kernel, "test_dist_channel_atomic_fetch_add")
+
+def test_dist_channel_atomic_cas():
+    """Compare-and-swap carries expected and desired with the fetch destination."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT64],
+               fetch: pl.Tensor[[1], pl.DT_INT64]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            dst_rptr = ch.remote_ptr(dst)
+            ch.atomic_cas(dst_rptr, fetch, 3, 4)
+    _assert_ir(kernel, "test_dist_channel_atomic_cas")
+
+def test_channel_atomic_rejects_a_float_pointer():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_FP32],
+               fetch: pl.Tensor[[1], pl.DT_FP32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            dst_rptr = ch.remote_ptr(dst)
+            ch.atomic_fetch_add(dst_rptr, fetch, 1)
+
+    with pytest.raises(InvalidType) as caught:
+        _parse(kernel)
+    assert "32/64-bit integer word" in str(caught.value)
+
+def test_channel_atomic_fetch_dtype_must_match():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT64],
+               fetch: pl.Tensor[[1], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            dst_rptr = ch.remote_ptr(dst)
+            ch.atomic_fetch_add(dst_rptr, fetch, 1)
+
+    with pytest.raises(InvalidType) as caught:
+        _parse(kernel)
+    assert "fetch tensor dtype must match" in str(caught.value)
+
+def test_channel_atomic_fetch_must_be_single_element():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT64],
+               fetch: pl.Tensor[[2], pl.DT_INT64]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            dst_rptr = ch.remote_ptr(dst)
+            ch.atomic_fetch_add(dst_rptr, fetch, 1)
+
+    with pytest.raises(InvalidVal) as caught:
+        _parse(kernel)
+    assert "exactly one" in str(caught.value)
+
 def test_channel_transfers_reject_per_call_peer():
     """The channel binds its destination at creation; transfers take no peer argument."""
 
@@ -412,6 +606,73 @@ def test_channel_buffer_alignment_is_checked():
     with pytest.raises(InvalidVal) as caught:
         _parse(kernel)
     assert "64-byte aligned" in str(caught.value)
+
+
+def test_dist_channel_urma_option():
+    """A per-call WQE option rides the write op as a compile-time flag byte."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, src: pl.Tensor[[8, 16], pl.DT_BF16], dst: pl.Tensor[[8, 16], pl.DT_BF16],
+               sig: pl.Tensor[[16], pl.DT_INT64]):
+        with pl.section_vector():
+            ch = pld.channel(win, 0x2000, peer=1)
+            ch.write(ch.remote_ptr(dst), src, option=pld.UrmaOption.CQE)
+            ch.write_notify(ch.remote_ptr(dst), src, ch.remote_ptr(sig), 1, option=pld.UrmaOption.CQE)
+    _assert_ir(kernel, "test_dist_channel_urma_option")
+
+
+def test_channel_option_requires_cqe():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, src: pl.Tensor[[8, 16], pl.DT_BF16], dst: pl.Tensor[[8, 16], pl.DT_BF16]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            ch.write(ch.remote_ptr(dst), src, option=pld.UrmaOption.ODR_STRONG)
+
+    with pytest.raises(InvalidVal) as caught:
+        _parse(kernel)
+    assert "CQE" in str(caught.value)
+
+
+def test_channel_option_rejects_conflicting_order_bits():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, src: pl.Tensor[[8, 16], pl.DT_BF16], dst: pl.Tensor[[8, 16], pl.DT_BF16]):
+        with pl.section_vector():
+            # 0x2F = DEFAULT | ODR_STRONG: both execution-order bits set.
+            ch = pld.channel(win, 64, peer=1)
+            ch.write(ch.remote_ptr(dst), src, option=0x2F)
+
+    with pytest.raises(InvalidVal) as caught:
+        _parse(kernel)
+    assert "ODR_RELAX" in str(caught.value)
+
+
+def test_channel_option_rejects_unsupported_bits():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, src: pl.Tensor[[8, 16], pl.DT_BF16], dst: pl.Tensor[[8, 16], pl.DT_BF16]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            ch.write(ch.remote_ptr(dst), src, option=0x10)
+
+    with pytest.raises(InvalidVal) as caught:
+        _parse(kernel)
+    assert "unsupported WQE flag bits" in str(caught.value)
+
+
+def test_write_indexed_rejects_option():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, src: pl.Tensor[[8, 16], pl.DT_BF16], dst: pl.Tensor[[8, 16], pl.DT_BF16],
+               idx: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            it = pl.make_tile(
+                pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec), addr=0x1000)
+            pl.load(it, idx, [0, 0])
+            ch = pld.channel(win, 0x2000, peer=1)
+            ch.write_indexed(ch.remote_ptr(dst), src, src_indices=it, count=8,
+                             option=pld.UrmaOption.CQE)
+
+    with pytest.raises(InvalidArgument) as caught:
+        _parse(kernel)
+    assert "option" in str(caught.value)
 
 def test_channel_remote_ptr_needs_one_operand():
     @pl.jit(arch="3510", auto_mutex=False)

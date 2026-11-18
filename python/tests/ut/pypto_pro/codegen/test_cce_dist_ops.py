@@ -16,13 +16,8 @@ Remote transfers now spell ``pl.load``/``pl.store`` over a ``pl.make_tensor`` vi
 ``ch.remote_ptr``. These tests pin the generated device calls.
 """
 
-import os
-from pathlib import Path
-
 import pypto_pro.language as pl
 import pypto_pro.language.distribute as pld
-
-_GOLDEN_DIR = Path(__file__).parent / "test_cce_dist_ops_src"
 
 
 def _compile_to_cce(kernel, arch: str = "3510") -> str:
@@ -31,22 +26,6 @@ def _compile_to_cce(kernel, arch: str = "3510") -> str:
 
     cube, vector = _parse_and_codegen_targets(kernel.to_kernel_def(), normalize_arch(arch), "")
     return _add_kernel_header(_assemble_cv_source(cube, vector)).content
-
-
-def _source_golden(kernel, golden_name: str) -> str:
-    """Whole generated CCE source, compared against the .pypto golden.
-
-    Set PYPTO_RENDER_IR=1 to (re)generate the golden files.
-    """
-    source = _compile_to_cce(kernel)
-    golden_path = _GOLDEN_DIR / f"{golden_name}.pypto"
-    if os.environ.get("PYPTO_RENDER_IR"):
-        golden_path.parent.mkdir(parents=True, exist_ok=True)
-        golden_path.write_text(source.rstrip("\n") + "\n", encoding="utf-8")
-        return source
-    golden = golden_path.read_text(encoding="utf-8")
-    assert source.rstrip("\n") == golden.rstrip("\n")
-    return source
 
 
 @pl.jit(arch="3510", auto_mutex=False)
@@ -59,6 +38,7 @@ def _dist_pointer_codegen_kernel(
     idx: pl.Tensor[[1, 8], pl.DT_INT32],
     out: pl.Tensor[[8, 16], pl.DT_BF16],
     out2: pl.Tensor[[1], pl.DT_INT64],
+    out2f: pl.Tensor[[1, 8], pl.DT_FP32],
 ):
     with pl.section_vector():
         me = win.rank()
@@ -92,45 +72,17 @@ def _dist_pointer_codegen_kernel(
         ch.write(pl.make_ptr(pl.addptr(wptr, 64), pl.DT_INT64), 7)
         ch.write_notify(wptr, src, pl.addptr(sig_rptr, me), me + 1)
         ch.write_indexed(pl.addptr(wptr, 128), src, src_indices=it, count=8)
+        ch.read(out, pl.addptr(wptr, 512))
+        ch.write_reduce(pl.make_ptr(pl.addptr(wptr, 768), pl.DT_FP32), out2f, op=pld.ReduceOp.SUM)
+        ch.atomic_fetch_add(pl.make_ptr(pl.addptr(wptr, 1024), pl.DT_INT64), out2, 1)
+        ch.atomic_cas(pl.make_ptr(pl.addptr(wptr, 1032), pl.DT_INT64), out2, 0, 1)
         ch.drain()
+        ch2 = pld.channel(win, 0x3000, peer=peer)
+        ch2.write(pl.addptr(ch2.remote_ptr(ws), 256), src, option=pld.UrmaOption.CQE)
+        ch2.drain()
         pld.barrier(win)
         pl.store(out, t, [0, 0])
 
 
-def test_generated_source_matches_golden():
-    _source_golden(_dist_pointer_codegen_kernel, "dist_pointer_codegen")
-
-
-def test_ub_remote_pointer_lowers_to_remote_ptr():
-    cpp = _compile_to_cce(_dist_pointer_codegen_kernel)
-    assert "pypto::dist::RemotePtr(" in cpp
-    assert "pto::GlobalTensor" in cpp
-
-
-def test_channel_address_lowers_to_remote_ptr():
-    cpp = _compile_to_cce(_dist_pointer_codegen_kernel)
-    assert ".RemoteAddr<uint8_t>(" in cpp
-
-
-def test_channel_write_forms_take_pointer_destinations():
-    cpp = _compile_to_cce(_dist_pointer_codegen_kernel)
-    assert ".Write<" in cpp and "reinterpret_cast<GM_ADDR>(wptr_0)" in cpp
-    assert ".WriteValue<" in cpp
-    assert ".WriteNotify<" in cpp
-    assert ".WriteIndexed<" in cpp
-
-
-def test_signal_words_lower_to_pointer_addresses():
-    cpp = _compile_to_cce(_dist_pointer_codegen_kernel)
-    # notify: SET and ATOMIC_ADD modes; wait: Cmp.GE == 5.
-    assert "pypto::dist::Notify<int64_t, 0, true>(" in cpp
-    assert "pypto::dist::Notify<int64_t, 1, true>(" in cpp
-    assert "pypto::dist::Wait<int64_t, 5>(" in cpp
-    # A 32-bit signal tensor lowers to the 32-bit device helpers.
-    assert "pypto::dist::Notify<int32_t, 0, true>(" in cpp
-    assert "pypto::dist::Wait<int32_t, 0>(" in cpp
-
-
-def test_pointer_atomic_lowers_to_typed_gm_intrinsic():
-    cpp = _compile_to_cce(_dist_pointer_codegen_kernel)
-    assert "atomicAdd((__gm__ int64_t*)" in cpp
+def test_generated_source_matches_golden(assert_golden):
+    assert_golden(_compile_to_cce(_dist_pointer_codegen_kernel), "cce")

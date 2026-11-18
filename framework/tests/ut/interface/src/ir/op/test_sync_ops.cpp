@@ -142,6 +142,29 @@ TEST(SyncOpsNopTest, NopAcceptsConstantCount)
     EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
 }
 
+TEST(SyncOpsNopTest, NopRejectsInvalidArgumentCount)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto count = std::make_shared<ConstInt>(4, DataType::INT64, Sp());
+    EXPECT_THROW((void)reg.Create("system.nop", {}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)reg.Create("system.nop", {count, count}, Sp()), npu::tile_fwk::Error);
+}
+
+TEST(SyncOpsNopTest, NopRejectsKeywordArguments)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto count = std::make_shared<ConstInt>(4, DataType::INT64, Sp());
+    std::vector<std::pair<std::string, std::any>> kwargs = {{"n", static_cast<int64_t>(4)}};
+    EXPECT_THROW((void)reg.Create("system.nop", {count}, kwargs, Sp()), npu::tile_fwk::Error);
+}
+
+TEST(SyncOpsNopTest, NopRejectsFloatingPointScalar)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto count = MakeScalarVar("n", DataType::FP32);
+    EXPECT_THROW((void)reg.Create("system.nop", {count}, Sp()), npu::tile_fwk::Error);
+}
+
 TEST_F(SyncOpsDcciTest, Dcci_TensorTarget_TupleOffset_ReturnsUnknown)
 {
     auto& reg = OpRegistry::GetInstance();

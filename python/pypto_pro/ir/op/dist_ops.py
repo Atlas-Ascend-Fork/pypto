@@ -151,9 +151,15 @@ def _parse_int_operand(parser, node, api, arg_name):
 
 
 def _enum_kwarg_to_int(value, api, arg_name):
-    """Enum member (``pld.NotifyOp.SET``, ``pld.Cmp.GE``) or an int literal -> int."""
+    """Enum member (``pld.NotifyOp.SET``, ``pld.Cmp.GE``) or an int literal -> int.
+
+    ``ch.*`` keyword values arrive as parse-time-constant Python values (see
+    ``_parse_op_kwargs``), so plain ints are accepted alongside IR ``ConstInt``.
+    """
     if isinstance(value, _ir_core.ConstInt):
         return int(value.value)
+    if _is_int(value):
+        return int(value)
     enum_value = getattr(value, "value", None)
     if enum_value is not None and _is_int(enum_value):
         return enum_value
@@ -325,6 +331,40 @@ def _require_const_int(parser, node, api, arg_name):
     return constant
 
 
+# WQE flag byte layout shared with hcomm's WqeEntry: odr[2:0], fence[3], cqe[5].
+_URMA_OPTION_MASK = 0x2F
+_URMA_OPTION_DEFAULT = 0x2D
+_URMA_OPTION_CQE = 0x20
+_URMA_OPTION_ODR_CONFLICT = 0x03
+
+
+def _urma_option(value, api):
+    """Compile-time ``pld.UrmaOption`` (IntFlag or int) -> validated WQE flag byte."""
+    if isinstance(value, _ir_core.ConstInt):
+        option = int(value.value)
+    elif _is_int(value):
+        option = int(value)
+    else:
+        raise InvalidType(
+            f"{api} option must be a compile-time pld.UrmaOption, got {value!r}",
+            hint="pass a pld.UrmaOption member (or an int literal), not a runtime value",
+        )
+    if option < 0 or option & ~_URMA_OPTION_MASK:
+        raise InvalidVal(
+            f"{api} option sets unsupported WQE flag bits, got {option:#x}"
+        )
+    if not option & _URMA_OPTION_CQE:
+        raise InvalidVal(
+            f"{api} option must include pld.UrmaOption.CQE (drain waits for one "
+            f"completion per batch), got {option:#x}"
+        )
+    if option & _URMA_OPTION_ODR_CONFLICT == _URMA_OPTION_ODR_CONFLICT:
+        raise InvalidVal(
+            f"{api} option cannot set ODR_RELAX and ODR_STRONG together"
+        )
+    return option
+
+
 @op_impl_ast("dist.channel")
 def _parse_channel(parser, call):
     """``ch = pld.channel(win, buffer[, peer])`` -> assignment-time handle.
@@ -376,22 +416,22 @@ def _ptr_dtype(ptr, api):
 
 
 def _build_channel_remote_ptr(parser, call, channel):
-    """``ch.remote_ptr(tensor_or_ptr)`` -> dist.channel_remote_ptr."""
+    """``ch.remote_ptr(tensor_or_ptr)`` -> channel.remote_ptr."""
     span = parser.span_tracker.get_span(call)
     if len(call.args) != 1 or call.keywords:
         raise InvalidArgument("ch.remote_ptr requires exactly one tensor or pointer argument")
     if isinstance(call.args[0], ast.Starred):
         raise InvalidArgument("ch.remote_ptr does not accept star-args")
     dst = _channel_dst_ptr(parser, "ch.remote_ptr", call.args[0], span)
-    return _ir_core.create_op_call("dist.channel_remote_ptr", [channel.token, dst], {}, span)
+    return _ir_core.create_op_call("channel.remote_ptr", [channel.token, dst], {}, span)
 
 
 def _build_channel_write(parser, call, channel):
-    """``ch.write(dst_ptr, tensor|scalar, submit=, timeout=)`` -> channel_write[_value]."""
+    """``ch.write(dst_ptr, tensor|scalar, submit=, timeout=)`` -> channel.write[_value]."""
     span = parser.span_tracker.get_span(call)
     kwargs_parsed = _parse_op_kwargs(parser, call)
     for name in kwargs_parsed:
-        if name not in ("submit", "timeout"):
+        if name not in ("submit", "timeout", "option"):
             raise InvalidArgument(f"ch.write does not accept keyword argument '{name}'")
     if any(isinstance(a, ast.Starred) for a in call.args):
         raise InvalidArgument("ch.write does not accept star-args")
@@ -407,25 +447,27 @@ def _build_channel_write(parser, call, channel):
     if not isinstance(submit, bool):
         raise InvalidType(f"ch.write submit must be a compile-time bool, got {submit!r}")
     timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write", minimum=1)
+    option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.write")
 
     source = parser.parse_expression(call.args[1])
     if isinstance(source, _ir_core.Var) and isinstance(source.type, _ir_core.TensorType):
         # The destination pointer is a byte address; the payload dtype and length come
         # from the source tensor.
+        _check_tensor_source_layout(source, "ch.write", span)
         num_bytes_arg = _shape_byte_count(source.type.shape, source.type.dtype, span)
         return _ir_core.create_op_call(
-            "dist.channel_write",
+            "channel.write",
             [channel.token, dst, num_bytes_arg, source],
-            {"submit": submit, "timeout_cycles": timeout},
+            {"submit": submit, "timeout_cycles": timeout, "option": option},
             span,
         )
 
     value = _parse_write_scalar(source, call.args[1], _ptr_dtype(dst, "ch.write"), api="ch.write")
     # The scalar rides inline in the WQE; no MTE3 flush is needed.
     return _ir_core.create_op_call(
-        "dist.channel_write_value",
+        "channel.write_value",
         [channel.token, dst, value],
-        {"submit": submit, "timeout_cycles": timeout},
+        {"submit": submit, "timeout_cycles": timeout, "option": option},
         span,
     )
 
@@ -461,18 +503,18 @@ def _check_dense_stride(type_, stride, api, name, span):
         expected *= dim
 
 
-def _check_tensor_source_layout(source, api, span):
-    """v1 payload reads assume a contiguous ND source tensor."""
+def _check_tensor_source_layout(source, api, span, name="source"):
+    """v1 payload transfers assume a contiguous ND tensor."""
     tensor_view = getattr(source.type, "tensor_view", None)
     if tensor_view is None:
         return
     layout = getattr(tensor_view, "layout", None)
     if layout is not None and layout != _ir_core.Layout.ND:
         raise InvalidType(
-            f"{api} v1 supports contiguous row-major (ND) sources only, got layout {layout}",
+            f"{api} v1 supports contiguous row-major (ND) {name}s only, got layout {layout}",
             span=span,
         )
-    _check_dense_stride(source.type, getattr(tensor_view, "stride", None), api, "source", span)
+    _check_dense_stride(source.type, getattr(tensor_view, "stride", None), api, name, span)
 
 
 def _check_index_tile_layout(tile_type, api, arg_name, span):
@@ -549,6 +591,111 @@ def _check_index_capacity(api, span, count, capacity, subject):
         raise InvalidVal(
             f"{api} count {count} exceeds the {subject} capacity {capacity}", span=span
         )
+
+
+def _build_channel_read(parser, call, channel):
+    """``ch.read(dst_tensor, src_ptr, submit=, timeout=)`` -> channel.read."""
+    span = parser.span_tracker.get_span(call)
+    kwargs_parsed = _parse_op_kwargs(parser, call)
+    for name in kwargs_parsed:
+        if name not in ("submit", "timeout", "option"):
+            raise InvalidArgument(f"ch.read does not accept keyword argument '{name}'")
+    if any(isinstance(a, ast.Starred) for a in call.args):
+        raise InvalidArgument("ch.read does not accept star-args")
+    if len(call.args) != 2:
+        raise InvalidArgument(
+            f"ch.read requires (dst_tensor, src_ptr), got {len(call.args)} arguments after the channel",
+            hint="Resolve the remote source with rptr = ch.remote_ptr(tensor) first; the peer is bound "
+                 "when the channel is opened",
+        )
+
+    source = parser.parse_expression(call.args[1])
+    if not isinstance(source, _ir_core.Expr) or not isinstance(source.type, _ir_core.PtrType):
+        raise InvalidType(
+            "ch.read source must be a remote pointer resolved by ch.remote_ptr(...) "
+            f"(the engine pulls from the peer's region), got {ast.unparse(call.args[1])}")
+    dst = parser.parse_expression(call.args[0])
+    if not isinstance(dst, _ir_core.Var) or not isinstance(dst.type, _ir_core.TensorType):
+        raise InvalidType(
+            "ch.read destination must be a kernel GM tensor (the engine writes the fetched bytes "
+            f"into it; use ch.write for the scalar-word form), got {ast.unparse(call.args[0])}")
+    _check_tensor_source_layout(dst, "ch.read", span, name="destination")
+    submit = kwargs_parsed.get("submit", True)
+    if not isinstance(submit, bool):
+        raise InvalidType(f"ch.read submit must be a compile-time bool, got {submit!r}")
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.read", minimum=1)
+    option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.read")
+
+    num_bytes_arg = _shape_byte_count(dst.type.shape, dst.type.dtype, span)
+    return _ir_core.create_op_call(
+        "channel.read",
+        [channel.token, source, num_bytes_arg, dst],
+        {"submit": submit, "timeout_cycles": timeout, "option": option},
+        span,
+    )
+
+
+_REDUCE_DTYPES = (
+    _ir_core.DataType.INT8,
+    _ir_core.DataType.INT16,
+    _ir_core.DataType.INT32,
+    _ir_core.DataType.UINT32,
+    _ir_core.DataType.FP16,
+    _ir_core.DataType.FP32,
+    _ir_core.DataType.BF16,
+)
+
+_REDUCE_OPS = (0x8, 0x9, 0xA)  # ReduceOp.MAX / MIN / SUM wire codes
+
+
+def _build_channel_write_reduce(parser, call, channel):
+    """``ch.write_reduce(dst_ptr, tensor, op=, submit=, timeout=)`` -> channel.write_reduce."""
+    span = parser.span_tracker.get_span(call)
+    kwargs_parsed = _parse_op_kwargs(parser, call)
+    for name in kwargs_parsed:
+        if name not in ("op", "submit", "timeout", "option"):
+            raise InvalidArgument(f"ch.write_reduce does not accept keyword argument '{name}'")
+    if any(isinstance(a, ast.Starred) for a in call.args):
+        raise InvalidArgument("ch.write_reduce does not accept star-args")
+    if len(call.args) != 2:
+        raise InvalidArgument(
+            f"ch.write_reduce requires (dst_ptr, tensor), got {len(call.args)} arguments after the channel",
+            hint="Resolve the destination with rptr = ch.remote_ptr(tensor) first",
+        )
+    if "op" not in kwargs_parsed:
+        raise InvalidArgument(
+            "ch.write_reduce requires op=pld.ReduceOp.SUM/MAX/MIN",
+            hint="The reduction mode is explicit so a lossy MAX/MIN is never spelled as a silent default",
+        )
+    reduce_op = _enum_kwarg_to_int(kwargs_parsed["op"], "ch.write_reduce", "op")
+    if reduce_op not in _REDUCE_OPS:
+        raise InvalidVal(
+            f"ch.write_reduce op must be a pld.ReduceOp member (SUM/MAX/MIN), got {reduce_op}")
+
+    dst = _channel_dst_ptr(parser, "ch.write_reduce", call.args[0], span)
+    source = parser.parse_expression(call.args[1])
+    if not isinstance(source, _ir_core.Var) or not isinstance(source.type, _ir_core.TensorType):
+        raise InvalidType(
+            "ch.write_reduce source must be a kernel GM tensor (the engine reads the reduction "
+            f"operands from GM), got {ast.unparse(call.args[1])}")
+    if source.type.dtype not in _REDUCE_DTYPES:
+        raise InvalidType(
+            "ch.write_reduce does not support dtype "
+            f"{source.type.dtype}; supported: int8/int16/int32/uint32/float16/float32/bfloat16")
+    _check_tensor_source_layout(source, "ch.write_reduce", span)
+    submit = kwargs_parsed.get("submit", True)
+    if not isinstance(submit, bool):
+        raise InvalidType(f"ch.write_reduce submit must be a compile-time bool, got {submit!r}")
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_reduce", minimum=1)
+    option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.write_reduce")
+
+    num_bytes_arg = _shape_byte_count(source.type.shape, source.type.dtype, span)
+    return _ir_core.create_op_call(
+        "channel.write_reduce",
+        [channel.token, dst, num_bytes_arg, source],
+        {"reduce_op": reduce_op, "submit": submit, "timeout_cycles": timeout, "option": option},
+        span,
+    )
 
 
 def _build_channel_write_indexed(parser, call, channel):
@@ -671,7 +818,7 @@ def _build_channel_write_indexed(parser, call, channel):
     # sized for the channel scratch.
     parser.requires_simt = True
     return _ir_core.create_op_call(
-        "dist.channel_write_indexed",
+        "channel.write_indexed",
         [
             channel.token,
             dst,
@@ -686,12 +833,123 @@ def _build_channel_write_indexed(parser, call, channel):
     )
 
 
-def _build_channel_write_notify(parser, call, channel):
-    """``ch.write_notify(dst_ptr, tensor, signal_ptr, val, timeout=)`` -> channel_write_notify."""
+_ATOMIC_DTYPES = (
+    _ir_core.DataType.INT32,
+    _ir_core.DataType.UINT32,
+    _ir_core.DataType.INT64,
+    _ir_core.DataType.UINT64,
+)
+
+
+def _atomic_fetch_operand(source, api):
+    """Local GM tensor receiving the engine's fetch result: same dtype as the
+    target pointer, exactly one element when the shape is static."""
+    if not isinstance(source, _ir_core.Var) or not isinstance(source.type, _ir_core.TensorType):
+        raise InvalidType(
+            f"{api} fetch must be a kernel GM tensor (the engine writes the previous value there), "
+            f"got {ast.unparse(source)}")
+    return source
+
+
+def _build_channel_atomic_fetch_add(parser, call, channel):
+    """``ch.atomic_fetch_add(dst_ptr, fetch_tensor, val, submit=, timeout=)`` -> channel_atomic_add."""
     span = parser.span_tracker.get_span(call)
     kwargs_parsed = _parse_op_kwargs(parser, call)
     for name in kwargs_parsed:
-        if name != "timeout":
+        if name not in ("submit", "timeout", "option"):
+            raise InvalidArgument(f"ch.atomic_fetch_add does not accept keyword argument '{name}'")
+    if any(isinstance(a, ast.Starred) for a in call.args):
+        raise InvalidArgument("ch.atomic_fetch_add does not accept star-args")
+    if len(call.args) != 3:
+        raise InvalidArgument(
+            f"ch.atomic_fetch_add requires (dst_ptr, fetch_tensor, val), got {len(call.args)} arguments "
+            "after the channel",
+            hint="Resolve the target with rptr = ch.remote_ptr(tensor) first",
+        )
+
+    dst = _channel_dst_ptr(parser, "ch.atomic_fetch_add", call.args[0], span)
+    dtype = _ptr_dtype(dst, "ch.atomic_fetch_add")
+    if dtype not in _ATOMIC_DTYPES:
+        raise InvalidType(
+            f"ch.atomic_fetch_add destination must point at a 32/64-bit integer word, got {dtype}")
+    fetch = _atomic_fetch_operand(parser.parse_expression(call.args[1]), "ch.atomic_fetch_add")
+    if fetch.type.dtype != dtype:
+        raise InvalidType(
+            f"ch.atomic_fetch_add fetch tensor dtype must match the destination pointer "
+            f"({dtype}), got {fetch.type.dtype}")
+    fetch_bytes = _static_shape_byte_count(fetch.type.shape, fetch.type.dtype)
+    if fetch_bytes is not None and fetch_bytes != dtype.get_bit() // 8:
+        raise InvalidVal(
+            f"ch.atomic_fetch_add fetch tensor must hold exactly one {dtype} element, got shape "
+            f"{fetch.type.shape}")
+    val = _parse_int_operand(parser, call.args[2], "ch.atomic_fetch_add", "val")
+    submit = kwargs_parsed.get("submit", True)
+    if not isinstance(submit, bool):
+        raise InvalidType(f"ch.atomic_fetch_add submit must be a compile-time bool, got {submit!r}")
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.atomic_fetch_add", minimum=1)
+    option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.atomic_fetch_add")
+
+    return _ir_core.create_op_call(
+        "channel.atomic_fetch_add",
+        [channel.token, dst, fetch, val],
+        {"submit": submit, "timeout_cycles": timeout, "option": option},
+        span,
+    )
+
+
+def _build_channel_atomic_cas(parser, call, channel):
+    """``ch.atomic_cas(dst_ptr, fetch_tensor, expected, desired, submit=, timeout=)``."""
+    span = parser.span_tracker.get_span(call)
+    kwargs_parsed = _parse_op_kwargs(parser, call)
+    for name in kwargs_parsed:
+        if name not in ("submit", "timeout", "option"):
+            raise InvalidArgument(f"ch.atomic_cas does not accept keyword argument '{name}'")
+    if any(isinstance(a, ast.Starred) for a in call.args):
+        raise InvalidArgument("ch.atomic_cas does not accept star-args")
+    if len(call.args) != 4:
+        raise InvalidArgument(
+            f"ch.atomic_cas requires (dst_ptr, fetch_tensor, expected, desired), got {len(call.args)} "
+            "arguments after the channel",
+            hint="Resolve the target with rptr = ch.remote_ptr(tensor) first",
+        )
+
+    dst = _channel_dst_ptr(parser, "ch.atomic_cas", call.args[0], span)
+    dtype = _ptr_dtype(dst, "ch.atomic_cas")
+    if dtype not in _ATOMIC_DTYPES:
+        raise InvalidType(
+            f"ch.atomic_cas destination must point at a 32/64-bit integer word, got {dtype}")
+    fetch = _atomic_fetch_operand(parser.parse_expression(call.args[1]), "ch.atomic_cas")
+    if fetch.type.dtype != dtype:
+        raise InvalidType(
+            f"ch.atomic_cas fetch tensor dtype must match the destination pointer "
+            f"({dtype}), got {fetch.type.dtype}")
+    fetch_bytes = _static_shape_byte_count(fetch.type.shape, fetch.type.dtype)
+    if fetch_bytes is not None and fetch_bytes != dtype.get_bit() // 8:
+        raise InvalidVal(
+            f"ch.atomic_cas fetch tensor must hold exactly one {dtype} element, got shape "
+            f"{fetch.type.shape}")
+    expected = _parse_int_operand(parser, call.args[2], "ch.atomic_cas", "expected")
+    desired = _parse_int_operand(parser, call.args[3], "ch.atomic_cas", "desired")
+    submit = kwargs_parsed.get("submit", True)
+    if not isinstance(submit, bool):
+        raise InvalidType(f"ch.atomic_cas submit must be a compile-time bool, got {submit!r}")
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.atomic_cas", minimum=1)
+    option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.atomic_cas")
+
+    return _ir_core.create_op_call(
+        "channel.atomic_cas",
+        [channel.token, dst, fetch, expected, desired],
+        {"submit": submit, "timeout_cycles": timeout, "option": option},
+        span,
+    )
+
+
+def _build_channel_write_notify(parser, call, channel):
+    """``ch.write_notify(dst_ptr, tensor, signal_ptr, val, timeout=)`` -> channel.write_notify."""
+    span = parser.span_tracker.get_span(call)
+    kwargs_parsed = _parse_op_kwargs(parser, call)
+    for name in kwargs_parsed:
+        if name not in ("timeout", "option"):
             raise InvalidArgument(f"ch.write_notify does not accept keyword argument '{name}'")
     if any(isinstance(a, ast.Starred) for a in call.args):
         raise InvalidArgument("ch.write_notify does not accept star-args")
@@ -714,10 +972,11 @@ def _build_channel_write_notify(parser, call, channel):
         allow_tensor=False, allow_32=False)
     val = _parse_int_operand(parser, call.args[3], "ch.write_notify", "val")
     timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_notify", minimum=1)
+    option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.write_notify")
 
     num_bytes_arg = _shape_byte_count(source.type.shape, source.type.dtype, span)
     return _ir_core.create_op_call(
-        "dist.channel_write_notify",
+        "channel.write_notify",
         [
             channel.token,
             dst,
@@ -726,21 +985,21 @@ def _build_channel_write_notify(parser, call, channel):
             signal,
             val,
         ],
-        {"timeout_cycles": timeout},
+        {"timeout_cycles": timeout, "option": option},
         span,
     )
 
 
 def _build_channel_submit(parser, call, channel):
-    """``ch.submit()`` -> dist.channel_submit."""
+    """``ch.submit()`` -> channel.submit."""
     span = parser.span_tracker.get_span(call)
     if call.args or call.keywords:
         raise InvalidArgument("ch.submit takes no arguments")
-    return _ir_core.create_op_call("dist.channel_submit", [channel.token], {}, span)
+    return _ir_core.create_op_call("channel.submit", [channel.token], {}, span)
 
 
 def _build_channel_drain(parser, call, channel):
-    """``ch.drain(timeout=)`` / ``ch.drain(timeout)`` -> dist.channel_drain."""
+    """``ch.drain(timeout=)`` / ``ch.drain(timeout)`` -> channel.drain."""
     span = parser.span_tracker.get_span(call)
     kwargs_parsed = _parse_op_kwargs(parser, call)
     for name in kwargs_parsed:
@@ -754,22 +1013,30 @@ def _build_channel_drain(parser, call, channel):
         kwargs_parsed = {"timeout": _require_const_int(parser, call.args[0], "ch.drain", "timeout")}
     timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.drain", minimum=1)
     return _ir_core.create_op_call(
-        "dist.channel_drain", [channel.token], {"timeout_cycles": timeout}, span
+        "channel.drain", [channel.token], {"timeout_cycles": timeout}, span
     )
 
 
 def _build_channel_is_exclusive(parser, call, channel):
-    """``ch.is_exclusive()`` -> dist.channel_is_exclusive (runtime bool)."""
+    """``ch.is_exclusive()`` -> channel.is_exclusive (runtime bool)."""
     span = parser.span_tracker.get_span(call)
     if call.args or call.keywords:
         raise InvalidArgument("ch.is_exclusive takes no arguments")
-    return _ir_core.create_op_call("dist.channel_is_exclusive", [channel.token], {}, span)
+    return _ir_core.create_op_call("channel.is_exclusive", [channel.token], {}, span)
 
 
 def parse_channel_method(parser, channel, method, call):
     """Dispatch ``ch.<method>(...)`` (receiver-routed by the parser)."""
     if method == "write":
         return _build_channel_write(parser, call, channel)
+    if method == "read":
+        return _build_channel_read(parser, call, channel)
+    if method == "write_reduce":
+        return _build_channel_write_reduce(parser, call, channel)
+    if method == "atomic_fetch_add":
+        return _build_channel_atomic_fetch_add(parser, call, channel)
+    if method == "atomic_cas":
+        return _build_channel_atomic_cas(parser, call, channel)
     if method == "remote_ptr":
         return _build_channel_remote_ptr(parser, call, channel)
     if method == "write_indexed":

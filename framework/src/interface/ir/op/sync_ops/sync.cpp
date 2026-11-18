@@ -243,7 +243,12 @@ REGISTER_OP("system.nop")
     .set_description("Delay execution for N cycles")
     .set_op_category("SyncOp")
     .add_argument("n", "Requested delay in cycles (constant integer in [0, INT32_MAX])")
-    .f_deduce_type(DeduceNoneType);
+    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1) << "system.nop requires one argument";
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << "system.nop does not accept keyword arguments";
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[0])) << "system.nop: n must be an integer scalar";
+        return GetNoneType();
+    });
 
 // Register system.dcci (Data Cache Clean and Invalid)
 // Arguments:

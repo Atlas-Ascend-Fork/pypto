@@ -24,7 +24,7 @@ template<class Tile, uint32_t N> struct SyncedTile {
 #endif
 #include <pypto_dump.h>
 #include <pypto_distribute.h>
-__aicore__ inline void _dist_pointer_codegen_kernel_impl_vector(__gm__ uint8_t* win_0_ptr, __gm__ uint8_t* ws_0_ptr, __gm__ int64_t* sig_0_ptr, __gm__ int32_t* sig32_0_ptr, __gm__ bfloat16_t* src_0_ptr, __gm__ int32_t* idx_0_ptr, __gm__ bfloat16_t* out_0_ptr, __gm__ int64_t* out2_0_ptr)
+__aicore__ inline void _dist_pointer_codegen_kernel_impl_vector(__gm__ uint8_t* win_0_ptr, __gm__ uint8_t* ws_0_ptr, __gm__ int64_t* sig_0_ptr, __gm__ int32_t* sig32_0_ptr, __gm__ bfloat16_t* src_0_ptr, __gm__ int32_t* idx_0_ptr, __gm__ bfloat16_t* out_0_ptr, __gm__ int64_t* out2_0_ptr, __gm__ float* out2f_0_ptr)
 {
 
     using idx_0ShapeDim5 = pto::TileShape2D<int32_t, pto::DYNAMIC, pto::DYNAMIC, Layout::ND>;
@@ -85,19 +85,35 @@ __aicore__ inline void _dist_pointer_codegen_kernel_impl_vector(__gm__ uint8_t* 
     auto sig_rptr_0 = ch_0.RemoteAddr<int64_t>(reinterpret_cast<int64_t>(((__gm__ int64_t*)(sig_0_ptr))));
     auto _expr_tmp_10_0 = (sig_rptr_0 + me_0);
     pypto::dist::Notify<int64_t, 1, true>(_expr_tmp_10_0, static_cast<int64_t>(1));
-    ch_0.Write<INT64_MAX, false>(reinterpret_cast<GM_ADDR>(wptr_0), reinterpret_cast<__gm__ uint8_t*>(src_0_ptr), static_cast<int64_t>(({int64_t __pypto_lhs = (((16 * 8) * 16)), __pypto_rhs = (8);int64_t __pypto_quot = __pypto_lhs / __pypto_rhs;__pypto_quot - (((__pypto_lhs < 0) != (__pypto_rhs < 0)) && (__pypto_lhs % __pypto_rhs != 0));})));
+    ch_0.Write<INT64_MAX, false, 45>(reinterpret_cast<GM_ADDR>(wptr_0), reinterpret_cast<__gm__ uint8_t*>(src_0_ptr), static_cast<int64_t>(({int64_t __pypto_lhs = (((16 * 8) * 16)), __pypto_rhs = (8);int64_t __pypto_quot = __pypto_lhs / __pypto_rhs;__pypto_quot - (((__pypto_lhs < 0) != (__pypto_rhs < 0)) && (__pypto_lhs % __pypto_rhs != 0));})));
     ch_0.Submit();
     auto _expr_tmp_11_0 = (wptr_0 + 64);
     auto _expr_tmp_12_0 = ((__gm__ int64_t*)(_expr_tmp_11_0));
-    ch_0.WriteValue<INT64_MAX, int64_t, true>(reinterpret_cast<GM_ADDR>(_expr_tmp_12_0), static_cast<int64_t>(7));
+    ch_0.WriteValue<INT64_MAX, int64_t, true, 45>(reinterpret_cast<GM_ADDR>(_expr_tmp_12_0), static_cast<int64_t>(7));
     auto _expr_tmp_13_0 = (sig_rptr_0 + me_0);
     auto _expr_tmp_14_0 = (((int64_t)me_0) + 1);
-    ch_0.WriteNotify<INT64_MAX>(reinterpret_cast<GM_ADDR>(wptr_0), reinterpret_cast<__gm__ uint8_t*>(src_0_ptr), static_cast<int64_t>(({int64_t __pypto_lhs = (((16 * 8) * 16)), __pypto_rhs = (8);int64_t __pypto_quot = __pypto_lhs / __pypto_rhs;__pypto_quot - (((__pypto_lhs < 0) != (__pypto_rhs < 0)) && (__pypto_lhs % __pypto_rhs != 0));})), reinterpret_cast<__gm__ uint8_t*>(_expr_tmp_13_0), static_cast<uint64_t>(_expr_tmp_14_0));
+    ch_0.WriteNotify<INT64_MAX, 45>(reinterpret_cast<GM_ADDR>(wptr_0), reinterpret_cast<__gm__ uint8_t*>(src_0_ptr), static_cast<int64_t>(({int64_t __pypto_lhs = (((16 * 8) * 16)), __pypto_rhs = (8);int64_t __pypto_quot = __pypto_lhs / __pypto_rhs;__pypto_quot - (((__pypto_lhs < 0) != (__pypto_rhs < 0)) && (__pypto_lhs % __pypto_rhs != 0));})), reinterpret_cast<__gm__ uint8_t*>(_expr_tmp_13_0), static_cast<uint64_t>(_expr_tmp_14_0));
     auto _expr_tmp_15_0 = (wptr_0 + 128);
     ch_0.WriteIndexed<int32_t, true, false, INT64_MAX, true>(reinterpret_cast<GM_ADDR>(_expr_tmp_15_0), reinterpret_cast<__gm__ uint8_t*>(src_0_ptr), reinterpret_cast<__ubuf__ int32_t*>(it_0.tile.data()), nullptr, static_cast<uint64_t>(32), static_cast<uint64_t>(32), static_cast<uint64_t>(32), static_cast<uint64_t>(8));
+    auto _expr_tmp_16_0 = (wptr_0 + 512);
+    ch_0.Read<INT64_MAX, true, 45>(reinterpret_cast<GM_ADDR>(_expr_tmp_16_0), reinterpret_cast<__gm__ uint8_t*>(out_0_ptr), static_cast<int64_t>(({int64_t __pypto_lhs = (((16 * 8) * 16)), __pypto_rhs = (8);int64_t __pypto_quot = __pypto_lhs / __pypto_rhs;__pypto_quot - (((__pypto_lhs < 0) != (__pypto_rhs < 0)) && (__pypto_lhs % __pypto_rhs != 0));})));
+    auto _expr_tmp_17_0 = (wptr_0 + 768);
+    auto _expr_tmp_18_0 = ((__gm__ float*)(_expr_tmp_17_0));
+    ch_0.WriteReduce<INT64_MAX, float, 10U, true, 45>(reinterpret_cast<GM_ADDR>(_expr_tmp_18_0), reinterpret_cast<__gm__ uint8_t*>(out2f_0_ptr), static_cast<int64_t>(({int64_t __pypto_lhs = (((32 * 1) * 8)), __pypto_rhs = (8);int64_t __pypto_quot = __pypto_lhs / __pypto_rhs;__pypto_quot - (((__pypto_lhs < 0) != (__pypto_rhs < 0)) && (__pypto_lhs % __pypto_rhs != 0));})));
+    auto _expr_tmp_19_0 = (wptr_0 + 1024);
+    auto _expr_tmp_20_0 = ((__gm__ int64_t*)(_expr_tmp_19_0));
+    ch_0.AtomicFetchAdd<INT64_MAX, int64_t, true, 45>(reinterpret_cast<GM_ADDR>(_expr_tmp_20_0), reinterpret_cast<__gm__ uint8_t*>(out2_0_ptr), static_cast<int64_t>(1));
+    auto _expr_tmp_21_0 = (wptr_0 + 1032);
+    auto _expr_tmp_22_0 = ((__gm__ int64_t*)(_expr_tmp_21_0));
+    ch_0.AtomicCas<INT64_MAX, int64_t, true, 45>(reinterpret_cast<GM_ADDR>(_expr_tmp_22_0), reinterpret_cast<__gm__ uint8_t*>(out2_0_ptr), static_cast<int64_t>(0), static_cast<int64_t>(1));
     ch_0.Drain<INT64_MAX>();
+    auto ch2_0 = pypto::dist::Channel(reinterpret_cast<__gm__ pypto::dist::Window*>(win_0_ptr), reinterpret_cast<__ubuf__ uint8_t*>(static_cast<uint64_t>(12288ULL)), static_cast<int32_t>(peer_0));
+    auto _expr_tmp_23_0 = ch2_0.RemoteAddr<uint8_t>(reinterpret_cast<int64_t>(((__gm__ uint8_t*)(ws_0_ptr))));
+    auto _expr_tmp_24_0 = (_expr_tmp_23_0 + 256);
+    ch2_0.Write<INT64_MAX, true, 32>(reinterpret_cast<GM_ADDR>(_expr_tmp_24_0), reinterpret_cast<__gm__ uint8_t*>(src_0_ptr), static_cast<int64_t>(({int64_t __pypto_lhs = (((16 * 8) * 16)), __pypto_rhs = (8);int64_t __pypto_quot = __pypto_lhs / __pypto_rhs;__pypto_quot - (((__pypto_lhs < 0) != (__pypto_rhs < 0)) && (__pypto_lhs % __pypto_rhs != 0));})));
+    ch2_0.Drain<INT64_MAX>();
     pypto::dist::BarrierSync<INT64_MAX, true, true>(reinterpret_cast<__gm__ pypto::dist::Window*>(win_0_ptr));
-    int64_t _tuple_anchor_16_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(0)};
+    int64_t _tuple_anchor_25_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(0)};
     out_0.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(t_0.tile.GetValidRow()), static_cast<int64_t>(t_0.tile.GetValidCol()));
     TASSIGN(out_0, out_0_ptr + (0 * (16) + 0));
     TSTORE(out_0, t_0.tile);
@@ -106,9 +122,9 @@ __aicore__ inline void _dist_pointer_codegen_kernel_impl_vector(__gm__ uint8_t* 
 #endif
 
 
-__aicore__ inline void _dist_pointer_codegen_kernel_impl(__gm__ uint8_t* win_0, __gm__ uint8_t* ws_0, __gm__ int64_t* sig_0, __gm__ int32_t* sig32_0, __gm__ bfloat16_t* src_0, __gm__ int32_t* idx_0, __gm__ bfloat16_t* out_0, __gm__ int64_t* out2_0)
+__aicore__ inline void _dist_pointer_codegen_kernel_impl(__gm__ uint8_t* win_0, __gm__ uint8_t* ws_0, __gm__ int64_t* sig_0, __gm__ int32_t* sig32_0, __gm__ bfloat16_t* src_0, __gm__ int32_t* idx_0, __gm__ bfloat16_t* out_0, __gm__ int64_t* out2_0, __gm__ float* out2f_0)
 {
 #if defined(__DAV_VEC__)
-    _dist_pointer_codegen_kernel_impl_vector(win_0, ws_0, sig_0, sig32_0, src_0, idx_0, out_0, out2_0);
+    _dist_pointer_codegen_kernel_impl_vector(win_0, ws_0, sig_0, sig32_0, src_0, idx_0, out_0, out2_0, out2f_0);
 #endif
 }
