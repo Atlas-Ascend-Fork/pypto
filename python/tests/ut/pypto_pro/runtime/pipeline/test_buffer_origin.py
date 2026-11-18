@@ -116,59 +116,60 @@ NT = 4
 _CONFIG = pl.pipeline.PipelineConfig(preload=1)
 
 
-def _gm(ws):
-    return pl.make_tensor(ws, [TM, K], dtype=pl.DT_FP16, depth=2, fwd_ids=[0, 1], bwd_ids=[2, 3])
-
-
-def _mat():
+def _shared():
     return pl.make_tile_group(
-        type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.ZN),
+        addrs=[0x0000, 0x4000], mutex_ids=[12, 13], fwd_ids=[0, 1], bwd_ids=[2, 3])
+
+
+def _left():
+    return pl.make_tile_group(
+        type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left, layout=pl.NZ),
         addrs=[0x0000, 0x4000], mutex_ids=[2, 3])
 
 
 @pl.pipeline.stage
-def scale_in_own_tile(i, src, gm):
+def scale_in_own_tile(i, src, sh):
     t = pl.make_tile(pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec), addr=0x0000)
     pl.load(t, src, [i * TM, 0])
-    pl.store(gm, t, [0, 0])
+    pl.move(sh.next(), t)
 
 
 @pl.pipeline.stage
-def scale_in_group(i, src, gm, ub):
+def scale_in_group(i, src, sh, ub):
     t = ub.next()
     pl.load(t, src, [i * TM, 0])
-    pl.store(gm, t, [0, 0])
+    pl.move(sh.next(), t)
 
 
 @pl.pipeline.stage
-def take(i, gm, mat):
-    m = mat.next()
-    pl.load(m, gm, [0, 0])
+def take(i, sh, left):
+    pl.move(left.next(), sh.next())
 
 
 @pl.jit(arch="3510", auto_mutex=True, pipeline=_CONFIG, name="untracked_make_tile")
-def with_make_tile(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_UINT8]):
-    gm = _gm(ws)
-    mat = _mat()
+def with_make_tile(src: pl.Tensor[[NT * TM, K], pl.DT_FP16]):
+    sh = _shared()
+    left = _left()
     for i in pl.range(0, NT):
         with pl.section_vector():
-            scale_in_own_tile(i, src, gm)
+            scale_in_own_tile(i, src, sh)
         with pl.section_cube():
-            take(i, gm, mat)
+            take(i, sh, left)
 
 
 @pl.jit(arch="3510", auto_mutex=True, pipeline=_CONFIG, name="untracked_none")
-def with_tile_groups_only(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_UINT8]):
-    gm = _gm(ws)
-    mat = _mat()
+def with_tile_groups_only(src: pl.Tensor[[NT * TM, K], pl.DT_FP16]):
+    sh = _shared()
+    left = _left()
     ub = pl.make_tile_group(
         type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
         addrs=[0x0000, 0x4000], mutex_ids=[0, 1])
     for i in pl.range(0, NT):
         with pl.section_vector():
-            scale_in_group(i, src, gm, ub)
+            scale_in_group(i, src, sh, ub)
         with pl.section_cube():
-            take(i, gm, mat)
+            take(i, sh, left)
 
 
 def _untracked_warnings(run) -> list:
@@ -181,9 +182,9 @@ def _untracked_warnings(run) -> list:
 
 def test_the_probe_warns_once_per_op_handed_an_untracked_tile():
     found = _untracked_warnings(lambda: probe_kernel_facts(with_make_tile.to_kernel_def()))
-    # pl.load and pl.store each take the make_tile tile; both targets parse them, and each
+    # pl.load and pl.move each take the make_tile tile; both targets parse them, and each
     # location is shown once.
-    assert sorted(str(w.message).split("`")[1] for w in found) == ["pl.load()", "pl.store()"]
+    assert sorted(str(w.message).split("`")[1] for w in found) == ["pl.load()", "pl.move()"]
     assert all("argument #" in str(w.message) for w in found)
 
 

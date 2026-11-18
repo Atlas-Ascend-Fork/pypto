@@ -17,7 +17,6 @@ These ops emit PTO MLIR instructions (pto.addptr, pto.make_tensor_view)
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import dataclass
 from typing import Any
 
 from pypto.pypto_impl import ir as _ir_core
@@ -29,11 +28,8 @@ from .._utils import (
     _const_int_value,
     _get_span_or_capture,
     _is_int,
-    _is_none,
     _normalize_expr,
     _to_make_tuple,
-    require_const_int,
-    require_const_int_list,
 )
 from ._op_registry import op_impl
 
@@ -44,10 +40,6 @@ def make_tensor(
     stride: Sequence[int | Expr] | _ir_core.MakeTuple | None = None,
     dtype: DataType | None = None,
     span: Span | None = None,
-    *,
-    depth: int | None = None,
-    fwd_ids: Sequence[int] | None = None,
-    bwd_ids: Sequence[int] | None = None,
 ) -> Call:
     """Create a tensor view from a raw pointer or an existing tensor.
 
@@ -72,9 +64,6 @@ def make_tensor(
             from the source pointer/tensor's element type; if given, the view is
             created with this dtype (the source is reinterpreted as ``dtype``).
         span: Optional source span for debugging (auto-captured if not provided)
-        depth: Read by the automatic pipeline transform only; not part of the IR
-        fwd_ids: Read by the automatic pipeline transform only; not part of the IR
-        bwd_ids: Read by the automatic pipeline transform only; not part of the IR
 
     Returns:
         Call expression creating a tensor view with the given shape and strides
@@ -252,89 +241,11 @@ def addptr(ptr: Expr, offset: Expr, span: Span | None = None) -> Call:
     return _ir_core.create_op_call("ptr.addptr", [ptr, offset], {}, actual_span)
 
 
-@dataclass(frozen=True)
-class TensorFacts:
-    """One pl.make_tensor() buffer declaration's resolved facts.
-
-    Carries the same fields as a tile group's facts, so that a reader of either asks the
-    same questions.
-    """
-
-    memory: _ir_core.MemorySpace  # always DDR: a view over the workspace
-    depth: int | None  # None when the keyword is absent
-    addrs: tuple[int, ...] | None  # always None: the base is a runtime pointer
-    slot_size: int | None  # in elements; None when an axis is a runtime value
-    fwd_ids: tuple[int, ...] | None  # None when the keyword is absent
-    bwd_ids: tuple[int, ...] | None
-    span: Span
-    site: tuple[int, int] | None  # (lineno, col_offset) of the kernel-body statement or call parsing it
-    dims: int  # how many dimensions the view's shape has
-    has_stride: bool  # whether a stride was written beside it
-
-
-def _const_axes(layout: _ir_core.MakeTuple) -> list[int] | None:
-    """Each axis of a layout argument as a plain int, or None when one is a runtime value."""
-    values = []
-    for element in layout.elements:
-        if not isinstance(element, _ir_core.ConstInt):
-            return None
-        values.append(element.value)
-    return values
-
-
-def _slot_size(shape: _ir_core.MakeTuple, stride: _ir_core.MakeTuple) -> int | None:
-    """Elements one slot of a GM view spans: ``max(shape[i] * stride[i])``, or ``prod(shape)``
-    with no stride. None when any axis is a runtime value."""
-    dims = _const_axes(shape)
-    if dims is None:
-        return None
-    if not stride.elements:
-        size = 1
-        for dim in dims:
-            size *= dim
-        return size
-    steps = _const_axes(stride)
-    if steps is None:
-        return None
-    return max(dim * step for dim, step in zip(dims, steps))
-
-
 @op_impl("make_tensor")
 def _build_make_tensor(
-    self, ptr: Expr, shape: Expr, stride: Expr | None = None, dtype: DataType | None = None, *,
-    depth: Expr | None = None, fwd_ids: Expr | None = None, bwd_ids: Expr | None = None, span: Span,
+    self, ptr: Expr, shape: Expr, stride: Expr | None = None, dtype: DataType | None = None, *, span: Span,
 ) -> Call:
-    """Build the tensor view; one carrying cross-core event IDs is also a buffer declaration.
-
-    A view with neither fwd_ids nor bwd_ids declares no buffer and records no facts.
-    """
-    result = make_tensor(
-        ptr, shape, stride, dtype, depth=depth, fwd_ids=fwd_ids, bwd_ids=bwd_ids, span=span,
-    )
-    if _is_none(fwd_ids) and _is_none(bwd_ids):
-        return result
-    depth = None if _is_none(depth) else require_const_int(depth, subject="'depth'")
-    decl_ids: dict[str, tuple[int, ...]] = {}
-    for ids_key, ids_value in (("fwd_ids", fwd_ids), ("bwd_ids", bwd_ids)):
-        if _is_none(ids_value):
-            continue
-        decl_ids[ids_key] = tuple(require_const_int_list(
-            ids_value, subject=f"'{ids_key}'", min_length=1,
-        ))
-    shape_tuple, stride_tuple = result.args[1], result.args[2]
-    self.parse_facts.buffer_decls[result] = TensorFacts(
-        memory=_ir_core.MemorySpace.DDR,
-        depth=depth,
-        addrs=None,
-        slot_size=_slot_size(shape_tuple, stride_tuple),
-        fwd_ids=decl_ids.get("fwd_ids"),
-        bwd_ids=decl_ids.get("bwd_ids"),
-        span=span,
-        site=self._access_site,
-        dims=len(shape_tuple.elements),
-        has_stride=bool(stride_tuple.elements),
-    )
-    return result
+    return make_tensor(ptr, shape, stride, dtype, span=span)
 
 
 @op_impl("make_ptr")

@@ -10,8 +10,8 @@
 """What the preload pipeline's auto-sync needs to know about buffers and the accesses to them.
 
 Both come from the probe parse (see _analyzer.probe_kernel_facts), not from the kernel's AST:
-which declarations are cross-core (those carrying fwd_ids/bwd_ids), how many slots each
-rotates through and over which addresses; and, per op a stage emitted, which declaration every
+which tile group declarations are cross-core (those carrying fwd_ids/bwd_ids), how many slots
+each rotates through and over which addresses; and, per op a stage emitted, which declaration every
 operand reaches. What is left here is the verdict on each of those — the role (R/W/RW) an
 op's arguments carry and the pipe the op runs on, read off the tables below.
 
@@ -24,7 +24,7 @@ import ast
 from dataclasses import dataclass, field
 import functools
 import inspect
-from typing import TYPE_CHECKING, Union
+from typing import TYPE_CHECKING
 
 from pypto.pypto_impl.backend import BackendCCE
 from pypto.pypto_impl.ir import MemorySpace, PipeType
@@ -33,7 +33,6 @@ from pypto_pro.language import _api as _language_api
 from ..._errors import (
     InvalidArgument,
     InvalidOperation,
-    InvalidVal,
     NotSupported,
     OutOfRange,
     span_of,
@@ -41,18 +40,13 @@ from ..._errors import (
 from ._astutil import buffer_decl_location, loop_body_sites, stmt_header
 
 if TYPE_CHECKING:
-    from pypto_pro.ir.op.ptr_ops import TensorFacts
     from pypto_pro.language.parser._buffer_parser import TileGroupFacts
-
-    # One buffer declaration as the parse resolved it, whichever call declared it.
-    BufferFacts = Union[TileGroupFacts, TensorFacts]
 
 # Highest usable cross-core event id: a hardware limit. Shared with _sync_graph, which
 # allocates from the same pool for address-reuse edges.
 MAX_EVENT_ID = 15
 
-# The memory spaces a cross-core tile group may live in: UB and L1. GM is the third
-# cross-core space, declared with make_tensor instead of make_tile_group.
+# The memory spaces a cross-core tile group may live in: UB and L1.
 _CROSS_CORE_TILE_MEMORY = frozenset({MemorySpace.Vec, MemorySpace.Mat})
 
 
@@ -60,7 +54,7 @@ _CROSS_CORE_TILE_MEMORY = frozenset({MemorySpace.Vec, MemorySpace.Mat})
 class CrossCoreBuffer:
     """A cross-core NBuffer's configuration."""
 
-    facts: BufferFacts  # the declaration as the parse resolved it
+    facts: TileGroupFacts  # the declaration as the parse resolved it
     fwd_ids_node: ast.expr | None  # AST node for cross_core_forward_id value (e.g. a Name)
     bwd_ids_node: ast.expr | None  # AST node for cross_core_backward_id value
     # The ids themselves. Kept rather than only counted: the address-reuse allocator needs
@@ -203,37 +197,22 @@ def detect_addr_overlaps(addr_ranges: dict, cross_core_names: set, decl_spans: d
     return overlaps
 
 
-def tile_group_names(buffer_facts: dict) -> set[str]:
-    """Every tile group's name. A GM buffer, the only other declaration, sits in DDR."""
-    return {name for name, decl in buffer_facts.items() if decl.memory != MemorySpace.DDR}
-
-
 def buffer_memory_spaces(buffer_facts: dict) -> dict:
     """Every declared buffer's memory space: name -> MemorySpace."""
     return {name: decl.memory for name, decl in buffer_facts.items()}
 
 
 def buffer_slot_counts(buffer_facts: dict) -> dict:
-    """Every declared buffer's slot count: name -> depth.
-
-    A declaration whose depth the source leaves out is left out too, so that a reader asking
-    whether a name has a slot count gets an answer from its presence alone.
-    """
-    return {name: decl.depth for name, decl in buffer_facts.items() if decl.depth is not None}
+    """Every declared buffer's slot count: name -> depth."""
+    return {name: decl.depth for name, decl in buffer_facts.items()}
 
 
 def buffer_addr_ranges(buffer_facts: dict) -> dict:
-    """Each buffer's per-slot address ranges: name -> (memory, [(start, end), ...]).
-
-    A declaration with no compile-time base takes no part in overlap detection, so it is
-    left out rather than entered with a range nothing can be compared against.
-    """
-    result = {}
-    for name, decl in buffer_facts.items():
-        if decl.addrs is None or decl.slot_size is None:
-            continue
-        result[name] = (decl.memory, [(start, start + decl.slot_size) for start in decl.addrs])
-    return result
+    """Each buffer's per-slot address ranges: name -> (memory, [(start, end), ...])."""
+    return {
+        name: (decl.memory, [(start, start + decl.slot_size) for start in decl.addrs])
+        for name, decl in buffer_facts.items()
+    }
 
 
 def _ids_literal(ids: tuple) -> ast.expr:
@@ -245,30 +224,15 @@ def _ids_literal(ids: tuple) -> ast.expr:
 
 def _validate_cross_core_memory(name: str, decl) -> None:
     """L8: a cross-core tile group has to sit where the other core can reach it."""
-    if decl.memory == MemorySpace.DDR or decl.memory in _CROSS_CORE_TILE_MEMORY:
+    if decl.memory in _CROSS_CORE_TILE_MEMORY:
         return
     raise NotSupported(
         f"pipeline: cross-core buffer '{name}' lives in "
         f"pl.MemorySpace.{decl.memory.name}, which cross-core sync does not support. "
         f"A tile group handing data to the other core has to be in pl.MemorySpace.Vec (UB) "
-        f"or pl.MemorySpace.Mat (L1); to hand the data over through GM, declare the buffer "
-        f"with pl.make_tensor(ws, shape, depth=..., fwd_ids=..., bwd_ids=...) instead.",
+        f"or pl.MemorySpace.Mat (L1).",
         span=decl.span,
     )
-
-
-def _validate_cross_core_depth(name: str, decl) -> None:
-    """A GM buffer rotates through a number of slots that has to be written down.
-
-    A tile group's depth is settled while parsing; a GM view's is whatever its keyword said,
-    which the parse only checked is a whole number.
-    """
-    if decl.memory == MemorySpace.DDR and (decl.depth is None or decl.depth <= 0):
-        raise InvalidVal(
-            f"pipeline: GM buffer '{name}' needs depth=<positive compile-time int> next to "
-            f"its fwd_ids/bwd_ids: it is the number of slots the buffer rotates through.",
-            span=decl.span,
-        )
 
 
 def _validate_event_id_range(name: str, label: str, ids: tuple, span) -> None:
@@ -300,12 +264,10 @@ def validate_bound_buffer_decls(func_def: ast.FunctionDef, unbound_decls: list) 
     for decl in sorted(unbound_decls, key=lambda decl: decl.site or (0, 0)):
         if decl.site not in in_loop:
             continue
-        # Only a GM view sits in DDR, and only make_tensor declares one.
-        written = "pl.make_tensor()" if decl.memory == MemorySpace.DDR else "pl.make_tile_group()"
         span, declared_at = buffer_decl_location(func_def, decl)
         made_by = f" at {declared_at}" if declared_at else ""
         raise InvalidOperation(
-            f"pipeline: a buffer declared with `{written}`{made_by} is not bound to a variable in the "
+            f"pipeline: a buffer declared with `pl.make_tile_group()`{made_by} is not bound to a variable in the "
             f"kernel body, so the pipeline cannot track it. A buffer cannot be declared inside a "
             f"stage or a function a stage calls, nor passed to a call directly.\n"
             f"Declare it in the kernel body, or return it from a function called there, and "
@@ -366,7 +328,6 @@ def cross_core_buffers(buffer_facts: dict) -> tuple[dict, list]:
         if decl.fwd_ids is None and decl.bwd_ids is None:
             continue
         _validate_cross_core_memory(name, decl)
-        _validate_cross_core_depth(name, decl)
 
         nodes: dict[str, ast.expr] = {}
         for label, ids in (("fwd_ids", decl.fwd_ids), ("bwd_ids", decl.bwd_ids)):

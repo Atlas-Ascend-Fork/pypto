@@ -15,8 +15,6 @@ import ast
 import copy
 from dataclasses import dataclass
 
-from pypto.pypto_impl.ir import MemorySpace
-
 from ..._errors import CommonInner, KeyNotFound, NotSupported, span_of
 from ._analyzer import KernelFacts, PipelineInfo, analyze_pipeline, buffers_touched
 from ._astutil import (
@@ -28,7 +26,6 @@ from ._astutil import (
     slot_index_field,
     task_id_var,
 )
-from ._cross_core_scanner import CrossCoreBuffer
 from ._stage import is_pipeline_stage
 from ._sync_graph import SyncPlan, build_graph, plan_sync, sites_for
 from ._validate import validate_names
@@ -300,8 +297,7 @@ def _insert_sync_into_loop_body(body: list[ast.stmt], sync: SyncPlan, info: Pipe
         if stage is None or not isinstance(stmt, ast.With):
             continue
         pre, post = _sync_stmts_for(_sites_for_stage(sync, stage), index_expr)
-        slots = _select_gm_slots(stmt.body[0].value, index_expr, info)
-        stmt.body[0:1] = pre + slots + stmt.body[0:1] + post
+        stmt.body[0:1] = pre + stmt.body[0:1] + post
 
 
 def _emit_prefire_and_drain(sync: SyncPlan) -> tuple[list[ast.stmt], list[ast.stmt]]:
@@ -1143,118 +1139,6 @@ def _build_stage_args(stage, arg_mapping: list, ctx_var: str, info: PipelineInfo
     return new_args
 
 
-def _gm_buffers(info: PipelineInfo) -> dict:
-    """``{name: CrossCoreBuffer}`` for the GM buffers that rotate through more than one slot."""
-    return {
-        name: buf
-        for name, buf in info.sync.buffers.items()
-        if buf.facts.memory == MemorySpace.DDR and info.sync.slot_counts.get(name, 1) > 1
-    }
-
-
-def _gm_slot_var(name: str) -> str:
-    """The variable holding a GM buffer's slot for one stage call."""
-    return f"_pl_gm_{name}"
-
-
-def _shape_of(name: str) -> ast.Attribute:
-    """``<name>.shape``."""
-    return ast.Attribute(value=ast.Name(id=name, ctx=ast.Load()), attr="shape", ctx=ast.Load())
-
-
-def _stride_of(name: str) -> ast.Attribute:
-    """``<name>.stride``."""
-    return ast.Attribute(value=ast.Name(id=name, ctx=ast.Load()), attr="stride", ctx=ast.Load())
-
-
-def _axis_of(layout: ast.expr, axis: int) -> ast.Subscript:
-    """``<layout>[axis]``."""
-    return ast.Subscript(value=copy.deepcopy(layout), slice=ast.Constant(value=axis), ctx=ast.Load())
-
-
-def _gm_slot_extent(name: str, buf: CrossCoreBuffer) -> ast.expr:
-    """How many elements one slot of a GM buffer spans: the number the parse folded, else
-    ``max(shape[i] * stride[i])``, or ``prod(shape)`` with no stride."""
-    if buf.facts.slot_size is not None:
-        return ast.Constant(value=buf.facts.slot_size)
-    axes = [_axis_of(_shape_of(name), axis) for axis in range(buf.facts.dims)]
-    if buf.facts.has_stride:
-        spans = [
-            ast.BinOp(left=axis, op=ast.Mult(), right=_axis_of(_stride_of(name), index))
-            for index, axis in enumerate(axes)
-        ]
-        size = spans[0]
-        for span in spans[1:]:
-            size = ast.Call(func=ast.Name(id="max", ctx=ast.Load()), args=[size, span], keywords=[])
-    else:
-        size = axes[0]
-        for axis in axes[1:]:
-            size = ast.BinOp(left=size, op=ast.Mult(), right=axis)
-    return ast.fix_missing_locations(size)
-
-
-def _select_gm_slots(call: ast.Call, index_expr: ast.expr, info: PipelineInfo) -> list[ast.stmt]:
-    """Hand a stage call the slot of each GM buffer its task uses, in place.
-
-    Each argument that reaches such a buffer is replaced by ``_pl_gm_<declared name>``; the
-    returned statements bind it to slot ``index_expr % depth``. The argument is resolved
-    through the probe's buffer_vars, so an argument that only aliases the buffer selects the
-    slot the way the declared name would — and under the declared name, so two spellings of
-    one buffer share the one assignment.
-    """
-    gm = _gm_buffers(info)
-    stmts: list[ast.stmt] = []
-    bound: set[str] = set()
-    for pos, arg in enumerate(call.args):
-        if not isinstance(arg, ast.Name):
-            continue
-        reached = [name for name in info.buffer_vars.get(arg.id, (arg.id,)) if name in gm]
-        if not reached:
-            continue
-        if len(reached) > 1:
-            raise NotSupported(
-                f"pipeline: argument '{arg.id}' of this stage call reaches more than one GM "
-                f"buffer ({', '.join(sorted(reached))}), so which buffer's slot the task "
-                f"should be handed depends on the path taken. The slot is selected at the "
-                f"call site, before the branch is known.\n"
-                f"Pass one buffer, choosing between them inside the stage.",
-                span=span_of(arg),
-            )
-        name = reached[0]
-        if name not in bound:
-            stmts.append(_build_gm_slot_assign(name, gm[name], index_expr, info))
-            bound.add(name)
-        call.args[pos] = ast.Name(id=_gm_slot_var(name), ctx=ast.Load())
-    return stmts
-
-
-def _build_gm_slot_assign(
-    name: str, buf: CrossCoreBuffer, index_expr: ast.expr, info: PipelineInfo
-) -> ast.Assign:
-    """``_pl_gm_<name> = pl.make_tensor(pl.addptr(pl.make_ptr(<name>), k * size), <name>.shape[, stride])``."""
-
-    def pl_call(fn: str, args: list) -> ast.Call:
-        return ast.Call(
-            func=ast.Attribute(value=ast.Name(id="pl", ctx=ast.Load()), attr=fn, ctx=ast.Load()),
-            args=args,
-            keywords=[],
-        )
-
-    slot_idx = ast.BinOp(
-        left=copy.deepcopy(index_expr), op=ast.Mod(), right=ast.Constant(value=info.sync.slot_counts[name])
-    )
-    offset = ast.BinOp(left=slot_idx, op=ast.Mult(), right=_gm_slot_extent(name, buf))
-    ptr = pl_call("addptr", [pl_call("make_ptr", [ast.Name(id=name, ctx=ast.Load())]), offset])
-    layout = [_shape_of(name)]
-    if buf.facts.has_stride:
-        layout.append(_stride_of(name))
-    return ast.Assign(
-        targets=[ast.Name(id=_gm_slot_var(name), ctx=ast.Store())],
-        value=pl_call("make_tensor", [ptr, *layout]),
-        lineno=0,
-    )
-
-
 def _wrap_in_section(section_kind: str, body: list[ast.stmt]) -> ast.With:
     """Wrap statements in `with pl.section_<kind>():`."""
     section_call = ast.Call(
@@ -1283,9 +1167,8 @@ def _build_guarded_stage_body(
     # same-buffer and address-reuse alike (see _sync_graph.plan_sync_sites).
     sites = _sites_for_stage(sync, stage)
     auto_pre, auto_post = _sync_stmts_for(sites, index_expr)
-    slots = _select_gm_slots(call_expr, index_expr, info)
 
-    return [*auto_pre, *slots, ast.Expr(value=call_expr, lineno=0), *auto_post]
+    return [*auto_pre, ast.Expr(value=call_expr, lineno=0), *auto_post]
 
 
 def _wrap_stage_section(stage, guarded_body: list[ast.stmt], ctx_var: str) -> ast.With:

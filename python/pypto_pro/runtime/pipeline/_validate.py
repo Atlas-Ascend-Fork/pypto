@@ -93,14 +93,11 @@ def reject_buffer_decls_in_loops(func_def, buffer_facts: dict) -> None:
         if decl.site in in_loop:
             span, declared_at = buffer_decl_location(func_def, decl)
             made_by = f" (declared at {declared_at})" if declared_at else ""
-            # A GM view has no on-chip addresses, and no slot cursor to restart.
-            restarts = "" if decl.addrs is None else (
-                "a tile group declared inside it restarts its slot rotation every iteration, and "
-            )
             raise InvalidOperation(
                 f"pipeline: buffer '{name}'{made_by} is declared inside a loop. The pipeline uses "
-                f"one buffer across the whole loop, but {restarts}the drain after the loop runs "
-                f"stages that still use it.\n"
+                f"one buffer across the whole loop, but a tile group declared inside it restarts its "
+                f"slot rotation every iteration, and the drain after the loop runs stages that still "
+                f"use it.\n"
                 f"Move the declaration before the outermost loop.",
                 span=span,
             )

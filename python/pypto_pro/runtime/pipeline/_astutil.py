@@ -26,7 +26,6 @@ import inspect
 import textwrap
 
 from pypto_pro._errors import span_of
-from pypto_pro.language.parser._expr_evaluator import ExprEvaluator
 
 # ---------------------------------------------------------------------------
 # Generated-code names
@@ -189,16 +188,6 @@ def buffer_decl_location(func_def: ast.FunctionDef, decl):
     ):
         return declared, None
     return site_span, f"{declared.filename}:{declared.begin_line}"
-
-
-def eval_const(node: ast.expr, closure_vars: dict):
-    """Evaluate a constant expression node using closure_vars as namespace.
-    Returns the value, or None if it cannot be evaluated (e.g. references a
-    runtime variable)."""
-    try:
-        return ExprEvaluator(closure_vars).eval_expr(node)
-    except Exception:
-        return None
 
 
 @contextlib.contextmanager

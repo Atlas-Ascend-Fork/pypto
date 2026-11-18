@@ -1501,44 +1501,6 @@ def test_cached_vf_reparses_accesses_only_for_pipeline_analysis(runtime, auto_pi
     assert registered == [cached]
 
 
-@pytest.mark.parametrize("ids_key", ["fwd_ids", "bwd_ids"])
-@pytest.mark.parametrize("ids_kind", ["constants", "omitted", "runtime", "empty"])
-def test_make_tensor_preserves_pipeline_buffer_facts(runtime, monkeypatch, ids_key, ids_kind):
-    span = _Span()
-    shape = _MakeTuple([_ConstInt(4), _ConstInt(8)], span)
-    handle = _Expr()
-    handle.args = [None, shape, _MakeTuple([], span)]
-    monkeypatch.setattr(runtime.ir.MemorySpace, "DDR", "ddr", raising=False)
-    helpers = runtime.load_functions(
-        "ir/op/ptr_ops.py", ("_build_make_tensor", "_slot_size", "_const_axes"),
-        make_tensor=lambda *args, **kwargs: handle, TensorFacts=types.SimpleNamespace,
-    )
-    parser = types.SimpleNamespace(parse_facts=types.SimpleNamespace(buffer_decls={}), _access_site=(9, 4))
-    ids = {
-        "constants": _MakeTuple([_ConstInt(1), _ConstInt(2)], span),
-        "omitted": _Expr(_NoneType()),
-        "runtime": _MakeTuple([_Expr(_ScalarType(_DType.INT32))], span),
-        "empty": _MakeTuple([], span),
-    }[ids_kind]
-    with runtime.errors.current_span(span):
-        if ids_kind in ("runtime", "empty"):
-            expected = runtime.errors.InvalidType if ids_kind == "runtime" else runtime.errors.InvalidVal
-            with pytest.raises(expected) as caught:
-                helpers._build_make_tensor(parser, None, shape, depth=_ConstInt(2), span=span, **{ids_key: ids})
-            assert caught.value.span is span
-            assert parser.parse_facts.buffer_decls == {}
-            return
-        actual = helpers._build_make_tensor(parser, None, shape, depth=_ConstInt(2), span=span, **{ids_key: ids})
-    assert actual is handle
-    if ids_kind == "omitted":
-        assert parser.parse_facts.buffer_decls == {}
-    else:
-        facts = parser.parse_facts.buffer_decls[handle]
-        assert getattr(facts, ids_key) == (1, 2)
-        assert (facts.depth, facts.slot_size, facts.dims, facts.has_stride) == (2, 32, 2, False)
-        assert (facts.site, facts.span, facts.memory) == ((9, 4), span, "ddr")
-
-
 @pytest.mark.parametrize("container", [list, tuple])
 def test_dtype_constraints_follow_the_checked_objects(runtime, container):
     dtype = _DType.INT32

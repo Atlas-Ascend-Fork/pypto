@@ -52,9 +52,9 @@ def _ctx_struct_type(result, target) -> str:
     return next(line for line in text.splitlines() if "_pl_ctx_arr_0_0 = struct.create" in line).split("%")[0].strip()
 
 
-def _mat():
+def _left():
     return pl.make_tile_group(
-        type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat),
+        type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Left, layout=pl.NZ),
         addrs=[0x0000, 0x4000], mutex_ids=[2, 3])
 
 
@@ -64,54 +64,54 @@ def _ub():
         addrs=[0x0000, 0x4000], mutex_ids=[0, 1])
 
 
-def _gm(ws):
-    return pl.make_tensor(ws, [TM, K], dtype=pl.DT_FP16, depth=2, fwd_ids=[0, 1], bwd_ids=[2, 3])
+def _shared():
+    return pl.make_tile_group(
+        type=pl.TileType(shape=[TM, K], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.ZN),
+        addrs=[0x0000, 0x4000], mutex_ids=[12, 13], fwd_ids=[0, 1], bwd_ids=[2, 3])
 
 
 @pl.pipeline.stage
-def scale(i, s, src, gm, ub):
+def scale(i, s, src, sh, ub):
     t = ub.next()
     pl.load(t, src, [i * TM, 0])
     pl.muls(t, t, s)
-    pl.store(gm, t, [0, 0])
+    pl.move(sh.next(), t)
 
 
 @pl.pipeline.stage
-def take(i, s, gm, mat):
-    m = mat.next()
-    pl.load(m, gm, [0, 0])
+def take(i, s, sh, left):
+    pl.move(left.next(), sh.next())
 
 
 @pl.pipeline.stage
-def scale_by_every_field(i, s, r, cfg, src, gm, ub):
+def scale_by_every_field(i, s, r, cfg, src, sh, ub):
     t = ub.next()
     pl.load(t, src, [i * TM, 0])
     pl.muls(t, t, s)
     pl.muls(t, t, r)
     pl.muls(t, t, cfg.f)
-    pl.store(gm, t, [0, 0])
+    pl.move(sh.next(), t)
 
 
 @pl.pipeline.stage
-def take_every_field(i, s, r, cfg, gm, mat):
-    m = mat.next()
-    pl.load(m, gm, [0, 0])
+def take_every_field(i, s, r, cfg, sh, left):
+    pl.move(left.next(), sh.next())
 
 
 @pl.pipeline.stage
-def scale_twice(i, s, r, src, gm, ub):
+def scale_twice(i, s, r, src, sh, ub):
     t = ub.next()
     pl.load(t, src, [i * TM, 0])
     pl.muls(t, t, s)
     pl.muls(t, t, r)
-    pl.store(gm, t, [0, 0])
+    pl.move(sh.next(), t)
 
 
 @pl.jit(arch="3510", auto_mutex=True, pipeline=_CONFIG, name="ctx_typed_per_section")
-def typed_per_section(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_UINT8]):
-    gm = _gm(ws)
+def typed_per_section(src: pl.Tensor[[NT * TM, K], pl.DT_FP16]):
+    sh = _shared()
     ub = _ub()
-    mat = _mat()
+    left = _left()
     with pl.section_vector():
         cfg = pl.struct("Cfg", f=0.5)
     with pl.section_cube():
@@ -124,9 +124,9 @@ def typed_per_section(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT
             s = i + 1
             r = i * 0.5
         with pl.section_vector():
-            scale_by_every_field(i, s, r, cfg, src, gm, ub)
+            scale_by_every_field(i, s, r, cfg, src, sh, ub)
         with pl.section_cube():
-            take_every_field(i, s, r, cfg, gm, mat)
+            take_every_field(i, s, r, cfg, sh, left)
 
 
 def test_fields_typed_differently_per_section_are_declared_per_section():
@@ -146,10 +146,10 @@ def test_fields_typed_differently_per_section_are_declared_per_section():
 
 
 @pl.jit(arch="3510", auto_mutex=True, pipeline=_CONFIG, name="ctx_typed_once")
-def typed_once(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_UINT8]):
-    gm = _gm(ws)
+def typed_once(src: pl.Tensor[[NT * TM, K], pl.DT_FP16]):
+    sh = _shared()
     ub = _ub()
-    mat = _mat()
+    left = _left()
     r = 0
     r = 0.5
     for i in pl.range(0, NT):
@@ -158,9 +158,9 @@ def typed_once(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_UINT8]
         with pl.section_cube():
             s = i * 0.25
         with pl.section_vector():
-            scale_twice(i, s, r, src, gm, ub)
+            scale_twice(i, s, r, src, sh, ub)
         with pl.section_cube():
-            take(i, s, gm, mat)
+            take(i, s, sh, left)
 
 
 def test_one_declaration_serves_both_sections_when_their_types_agree():
@@ -193,17 +193,17 @@ def _halve(x):
 
 
 @pl.jit(arch="3510", auto_mutex=True, pipeline=_CONFIG, name="ctx_position_shared_with_helper")
-def position_shared_with_helper(src: pl.Tensor[[NT * TM, K], pl.DT_FP16], ws: pl.Ptr[pl.DT_UINT8]):
-    gm = _gm(ws)
+def position_shared_with_helper(src: pl.Tensor[[NT * TM, K], pl.DT_FP16]):
+    sh = _shared()
     ub = _ub()
-    mat = _mat()
+    left = _left()
     _halve(3)
     for i in pl.range(0, NT):
         s = i + 1
         with pl.section_vector():
-            scale(i, s, src, gm, ub)
+            scale(i, s, src, sh, ub)
         with pl.section_cube():
-            take(i, s, gm, mat)
+            take(i, s, sh, left)
 
 
 def _argument_positions(tree: ast.AST, callee: str) -> list:

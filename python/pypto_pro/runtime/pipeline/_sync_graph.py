@@ -136,8 +136,8 @@ class SyncGraph:
 def _slot_count(info, buffer: str) -> int:
     """How many slots a buffer rotates through, i.e. the modulus of ``task % slot_count``.
 
-    Read from the declaration's normalized depth/ID-list length. AUTO groups have no IDs
-    yet during pipeline transformation, so depth is the authoritative structural count.
+    Read from the declaration's normalized depth. AUTO groups have no IDs yet during pipeline
+    transformation, so depth is the authoritative structural count.
     """
     return info.sync.slot_counts[buffer]
 

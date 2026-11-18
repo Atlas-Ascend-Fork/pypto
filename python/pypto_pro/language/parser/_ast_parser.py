@@ -21,7 +21,6 @@ from typing import Any
 
 from pypto.pypto_impl import ir
 from pypto_pro.ir import IRBuilder
-from pypto_pro.ir.op.ptr_ops import TensorFacts
 
 from ..._errors import (
     CommonInner,
@@ -147,7 +146,7 @@ class ParseFacts:
     # declaration handles, never an alias, so one lookup is final.
     buffer_refs: dict[ir.Expr, tuple[BufferRef, ...]] = field(default_factory=dict)
     # Maps a buffer declaration handle -> that declaration's resolved facts.
-    buffer_decls: dict[ir.Expr, TileGroupFacts | TensorFacts] = field(default_factory=dict)
+    buffer_decls: dict[ir.Expr, TileGroupFacts] = field(default_factory=dict)
     # Maps the (lineno, col_offset) of a kernel-body node -> the ops parsed under it, in
     # order. A key holding an empty list is a call that was expanded and reaches no buffer.
     op_accesses: dict[tuple[int, int] | None, list[OpAccess]] = field(default_factory=dict)

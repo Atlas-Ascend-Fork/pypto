@@ -92,8 +92,6 @@ pypto_pro.language.make_tensor(
 
 ptr可以是pypto_pro.language.Ptr或已有Tensor。新Tensor与源对象共享同一段GM地址；make_tensor不申请内存，也不复制或重排数据。
 
-make_tensor还支持`depth`、`fwd_ids`、`bwd_ids`三个可选参数，用于把一段workspace声明为Cube与Vector之间的跨核共享Buffer，仅在[自动CV并行流水](../advanced_programming/auto_parallel_pipeline.md)场景下生效，未开启自动流水时忽略。
-
 ### 创建连续Tensor视图
 
 省略stride时，框架根据shape生成连续的行主序stride：

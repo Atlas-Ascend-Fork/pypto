@@ -39,7 +39,6 @@ from ._cross_core_scanner import (
     detect_addr_overlaps,
     reject_buffer_access_outside_stages,
     stage_accesses,
-    tile_group_names,
     validate_bound_buffer_decls,
     validate_distinct_buffer_names,
 )
@@ -85,14 +84,10 @@ class KernelFacts:
     var_types: dict = field(default_factory=dict)
     # {(lineno, col_offset) of an argument a kernel-body call writes: ArgTypeFacts}
     arg_types: dict = field(default_factory=dict)
-    # {kernel-body variable holding a buffer: the declared names it reaches}. More than one
-    # name when control flow merges two declarations. Only the GM slot selection reads this
-    # today; the tile-group slot paths still match on the name as written.
-    buffer_vars: dict = field(default_factory=dict)
     # {target: {(lineno, col_offset) of a kernel-body node: [StageOpAccess, ...]}}. Per target
     # because a parse expands only the sections belonging to the one it ran for.
     op_accesses: dict = field(default_factory=dict)
-    # {declared name: TileGroupFacts | TensorFacts}, in source order. Merged over the targets:
+    # {declared name: TileGroupFacts}, in source order. Merged over the targets:
     # a declaration inside a section is only parsed by the target that section belongs to.
     buffer_facts: dict = field(default_factory=dict)
     # Declarations no kernel-body variable holds, which the pipeline refuses.
@@ -184,8 +179,6 @@ class PipelineInfo:
     var_types: dict = field(default_factory=dict)
     # {(lineno, col_offset) of a call argument: ArgTypeFacts}.
     arg_types: dict = field(default_factory=dict)
-    # {kernel-body variable holding a buffer: the declared names it reaches}, from the probe.
-    buffer_vars: dict = field(default_factory=dict)
     # {struct variable: the pl.struct() call declaring it}, so a field an error rejects can be
     # pointed at.
     struct_defs: dict = field(default_factory=dict)
@@ -272,7 +265,6 @@ def analyze_pipeline(
         info.closure_vars = closure_vars
         info.var_types = facts.var_types
         info.arg_types = facts.arg_types
-        info.buffer_vars = facts.buffer_vars
         info.var_sections = var_sections
         info.stages = stages
         _record_pipeline_loop_info(loop, info)
@@ -283,7 +275,7 @@ def analyze_pipeline(
         info.struct_args = _collect_struct_args(func_def, info)
         infos.append(info)
 
-    group_names = tile_group_names(facts.buffer_facts)
+    group_names = set(facts.buffer_facts)
     sync = CrossCoreSyncContext()
     for info in infos:
         info.group_names = group_names
@@ -317,7 +309,7 @@ def analyze_pipeline(
             # be recorded against no stage and synchronised by nobody, and its cursor would hand
             # stages a slot that is not their task's.
             tracked = set(tables.cross_buffers) | tables.addr_shared
-            validate_slot_picks(info, tracked & info.group_names, helper_func_defs)
+            validate_slot_picks(info, tracked, helper_func_defs)
             reject_buffer_access_outside_stages(info, facts.op_accesses, tables)
     # Every declared cross-core buffer must be used by SOME pipeline. The per-loop check in
     # validate_sync cannot see that: a buffer another loop uses is legitimately absent there.
@@ -1091,7 +1083,6 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
     arg_types = facts.arg_types
     op_accesses = facts.op_accesses
     buffer_facts = facts.buffer_facts
-    buffer_vars = facts.buffer_vars
     unbound_decls = facts.unbound_decls
     same_name_decls = facts.same_name_decls
     for target in (ir.SectionKind.Cube, ir.SectionKind.Vector):
@@ -1120,9 +1111,6 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
         original_define = scope.define_var
         # {id(declaration handle IR): the first kernel-body variable bound to that buffer}
         decl_names: dict = {}
-        # {kernel-body variable holding a buffer: the declaration handle ids it reaches},
-        # named below once decl_names is complete.
-        buffer_var_ids: dict = {}
 
         def _record_type(value):
             var_type = getattr(value, "type", None)
@@ -1135,23 +1123,13 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
             recorded = _record_type(value)
             if recorded is not None:
                 var_types.setdefault(name, recorded)
-            var_type = getattr(value, "type", None)
             origins = parser.buffers_of(value)
             # Whether the value IS a buffer rather than a slot taken from one.
-            holds_buffer = (
-                not parser.inline_call_stack
-                and bool(origins)
-                and (parser.is_tile_group(value) or isinstance(var_type, ir.TensorType))
-            )
+            holds_buffer = not parser.inline_call_stack and bool(origins) and parser.is_tile_group(value)
             # A kernel-body variable names a buffer when it holds exactly that one buffer: a
-            # tile group handle, or a GM view. A tile taken from it, or a tuple of several
-            # buffers, names none.
+            # tile group handle. A tile taken from it, or a tuple of several buffers, names none.
             if holds_buffer and len(origins) == 1:
                 decl_names.setdefault(id(origins[0]), name)
-            # Every variable holding a buffer, the declaration's own name included, so a
-            # consumer resolves an alias without having to follow the assignments itself.
-            if holds_buffer:
-                buffer_var_ids[name] = tuple(id(origin) for origin in origins)
             return _orig(name, value, allow_redef=allow_redef, span=span)
 
         scope.define_var = _define
@@ -1202,13 +1180,6 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
             known = buffer_facts.setdefault(name, decl)
             if _decl_identity(known) != _decl_identity(decl):
                 same_name_decls.append((name, known, decl))
-        # The variables, now that every declaration this parse saw has its name. A declaration
-        # inside the other target's section is not seen here, so the targets' answers are
-        # unioned rather than one overwriting the other.
-        for name, handle_ids in buffer_var_ids.items():
-            reached = tuple(decl_names[i] for i in handle_ids if i in decl_names)
-            if reached:
-                buffer_vars[name] = tuple(dict.fromkeys(buffer_vars.get(name, ()) + reached))
         op_accesses[target] = {
             site: [
                 StageOpAccess(
