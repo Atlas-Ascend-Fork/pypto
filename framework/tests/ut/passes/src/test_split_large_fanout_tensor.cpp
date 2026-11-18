@@ -29,6 +29,7 @@
 #include "ut_json/ut_json_tool.h"
 #define private public
 #include "passes/tile_graph_pass/graph_optimization/split_large_fanout_tensor.h"
+#include "passes/tile_graph_pass/graph_optimization/remove_redundant_op.h"
 #undef private
 #include "computational_graph_builder.h"
 #include "passes/pass_utils/remove_redundant_op_utils.h"
@@ -2597,6 +2598,99 @@ TEST_F(SplitLargeFanoutTensorTest, AliasFanoutHasIndependentBuffersWhileCopiesAn
         }
         if (mode == "view_token") {
             EXPECT_EQ(graph.GetOp("left")->tokens_, (std::vector<ir::VarPtr>{token}));
+        }
+    }
+}
+
+/*
+ * Regression guard for !7359 (reverted by !7492):
+ * Four Assemble/Contract writes -> largeTensor[64] -> two View/Slice reads[32].
+ * After splitting, each read has a zero offset and equal input/output static shapes. Its input validShape
+ * must still be inferred from the two incoming writes, while its output keeps the explicit view validShape.
+ * Deriving the split validShape from largeTensor + offset makes these expressions identical and allows
+ * RemoveRedundantOp to delete the reads, changing downstream graph transformations.
+ * Only change or remove this guard after verifying that such elimination and its downstream effects are safe.
+ */
+TEST_F(SplitLargeFanoutTensorTest, SplitValidShapePreservesViewsThroughRemoveRedundantOp)
+{
+    constexpr int64_t writeSize = 16;
+    constexpr int64_t readSize = 32;
+    constexpr int64_t writeCount = 4;
+    constexpr int64_t readCount = 2;
+    for (bool enableSlice : {false, true}) {
+        SCOPED_TRACE(enableSlice);
+        config::SetPassOption("enable_slice", enableSlice);
+        ComputationalGraphBuilder graph;
+        ASSERT_TRUE(graph.AddTensor(DT_FP32, {writeCount * writeSize}, "large"));
+        const std::vector<SymbolicScalar> largeValidShape{CreateTestScalarVar("length")};
+        auto largeTensor = graph.GetTensor("large");
+        largeTensor->UpdateDynValidShape(largeValidShape);
+        std::vector<std::string> inputs;
+        std::vector<std::string> outputs;
+        std::vector<int> readMagics;
+        for (int64_t i = 0; i < writeCount; ++i) {
+            auto input = "input" + std::to_string(i);
+            auto tile = "tile" + std::to_string(i);
+            auto write = "write" + std::to_string(i);
+            ASSERT_TRUE(graph.AddTensors(DT_FP32, {writeSize}, {input, tile}));
+            auto validShape = GetViewValidShape(largeValidShape, {i * writeSize}, {}, {writeSize});
+            graph.GetTensor(input)->UpdateDynValidShape(validShape);
+            graph.GetTensor(tile)->UpdateDynValidShape(validShape);
+            ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {input}, {tile}, "compute" + std::to_string(i)));
+            ASSERT_TRUE(graph.AddOp(enableSlice ? Opcode::OP_CONTRACT : Opcode::OP_ASSEMBLE, {tile}, {"large"}, write));
+            graph.GetOp(write)->SetAssembleOpAttribute({i * writeSize});
+            inputs.push_back(input);
+        }
+        for (int64_t i = 0; i < readCount; ++i) {
+            auto read = "read" + std::to_string(i);
+            auto output = "output" + std::to_string(i);
+            ASSERT_TRUE(graph.AddTensors(DT_FP32, {readSize}, {read, output}));
+            auto validShape = GetViewValidShape(largeValidShape, {i * readSize}, {}, {readSize});
+            graph.GetTensor(read)->UpdateDynValidShape(validShape);
+            graph.GetTensor(output)->UpdateDynValidShape(validShape);
+            ASSERT_TRUE(graph.AddOp(enableSlice ? Opcode::OP_SLICE : Opcode::OP_VIEW, {"large"}, {read}, read));
+            graph.GetOp(read)->SetOpAttribute(
+                std::make_shared<ViewOpAttribute>(Offset{i * readSize}, std::vector<SymbolicScalar>{}, validShape));
+            readMagics.push_back(graph.GetOp(read)->GetOpMagic());
+            ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {read}, {output}, "consume" + std::to_string(i)));
+            outputs.push_back(output);
+        }
+        ASSERT_TRUE(graph.SetInCast(inputs));
+        ASSERT_TRUE(graph.SetOutCast(outputs));
+        auto* function = graph.GetFunction();
+        SplitLargeFanoutTensor split;
+        ASSERT_EQ(split.PreCheck(*function), SUCCESS);
+        ASSERT_EQ(split.RunOnFunction(*function), SUCCESS);
+        ASSERT_EQ(split.PostCheck(*function), SUCCESS);
+        for (int64_t i = 0; i < readCount; ++i) {
+            auto* read = graph.GetOp("read" + std::to_string(i));
+            ASSERT_FALSE(read->IsDeleted());
+            auto splitTensor = read->GetIOperands().front();
+            EXPECT_NE(splitTensor, largeTensor);
+            EXPECT_EQ(splitTensor->GetShape(), (Shape{readSize}));
+            EXPECT_EQ(splitTensor->GetProducers().size(), 2U);
+            auto attr = std::dynamic_pointer_cast<ViewOpAttribute>(read->GetOpAttribute());
+            ASSERT_NE(attr, nullptr);
+            EXPECT_EQ(attr->GetFromOffset(), (Offset{0}));
+            const auto& inputShape = splitTensor->GetDynValidShape();
+            const auto& outputShape = read->GetOOperands().front()->GetDynValidShape();
+            ASSERT_EQ(inputShape.size(), 1U);
+            ASSERT_EQ(outputShape.size(), 1U);
+            // This is exactly the largeTensor + offset shortcut that must not replace write-based inference.
+            auto shortcut = GetViewValidShape(largeValidShape, {i * readSize}, {}, {readSize});
+            EXPECT_EQ(outputShape[0].Dump(), shortcut[0].Dump());
+            EXPECT_NE(inputShape[0].Dump(), shortcut[0].Dump());
+        }
+        RemoveRedundantOp removeRedundant;
+        ASSERT_EQ(removeRedundant.RunOnFunction(*function), SUCCESS);
+        std::set<int> remainingMagics;
+        for (const auto& op : function->Operations()) {
+            remainingMagics.insert(op.GetOpMagic());
+        }
+        for (int64_t i = 0; i < readCount; ++i) {
+            ASSERT_EQ(remainingMagics.count(readMagics[i]), 1U);
+            EXPECT_EQ(graph.GetOp("consume" + std::to_string(i))->GetIOperands().front(),
+                      graph.GetTensor("read" + std::to_string(i)));
         }
     }
 }

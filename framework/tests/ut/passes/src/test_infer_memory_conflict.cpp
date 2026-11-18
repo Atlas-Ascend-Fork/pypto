@@ -19,6 +19,7 @@
 #include "interface/tensor/irbuilder.h"
 #include "passes/pass_mgr/pass_manager.h"
 #include "passes/pass_utils/pass_operation_utils.h"
+#include "passes/pass_utils/pass_token_utils.h"
 #include "symbolic_scalar_test_utils.h"
 
 namespace npu::tile_fwk {
@@ -263,6 +264,284 @@ TEST_F(PassTest, InferMemoryConflictIndexAddInsertsRegisterCopy)
     EXPECT_EQ(assembleOp.GetIOperands().front(), copy->GetOOperands().front());
     EXPECT_EQ(indexAddOp.GetIOperands().front(), self);
     EXPECT_EQ(assembleTmpOp.GetIOperands().front(), tmp);
+}
+
+namespace {
+struct InputOutputAliasGraph {
+    std::shared_ptr<Function> function;
+    LogicalTensorPtr input;
+    LogicalTensorPtr view;
+    LogicalTensorPtr weight;
+    LogicalTensorPtr result;
+    LogicalTensorPtr output;
+    Operation* viewOp;
+    Operation* matmul;
+    Operation* assemble;
+};
+
+InputOutputAliasGraph BuildInputOutputAliasGraph(const Shape& viewShape = {8, 512}, DataType dtype = DT_FP16)
+{
+    InputOutputAliasGraph graph;
+    graph.function = std::make_shared<Function>(Program::GetInstance(), "TestInplaceAlias", "TestInplaceAlias",
+                                                nullptr);
+    auto createTensor = [dtype](const Shape& shape, const std::string& symbol) {
+        auto raw = std::make_shared<RawTensor>(dtype, shape);
+        raw->SetSymbol(symbol);
+        raw->memoryId = 0;
+        return IRBuilder().CreateTensorVar(raw, Offset(shape.size(), 0), shape, CreateTestConstIntVector(shape));
+    };
+    graph.input = createTensor({-1, -1}, "inplace");
+    graph.view = createTensor(viewShape, "view");
+    graph.weight = createTensor({512, 512}, "weight");
+    graph.result = createTensor({8, 512}, "result");
+    graph.output = createTensor({8, 512}, "output");
+    graph.function->inCasts_ = {graph.input, graph.weight};
+    graph.function->outCasts_ = {graph.output};
+    graph.viewOp = &PassOperationUtils::AddOperation(*graph.function, Opcode::OP_VIEW, {graph.input}, {graph.view});
+    graph.viewOp->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset(viewShape.size(), 0), MEM_UNKNOWN));
+    graph.matmul = &PassOperationUtils::AddOperation(*graph.function, Opcode::OP_A_MUL_B, {graph.view, graph.weight},
+                                                     {graph.result});
+    graph.assemble = &PassOperationUtils::AddOperation(*graph.function, Opcode::OP_ASSEMBLE, {graph.result},
+                                                       {graph.output});
+    graph.assemble->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, Offset(viewShape.size(), 0)));
+    TileShape tile;
+    tile.SetVecTile({8, 128});
+    graph.matmul->UpdateTileShape(tile);
+    return graph;
+}
+
+Status RunAliasMemoryConflictPass(Function& function)
+{
+    const std::string strategy = "InplaceAliasMemoryConflictTestStrategy";
+    PassManager::Instance().RegisterStrategy(strategy, {{"InferMemoryConflict", PassName::INFER_MEMORY_CONFLICT}});
+    return PassManager::Instance().RunPass(Program::GetInstance(), function, strategy);
+}
+
+void ExpectInputSnapshot(const Operation& consumer, size_t index, const LogicalTensorPtr& original)
+{
+    const auto& input = consumer.GetIOperands()[index];
+    ASSERT_NE(input, original);
+    ASSERT_EQ(input->GetProducers().size(), 1);
+    const auto* copy = *input->GetProducers().begin();
+    EXPECT_EQ(copy->GetOpcode(), Opcode::OP_REGISTER_COPY);
+    EXPECT_EQ(copy->GetIOperands().front(), original);
+    EXPECT_NE(input->GetRawMagic(), original->GetRawMagic());
+    EXPECT_EQ(input->GetShape(), original->GetShape());
+}
+} // namespace
+
+TEST_F(PassTest, InferMemoryConflictInplaceInputOutputCopiesViewInput)
+{
+    auto graph = BuildInputOutputAliasGraph();
+    // SSA 改写后，不同的 RawTensor 仍可能复用同一块输入存储。
+    graph.output->GetRawTensor()->actualRawmagic = graph.input->GetRawMagic();
+    ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+    ExpectInputSnapshot(*graph.matmul, 0, graph.view);
+    EXPECT_EQ(graph.viewOp->GetIOperands().front(), graph.input);
+    EXPECT_EQ(graph.matmul->GetIOperands()[1], graph.weight);
+    EXPECT_EQ(graph.assemble->GetIOperands().front(), graph.result);
+}
+
+TEST_F(PassTest, InferMemoryConflictAlignsAliasSnapshotTile)
+{
+    for (const auto dtype : {DT_INT8, DT_FP16, DT_FP32, DT_INT64}) {
+        for (const int64_t lastTile : {50, 64}) {
+            SCOPED_TRACE(std::to_string(dtype) + ":" + std::to_string(lastTile));
+            auto graph = BuildInputOutputAliasGraph({2, 112}, dtype);
+            graph.output->GetRawTensor()->actualRawmagic = graph.input->GetRawMagic();
+            TileShape tile;
+            tile.SetVecTile({1, lastTile});
+            graph.viewOp->UpdateTileShape(tile);
+
+            ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+            ASSERT_EQ(CountRegisterCopy(graph.function.get()), 1);
+            ExpectInputSnapshot(*graph.matmul, 0, graph.view);
+            const auto* copy = *graph.matmul->GetIOperands().front()->GetProducers().begin();
+            const int64_t blockElements = 32 / BytesOf(dtype);
+            const int64_t alignedTile = (lastTile + blockElements - 1) / blockElements * blockElements;
+            EXPECT_EQ(copy->GetTileShape().GetVecTile().tile, (Shape{1, alignedTile}));
+            EXPECT_EQ(graph.viewOp->GetTileShape().GetVecTile().tile, (Shape{1, lastTile}));
+            EXPECT_EQ(copy->GetOOperands().front()->GetDynValidShape(), graph.view->GetDynValidShape());
+        }
+    }
+}
+
+TEST_F(PassTest, InferMemoryConflictCopiesInputSharingOutputSlot)
+{
+    auto graph = BuildInputOutputAliasGraph();
+    auto scope = std::make_shared<TensorSlotScope>(graph.function.get());
+    scope->ioslot.incastSlot = {{17, 19}, {18}};
+    scope->ioslot.outcastSlot = {{19}};
+    graph.function->SetSlotScope(scope);
+    ASSERT_NE(graph.input->GetRawMagic(), graph.output->GetRawMagic());
+    ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+    ExpectInputSnapshot(*graph.matmul, 0, graph.view);
+    EXPECT_EQ(graph.matmul->GetIOperands()[1], graph.weight);
+}
+
+TEST_F(PassTest, InferMemoryConflictIgnoresMatchingTensorNames)
+{
+    auto graph = BuildInputOutputAliasGraph();
+    graph.output->GetRawTensor()->SetSymbol(graph.input->GetRawTensor()->GetSymbol());
+    ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 0);
+    EXPECT_EQ(graph.matmul->GetIOperands().front(), graph.view);
+}
+
+TEST_F(PassTest, InferMemoryConflictIgnoresIntermediateStorageAliases)
+{
+    auto graph = BuildInputOutputAliasGraph();
+    graph.view->GetRawTensor()->actualRawmagic = graph.input->GetRawMagic();
+    ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 0);
+    EXPECT_EQ(graph.matmul->GetIOperands().front(), graph.view);
+}
+
+TEST_F(PassTest, InferMemoryConflictSkipsDynamicViewSnapshot)
+{
+    auto graph = BuildInputOutputAliasGraph({-1, 512});
+    graph.output->GetRawTensor()->actualRawmagic = graph.input->GetRawMagic();
+    ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 0);
+    EXPECT_EQ(graph.matmul->GetIOperands().front(), graph.view);
+}
+
+TEST_F(PassTest, InferMemoryConflictWaitsForConcreteViewShape)
+{
+    auto graph = BuildInputOutputAliasGraph();
+    graph.output->GetRawTensor()->actualRawmagic = graph.input->GetRawMagic();
+    const Shape dynamicShape{-1, 512};
+    auto dynamicView = IRBuilder().CreateTensorVar(DT_FP16, dynamicShape, CreateTestConstIntVector(dynamicShape));
+    auto& view = PassOperationUtils::AddOperation(*graph.function, Opcode::OP_VIEW, {graph.input}, {dynamicView});
+    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset(dynamicShape.size(), 0), MEM_UNKNOWN));
+    graph.viewOp->ReplaceInput(dynamicView, graph.input);
+    ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+    ExpectInputSnapshot(*graph.matmul, 0, graph.view);
+    EXPECT_EQ(graph.viewOp->GetIOperands().front(), dynamicView);
+}
+
+TEST_F(PassTest, InferMemoryConflictCopiesAllAliasedConsumerInputs)
+{
+    auto graph = BuildInputOutputAliasGraph();
+    graph.output->GetRawTensor()->actualRawmagic = graph.input->GetRawMagic();
+    graph.weight->GetRawTensor()->actualRawmagic = graph.input->GetRawMagic();
+    ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 2);
+    ExpectInputSnapshot(*graph.matmul, 0, graph.view);
+    ExpectInputSnapshot(*graph.matmul, 1, graph.weight);
+}
+
+TEST_F(PassTest, InferMemoryConflictReusesExistingInputSnapshot)
+{
+    auto graph = BuildInputOutputAliasGraph();
+    graph.output->GetRawTensor()->actualRawmagic = graph.input->GetRawMagic();
+    auto snapshot = IRBuilder().CreateTensorVar(DT_FP16, graph.view->GetShape(), graph.view->GetDynValidShape());
+    PassOperationUtils::AddOperation(*graph.function, Opcode::OP_REGISTER_COPY, {graph.view}, {snapshot});
+    graph.matmul->ReplaceInput(snapshot, graph.view);
+    ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+    EXPECT_EQ(graph.matmul->GetIOperands().front(), snapshot);
+    ExpectInputSnapshot(*graph.matmul, 0, graph.view);
+}
+
+TEST_F(PassTest, InferMemoryConflictPreservesInplaceInput)
+{
+    for (auto opcode : {Opcode::OP_INDEX_PUT, Opcode::OP_INDEX_ADD, Opcode::OP_INDEX_OUTCAST}) {
+        SCOPED_TRACE(static_cast<int>(opcode));
+        auto function = std::make_shared<Function>(Program::GetInstance(), "TestInplaceAlias", "TestInplaceAlias",
+                                                   nullptr);
+        const Shape shape = {4, 4};
+        const Shape valuesShape = {2, 4};
+        const Shape indicesShape = opcode == Opcode::OP_INDEX_OUTCAST ? Shape{1, 2} : Shape{2};
+        auto inputRaw = std::make_shared<RawTensor>(DT_FP32, shape);
+        inputRaw->memoryId = 0;
+        auto input = IRBuilder().CreateTensorVar(inputRaw, Offset(shape.size(), 0), shape,
+                                                 CreateTestConstIntVector(shape));
+        auto values = IRBuilder().CreateTensorVar(DT_FP32, valuesShape, CreateTestConstIntVector(valuesShape));
+        auto indices = IRBuilder().CreateTensorVar(DT_INT32, indicesShape, CreateTestConstIntVector(indicesShape));
+        auto output = IRBuilder().CreateTensorVar(inputRaw, Offset(shape.size(), 0), shape,
+                                                  CreateTestConstIntVector(shape));
+        LogicalTensors inputs = {input, values, indices};
+        const size_t inplaceIndex = opcode == Opcode::OP_INDEX_OUTCAST ? 2 : 0;
+        if (opcode == Opcode::OP_INDEX_OUTCAST) {
+            inputs = {values, indices, input};
+        }
+        LogicalTensors outputs = {output};
+        if (opcode == Opcode::OP_INDEX_ADD) {
+            outputs.push_back(IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape)));
+        }
+        function->inCasts_ = {input, values, indices};
+        function->outCasts_ = outputs;
+        auto& inplaceOp = PassOperationUtils::AddOperation(*function, opcode, inputs, outputs);
+
+        ASSERT_EQ(RunAliasMemoryConflictPass(*function), SUCCESS);
+        EXPECT_EQ(CountRegisterCopy(function.get()), 0);
+        EXPECT_EQ(inplaceOp.GetIOperands()[inplaceIndex], input);
+        EXPECT_EQ(inplaceOp.GetIOperands(), inputs);
+        EXPECT_EQ(inplaceOp.GetOOperands(), outputs);
+
+        // 同一算子的普通读取输入仍需缓存，只有原地目标输入保持不变。
+        values->GetRawTensor()->actualRawmagic = input->GetRawMagic();
+        ASSERT_EQ(RunAliasMemoryConflictPass(*function), SUCCESS);
+        EXPECT_EQ(CountRegisterCopy(function.get()), 1);
+        EXPECT_EQ(inplaceOp.GetIOperands()[inplaceIndex], input);
+        ExpectInputSnapshot(inplaceOp, inplaceIndex == 2 ? 0 : 1, values);
+    }
+}
+
+TEST_F(PassTest, InferMemoryConflictPreservesAssembleSsaInplaceInput)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "TestAssembleSsaAlias", "TestAssembleSsaAlias",
+                                               nullptr);
+    const Shape shape = {2, 2};
+    auto source = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    auto outputRaw = std::make_shared<RawTensor>(DT_FP16, shape);
+    outputRaw->memoryId = 0;
+    auto output = IRBuilder().CreateTensorVar(outputRaw, Offset(shape.size(), 0), shape,
+                                              CreateTestConstIntVector(shape));
+    auto view = IRBuilder().CreateTensorVar(DT_FP16, shape, CreateTestConstIntVector(shape));
+    auto result = IRBuilder().CreateTensorVar(outputRaw, Offset(shape.size(), 0), shape,
+                                              CreateTestConstIntVector(shape));
+    function->inCasts_ = {source, output};
+    function->outCasts_ = {result};
+
+    auto& viewOp = PassOperationUtils::AddOperation(*function, Opcode::OP_VIEW, {output}, {view});
+    viewOp.SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset(shape.size(), 0), MEM_UNKNOWN));
+    auto& assembleSsa = PassOperationUtils::AddOperation(*function, Opcode::OP_ASSEMBLE_SSA, {source, view}, {result});
+    assembleSsa.SetAssembleOpAttribute(Offset(shape.size(), 0), {});
+    assembleSsa.SetAttribute(OpAttributeKey::inplaceIdx, 1);
+
+    ASSERT_EQ(RunAliasMemoryConflictPass(*function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(function.get()), 0);
+    EXPECT_EQ(assembleSsa.GetIOperands()[0], source);
+    EXPECT_EQ(assembleSsa.GetIOperands()[1], view);
+    ASSERT_EQ(view->GetProducers().size(), 1);
+    EXPECT_EQ((*view->GetProducers().begin())->GetOpcode(), Opcode::OP_VIEW);
+}
+
+TEST_F(PassTest, InferMemoryConflictPreservesIndependentWriteOrdering)
+{
+    auto graph = BuildInputOutputAliasGraph();
+    graph.output->GetRawTensor()->actualRawmagic = graph.input->GetRawMagic();
+    auto writeSource = IRBuilder().CreateTensorVar(DT_FP16, graph.output->GetShape(), graph.output->GetDynValidShape());
+    writeSource->GetRawTensor()->memoryId = 0;
+    graph.function->inCasts_.push_back(writeSource);
+    graph.function->outCasts_.push_back(graph.result);
+    graph.assemble->ReplaceInput(writeSource, graph.result);
+    // 读写分支没有数据边，由原有 token 保证先读后写，插入快照后仍应保持该约束。
+    PassTokenUtils::LinkTokenDependency(*graph.function, *graph.matmul, *graph.assemble);
+    const auto tokens = graph.assemble->tokens_;
+    ASSERT_EQ(graph.assemble->ProducerOps().count(graph.matmul), 0);
+
+    ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+    ExpectInputSnapshot(*graph.matmul, 0, graph.view);
+    EXPECT_EQ(graph.assemble->GetIOperands().front(), writeSource);
+    EXPECT_EQ(graph.assemble->tokens_, tokens);
+    EXPECT_EQ(graph.assemble->ProducerOpsByToken().count(graph.matmul), 1);
 }
 
 namespace {

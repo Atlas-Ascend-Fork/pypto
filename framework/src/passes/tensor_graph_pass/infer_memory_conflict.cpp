@@ -40,6 +40,30 @@ constexpr int INDEX_OUTCAST_TRANSMIT_OPERAND_INDEX = 2;
 
 bool IsIndexInplaceOpcode(Opcode opcode) { return opcode == Opcode::OP_INDEX_PUT || opcode == Opcode::OP_INDEX_ADD; }
 
+bool IsInplaceInput(const Operation* op, const LogicalTensorPtr& tensor)
+{
+    if (op == nullptr || tensor == nullptr) {
+        return false;
+    }
+    size_t outputCount = op->GetOOperands().size();
+    if (op->HasAttribute(OpAttributeKey::inplaceIdx) || op->GetBoolAttribute(OP_ATTR_PREFIX + "isInplace")) {
+        outputCount = outputCount == 0 ? 0 : 1;
+    }
+    for (size_t outputIndex = 0; outputIndex < outputCount; ++outputIndex) {
+        const int inplaceIndex = op->GetInplaceIndex(outputIndex);
+        if (inplaceIndex >= 0 && static_cast<size_t>(inplaceIndex) < op->GetIOperands().size() &&
+            op->GetIOperands()[inplaceIndex] == tensor) {
+            return true;
+        }
+    }
+    if (op->GetOpcode() == Opcode::OP_INDEX_OUTCAST) {
+        return op->GetIOperands().size() > INDEX_OUTCAST_TRANSMIT_OPERAND_INDEX &&
+               op->GetIOperands()[INDEX_OUTCAST_TRANSMIT_OPERAND_INDEX] == tensor;
+    }
+    return IsIndexInplaceOpcode(op->GetOpcode()) && op->GetIOperands().size() > INDEX_INPLACE_TRANSMIT_OPERAND_INDEX &&
+           op->GetIOperands()[INDEX_INPLACE_TRANSMIT_OPERAND_INDEX] == tensor;
+}
+
 // 内存信息是否可经tensor所在的输入operand流入op：普通传导算子任意输入均可；
 // INDEX_OUTCAST仅第3个输入、INDEX_PUT/INDEX_ADD仅第1个输入（均与第1个输出同物理地址）可传
 bool CanTransmitInput(const Operation* op, const LogicalTensorPtr& tensor)
@@ -439,6 +463,36 @@ bool IsEffectiveValidShapeAligned(Operation& viewOp, Operation& reshapeOp, const
     return IsTrailingValidFull(inValid, reshapeIn->GetShape()) && IsTrailingValidFull(outValid, reshapeOut->GetShape());
 }
 
+std::vector<LogicalTensorPtr> FindAliasedInputs(Function& function)
+{
+    std::unordered_set<int> outputRawMagics;
+    for (const auto& outcast : function.GetOutcast()) {
+        outputRawMagics.insert(outcast->GetRawMagic());
+    }
+    // SSA 改写可能改变 raw magic，共同的 IO slot 仍能标识输入输出的存储复用关系。
+    const auto& scope = function.GetSlotScope();
+    std::unordered_set<int> outputSlots;
+    if (scope != nullptr) {
+        for (const auto& slots : scope->ioslot.outcastSlot) {
+            outputSlots.insert(slots.begin(), slots.end());
+        }
+    }
+    std::vector<LogicalTensorPtr> aliasedInputs;
+    const auto& incasts = function.GetIncast();
+    for (size_t i = 0; i < incasts.size(); ++i) {
+        bool aliased = outputRawMagics.count(incasts[i]->GetRawMagic()) != 0;
+        if (!aliased && scope != nullptr && i < scope->ioslot.incastSlot.size()) {
+            const auto& slots = scope->ioslot.incastSlot[i];
+            aliased = std::any_of(slots.begin(), slots.end(),
+                                  [&outputSlots](int slot) { return outputSlots.count(slot) != 0; });
+        }
+        if (aliased) {
+            aliasedInputs.push_back(incasts[i]);
+        }
+    }
+    return aliasedInputs;
+}
+
 } // namespace
 
 Status InferMemoryConflict::RunOnFunction(Function& function)
@@ -461,6 +515,10 @@ Status InferMemoryConflict::RunOnFunction(Function& function)
         APASS_LOG_ERROR_F(Elements::Operation, "InsertCopys failed.");
         return FAILED;
     }
+    if (InsertInputOutputAliasCopys(function) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Operation, "InsertInputOutputAliasCopys failed.");
+        return FAILED;
+    }
     if (UpdateViewTypeTileShape(function) != SUCCESS) {
         APASS_LOG_ERROR_F(Elements::Operation, "UpdateViewTypeTileShape failed.");
         return FAILED;
@@ -471,6 +529,51 @@ Status InferMemoryConflict::RunOnFunction(Function& function)
         return FAILED;
     }
     APASS_LOG_INFO_F(Elements::Operation, "End InferMemoryConflict for function [%s].", function.GetRawName().c_str());
+    return SUCCESS;
+}
+
+Status InferMemoryConflict::InsertInputOutputAliasCopys(Function& function)
+{
+    // 切图后，某条路径的输出可能提前覆写其他路径仍需读取的数据，因此需要缓存输入。
+    // 缓存应插在 VIEW 链中 shape 不含 -1 的位置，以保证 REGISTER_COPY 正常展开。
+    // 对计算后写回的路径，快照到计算、再到写回的数据依赖由后续切图保留。
+    // 本函数不为原图中互相独立的读写分支建立新的顺序，原有 WAR/token 约束仍需保留。
+    // 如果 VIEW 链始终包含动态 shape，则无法展开 REGISTER_COPY，本轮不插入快照。
+    std::queue<LogicalTensorPtr> pending;
+    for (const auto& incast : FindAliasedInputs(function)) {
+        pending.push(incast);
+    }
+    std::unordered_set<LogicalTensorPtr> visited;
+    std::vector<std::pair<Operation*, LogicalTensorPtr>> copies;
+    while (!pending.empty()) {
+        auto tensor = pending.front();
+        pending.pop();
+        if (!visited.insert(tensor).second) {
+            continue;
+        }
+        const bool concreteShape = !CheckDynRawShape(tensor->GetShape());
+        for (auto* consumer : tensor->GetConsumers()) {
+            const auto opcode = consumer->GetOpcode();
+            if (opcode == Opcode::OP_VIEW || opcode == Opcode::OP_VIEW_TYPE) {
+                pending.push(consumer->GetOOperands().front());
+            } else if (opcode == Opcode::OP_REGISTER_COPY || IsInplaceInput(consumer, tensor)) {
+                // 已有缓存无需重复插入；原地目标输入必须与输出同址，不能替换成独立缓存。
+                continue;
+            } else if (concreteShape) {
+                copies.emplace_back(consumer, tensor);
+            } else {
+                APASS_LOG_DEBUG_F(Elements::Tensor,
+                                  "Skip alias snapshot for tensor [%d] before op [%d]: logical shape is dynamic.",
+                                  tensor->GetMagic(), consumer->GetOpMagic());
+            }
+        }
+    }
+    // 收集完成后再改图，避免替换输入时使消费者迭代器失效。
+    for (const auto& [consumer, tensor] : copies) {
+        if (InsertPrecededCopy(function, *consumer, tensor) != SUCCESS) {
+            return FAILED;
+        }
+    }
     return SUCCESS;
 }
 
@@ -1039,7 +1142,6 @@ Status InferMemoryConflict::InferTileShape(Operation& op, const LogicalTensorPtr
     if (tileShapeSize == 0 || tileShapeSize != tensorSize) {
         APASS_LOG_WARN_F(Elements::Operation, "Inserted op[%d]'s producer/consumer op has no tile shape.",
                          op.GetOpMagic());
-        TileShape tile;
         Shape defaultTile;
         if (!reshapeTile.empty() && reshapeTile.size() == tensorSize) {
             APASS_LOG_DEBUG_F(Elements::Operation, "Derivate reshape tile shape.");
@@ -1050,11 +1152,13 @@ Status InferMemoryConflict::InferTileShape(Operation& op, const LogicalTensorPtr
                 return FAILED;
             }
         }
-        tile.SetVecTile(defaultTile);
-        op.UpdateTileShape(tile);
-    } else {
-        op.UpdateTileShape(parentTile);
+        parentTile.SetVecTile(defaultTile);
     }
+    // 计算算子的 tile 可以不对齐，但新增拷贝在展开时要求尾轴按 32 字节对齐。
+    // 只调整拷贝的切分粒度，保留张量的逻辑 shape 和有效范围。
+    auto& vecTile = parentTile.GetVecTile().tile;
+    vecTile.back() = AlignUp(vecTile.back(), BLOCK_SIZE / BytesOf(tensor->Datatype()));
+    op.UpdateTileShape(parentTile);
     if (!IsValidTileShape(op)) {
         APASS_LOG_ERROR_F(Elements::Operation, "Invalid tile size for %s[%d]. %s", op.GetOpcodeStr().c_str(),
                           op.GetOpMagic(), GetFormatBacktrace(op).c_str());
@@ -1080,7 +1184,30 @@ Status InferMemoryConflict::ObtainReshapeTile(Operation& op, Shape& inTileShape,
     return SUCCESS;
 }
 
-// 在OP_RESHAPE前面插入OP_REGISTER_COPY
+Status InferMemoryConflict::InsertPrecededCopy(Function& function, Operation& op, const LogicalTensorPtr& inputTensor)
+{
+    auto newRawTensor = std::make_shared<RawTensor>(inputTensor->Datatype(), inputTensor->GetShape());
+    Offset newOffset(inputTensor->GetShape().size(), 0);
+    auto newTensor = irBuilder_.CreateTensorVar(newRawTensor, newOffset, inputTensor->GetShape(),
+                                                inputTensor->GetDynValidShape());
+    auto& copyOp = irBuilder_.CreateTensorOpStmt(function, Opcode::OP_REGISTER_COPY, {inputTensor}, {newTensor});
+    APASS_LOG_DEBUG_F(Elements::Operation, "Insert copy op [%d]", copyOp.GetOpMagic());
+    Shape reshapeTile;
+    if (op.GetOpcode() == Opcode::OP_RESHAPE) {
+        const auto& vecTile = op.GetTileShape();
+        if (vecTile.GetVecTile().size() > 0) {
+            reshapeTile = vecTile.GetVecTile().tile;
+        }
+    }
+    if (InferTileShape(copyOp, inputTensor, ObtainTileShape(copyOp.ProducerOps()), reshapeTile) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Operation, "InferTileShape failed. %s", GetFormatBacktrace(copyOp).c_str());
+        return FAILED;
+    }
+    op.ReplaceInput(newTensor, inputTensor);
+    return SUCCESS;
+}
+
+// 在内存冲突算子前面插入 OP_REGISTER_COPY。
 Status InferMemoryConflict::InsertPrecededCopys(Function& function)
 {
     for (const auto op : preregcopys) {
@@ -1095,26 +1222,9 @@ Status InferMemoryConflict::InsertPrecededCopys(Function& function)
             APASS_LOG_ERROR_F(Elements::Operation, "No transmittable input found for op [%d].", op->GetOpMagic());
             return FAILED;
         }
-        std::shared_ptr<RawTensor> newRawTensor = std::make_shared<RawTensor>(inputTensor->Datatype(),
-                                                                              inputTensor->GetShape());
-        Offset newOffset(inputTensor->GetShape().size(), 0);
-        LogicalTensorPtr newTensor = irBuilder_.CreateTensorVar(newRawTensor, newOffset, inputTensor->GetShape(),
-                                                                inputTensor->GetDynValidShape());
-        auto& copyOp = irBuilder_.CreateTensorOpStmt(function, Opcode::OP_REGISTER_COPY, {inputTensor}, {newTensor});
-        APASS_LOG_DEBUG_F(Elements::Operation, "Insert copy op [%d]", copyOp.GetOpMagic());
-        Shape reshapeTile;
-        if (op->GetOpcode() == Opcode::OP_RESHAPE) {
-            TileShape vecTile = op->GetTileShape();
-            if (vecTile.GetVecTile().size() > 0) {
-                reshapeTile = vecTile.GetVecTile().tile;
-            }
-        }
-        if (InferTileShape(copyOp, inputTensor, ObtainTileShape(copyOp.ProducerOps()), reshapeTile) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "InferTileShape failed. %s", GetFormatBacktrace(copyOp).c_str());
+        if (InsertPrecededCopy(function, *op, inputTensor) != SUCCESS) {
             return FAILED;
         }
-        inputTensor->RemoveConsumer(op);
-        op->ReplaceInput(newTensor, inputTensor);
     }
     return SUCCESS;
 }
@@ -1160,6 +1270,9 @@ Status InferMemoryConflict::InsertCopys(Function& function)
 
 Status InferMemoryConflict::Init(Function& function)
 {
+    memoryInfo.clear();
+    preregcopys.clear();
+    postregcopys.clear();
     for (auto& incast : function.GetIncast()) {
         memoryInfo[incast] = incast;
     }

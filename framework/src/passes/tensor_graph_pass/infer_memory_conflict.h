@@ -44,8 +44,10 @@ private:
                                 std::queue<std::pair<LogicalTensorPtr, Operation*>>& curTensors,
                                 Operation* outcastAssembleLike = nullptr);
     Status InsertPrecededCopys(Function& function);
+    Status InsertPrecededCopy(Function& function, Operation& op, const LogicalTensorPtr& inputTensor);
     Status InsertPostCopys(Function& function);
     Status InsertCopys(Function& function);
+    Status InsertInputOutputAliasCopys(Function& function);
     Status UpdateViewTypeTileShape(Function& function);
     Status ObtainReshapeTile(Operation& op, Shape& inTileShape, Shape& outTileShape);
     Status InferTileShape(Operation& op, const LogicalTensorPtr& tensor, TileShape parentTile, Shape& reshapeTile);
