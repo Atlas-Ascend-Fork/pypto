@@ -239,6 +239,7 @@ __all__ = [
     # Frontend (runtime) aliases
     "jit",
     "pipeline",
+    "make_list_tensor_desc",
     # VF enums
     "MaskPattern",
     "MergeMode",
@@ -311,7 +312,7 @@ from pypto.pypto_impl.ir import (
 )
 from pypto_pro.ir.op.block_ops import TileType
 from pypto_pro.ir.op.ptr_ops import addptr, make_ptr, make_tensor, tensor_view
-from pypto_pro.runtime import SkCap, jit, pipeline
+from pypto_pro.runtime import SkCap, jit, make_list_tensor_desc, pipeline
 
 from . import parser
 from ._api import (

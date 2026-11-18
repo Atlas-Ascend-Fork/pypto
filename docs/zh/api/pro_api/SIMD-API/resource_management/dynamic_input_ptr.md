@@ -24,7 +24,7 @@
 
 当输入有多个Tensor，个数、形状均不固定时，可使用[约束说明](#约束说明)中的打包方式将其按一定要求组合成动态输入，通过指针记录这多个输入Tensor的起始地址。本接口实现从该动态输入中，读取指定Tensor的起始地址，返回指针的元素类型由声明的dtype决定。
 
-常用于按顺序遍历全部张量，配合[pypto_pro.language.make_tensor](make_tensor.md)把每次取出的地址包装成Tensor视图，读取每个张量的形状使用[pypto_pro.language.dynamic_input_dim](dynamic_input_dim.md)。
+接口[pypto_pro.language.make_list_tensor_desc](make_list_tensor_desc.md)实现了打包封装。常用于按顺序遍历全部张量，配合[pypto_pro.language.make_tensor](make_tensor.md)把每次取出的地址包装成Tensor视图，读取每个张量的形状使用[pypto_pro.language.dynamic_input_dim](dynamic_input_dim.md)。
 
 ## 函数原型
 
@@ -41,23 +41,7 @@ pypto_pro.language.dynamic_input_ptr(x: Ptr, i: int, /) -> Ptr
 
 ## 约束说明
 
-- 多个Tensor不包含形状信息的打包方式示意图如下，代码实现可见[调用示例](#调用示例)：
-
-  ```text
-           ┌──────────────┐
-      w[0] │      24      │  地址数组的字节偏移（固定24）
-           ├──────────────┤
-      w[1] │ dim | count  │  低32 bit为dim(=0)，高32 bit为Tensor个数N
-      w[2] │  0xFFFFFFFF  │  保留字
-           ├──────────────┤
-      w[3] │    addr_0    │  第0个Tensor的起始地址
-      w[4] │    addr_1    │  第1个Tensor的起始地址
-       ... │     ...      │  ...
-    w[2+N] │  addr_{N-1}  │  第N-1个Tensor的起始地址
-           └──────────────┘
-
-  以N=2、dim=0为例，该数组为[24, (2 << 32) | 0, 0xFFFFFFFF, addr_0, addr_1]。
-  ```
+- 多个Tensor不包含形状信息的打包方式示意图见[pypto_pro.language.make_list_tensor_desc](make_list_tensor_desc.md)约束说明，代码实现可见[调用示例](#调用示例)。
 
 ## 返回值说明
 
@@ -72,18 +56,6 @@ import pypto_pro.language as pl
 import torch
 
 P = 256
-
-
-def _build_list_tensor_desc(addrs):
-    """dim为0的动态输入：[dataPtrOffset, (count<<32)|dim, 0xffffffff, addr_0..addr_{N-1}]。"""
-    n = len(addrs)
-    w = [0] * (3 + n)
-    w[0] = 24  # 从起始处到地址数组的字节偏移，即地址数组从 w[3] 开始
-    w[1] = (n << 32) & 0xFFFFFFFFFFFFFFFF  # 低32bit dim=0，高32bit count
-    w[2] = 0xFFFFFFFF  # 保留字
-    for i, a in enumerate(addrs):
-        w[3 + i] = a
-    return torch.tensor(w, dtype=torch.int64)
 
 
 @pl.jit(auto_mutex=True)
@@ -117,7 +89,7 @@ def run():
     torch.manual_seed(0)
     # 两个张量独立分配（地址不连续），全部由该参数索引
     tensors = [torch.randn(P, device=device, dtype=torch.float32) for _ in range(2)]
-    desc = _build_list_tensor_desc([t.data_ptr() for t in tensors]).to(device)
+    desc = pl.make_list_tensor_desc([t.data_ptr() for t in tensors]).to(device)
     out = torch.full((1, P), -1.0, device=device, dtype=torch.float32)
     dynamic_input_ptr_sum[None, 1](desc, out)
     torch.npu.synchronize()

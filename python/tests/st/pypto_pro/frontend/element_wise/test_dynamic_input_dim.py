@@ -12,8 +12,10 @@
 """ST: pl.dynamic_input_dim on Ascend 3510.
 
 A runtime-variadic (DYNAMIC) input descriptor in the ``dim != 0`` form carries one shape
-value per tensor axis.  The ST synthesizes such a descriptor (dim == 1 / 2 / 3) and checks
-that a @pl.jit kernel reads every valid axis of a listed tensor via pl.dynamic_input_dim.
+value per tensor axis.  The ST builds such a descriptor with pl.make_list_tensor_desc
+(dim == 1 / 2 / 3, shared and per-tensor shapes) and checks that a @pl.jit kernel reads
+every valid axis of a listed tensor via pl.dynamic_input_dim, so the shape words the API
+writes are verified on device.
 
 Note: ``dim == 0`` (the pointer-only form) has no shape block and is out of scope; an axis
 outside ``[0, dim)`` is guarded on device (traps) rather than reading a wrong word.
@@ -42,27 +44,6 @@ def _require_3510():
         pytest.skip(f"Current device is {name}, not 3510 (Ascend950). Skip.")
 
 
-def _build_list_tensor_desc_shaped(addrs, dim, shapes):
-    """list-tensor descriptor with dim >= 1.
-
-    Layout: [dataPtrOffset, <count> shape structs of (1+dim) words each, addr_0..].
-    Tensor i's shape[axis] is word[1 + i*(1+dim) + 1 + axis].
-    """
-    n = len(addrs)
-    struct_sz = 1 + dim
-    data_ptr_offset = 8 + n * struct_sz * 8
-    w = [0] * (1 + n * struct_sz + n)
-    w[0] = data_ptr_offset
-    w[1] = (dim & 0xFFFFFFFF) | (n << 32)  # low32 dim, high32 count
-    for i in range(n):
-        for k in range(dim):
-            w[1 + i * struct_sz + 1 + k] = shapes[k]
-    addr_off = data_ptr_offset // 8
-    for i, a in enumerate(addrs):
-        w[addr_off + i] = a
-    return torch.tensor(w, dtype=torch.int64)
-
-
 @pl.jit(auto_mutex=True)
 def dynamic_input_dim_read(
     desc: pl.Ptr[pl.DT_FP32],
@@ -83,14 +64,25 @@ def test_dynamic_input_dim():
     torch.manual_seed(0)
     # Generic over dim: the descriptor's shape stride is 1 + dim at runtime.
     for dim, shapes in ((1, [11]), (2, [22, 23]), (3, [33, 34, 35])):
-        tensors = [torch.zeros(16, device=ST_DEVICE, dtype=torch.float32) for _ in range(2)]
-        desc = _build_list_tensor_desc_shaped([t.data_ptr() for t in tensors], dim, shapes).to(ST_DEVICE)
+        tensors = [torch.zeros(*shapes, device=ST_DEVICE, dtype=torch.float32) for _ in range(2)]
+        desc = pl.make_list_tensor_desc([t.data_ptr() for t in tensors], shape=shapes).to(ST_DEVICE)
         out = torch.full((1, MAX_AXIS), -1, device=ST_DEVICE, dtype=torch.int64)
         dynamic_input_dim_read[None, 1](desc, out, dim)
         torch.npu.synchronize()
         got = [int(v) for v in out.cpu().flatten().tolist()][:dim]
         torch.testing.assert_close(got, shapes, rtol=0, atol=0)
         logging.info("  dim=%d shapes=%s OK", dim, shapes)
+
+    # Per-tensor shapes (same dim, different axis lengths): tensor 1 must read its own.
+    shapes = [[4, 5], [6, 7]]
+    tensors = [torch.zeros(*s, device=ST_DEVICE, dtype=torch.float32) for s in shapes]
+    desc = pl.make_list_tensor_desc([t.data_ptr() for t in tensors], shape=shapes).to(ST_DEVICE)
+    out = torch.full((1, MAX_AXIS), -1, device=ST_DEVICE, dtype=torch.int64)
+    dynamic_input_dim_read[None, 1](desc, out, 2)
+    torch.npu.synchronize()
+    got = [int(v) for v in out.cpu().flatten().tolist()][:2]
+    torch.testing.assert_close(got, shapes[1], rtol=0, atol=0)
+    logging.info("  per-tensor shapes=%s OK", shapes)
 
     logging.info("test_dynamic_input_dim passed!")
 

@@ -550,6 +550,7 @@
       - [pypto_pro.language.addptr](pro_api/SIMD-API/resource_management/addptr.md)
       - [pypto_pro.language.dynamic_input_dim](pro_api/SIMD-API/resource_management/dynamic_input_dim.md)
       - [pypto_pro.language.dynamic_input_ptr](pro_api/SIMD-API/resource_management/dynamic_input_ptr.md)
+      - [pypto_pro.language.make_list_tensor_desc](pro_api/SIMD-API/resource_management/make_list_tensor_desc.md)
       - [pypto_pro.language.make_ptr](pro_api/SIMD-API/resource_management/make_ptr.md)
       - [pypto_pro.language.make_tensor](pro_api/SIMD-API/resource_management/make_tensor.md)
       - [pypto_pro.language.make_tile](pro_api/SIMD-API/resource_management/make_tile.md)

@@ -26,7 +26,7 @@ Typical usage:
     # my_kernel is lazily compiled on first launch.
 """
 
-__all__ = ["jit"]
+__all__ = ["jit", "make_list_tensor_desc"]
 
 
 from pypto.pypto_impl.ir import MemorySpace  # noqa: F401
@@ -35,3 +35,4 @@ from pypto.pypto_impl.ir import MemorySpace  # noqa: F401
 # (e.g. pl.pipeline.PipelineConfig), not exposed as top-level framework API.
 from . import pipeline  # noqa: F401
 from .jit import SkCap, jit  # noqa: F401
+from .list_tensor import make_list_tensor_desc  # noqa: F401

@@ -7,6 +7,7 @@
 addptr
 dynamic_input_dim
 dynamic_input_ptr
+make_list_tensor_desc
 make_ptr
 make_tensor
 make_tile
