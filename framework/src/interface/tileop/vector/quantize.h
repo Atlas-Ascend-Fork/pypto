@@ -272,7 +272,7 @@ TILEOP void TQuant(T0 dst, T1 src, T2 scale, T3 offset, T4 tmp)
     TQuantInt8Asym(dst, src, scale, offset, tmp);
 }
 
-#if defined PTO_NPU_ARCH_A5
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 // =============================================================================
 // MX 量化
 // =============================================================================
@@ -528,7 +528,7 @@ TILEOP void TQuantMX(T0 dst, T1 exp, T2 maxScratch, T3 scalingScratch, T4 src)
         TQuantMXGeneral<DEQUANT_SCALE_ROUNDING_MODE, AXIS>(dst, exp, maxScratch, scalingScratch, src);
     }
 }
-#endif // defined PTO_NPU_ARCH_A5
+#endif // defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 
 #if __NPU_ARCH__ == 9201
 #include "quant_hif4_tile.h"

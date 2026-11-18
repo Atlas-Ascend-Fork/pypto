@@ -15,6 +15,16 @@
 
 namespace npu::tile_fwk {
 
+inline uint32_t GetSimtDynamicUbSize(NPUArch arch)
+{
+    static const std::unordered_map<NPUArch, uint32_t> budgets = {
+        {NPUArch::DAV_3510, A5_SIMT_DYNAMIC_UB_SIZE},
+        {NPUArch::DAV_9201, A6_SIMT_DYNAMIC_UB_SIZE},
+    };
+    const auto it = budgets.find(arch);
+    return it != budgets.end() ? it->second : 0u;
+}
+
 inline bool IsGmGatherElement(const Operation& op)
 {
     if (op.GetOpcode() != Opcode::OP_GATHER_ELEMENT || op.GetIOperands().size() != 2U) {
@@ -42,7 +52,8 @@ inline bool IsGmScatter(const Operation& op)
         (!scalar && inputs[2]->GetMemoryTypeToBe() != MemoryType::MEM_UB)) {
         return false;
     }
-    return Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510;
+    const auto arch = Platform::Instance().GetSoc().GetNPUArch();
+    return arch == NPUArch::DAV_3510 || arch == NPUArch::DAV_9201;
 }
 
 } // namespace npu::tile_fwk

@@ -84,72 +84,74 @@ void TiledCastOperation(Function& function, const TileShape& tileShape, const Lo
 
 void CheckCastTypeSupport(DataType srcType, DataType dstType, const std::string& opName)
 {
+    using ConversionTable = std::unordered_map<DataType, std::unordered_set<DataType>>;
     // 同类型转换始终支持
     if (srcType == dstType) {
         return;
     }
 
+    static const ConversionTable a5SupportedConversions = {
+        {DT_FP32, {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_INT64, DT_FP8E4M3, DT_FP8E5M2, DT_HF8}},
+        {DT_FP16, {DT_FP32, DT_INT32, DT_INT16, DT_INT8, DT_UINT8, DT_HF8}},
+        {DT_BF16, {DT_FP32, DT_INT32, DT_FP16, DT_FP4_E1M2, DT_FP4_E2M1}},
+        {DT_UINT8, {DT_FP16, DT_UINT16}},
+        {DT_INT8, {DT_FP16, DT_INT16, DT_INT32}},
+        {DT_INT16, {DT_UINT8, DT_FP16, DT_FP32, DT_UINT32, DT_INT32}},
+        {DT_INT32, {DT_FP32, DT_INT16, DT_UINT16, DT_INT64, DT_UINT8, DT_FP16}},
+        {DT_UINT32, {DT_UINT8, DT_UINT16, DT_INT16}},
+        {DT_INT64, {DT_FP32, DT_INT32}},
+        {DT_FP8E4M3, {DT_FP32}},
+        {DT_FP8E5M2, {DT_FP32}},
+        {DT_HF8, {DT_FP32}},
+        {DT_FP4_E1M2, {DT_BF16}},
+        {DT_FP4_E2M1, {DT_BF16}}};
+    static const ConversionTable a6SupportedConversions = {
+        {DT_FP32, {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_INT64, DT_FP8E4M3, DT_FP8E5M2, DT_HF8}},
+        {DT_FP16, {DT_FP32, DT_INT32, DT_INT16, DT_INT8, DT_UINT8, DT_HF8}},
+        {DT_BF16, {DT_FP32, DT_INT32, DT_FP16, DT_FP4_E1M2, DT_FP4_E2M1}},
+        {DT_UINT8, {DT_FP16, DT_UINT16}},
+        {DT_INT8, {DT_FP16, DT_INT16, DT_INT32}},
+        {DT_INT16, {DT_UINT8, DT_FP16, DT_FP32, DT_UINT32, DT_INT32}},
+        {DT_INT32, {DT_FP32, DT_INT16, DT_UINT16, DT_INT64, DT_UINT8, DT_FP16}},
+        {DT_UINT32, {DT_UINT8, DT_UINT16, DT_INT16}},
+        {DT_INT64, {DT_FP32, DT_INT32}},
+        {DT_FP8E4M3, {DT_FP32}},
+        {DT_FP8E5M2, {DT_FP32}},
+        {DT_HF8, {DT_FP32}},
+        {DT_FP4_E1M2, {DT_BF16}},
+        {DT_FP4_E2M1, {DT_BF16}}};
+    static const ConversionTable liteNPUSupportedConversions = {
+        {DT_FP32, {DT_FP16, DT_INT32, DT_INT16}},
+        {DT_FP16, {DT_FP32, DT_INT32, DT_INT16, DT_INT8, DT_UINT8}},
+        {DT_INT32, {DT_FP32}},
+        {DT_INT16, {DT_FP32, DT_FP16}},
+        {DT_UINT8, {DT_FP16}},
+        {DT_INT8, {DT_FP16}}};
+    static const ConversionTable a2a3SupportedConversions = {
+        {DT_FP16, {DT_FP32, DT_INT32, DT_INT16, DT_INT8, DT_UINT8, DT_INT4}},
+        {DT_BF16, {DT_FP32, DT_INT32}},
+        {DT_INT32, {DT_FP32, DT_INT16, DT_INT64, DT_FP16}},
+        {DT_FP32, {DT_BF16, DT_FP16, DT_INT16, DT_INT32, DT_INT64}},
+        {DT_UINT8, {DT_FP16}},
+        {DT_INT8, {DT_FP16}},
+        {DT_INT16, {DT_FP32, DT_FP16}},
+        {DT_INT64, {DT_FP32, DT_INT32}},
+        {DT_INT4, {DT_FP16}}};
+
+    static const std::unordered_map<NPUArch, const ConversionTable*> supportedConversionsByArch = {
+        {NPUArch::DAV_2201, &a2a3SupportedConversions},    {NPUArch::DAV_3510, &a5SupportedConversions},
+        {NPUArch::DAV_9201, &a6SupportedConversions},      {NPUArch::DAV_3003, &liteNPUSupportedConversions},
+        {NPUArch::DAV_3113, &liteNPUSupportedConversions}, {NPUArch::DAV_5101, &liteNPUSupportedConversions},
+    };
     auto arch = Platform::Instance().GetSoc().GetNPUArch();
-    bool isA5Architecture = (arch == NPUArch::DAV_3510);
-
-    if (isA5Architecture) {
-        // A5 架构支持的转换
-        std::unordered_map<DataType, std::unordered_set<DataType>> a5SupportedConversions = {
-            {DT_FP32, {DT_FP16, DT_BF16, DT_INT16, DT_INT32, DT_INT64, DT_FP8E4M3, DT_FP8E5M2, DT_HF8}},
-            {DT_FP16, {DT_FP32, DT_INT32, DT_INT16, DT_INT8, DT_UINT8, DT_HF8}},
-            {DT_BF16, {DT_FP32, DT_INT32, DT_FP16, DT_FP4_E1M2, DT_FP4_E2M1}},
-            {DT_UINT8, {DT_FP16, DT_UINT16}},
-            {DT_INT8, {DT_FP16, DT_INT16, DT_INT32}},
-            {DT_INT16, {DT_UINT8, DT_FP16, DT_FP32, DT_UINT32, DT_INT32}},
-            {DT_INT32, {DT_FP32, DT_INT16, DT_UINT16, DT_INT64, DT_UINT8, DT_FP16}},
-            {DT_UINT32, {DT_UINT8, DT_UINT16, DT_INT16}},
-            {DT_INT64, {DT_FP32, DT_INT32}},
-            {DT_FP8E4M3, {DT_FP32}},
-            {DT_FP8E5M2, {DT_FP32}},
-            {DT_HF8, {DT_FP32}},
-            {DT_FP4_E1M2, {DT_BF16}},
-            {DT_FP4_E2M1, {DT_BF16}}};
-
-        if (a5SupportedConversions.count(srcType) == 0 || a5SupportedConversions[srcType].count(dstType) == 0) {
-            CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, false)
-                << "A5 architecture does not support cast from " << npu::tile_fwk::DataType2String(srcType) << " to "
-                << npu::tile_fwk::DataType2String(dstType) << " in " << opName;
-        }
-    } else if (IsLiteNPU(arch)) {
-        // Kirin9030/KirinX90 架构支持的转换
-        std::unordered_map<DataType, std::unordered_set<DataType>> liteNPUSupportedConversions = {
-            {DT_FP32, {DT_FP16, DT_INT32, DT_INT16}},
-            {DT_FP16, {DT_FP32, DT_INT32, DT_INT16, DT_INT8, DT_UINT8}},
-            {DT_INT32, {DT_FP32}},
-            {DT_INT16, {DT_FP32, DT_FP16}},
-            {DT_UINT8, {DT_FP16}},
-            {DT_INT8, {DT_FP16}}};
-
-        if (liteNPUSupportedConversions.count(srcType) == 0 ||
-            liteNPUSupportedConversions[srcType].count(dstType) == 0) {
-            CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, false)
-                << "Kirin architecture does not support cast from " << npu::tile_fwk::DataType2String(srcType) << " to "
-                << npu::tile_fwk::DataType2String(dstType) << " in " << opName;
-        }
-    } else {
-        // A2A3 架构支持的转换（其他架构也按A2A3处理）
-        std::unordered_map<DataType, std::unordered_set<DataType>> a2a3SupportedConversions = {
-            {DT_FP16, {DT_FP32, DT_INT32, DT_INT16, DT_INT8, DT_UINT8, DT_INT4}},
-            {DT_BF16, {DT_FP32, DT_INT32}},
-            {DT_INT32, {DT_FP32, DT_INT16, DT_INT64, DT_FP16}},
-            {DT_FP32, {DT_BF16, DT_FP16, DT_INT16, DT_INT32, DT_INT64}},
-            {DT_UINT8, {DT_FP16}},
-            {DT_INT8, {DT_FP16}},
-            {DT_INT16, {DT_FP32, DT_FP16}},
-            {DT_INT64, {DT_FP32, DT_INT32}},
-            {DT_INT4, {DT_FP16}}};
-
-        if (a2a3SupportedConversions.count(srcType) == 0 || a2a3SupportedConversions[srcType].count(dstType) == 0) {
-            CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, false)
-                << "A2A3 architecture does not support cast from " << npu::tile_fwk::DataType2String(srcType) << " to "
-                << npu::tile_fwk::DataType2String(dstType) << " in " << opName;
-        }
-    }
+    auto archIt = supportedConversionsByArch.find(arch);
+    const auto* supportedConversions = archIt != supportedConversionsByArch.end() ? archIt->second :
+                                                                                    &a2a3SupportedConversions;
+    auto srcIt = supportedConversions->find(srcType);
+    CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED,
+          srcIt != supportedConversions->end() && srcIt->second.count(dstType) != 0)
+        << NPUArchToString(arch) << " architecture does not support cast from " << DataType2String(srcType) << " to "
+        << DataType2String(dstType) << " in " << opName;
 }
 
 Tensor Cast(const Tensor& self, DataType dstDataType, CastMode mode, SaturationMode satmode)

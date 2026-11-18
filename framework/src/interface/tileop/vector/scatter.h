@@ -15,7 +15,7 @@
 #ifndef TILEOP_TILE_OPERATOR_SCATTER__H
 #define TILEOP_TILE_OPERATOR_SCATTER__H
 #include <type_traits>
-#if defined(__DAV_V310)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 #include "tileop_common.h"
 #endif
 #include "utils/layout.h"
@@ -216,7 +216,7 @@ TILEOP void Tscatter(T0 dst, T1 src1, T2 src2, T3 tmp)
     }
 }
 
-#if defined(__DAV_V310)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 struct ScatterGmTileInfo {
     uint64_t shape[3];
     uint64_t idxStride[4];
@@ -231,7 +231,7 @@ __simt_vf__ AICORE LAUNCH_BOUND(1024) inline void ScatterGmSimt(__gm__ DstType* 
 {
     static_assert(scatterMode == 0, "GM Scatter SIMT only supports overwrite");
     const uint32_t warps = rows < 32 ? rows : 32;
-    for (uint32_t row = __cce_simt_get_TID_Y(); row < rows; row += warps) {
+    for (uint32_t row = threadIdx.y; row < rows; row += warps) {
         uint32_t remaining = row;
         const uint32_t l = remaining % info.shape[2];
         remaining /= info.shape[2];
@@ -245,7 +245,7 @@ __simt_vf__ AICORE LAUNCH_BOUND(1024) inline void ScatterGmSimt(__gm__ DstType* 
                                l * info.srcStride[3];
         const int64_t baseOffset = (axis == 0 ? 0 : i * info.dstStride[0]) + (axis == 1 ? 0 : j * info.dstStride[1]) +
                                    (axis == 2 ? 0 : k * info.dstStride[2]) + (axis == 3 ? 0 : l * info.dstStride[3]);
-        for (uint32_t m = __cce_simt_get_TID_X(); m < cols; m += 32) {
+        for (uint32_t m = threadIdx.x; m < cols; m += 32) {
             const IdxType index = indices[idxRow + m];
             const int64_t offset = baseOffset + (axis == 4 ? static_cast<int64_t>(index) * info.dstStride[4] :
                                                              static_cast<int64_t>(index) * info.dstStride[axis] +
@@ -263,7 +263,7 @@ __simt_vf__ AICORE LAUNCH_BOUND(1024) inline void ScatterScalarSimt(__gm__ DstTy
 {
     static_assert(scatterMode == 0, "GM scalar Scatter only supports overwrite");
     const uint32_t warps = rows < 32 ? rows : 32;
-    for (uint32_t row = __cce_simt_get_TID_Y(); row < rows; row += warps) {
+    for (uint32_t row = threadIdx.y; row < rows; row += warps) {
         uint32_t remaining = row;
         const uint32_t l = remaining % info.shape[2];
         remaining /= info.shape[2];
@@ -275,7 +275,7 @@ __simt_vf__ AICORE LAUNCH_BOUND(1024) inline void ScatterScalarSimt(__gm__ DstTy
                                l * info.idxStride[3];
         const int64_t baseOffset = (axis == 0 ? 0 : i * info.dstStride[0]) + (axis == 1 ? 0 : j * info.dstStride[1]) +
                                    (axis == 2 ? 0 : k * info.dstStride[2]) + (axis == 3 ? 0 : l * info.dstStride[3]);
-        for (uint32_t m = __cce_simt_get_TID_X(); m < cols; m += 32) {
+        for (uint32_t m = threadIdx.x; m < cols; m += 32) {
             const IdxType index = indices[idxRow + m];
             const int64_t offset = baseOffset + (axis == 4 ? static_cast<int64_t>(index) * info.dstStride[4] :
                                                              static_cast<int64_t>(index) * info.dstStride[axis] +

@@ -1251,9 +1251,11 @@ Status OoOScheduler::Init(const std::vector<Operation*>& opList,
     for (auto& op : opList) {
         bool requiresSimt = op->HasAttribute(simtAttr) && op->GetBoolAttribute(simtAttr);
         if (requiresSimt) {
-            FE_ASSERT(Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510)
-                << "requires_simt is only supported on DAV_3510";
-            state_.localMemSize[MemoryType::MEM_UB] = A5_SIMT_DYNAMIC_UB_SIZE;
+            auto arch = Platform::Instance().GetSoc().GetNPUArch();
+            FE_ASSERT(arch == NPUArch::DAV_3510 || arch == NPUArch::DAV_9201)
+                << "requires_simt is only supported on DAV_3510 or DAV_9201";
+            const auto simtUbSize = GetSimtDynamicUbSize(arch);
+            state_.localMemSize[MemoryType::MEM_UB] = simtUbSize;
             break;
         }
     }

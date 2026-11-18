@@ -27,6 +27,19 @@
 
 namespace npu::tile_fwk {
 
+static bool SupportsInt64Range()
+{
+    static const std::unordered_map<NPUArch, bool> supportsInt64 = {
+        {NPUArch::DAV_1001, false}, {NPUArch::DAV_2201, false}, {NPUArch::DAV_3510, true},  {NPUArch::DAV_9201, true},
+        {NPUArch::DAV_3003, false}, {NPUArch::DAV_3113, false}, {NPUArch::DAV_5101, false},
+    };
+    auto arch = Platform::Instance().GetSoc().GetNPUArch();
+    auto it = supportsInt64.find(arch);
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, it != supportsInt64.end())
+        << "Range int64 support is not configured for architecture: " << NPUArchToString(arch);
+    return it->second;
+}
+
 template <typename T, DataType dataType>
 Element GetCurStartElement(Element start, Element step, int id)
 {
@@ -154,8 +167,7 @@ DataType GetComputeDataType(const Element& start, const Element& end, const Elem
     if (startIsFloat || endIsFloat || stepIsFloat) {
         return DT_FP32;
     }
-    if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510 &&
-        (startType == DT_INT64 || endType == DT_INT64 || stepType == DT_INT64)) {
+    if (SupportsInt64Range() && (startType == DT_INT64 || endType == DT_INT64 || stepType == DT_INT64)) {
         return DT_INT64;
     }
     int64_t startValue = start.GetSignedData();
@@ -187,8 +199,7 @@ DataType GetOutputDataType(const Element& start, const Element& end, const Eleme
     if (startType == DT_BF16 || endType == DT_BF16 || stepType == DT_BF16) {
         return DT_BF16;
     }
-    if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510 &&
-        (startType == DT_INT64 || endType == DT_INT64 || stepType == DT_INT64)) {
+    if (SupportsInt64Range() && (startType == DT_INT64 || endType == DT_INT64 || stepType == DT_INT64)) {
         return DT_INT64;
     }
     return DT_INT32;
@@ -215,9 +226,8 @@ Tensor Range(const Element& start, const Element& end, const Element& step)
         CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, false)
             << "Unsupported Output DataType " << DataType2String(dataType);
     }
-    CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED,
-          dataType != DT_INT64 || Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510)
-        << "RANGE: DT_INT64 is only supported on Ascend 950PR/Ascend 950DT architecture.";
+    CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, dataType != DT_INT64 || SupportsInt64Range())
+        << "RANGE: DT_INT64 is only supported on DAV_3510 and DAV_9201 architectures.";
     DataType outputDataType = DT_INT32;
     outputDataType = GetOutputDataType(start, end, step);
 

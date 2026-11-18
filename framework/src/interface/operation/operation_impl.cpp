@@ -341,7 +341,7 @@ constexpr int BIAS_DIM_NUM = 1;
 constexpr int SMALL_CHANNEL_4 = 4;
 constexpr int SMALL_CHANNEL_8 = 8;
 constexpr int SMALL_CHANNEL_16 = 16;
-static const std::vector<NPUArch> ONLINE_SOFTMAX_SUPPORTED_ARCHITECTURES = {NPUArch::DAV_3510};
+static const std::vector<NPUArch> ONLINE_SOFTMAX_SUPPORTED_ARCHITECTURES = {NPUArch::DAV_3510, NPUArch::DAV_9201};
 
 void TiledMaxpool(Function& function, const TileShape& tileShape, const std::shared_ptr<LogicalTensor>& input,
                   const std::shared_ptr<LogicalTensor>& output, const Operation& op)

@@ -15,7 +15,7 @@
 
 #ifndef TILEOP_TILE_OPERATOR_RADIX_SELECT_B4__H
 #define TILEOP_TILE_OPERATOR_RADIX_SELECT_B4__H
-#if defined(PTO_NPU_ARCH_A5)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 
 #include "radix_select_util.h"
 
@@ -182,5 +182,5 @@ TILEOP void RadixSelectCalcB4(VAL value, IDX index, TMP tmp, SRC src)
 
 } // namespace RadixSelectUtil
 
-#endif // defined(PTO_NPU_ARCH_A5)
+#endif // defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 #endif // TILEOP_TILE_OPERATOR_RADIX_SELECT_B4__H

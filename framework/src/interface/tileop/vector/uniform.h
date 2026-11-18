@@ -20,7 +20,7 @@
 #include "utils/layout.h"
 #include "utils/tile_tensor.h"
 
-#if defined(PTO_NPU_ARCH_A5) || defined(__CPU_SIM)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6) || defined(__CPU_SIM)
 #define OP_TILE_OP_UNIFORM TUniform
 template <int Size, typename TDst, typename TTmp>
 TILEOP void TUniform(TDst dst, TTmp tmpbuf, uint64_t key, uint64_t counter0, uint64_t counter1, uint16_t rounds)

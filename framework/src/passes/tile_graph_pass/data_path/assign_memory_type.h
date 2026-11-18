@@ -175,7 +175,7 @@ private:
 
     Status SyncAssembleMemoryAttr(Operation& operation);
 
-    Status MarkA5SimtGatherElement(Function& function);
+    Status MarkSimtOps(Function& function);
 
     Status NormalizeViewAssembleOpcodes(Function& function);
 

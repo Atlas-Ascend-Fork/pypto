@@ -341,8 +341,8 @@ TILEOP size_t GetTileOffset(size_t dstStrides[], size_t idx[], __ubuf__ typename
     return dstOffset;
 }
 
-// A5 SIMT atomic scatter, one valid source row per launch.
-#if defined(__DAV_V310)
+// A5/A6 SIMT atomic scatter, one valid source row per launch.
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 template <int axis, typename T0, typename T1, typename T2, typename T3, typename T4, typename C, typename Scalar>
 TILEOP void TIndexAddSimt(T0 dst, T1 src0, T2 src, T3 indices, T4 tmp, C coord, Scalar alpha)
 {

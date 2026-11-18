@@ -221,18 +221,24 @@ Tensor Permute(Function& function, const Tensor& self, std::vector<int> perm)
 {
     DECLARE_TRACER();
     CheckTensorShapeSize(self.GetStorage(), "PERMUTE");
-    std::unordered_set<DataType> supportedTypes = {DT_FP8E4M3, DT_FP8E5M2, DT_HF8,    DT_FP8E8M0, DT_FP16,   DT_BF16,
-                                                   DT_FP32,    DT_INT8,    DT_UINT8,  DT_INT16,   DT_UINT16, DT_INT32,
-                                                   DT_UINT32,  DT_INT64,   DT_UINT64, DT_BOOL};
-    CheckTensorDataType(self.GetStorage(), supportedTypes, "PERMUTE");
+    static const std::unordered_map<NPUArch, std::unordered_set<DataType>> supportedTypes = {
+        {NPUArch::DAV_2201,
+         {DT_FP16, DT_BF16, DT_FP32, DT_INT8, DT_UINT8, DT_INT16, DT_UINT16, DT_INT32, DT_UINT32, DT_INT64, DT_UINT64,
+          DT_BOOL}},
+        {NPUArch::DAV_3510,
+         {DT_FP8E4M3, DT_FP8E5M2, DT_HF8, DT_FP8E8M0, DT_FP16, DT_BF16, DT_FP32, DT_INT8, DT_UINT8, DT_INT16, DT_UINT16,
+          DT_INT32, DT_UINT32, DT_INT64, DT_UINT64, DT_BOOL}},
+        {NPUArch::DAV_9201,
+         {DT_FP8E4M3, DT_FP8E5M2, DT_HF8, DT_FP8E8M0, DT_FP16, DT_BF16, DT_FP32, DT_INT8, DT_UINT8, DT_INT16, DT_UINT16,
+          DT_INT32, DT_UINT32, DT_INT64, DT_UINT64, DT_BOOL}},
+    };
+    auto arch = Platform::Instance().GetSoc().GetNPUArch();
+    auto it = supportedTypes.find(arch);
+    const auto& supportedTypeSet = it != supportedTypes.end() ? it->second :
+                                                                supportedTypes.find(NPUArch::DAV_2201)->second;
+    CheckTensorDataType(self.GetStorage(), supportedTypeSet, "PERMUTE");
 
     DataType dtype = self.GetDataType();
-    if (dtype == DT_FP8E4M3 || dtype == DT_FP8E5M2 || dtype == DT_HF8 || dtype == DT_FP8E8M0) {
-        CHECK(VectorErrorCode::ERR_PARAM_INVALID, Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510)
-            << "PERMUTE: FP8 types (DT_FP8E4M3, DT_FP8E5M2, DT_HF8, DT_FP8E8M0) are only supported on DAV_3510 "
-               "architecture.";
-    }
-
     if (dtype == DT_INT64 || dtype == DT_UINT64) {
         CHECK(VectorErrorCode::ERR_PARAM_INVALID, self.Format() != TileOpFormat::TILEOP_NZ)
             << "PERMUTE: INT64/UINT64 do not support NZ format.";

@@ -165,9 +165,10 @@ TILEOP void TgatherElement(T0 dst, T1 tmp, T2 src, T3 idx, C srcCoordinate)
     __ubuf__ IdxType* idxAddr = (__ubuf__ IdxType*)((uint64_t)(idx.GetAddr()));
 
     set_flag(PIPE_V, PIPE_S, EVENT_ID0);
+
     wait_flag(PIPE_V, PIPE_S, EVENT_ID0);
 
-#if defined(__DAV_V310)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
     if constexpr (std::is_same_v<IdxType, int32_t> || std::is_same_v<IdxType, uint32_t>) {
         constexpr auto tileW = TileOp::GetTensorTileShapeDim<T0, DIM_5TH, expectSize>();
         using DstTile = pto::Tile<pto::TileType::Vec, DstType, 1, tileW, pto::BLayout::RowMajor, -1, -1>;

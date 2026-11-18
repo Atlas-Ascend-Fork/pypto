@@ -30,7 +30,7 @@
 #endif
 
 #ifdef SUPPORT_TILE_TENSOR
-#ifndef __LITE_NPU
+#if !defined(__LITE_NPU) && !defined(PTO_COMM_NOT_SUPPORTED)
 #include "distributed/tileop_shmem.h"
 #endif
 #include "utils/layout.h"

@@ -34,7 +34,7 @@ constexpr int64_t QUANT_MX_TILE_ALIGN_BYTES = 256;
 const std::unordered_set<DataType> QUANT_MX_SUPPORTED_INPUT_TYPES = {DataType::DT_FP16, DataType::DT_BF16,
                                                                      DataType::DT_FP32};
 const std::unordered_set<DataType> QUANT_MX_SUPPORTED_OUTPUT_TYPES = {DataType::DT_FP8E4M3, DataType::DT_FP4_E2M1};
-const std::vector<NPUArch> QUANT_MX_SUPPORTED_ARCHITECTURES = {NPUArch::DAV_3510};
+const std::vector<NPUArch> QUANT_MX_SUPPORTED_ARCHITECTURES = {NPUArch::DAV_3510, NPUArch::DAV_9201};
 
 int64_t CeilDiv(int64_t dividend, int64_t divisor)
 {

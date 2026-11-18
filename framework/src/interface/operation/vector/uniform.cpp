@@ -23,7 +23,7 @@
 namespace npu::tile_fwk {
 
 namespace {
-const std::vector<NPUArch> UNIFORM_SUPPORTED_ARCHITECTURES = {NPUArch::DAV_3510};
+const std::vector<NPUArch> UNIFORM_SUPPORTED_ARCHITECTURES = {NPUArch::DAV_3510, NPUArch::DAV_9201};
 } // namespace
 
 LogicalTensorPtr TensorUniform(Function& function, LogicalTensorPtr& result, const Element& key,

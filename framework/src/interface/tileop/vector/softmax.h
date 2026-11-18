@@ -28,7 +28,7 @@
 #define PTO_INST AICORE PTO_INLINE __attribute__((visibility("default")))
 #define PTO_INTERNAL AICORE PTO_INLINE
 
-#if defined(PTO_NPU_ARCH_A5) || defined(__CPU_SIM)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6) || defined(__CPU_SIM)
 template <typename TileDataOut, typename TileDataIn, typename Scalar>
 __tf__ PTO_INTERNAL void TCOLMAX_HIGH_PERF(TileDataOut& dstTile, TileDataIn& srcTile, Scalar scale)
 {
@@ -211,6 +211,6 @@ TILEOP void TOnlineSoftmaxUpdate(T0 updatedMax, T1 updatedSum, T2 updatedOutput,
     SyncV();
 }
 
-#endif // defined(PTO_NPU_ARCH_A5) || defined(__CPU_SIM)
+#endif // defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6) || defined(__CPU_SIM)
 
 #endif // TILEOP_TILE_OPERATOR_SOFTMAX__H

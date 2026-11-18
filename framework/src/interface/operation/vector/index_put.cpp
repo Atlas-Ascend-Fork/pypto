@@ -44,7 +44,7 @@ void TiledIndexPut(Function& function, const TileShape& tileShape, Input& inputS
                                                                               inputIndices[j].tileInfo.offset);
             inputsTile.push_back(inputIndicesTile);
         }
-        bool useSimt = Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510 && selfDim == indicesCount &&
+        bool useSimt = IsVectorOpSimtEnabled(Opcode::OP_INDEX_PUT) && selfDim == indicesCount &&
                        (inputSelf.tensor.GetDataType() == DT_FP32 || inputSelf.tensor.GetDataType() == DT_FP16 ||
                         inputSelf.tensor.GetDataType() == DT_BF16) &&
                        (inputIndices[0].tensor.GetDataType() == DT_INT32 ||

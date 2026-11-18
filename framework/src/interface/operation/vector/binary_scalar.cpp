@@ -178,6 +178,7 @@ void TiledBinaryOperationScalar(Function& function, const TileShape& tileShape, 
 {
     auto opNameCode = GetBinaryOpNameCode<T, true>();
     if (cur == input1.tensor->GetShape().size()) {
+        const bool useGcdSimt = opNameCode == Opcode::OP_GCDS && IsVectorOpSimtEnabled(Opcode::OP_GCDS);
         auto inputTile1 = input1.tensor->View(function, input1.tileInfo.shape, input1.tileInfo.offset);
         auto resultTile = result->View(function, resultTileInfo.shape, resultTileInfo.offset);
         if (opNameCode == Opcode::OP_BITWISEXORS || opNameCode == Opcode::OP_POWS) {
@@ -200,7 +201,7 @@ void TiledBinaryOperationScalar(Function& function, const TileShape& tileShape, 
             tmpOp.SetAttribute(OpAttributeKey::scalar, value);
             tmpOp.SetAttribute(OP_ATTR_PREFIX + "reverseOperand", reverseOperand);
             return;
-        } else if (opNameCode == Opcode::OP_GCDS && Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510) {
+        } else if (opNameCode == Opcode::OP_GCDS && !useGcdSimt) {
             auto vecTile = tileShape.GetVecTile().tile;
             int64_t tileW = vecTile.empty() ? 1 : vecTile.back();
             int64_t tileH = vecTile.size() > 1 ? vecTile[vecTile.size() - NUM_VALUE_2] : 1;
@@ -221,7 +222,7 @@ void TiledBinaryOperationScalar(Function& function, const TileShape& tileShape, 
         auto& op = function.AddOperation(opNameCode, {inputTile1}, {resultTile});
         op.SetAttribute(OpAttributeKey::scalar, value);
         op.SetAttribute(OP_ATTR_PREFIX + "reverseOperand", reverseOperand);
-        if (opNameCode == Opcode::OP_GCDS && Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) {
+        if (useGcdSimt) {
             op.SetAttribute(OP_ATTR_PREFIX + "requires_simt", true);
         }
         if constexpr (T == BinaryOpType::DIV || T == BinaryOpType::MOD || T == BinaryOpType::POW) {
@@ -399,9 +400,9 @@ Tensor Remainder(const Tensor& self, const Element& other, PrecisionType precisi
     CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "REM");
     auto selfDtype = self.GetDataType();
     Element castOther = CastScalarToDtype(other, selfDtype);
-    bool isA5Architecture = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510);
-    if ((!isA5Architecture && selfDtype == DT_INT16) || selfDtype == DT_FP16) {
-        Tensor castSelf = Cast(self, DT_FP32, CastMode::CAST_NONE, SaturationMode::ON);
+    auto computeType = GetRemainderComputeType(selfDtype);
+    if (computeType != selfDtype) {
+        Tensor castSelf = Cast(self, computeType, CastMode::CAST_NONE, SaturationMode::ON);
         auto [result, op] = TensorBinaryOperationScalarWithOp<BinaryOpType::REM>(
             *Program::GetInstance().GetCurrentFunction(), castSelf.GetStorage(), castOther);
         op->SetAttribute(OpAttributeKey::precisionType, static_cast<int64_t>(precisionType));
@@ -423,9 +424,9 @@ Tensor Remainder(const Element& self, const Tensor& other, PrecisionType precisi
     CheckTensorDataTypeCombination({other.GetDataType()}, combinations, "REM");
     auto otherDtype = other.GetDataType();
     Element castSelf = CastScalarToDtype(self, otherDtype);
-    bool isA5Architecture = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510);
-    if ((!isA5Architecture && otherDtype == DT_INT16) || otherDtype == DT_FP16) {
-        Tensor castOther = Cast(other, DT_FP32, CastMode::CAST_NONE, SaturationMode::ON);
+    auto computeType = GetRemainderComputeType(otherDtype);
+    if (computeType != otherDtype) {
+        Tensor castOther = Cast(other, computeType, CastMode::CAST_NONE, SaturationMode::ON);
         auto [result, op] = TensorBinaryOperationScalarWithOp<BinaryOpType::REMR>(
             *Program::GetInstance().GetCurrentFunction(), castOther.GetStorage(), castSelf);
         op->SetAttribute(OpAttributeKey::precisionType, static_cast<int64_t>(precisionType));

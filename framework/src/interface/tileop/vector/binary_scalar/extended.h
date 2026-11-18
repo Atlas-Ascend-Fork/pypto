@@ -22,7 +22,7 @@
 #include "utils/tile_tensor.h"
 
 #define OP_TILE_OP_GCDS TGcdS
-#if defined(__DAV_V310)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 template <typename Scalar, typename T0, typename T1>
 TILEOP void TGcdS(T0 dst, T1 src0, Scalar src1)
 {

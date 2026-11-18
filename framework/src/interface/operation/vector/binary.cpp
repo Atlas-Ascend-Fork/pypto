@@ -184,6 +184,19 @@ Tensor Fmod(const Tensor& self, const Tensor& other, PrecisionType precisionType
     return Tensor(result);
 }
 
+DataType GetRemainderComputeType(DataType dtype)
+{
+    static const std::unordered_map<NPUArch, std::unordered_set<DataType>> fp32ComputeTypes = {
+        {NPUArch::DAV_2201, {DT_INT16, DT_FP16}},
+        {NPUArch::DAV_3510, {DT_FP16}},
+        {NPUArch::DAV_9201, {DT_FP16}},
+    };
+    auto arch = Platform::Instance().GetSoc().GetNPUArch();
+    auto it = fp32ComputeTypes.find(arch);
+    auto types = it != fp32ComputeTypes.end() ? it->second : fp32ComputeTypes.find(NPUArch::DAV_2201)->second;
+    return types.count(dtype) != 0 ? DT_FP32 : dtype;
+}
+
 Tensor Remainder(const Tensor& self, const Tensor& other, PrecisionType precisionType)
 {
     DECLARE_TRACER();
@@ -193,10 +206,10 @@ Tensor Remainder(const Tensor& self, const Tensor& other, PrecisionType precisio
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_REM);
     CheckTensorDataTypeCombination({self.GetDataType(), other.GetDataType()}, combinations, "REM");
     auto selfDtype = self.GetDataType();
-    bool isA5Architecture = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510);
-    if ((!isA5Architecture && selfDtype == DT_INT16) || selfDtype == DT_FP16) {
-        Tensor castSelf = Cast(self, DT_FP32, CastMode::CAST_NONE, SaturationMode::ON);
-        Tensor castOther = Cast(other, DT_FP32, CastMode::CAST_NONE, SaturationMode::ON);
+    auto computeType = GetRemainderComputeType(selfDtype);
+    if (computeType != selfDtype) {
+        Tensor castSelf = Cast(self, computeType, CastMode::CAST_NONE, SaturationMode::ON);
+        Tensor castOther = Cast(other, computeType, CastMode::CAST_NONE, SaturationMode::ON);
         auto [result, op] = TensorBinaryOperationWithOp<BinaryOpType::REM>(*Program::GetInstance().GetCurrentFunction(),
                                                                            castSelf, castOther);
         op->SetAttribute(OpAttributeKey::precisionType, static_cast<int64_t>(precisionType));
@@ -233,15 +246,24 @@ Tensor Minimum(const Tensor& operand1, const Tensor& operand2)
                 operand2);
 }
 
+static const std::unordered_set<DataType>& GetClipSupportedDtypes()
+{
+    static const std::unordered_map<NPUArch, std::unordered_set<DataType>> supportedTypes = {
+        {NPUArch::DAV_2201, {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16}},
+        {NPUArch::DAV_3510, {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16, DT_INT64}},
+        {NPUArch::DAV_9201, {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16, DT_INT64}},
+    };
+    auto arch = Platform::Instance().GetSoc().GetNPUArch();
+    auto it = supportedTypes.find(arch);
+    return it != supportedTypes.end() ? it->second : supportedTypes.find(NPUArch::DAV_2201)->second;
+}
+
 Tensor Clip(const Tensor& self, const Element& min, const Element& max)
 {
     DECLARE_TRACER();
     CheckVectorOperand(self.GetStorage(), "Clip");
 
-    static const std::unordered_set<DataType> CLIP_A2A3_TYPES = {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16};
-    static const std::unordered_set<DataType> CLIP_A5_TYPES = {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16, DT_INT64};
-    const auto& supportedTypes = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) ? CLIP_A5_TYPES :
-                                                                                                     CLIP_A2A3_TYPES;
+    const auto& supportedTypes = GetClipSupportedDtypes();
     CheckTensorDataType(self.GetStorage(), supportedTypes, "CLIP");
 
     Element min_ = min, max_ = max;
@@ -266,10 +288,7 @@ Tensor Clip(const Tensor& self, const Tensor& min, const Tensor& max)
     DECLARE_TRACER();
     CheckVectorOperand(self.GetStorage(), "Clip");
 
-    static const std::unordered_set<DataType> CLIP_A2A3_TYPES = {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16};
-    static const std::unordered_set<DataType> CLIP_A5_TYPES = {DT_FP32, DT_FP16, DT_BF16, DT_INT32, DT_INT16, DT_INT64};
-    const auto& supportedTypes = (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) ? CLIP_A5_TYPES :
-                                                                                                     CLIP_A2A3_TYPES;
+    const auto& supportedTypes = GetClipSupportedDtypes();
     CheckTensorDataType(self.GetStorage(), supportedTypes, "CLIP");
 
     Tensor result = self;

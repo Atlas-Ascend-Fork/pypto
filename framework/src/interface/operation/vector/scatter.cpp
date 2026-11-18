@@ -70,7 +70,7 @@ void InnerTiledScatterElementS(size_t cur, Function& function, const TileShape& 
         if (scatterPara.inplace) {
             op.SetAttribute(OpAttributeKey::inplaceIdx, 0);
             op.SetAttr(OpAttributeKey::inplaceInfo, std::map<int, int>{{0, 0}});
-            if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) {
+            if (IsVectorOpSimtEnabled(Opcode::OP_SCATTER_ELEMENT_INPLACE)) {
                 op.SetAttribute(OpAttributeKey::dontTouch, true);
             }
         }
@@ -277,7 +277,7 @@ void InnerTiledScatter(size_t cur, Function& function, const TileShape& tileShap
             std::map<int, int> inplaceInfo = {{0, 0}};
             op.SetAttr(OpAttributeKey::inplaceInfo, inplaceInfo);
             op.SetAttribute(OpAttributeKey::inplaceIdx, 0);
-            if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) {
+            if (IsVectorOpSimtEnabled(Opcode::OP_SCATTER_INPLACE)) {
                 op.SetAttribute(OpAttributeKey::dontTouch, true);
             }
         }
@@ -359,7 +359,7 @@ void TensorScatter(Function& function, const ScatterPara& scatterPara)
         std::map<int, int> inplaceInfo = {{0, 0}};
         op.SetAttr(OpAttributeKey::inplaceInfo, inplaceInfo);
         op.SetAttribute(OpAttributeKey::inplaceIdx, 0);
-        if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) {
+        if (IsVectorOpSimtEnabled(Opcode::OP_SCATTER_INPLACE)) {
             op.SetAttribute(OpAttributeKey::dontTouch, true);
         }
     } else {
@@ -388,7 +388,7 @@ static void CheckScatterParamsInvalid(const Tensor& self, const Tensor& indices,
             continue;
         }
         CHECK(VectorErrorCode::ERR_PARAM_INVALID,
-              (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510 && self.GetShape()[i] < 0) ||
+              (IsVectorOpSimtEnabled(Opcode::OP_SCATTER_INPLACE) && self.GetShape()[i] < 0) ||
                   indices.GetShape()[i] <= self.GetShape()[i])
             << "The shape size of src and indices should be equal";
     }
@@ -433,8 +433,8 @@ Tensor Scatter(const Tensor& self, const Tensor& indices, const Tensor& src, int
 
 void Scatter_(Tensor& self, const Tensor& indices, const Element& src, int axis, ScatterMode reduce)
 {
-    const bool a5 = Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510;
-    if (!a5 || reduce != ScatterMode::NONE) {
+    const bool useSimt = IsVectorOpSimtEnabled(Opcode::OP_SCATTER_ELEMENT_INPLACE);
+    if (!useSimt || reduce != ScatterMode::NONE) {
         self = Scatter(self, indices, src, axis, reduce);
         return;
     }
@@ -469,8 +469,8 @@ void Scatter_(Tensor& self, const Tensor& indices, const Element& src, int axis,
 
 void Scatter_(Tensor& self, const Tensor& indices, const Tensor& src, int axis, ScatterMode reduce)
 {
-    const bool a5 = Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510;
-    if (!a5 || reduce != ScatterMode::NONE) {
+    const bool useSimt = IsVectorOpSimtEnabled(Opcode::OP_SCATTER_INPLACE);
+    if (!useSimt || reduce != ScatterMode::NONE) {
         self = Scatter(self, indices, src, axis, reduce);
         return;
     }

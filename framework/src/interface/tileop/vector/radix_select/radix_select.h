@@ -15,7 +15,7 @@
 
 #ifndef TILEOP_TILE_OPERATOR_RADIX_SELECT__H
 #define TILEOP_TILE_OPERATOR_RADIX_SELECT__H
-#if defined(PTO_NPU_ARCH_A5)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 
 #include "radix_select_b1.h"
 #include "radix_select_b2.h"
@@ -66,5 +66,5 @@ TILEOP void TRadixSelect(VAL value, IDX index, TMP tmp, SRC src)
     RadixSelectUtil::RadixSelectCalc<k, isLargest>(value, index, tmp, src);
 }
 
-#endif // defined(PTO_NPU_ARCH_A5)
+#endif // defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 #endif // TILEOP_TILE_OPERATOR_RADIX_SELECT__H

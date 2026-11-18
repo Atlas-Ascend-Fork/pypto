@@ -24,7 +24,7 @@
 #include "../binary_brcinline.h"
 
 #define OP_TILE_OP_GCD TGcd
-#if defined(__DAV_V310)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 template <int... BrcOperands, typename T0, typename T1, typename T2>
 TILEOP void TGcd(T0 dst, T1 src0, T2 src1)
 {

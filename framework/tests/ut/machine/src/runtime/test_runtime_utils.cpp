@@ -41,3 +41,15 @@ TEST(RuntimeUtilsTest, A5SimtDynamicUbSize)
     EXPECT_EQ(GetAicoreLocalMemorySize(NPUArch::DAV_2201, true), 0U);
     EXPECT_EQ(GetAicoreLocalMemorySize(NPUArch::DAV_UNKNOWN, true), 0U);
 }
+
+TEST(RuntimeUtilsTest, A6SimtDynamicUbSize)
+{
+    EXPECT_EQ(GetAicoreLocalMemorySize(NPUArch::DAV_9201, true), 344U * 1024U);
+    EXPECT_EQ(GetAicoreLocalMemorySize(NPUArch::DAV_9201, false), 0U);
+    EXPECT_EQ(GetAicoreLocalMemorySize(NPUArch::DAV_3510, true), 216U * 1024U);
+    for (auto arch : {NPUArch::DAV_2201, NPUArch::DAV_3003, NPUArch::DAV_3113, NPUArch::DAV_5101, NPUArch::DAV_1001,
+                      NPUArch::DAV_UNKNOWN, static_cast<NPUArch>(9999)}) {
+        EXPECT_EQ(GetAicoreLocalMemorySize(arch, true), 0U);
+        EXPECT_EQ(GetAicoreLocalMemorySize(arch, false), 0U);
+    }
+}

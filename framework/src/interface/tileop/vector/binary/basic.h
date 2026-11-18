@@ -225,7 +225,7 @@ TILEOP void BinaryCompute(T0 dst, T1 src0, T2 src1)
                 dstTile.Assign(dst, dsttileOffsets);
                 src0Tile.Assign(src0, src0tileOffsets);
                 src1Tile.Assign(src1, src1tileOffsets);
-#if defined PTO_NPU_ARCH_A5 || defined(__LITE_NPU)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6) || defined(__LITE_NPU)
                 if constexpr (GetBrcOperandAt<DIM_5TH, BrcOperands...>() != BRC_NONE) {
                     A5Expand1DimBrcWSrc<brcmode, T1, T2, Src0TileInfo, Src1TileInfo, BrcOperands...>(
                         src0Tile.Data(), src1Tile.Data(), (uint64_t)src0.GetAddr(), (uint64_t)src1.GetAddr());

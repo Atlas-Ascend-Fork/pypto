@@ -32,6 +32,7 @@ void AddTiledBinaryOperation(Function& function, const TileShape& tileShape, Log
     auto inputTile2 = input2.tensor->View(function, input2.tileInfo.shape, input2.tileInfo.offset);
     auto resultTile = result->View(function, resultTileInfo.shape, resultTileInfo.offset);
     auto opName = GetBinaryOpName<T>();
+    const bool useGcdSimt = opName == "GCD" && IsVectorOpSimtEnabled(Opcode::OP_GCD);
     Operation* op = nullptr;
     if (opName == "BITWISEXOR" || opName == "COPYSIGN" || opName == "POW") {
         std::vector<int64_t> tmpShape(resultTileInfo.shape);
@@ -75,7 +76,7 @@ void AddTiledBinaryOperation(Function& function, const TileShape& tileShape, Log
         auto tempTensor = std::make_shared<LogicalTensor>(function, tmpType, tmpShape);
         op = &function.AddOperation(GetBinaryOpNameCode<T, false, false>(), {inputTile1, inputTile2},
                                     {resultTile, tempTensor});
-    } else if (opName == "GCD" && Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510) {
+    } else if (opName == "GCD" && !useGcdSimt) {
         auto vecTile = tileShape.GetVecTile().tile;
         int64_t tileW = vecTile.empty() ? 1 : vecTile.back();
         int64_t tileH = vecTile.size() > 1 ? vecTile[vecTile.size() - NUM_VALUE_2] : 1;
@@ -94,7 +95,7 @@ void AddTiledBinaryOperation(Function& function, const TileShape& tileShape, Log
     }
 
     if (op != nullptr) {
-        if (opName == "GCD" && Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) {
+        if (useGcdSimt) {
             op->SetAttribute(OP_ATTR_PREFIX + "requires_simt", true);
         }
         std::vector<int64_t> brcOperand(shapeSize, 0);

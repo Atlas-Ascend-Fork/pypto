@@ -588,9 +588,10 @@ std::tuple<Tensor, Tensor> TopK(const Tensor& self, int k, int axis, bool isLarg
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "TOPK");
     const auto len = static_cast<int>(self.GetShape().size());
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, axis == len - 1 || axis == -1) << "TopK only supports the last axis";
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID,
-          algo != TopKAlgo::RADIX_SELECT || Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510)
-        << "When TopK using radix select algo, only DAV_3510 architecture is supported.";
+    if (algo == TopKAlgo::RADIX_SELECT) {
+        static const std::vector<NPUArch> supportedArches = {NPUArch::DAV_3510, NPUArch::DAV_9201};
+        CheckSupportedNPUArch(supportedArches, "TOPK(Radix Select)");
+    }
     axis = axis >= 0 ? axis : (axis + len);
 
     auto topkOutShape = self.GetShape();

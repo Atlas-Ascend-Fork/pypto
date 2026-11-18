@@ -10,7 +10,7 @@
 #ifndef TILEOP_TILE_OPERATOR_VEC_GCD_SIMT_H
 #define TILEOP_TILE_OPERATOR_VEC_GCD_SIMT_H
 
-#if defined(__DAV_V310)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 #include "utils/layout.h"
 #include "utils/tile_tensor.h"
 #include "binary_brcinline.h"
@@ -54,7 +54,7 @@ __simt_vf__ AICORE LAUNCH_BOUND(1024) inline void GcdTileSimt(__ubuf__ T* dst, _
                                                               uint32_t src1ColStride)
 {
     const uint32_t count = rows * cols;
-    for (uint32_t index = __cce_simt_get_TID_X(); index < count; index += 1024) {
+    for (uint32_t index = threadIdx.x; index < count; index += 1024) {
         const uint32_t row = index / cols;
         const uint32_t col = index % cols;
         const T rhs = scalarMode ? scalar : src1[row * src1RowStride + col * src1ColStride];

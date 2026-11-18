@@ -426,6 +426,7 @@ if (ENABLE_FEATURE_PYTHON_FRONT_END)
                     framework/src/interface/utils/string_utils.h
                     framework/src/interface/utils/enum_flags.h
                     framework/src/interface/utils/entry_registrar.h
+                    framework/src/interface/utils/simt_utils.h
                 DESTINATION ${PyPTO_WhlName}/lib/framework/src/interface/utils
                 COMPONENT pypto
         )

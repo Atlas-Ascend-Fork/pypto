@@ -83,7 +83,7 @@ Status AssignMemoryType::RunOnFunction(Function& function)
     RETURN_IF_NOT_SUCCESS(InsertConvertOpsAndInferShape(function));
     RETURN_IF_NOT_SUCCESS(NormalizeViewAssembleOpcodes(function));
     RETURN_IF_NOT_SUCCESS(MemoryPathUtils::SyncTensorToBe(function));
-    RETURN_IF_NOT_SUCCESS(MarkA5SimtGatherElement(function));
+    RETURN_IF_NOT_SUCCESS(MarkSimtOps(function));
     APASS_LOG_INFO_F(Elements::Function, "===> End AssignMemoryType.");
     return SUCCESS;
 }
@@ -2034,9 +2034,10 @@ Status AssignMemoryType::NormalizeViewAssembleOpcodes(Function& function)
     return SUCCESS;
 }
 
-Status AssignMemoryType::MarkA5SimtGatherElement(Function& function)
+Status AssignMemoryType::MarkSimtOps(Function& function)
 {
-    if (Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510) {
+    const auto arch = Platform::Instance().GetSoc().GetNPUArch();
+    if (arch != NPUArch::DAV_3510 && arch != NPUArch::DAV_9201) {
         return SUCCESS;
     }
     for (auto& op : function.Operations()) {

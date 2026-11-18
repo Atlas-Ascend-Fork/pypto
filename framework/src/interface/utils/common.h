@@ -36,6 +36,8 @@ namespace npu::tile_fwk {
 
 // A5 UB: 256 KB = 8 KB static UB + 216 KB dynamic UB + 32 KB DCache.
 constexpr uint32_t A5_SIMT_DYNAMIC_UB_SIZE = 216U * 1024U;
+// A6 UB: 384 KB = 8 KB static UB + 344 KB dynamic UB + 32 KB DCache.
+constexpr uint32_t A6_SIMT_DYNAMIC_UB_SIZE = 344U * 1024U;
 
 #ifdef __clang__
 #define NO_UBSAN __attribute__((no_sanitize("unsigned-integer-overflow")))

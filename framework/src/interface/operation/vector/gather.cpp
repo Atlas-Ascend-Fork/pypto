@@ -25,19 +25,6 @@
 
 namespace npu::tile_fwk {
 
-namespace {
-bool IsFp8DataType(DataType dtype) { return dtype == DT_FP8E4M3 || dtype == DT_FP8E5M2 || dtype == DT_FP8E8M0; }
-
-void CheckFp8ArchSupport(const Tensor& tensor, const std::string& opName)
-{
-    if (!IsFp8DataType(tensor.GetDataType())) {
-        return;
-    }
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510)
-        << opName << ": DT_FP8E4M3, DT_FP8E5M2 and DT_FP8E8M0 are only supported on DAV_3510 architecture.";
-}
-} // namespace
-
 void TiledGatherOperation(Function& function, const TileShape& tileShape, size_t cur, Input& paramsInput,
                           Input& indicesInput, int axis, const LogicalTensorPtr& result, TileInfo& resultTileInfo)
 {
@@ -167,7 +154,6 @@ void CheckGatherParamsInvalid(const Tensor& params, const Tensor& indices, int a
 {
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_GATHER);
     CheckTensorDataTypeCombination({params.GetDataType(), indices.GetDataType()}, combinations, opName);
-    CheckFp8ArchSupport(params, opName);
     CheckTensorDimRange(params.GetStorage(), 1, NUM_VALUE_4, opName);
     CheckTensorDimRange(indices.GetStorage(), 1, NUM_VALUE_2, opName);
     CheckTensorShapeSize(params.GetStorage(), opName);

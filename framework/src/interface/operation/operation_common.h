@@ -106,6 +106,7 @@ void CheckTensorDataTypeCombination(const std::vector<DataType>& actualTypes,
 void CheckTensorFormat(const LogicalTensorPtr& tensor, const std::unordered_set<TileOpFormat>& unsupportedFormats,
                        const std::string& opName);
 void CheckSupportedNPUArch(const std::vector<NPUArch>& supportedArches, const std::string& opName);
+bool IsVectorOpSimtEnabled(Opcode opcode);
 void CheckTensorsDataTypeConsistency(const LogicalTensorPtr& tensor1, const LogicalTensorPtr& tensor2,
                                      const std::string& opName);
 void CheckTensorsDataTypeConsistency(const LogicalTensorPtr& tensor, const Element& element, const std::string& opName);

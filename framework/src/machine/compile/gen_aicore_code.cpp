@@ -21,7 +21,7 @@ namespace {
 const std::string kAicoreSrcCode = R"!!!(
 #include "tilefwk/aicore_entry.h"
 
-#if REQUIRES_SIMT && defined(__DAV_V310) && defined(__AIV__)
+#if REQUIRES_SIMT && (defined(__DAV_V310) || defined(__DAV_V920)) && defined(__AIV__)
 #define SIMT_META_ENTRY_IMPL(name, sep1, key1, sep2, key2, type) name##sep1##key1##sep2##key2##type
 #define SIMT_META_ENTRY(name, key1, key2, type) SIMT_META_ENTRY_IMPL(name, _, key1, _, key2, type)
 namespace {

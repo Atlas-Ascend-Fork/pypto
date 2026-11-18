@@ -181,7 +181,7 @@ TILEOP void PostProcessMode0(DstTileType& bitResTile, CmpTileType& cmpResTile, S
         pto::TCVT(tmpTile, vselResultTile, pto::RoundMode::CAST_NONE);
         SyncV();
         pto::TCVT(bitResTile, tmpTile, pto::RoundMode::CAST_NONE);
-#ifdef __DAV_V310
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
     } else if constexpr (sizeof(typename T::Type) == 8) {
         // int64/uint64: device TCVT has no direct 64-bit -> 8-bit path, so convert through int32.
         // TSEL only writes 0/1, whose bit pattern is identical between int64 and uint64, hence the

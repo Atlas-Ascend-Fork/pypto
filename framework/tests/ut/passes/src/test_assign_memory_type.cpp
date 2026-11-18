@@ -3795,6 +3795,24 @@ TEST_F(AssignMemoryTypeTest, LegacyGmGatherElementRequiresSimt)
     EXPECT_TRUE(G.GetOp("gather_element")->GetBoolAttribute(OP_ATTR_PREFIX + "requires_simt"));
 }
 
+TEST_F(AssignMemoryTypeTest, A6GmGatherElementRequiresSimt)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    config::SetPassOption(ENABLE_SLICE, false);
+    ComputationalGraphBuilder G;
+    Shape shape{NUM_16, NUM_16};
+    ASSERT_TRUE(G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_DEVICE_DDR, "source"));
+    ASSERT_TRUE(G.AddTensor(DataType::DT_INT32, shape, MemoryType::MEM_UB, "indices"));
+    ASSERT_TRUE(G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_UB, "gather_out"));
+    ASSERT_TRUE(G.AddTensor(DataType::DT_INT32, shape, MemoryType::MEM_UB, "gather_tmp"));
+    ASSERT_TRUE(
+        G.AddOp(Opcode::OP_GATHER_ELEMENT, {"source", "indices"}, {"gather_out", "gather_tmp"}, "gather_element"));
+
+    AssignMemoryType assignMemoryType;
+    ASSERT_EQ(assignMemoryType.RunOnFunction(*G.GetFunction()), SUCCESS);
+    EXPECT_TRUE(G.GetOp("gather_element")->GetBoolAttribute(OP_ATTR_PREFIX + "requires_simt"));
+}
+
 TEST_F(AssignMemoryTypeTest, ExplicitUnknownGatherElementOffsetSliceFromIncastFallsBackToDdr)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
@@ -3837,6 +3855,48 @@ TEST_F(AssignMemoryTypeTest, A5UbSourceGatherElementDoesNotRequireSimt)
     ASSERT_EQ(assignMemoryType.RunOnFunction(*G.GetFunction()), SUCCESS);
     EXPECT_FALSE(G.GetOp("gather_element")->GetBoolAttribute(OP_ATTR_PREFIX + "requires_simt"));
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(AssignMemoryTypeTest, A6UbSourceGatherElementDoesNotRequireSimt)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
+    config::SetPassOption(ENABLE_SLICE, true);
+    ComputationalGraphBuilder G;
+    Shape shape{NUM_16, NUM_16};
+    ASSERT_TRUE(G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_UB, "source"));
+    ASSERT_TRUE(G.AddTensor(DataType::DT_INT32, shape, MemoryType::MEM_UB, "indices"));
+    ASSERT_TRUE(G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_UB, "gather_out"));
+    ASSERT_TRUE(G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_UB, "gather_tmp"));
+    ASSERT_TRUE(
+        G.AddOp(Opcode::OP_GATHER_ELEMENT, {"source", "indices"}, {"gather_out", "gather_tmp"}, "gather_element"));
+
+    AssignMemoryType assignMemoryType;
+    ASSERT_EQ(assignMemoryType.RunOnFunction(*G.GetFunction()), SUCCESS);
+    EXPECT_FALSE(G.GetOp("gather_element")->GetBoolAttribute(OP_ATTR_PREFIX + "requires_simt"));
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(AssignMemoryTypeTest, GmScalarScatterRequiresSimtByArch)
+{
+    for (auto arch : {NPUArch::DAV_2201, NPUArch::DAV_3510, NPUArch::DAV_9201}) {
+        SCOPED_TRACE(NPUArchToString(arch));
+        Platform::Instance().GetSoc().SetNPUArch(arch);
+        ComputationalGraphBuilder G;
+        Shape shape{NUM_16, NUM_16};
+        ASSERT_TRUE(G.AddTensor(DataType::DT_FP32, shape, MemoryType::MEM_DEVICE_DDR, "self"));
+        ASSERT_TRUE(G.AddTensor(DataType::DT_INT32, shape, MemoryType::MEM_UB, "indices"));
+        ASSERT_TRUE(G.AddTensor(DataType::DT_FP32, shape, MemoryType::MEM_DEVICE_DDR, "result"));
+        ASSERT_TRUE(G.AddOp(Opcode::OP_SCATTER_ELEMENT_INPLACE, {"self", "indices"}, {"result"}, "scatter"));
+        auto* op = G.GetOp("scatter");
+        op->SetAttribute(OP_ATTR_PREFIX + "axis", 1);
+        op->SetAttribute(OP_ATTR_PREFIX + "scatter_mode", 0);
+        op->SetAttribute(OpAttributeKey::scalar, Element(DT_FP32, 2.0f));
+        AssignMemoryType assignMemoryType;
+        ASSERT_EQ(assignMemoryType.RunOnFunction(*G.GetFunction()), SUCCESS);
+        EXPECT_EQ(
+            op->HasAttr(OP_ATTR_PREFIX + "requires_simt") && op->GetBoolAttribute(OP_ATTR_PREFIX + "requires_simt"),
+            arch != NPUArch::DAV_2201);
+    }
 }
 
 TEST_F(AssignMemoryTypeTest, VecDupViewMatmulNoAssemble)

@@ -21,7 +21,7 @@
 namespace npu::tile_fwk {
 
 namespace {
-const std::vector<NPUArch> INTERLEAVE_SUPPORTED_ARCHITECTURES = {NPUArch::DAV_3510};
+const std::vector<NPUArch> INTERLEAVE_SUPPORTED_ARCHITECTURES = {NPUArch::DAV_3510, NPUArch::DAV_9201};
 } // namespace
 
 void TileInterleaveOperation(Function& function, const TileShape& tileShape, size_t cur, LogicalInput& input1,

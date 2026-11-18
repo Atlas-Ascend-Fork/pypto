@@ -440,7 +440,7 @@ __aicore__ inline void TIndexPut(DST dst, C coordinate, VAL values, TMP tmp, IDX
         valuesStride = 0;
     }
     size_t gmOffset = static_cast<size_t>(dstLayout.template GetGmOffset<C, MAX_DIMS>(coordinate));
-#if defined(__DAV_V310)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
     if constexpr (dstShapeSize == indicesSize &&
                   (std::is_same_v<typename VAL::Type, float> || std::is_same_v<typename VAL::Type, half> ||
                    std::is_same_v<typename VAL::Type, bfloat16_t>) &&

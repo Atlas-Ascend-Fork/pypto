@@ -19,6 +19,7 @@
 #include "tilefwk/element.h"
 #include <algorithm>
 #include <sstream>
+#include <unordered_map>
 #include <unordered_set>
 
 namespace npu::tile_fwk {
@@ -305,6 +306,28 @@ void CheckSupportedNPUArch(const std::vector<NPUArch>& supportedArches, const st
     }
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, isSupported)
         << opName << ": this interface only supports architecture: " << oss.str();
+}
+
+bool IsVectorOpSimtEnabled(Opcode opcode)
+{
+    static const std::unordered_map<NPUArch, std::unordered_set<Opcode>> simtOpsByArch = {
+        {NPUArch::DAV_1001, {}},
+        {NPUArch::DAV_2201, {}},
+        {NPUArch::DAV_3510,
+         {Opcode::OP_GCD, Opcode::OP_GCDS, Opcode::OP_INDEX_ADD, Opcode::OP_INDEX_PUT, Opcode::OP_SCATTER_INPLACE,
+          Opcode::OP_SCATTER_ELEMENT_INPLACE}},
+        {NPUArch::DAV_9201,
+         {Opcode::OP_GCD, Opcode::OP_GCDS, Opcode::OP_INDEX_ADD, Opcode::OP_INDEX_PUT, Opcode::OP_SCATTER_INPLACE,
+          Opcode::OP_SCATTER_ELEMENT_INPLACE}},
+        {NPUArch::DAV_3003, {}},
+        {NPUArch::DAV_3113, {}},
+        {NPUArch::DAV_5101, {}},
+    };
+    auto arch = Platform::Instance().GetSoc().GetNPUArch();
+    auto it = simtOpsByArch.find(arch);
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, it != simtOpsByArch.end())
+        << "Vector SIMT selection is not configured for architecture: " << NPUArchToString(arch);
+    return it->second.count(opcode) != 0;
 }
 
 void CheckTensorsDataTypeConsistency(const LogicalTensorPtr& tensor1, const LogicalTensorPtr& tensor2,

@@ -325,6 +325,8 @@ LogicalTensorPtr TensorBinaryOperationAllScalar(Function& function, const Tensor
     return result;
 }
 
+DataType GetRemainderComputeType(DataType dtype);
+
 LogicalTensorPtr GenAllOneTensor(const Shape& shape, std::vector<SymbolicScalar> validShape, const DataType& dataType);
 
 } // namespace npu::tile_fwk

@@ -176,7 +176,8 @@ TEST_F(TestAicoreCompiler, GenAicoreSrcFileUsesRequiresSimtMacro)
     std::ifstream source(sourcePath);
     ASSERT_TRUE(source.is_open());
     const std::string content((std::istreambuf_iterator<char>(source)), std::istreambuf_iterator<char>());
-    EXPECT_NE(content.find("#if REQUIRES_SIMT && defined(__DAV_V310) && defined(__AIV__)"), std::string::npos);
+    EXPECT_NE(content.find("#if REQUIRES_SIMT && (defined(__DAV_V310) || defined(__DAV_V920)) && defined(__AIV__)"),
+              std::string::npos);
     EXPECT_NE(content.find("void KERNEL_ENTRY(__OPTYPE__, __OPNAME__, __TILINGKEY__)"), std::string::npos);
     EXPECT_NE(content.find("{12U, sizeof(uint32_t), 4U}"), std::string::npos);
     EXPECT_NE(content.find("{7U, sizeof(uint32_t), 8U * 1024U}"), std::string::npos);

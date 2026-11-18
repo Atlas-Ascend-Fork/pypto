@@ -20,7 +20,7 @@
 #include "utils/layout.h"
 #include "utils/tile_tensor.h"
 
-#if defined PTO_NPU_ARCH_A5
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 
 enum class InterleaveOp {
     INTERLEAVE,
@@ -107,5 +107,5 @@ TILEOP void TDeInterleave(T0 dst0, T1 dst1, T2 src)
     }
 }
 
-#endif // defined PTO_NPU_ARCH_A5
+#endif // defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 #endif // TILEOP_TILE_OPERATOR_INTERLEAVE__H

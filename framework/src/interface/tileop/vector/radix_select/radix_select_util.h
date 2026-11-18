@@ -15,7 +15,7 @@
 
 #ifndef TILEOP_TILE_OPERATOR_RADIX_SELECT_UTIL__H
 #define TILEOP_TILE_OPERATOR_RADIX_SELECT_UTIL__H
-#if defined(PTO_NPU_ARCH_A5)
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 #include "utils/layout.h"
 #include "utils/tile_tensor.h"
 
@@ -437,5 +437,5 @@ TILEOP void RadixSelectTwiddle(TWI twi, SRC src, TMP tmp, CMP cmp, USELESS usele
 
 } // namespace RadixSelectUtil
 
-#endif // defined(PTO_NPU_ARCH_A5)
+#endif // defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
 #endif // TILEOP_TILE_OPERATOR_RADIX_SELECT_UTIL__H
