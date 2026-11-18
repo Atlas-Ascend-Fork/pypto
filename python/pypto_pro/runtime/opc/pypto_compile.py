@@ -44,6 +44,7 @@ import os
 from pathlib import Path
 import shutil
 import time
+from types import SimpleNamespace
 
 from asc_op_compile_base.asc_op_compiler.ascendc_common_utility import CommonUtility, CompileInfo
 from asc_op_compile_base.asc_op_compiler.ascendc_compile_base import (
@@ -683,6 +684,43 @@ def _filter_tiling_keys(tiling_key_list, extend_options, ctx, kernel_name):
     return filtered
 
 
+def _codegen_variants(kernel, cce_file, arch, dtype_consts, tiling_keys, kernel_meta_dir):
+    """Specialize independent keys before touching shared OPC state or output files."""
+    from pypto_pro.runtime.jit import _codegen
+
+    from ._parallel_codegen import codegen_budget, parallel_codegen
+
+    tasks = [(int(key), _decode_tiling_key(kernel.tilingkey_schema, int(key))) for key in tiling_keys]
+    started = time.perf_counter()
+    with codegen_budget(len(tasks)) as workers:
+        logger.info("pypto codegen: %d tilingkeys, %d workers", len(tasks), workers)
+        if workers > 1:
+            results = parallel_codegen(cce_file, arch, dtype_consts, tasks, kernel_meta_dir, workers)
+        else:
+            results = []
+            for packed, concrete in tasks:
+                cg = _codegen(
+                    kernel.to_kernel_def(concrete, dtype_consts),
+                    arch,
+                    clean_up=False,
+                    tilingkey_packed=packed,
+                    out_dir=os.path.join(kernel_meta_dir, f"_cg_tk_{packed}"),
+                )
+                if cg is None:
+                    raise RuntimeFailure(f"pypto codegen failed for tilingkey {packed}")
+                # Do not retain hundreds of large source strings/native type graphs
+                # when serial codegen is selected; packaging only needs this metadata.
+                results.append(SimpleNamespace(
+                    build_dir=cg.build_dir,
+                    kernel_name=cg.kernel_name,
+                    entry_params=cg.entry_params,
+                    has_cube=cg.has_cube,
+                    has_vector=cg.has_vector,
+                ))
+    logger.info("pypto codegen: %d tilingkeys completed in %.3fs", len(tasks), time.perf_counter() - started)
+    return results
+
+
 def pypto_compile_op(
     cce_file,
     origin_func_name,
@@ -699,7 +737,6 @@ def pypto_compile_op(
     ``op_context`` of ``SingleOpCompile``.
     """
     from pypto_pro.runtime.jit import (
-        _codegen,
         _setup_arch_env,
         _validate_datatype_key,
     )
@@ -793,26 +830,14 @@ def pypto_compile_op(
     )
 
     op_info = _prepare_dfx(op_info, tiling_info, compile_info)
+    codegen_results = _codegen_variants(kernel, cce_file, arch, dtype_consts, tiling_keys, kernel_meta_dir)
     obj_files: list[str] = []
     cmds_by_core: dict[str, list] = {core: [] for core in _CORE_COMPILE_TARGETS}
     tiling_keys_by_core: dict[str, list] = {core: [] for core in _CORE_COMPILE_TARGETS}
     compile_options_ready = False
-    for tiling_key in tiling_keys:
+    shared_headers = {}
+    for tiling_key, cg in zip(tiling_keys, codegen_results):
         packed = int(tiling_key)
-        concrete = _decode_tiling_key(schema, packed)
-
-        # Codegen into a per-key subdir under this kernel's (unique) kernel_meta dir. asc_opc forks one
-        # process per dtype-combo, all sharing cwd — the default ./build/<prog_name>__<arch>/tk_<packed>
-        # location is keyed only on prog.name, so concurrent processes would clobber each other's
-        # kernel.cpp (yielding empty/half-written copies). kernel_meta_dir is unique per kernel_name.
-        cg_dir = os.path.join(kernel_meta_dir, f"_cg_tk_{packed}")
-        cg = _codegen(
-            kernel.to_kernel_def(concrete, dtype_consts),
-            arch,
-            clean_up=False,
-            tilingkey_packed=packed,
-            out_dir=cg_dir,
-        )
         if cg is None:
             raise RuntimeFailure(f"pypto codegen failed for tilingkey {packed}")
         if _kernel_type_from_codegen(cg, arch) != kernel_type:
@@ -830,13 +855,18 @@ def pypto_compile_op(
         # Co-locate the codegen'd kernel.cpp (+ its tiling headers) into kernel_meta under a per-key name,
         # so the per-key src #includes it by a bare relative name (no absolute path; bisheng resolves a
         # quoted include against the including file's own dir). Tiling headers are dtype/key-agnostic
-        # (same content across keys) — copying per key is idempotent.
+        # (same content across keys). Validate them and copy each shared header only once.
         impl_cpp_name = f"{kernel_name}_{packed}_impl.cpp"
         impl_src = os.path.join(cg.build_dir, "kernel.cpp")
         impl_dst = os.path.join(kernel_meta_dir, impl_cpp_name)
         shutil.copyfile(impl_src, impl_dst)
         for hdr in (f for f in os.listdir(cg.build_dir) if f.endswith(".h")):
-            shutil.copyfile(os.path.join(cg.build_dir, hdr), os.path.join(kernel_meta_dir, hdr))
+            header = Path(cg.build_dir, hdr).read_bytes()
+            if hdr not in shared_headers:
+                shared_headers[hdr] = header
+                Path(kernel_meta_dir, hdr).write_bytes(header)
+            elif shared_headers[hdr] != header:
+                raise InvalidOperation(f"PyPTO header {hdr} differs for tiling key {packed}")
 
         src = _gen_key_src(
             impl_cpp_name, origin_func, impl_name, cg.entry_params, kernel_name, packed, tiling_info, compile_info

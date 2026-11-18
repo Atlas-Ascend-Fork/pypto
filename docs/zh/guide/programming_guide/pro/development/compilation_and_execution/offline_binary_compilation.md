@@ -238,4 +238,16 @@ bash build.sh --pkg --soc=${soc_version} \
 
 未指定`--vendor_name`时，自定义算子包名称默认为`custom`。
 
+普通动态二进制编译会按TilingKey并行执行AST解析、IR Pass和CCE代码生成。
+每个OPC编译进程默认最多使用8个代码生成单元，并受CPU亲和性、Key数量和Make jobserver可用槽位限制。
+各代码生成单元独立生成源码，OPC进程按原Key顺序汇总，再调用后端编译和链接。
+静态编译及SuperKernel编译路径不使用此并行策略。
+
+在Make构建中，新增代码生成单元仅使用当前可取得的jobserver令牌，不等待额外令牌；
+jobserver不可用时使用串行代码生成。独立运行OPC时，上限分别应用于每个OPC进程，
+同时编译多个算子或dtype时需要据此分配总CPU和内存预算。
+并行代码生成失败会终止本次编译，错误信息和代码生成单元日志保存在该编译实例的`kernel_meta/pypto_codegen.log`中。
+标准OPC进程在代码生成阶段收到`SIGTERM`或`Ctrl+C`时，会清理代码生成单元并归还Make jobserver令牌。
+`SIGKILL`（包括OOM强制终止）无法触发Python清理逻辑；若嵌入程序自定义了`SIGTERM`处理器，则保留其处理行为。
+
 构建完成后，算子安装包生成在工程根目录的`build_out`中。安装算子包后可以通过aclnn调用；图模式还需要提供`op_graph`中的相关交付件。
