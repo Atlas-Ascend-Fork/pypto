@@ -209,7 +209,14 @@ void PadLocalBuffer::TryPadMatmulIsMXScene(Operation& op, LogicalTensorPtr& in)
 bool PadLocalBuffer::TryPadMatmulMXScene(Operation& op, LogicalTensorPtr& in)
 {
     const auto& producers = in->GetProducers();
-    if (producers.empty()) {
+    if (producers.empty() || *producers.begin() == nullptr) {
+        return false;
+    }
+    auto producerOpcode = (*producers.begin())->GetOpcode();
+    auto opcode = op.GetOpcode();
+    const bool isL0AScaleScene = opcode == Opcode::OP_L1_TO_L0A_SCALE || producerOpcode == Opcode::OP_L1_TO_L0A_SCALE;
+    const bool isL0BScaleScene = opcode == Opcode::OP_L1_TO_L0B_SCALE || producerOpcode == Opcode::OP_L1_TO_L0B_SCALE;
+    if (!isL0AScaleScene && !isL0BScaleScene) {
         return false;
     }
     // MX scale 主体为 3 维（构图层保证 3~5 维），维数不足时尾维定位会下溢
@@ -219,19 +226,15 @@ bool PadLocalBuffer::TryPadMatmulMXScene(Operation& op, LogicalTensorPtr& in)
                           op.opmagic, op.GetOpcodeStr().c_str(), in->magic);
         return false;
     }
-    auto producerOpcode = (*producers.begin())->GetOpcode();
     // L0A scale 的 m 恒在倒数第 3 维，L0B scale 的 n 恒在倒数第 2 维
     const int64_t mxMAxis = static_cast<int64_t>(in->tensor->rawshape.size()) - SHAPE_DIM3;
     const int64_t mxNAxis = static_cast<int64_t>(in->tensor->rawshape.size()) - SHAPE_DIM2;
-    if (op.GetOpcode() == Opcode::OP_L1_TO_L0A_SCALE || producerOpcode == Opcode::OP_L1_TO_L0A_SCALE) {
+    if (isL0AScaleScene) {
         PadForMatMulMX(in, mxMAxis);
         return true;
     }
-    if (op.GetOpcode() == Opcode::OP_L1_TO_L0B_SCALE || producerOpcode == Opcode::OP_L1_TO_L0B_SCALE) {
-        PadForMatMulMX(in, mxNAxis);
-        return true;
-    }
-    return false;
+    PadForMatMulMX(in, mxNAxis);
+    return true;
 }
 
 int64_t PadLocalBuffer::GetMatmulPaddingValue(Operation& op, LogicalTensorPtr& in) const
