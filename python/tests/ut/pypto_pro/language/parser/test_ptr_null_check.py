@@ -8,7 +8,7 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""Parser tests for pointer null-check syntax on optional pl.Ptr parameters."""
+"""Parser tests for pointer null-check syntax on pl.Ptr and pl.Tensor parameters."""
 
 from pypto_pro import ir
 from pypto_pro._errors import InvalidVal
@@ -28,21 +28,27 @@ def test_is_none_requires_simple_variable():
         bad_is_none.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
-def test_is_none_on_tensor_rejected():
-    """'is None' on a pl.Tensor parameter is rejected at parse time.
+def test_is_none_on_tensor_supported():
+    """'is None' on a pl.Tensor parameter lowers to its GM data-pointer null check.
 
-    pl.Tensor is a descriptor (ptr + shape); null-checking it has no meaning
-    and the generated code would reference an undeclared identifier. Users
-    must declare optional inputs as pl.Ptr instead (reviewer guidance: a
-    tensor with no argument has no meaningful shape).
+    aicore and aicpu kernels share one path: pl.Ptr tests the pointer, a
+    tensor tests its GM data pointer -- the flattened form of the cpp
+    ``Tensor* != nullptr && GetData() != nullptr`` guard.
     """
-    with pytest.raises(InvalidVal, match="pl.Ptr"):
+    @pl.jit(auto_mutex=False)
+    def tensor_none(src: pl.Tensor[[4], pl.DT_FP16], bias: pl.Tensor[[4], pl.DT_FP16]):
+        if bias is None:
+            src[0] = 0.0
+
+    tensor_none.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_is_none_on_scalar_rejected():
+    """'is None' on a non-pointer scalar parameter is rejected at parse time."""
+    with pytest.raises(InvalidVal, match="pl.Ptr and pl.Tensor"):
         @pl.jit(auto_mutex=False)
-        def bad_tensor_none(
-            src: pl.Tensor[[4], pl.DT_FP16],
-            bias: pl.Tensor[[4], pl.DT_FP16],  # should be pl.Ptr[pl.DT_FP16]
-        ):
-            if bias is None:
+        def scalar_none(x: pl.DT_INT64):
+            if x is None:
                 pass
 
-        bad_tensor_none.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+        scalar_none.to_kernel_def().parse_target_program(ir.SectionKind.Vector)

@@ -169,9 +169,7 @@ class ControlFlowParserMixin:
                 break
         return local_scope.jump_kind
 
-    def _parse_control_flow_region(
-        self, statements: list[ast.stmt], scope_type: str
-    ) -> JumpKind:
+    def _parse_control_flow_region(self, statements: list[ast.stmt], scope_type: str) -> JumpKind:
         """Parse one if/loop block, add its default jump, and dispatch it."""
         jump_kind = self._parse_statement_list(statements)
         local_scope = self.scope_manager.current_scope
@@ -219,12 +217,7 @@ class ControlFlowParserMixin:
             raise InvalidVal(f"{jump_kind.value} is missing its control-flow owner")
 
         span = self._current_span()
-        outputs = [
-            self._as_control_flow_value(
-                name, self.lookup_expr_by_name(name), span
-            )
-            for name in info.merge_names
-        ]
+        outputs = [self._as_control_flow_value(name, self.lookup_expr_by_name(name), span) for name in info.merge_names]
 
         if jump_kind is JumpKind.YIELD:
             jump_op = ir.YieldStmt([], span)
@@ -243,10 +236,7 @@ class ControlFlowParserMixin:
         if not info.jumps:
             return []
         output_count = len(info.jumps[0].outputs)
-        states = [
-            PhiState(type_equal=self.tuple_type_registry.types_equal)
-            for _ in range(output_count)
-        ]
+        states = [PhiState(type_equal=self.tuple_type_registry.types_equal) for _ in range(output_count)]
         for jump in info.jumps:
             if len(jump.outputs) != output_count:
                 raise InvalidVal("control-flow jump output counts must match")
@@ -348,9 +338,7 @@ class ControlFlowParserMixin:
     def _as_index_expr(value: int | ir.Expr, span: ir.Span) -> ir.Expr:
         return value if isinstance(value, ir.Expr) else ir.ConstInt(value, DataType.INT64, span)
 
-    def _select_loop_merge_inputs(
-        self, writes: set[str], span: ir.Span
-    ) -> tuple[tuple[str, ir.Expr], ...]:
+    def _select_loop_merge_inputs(self, writes: set[str], span: ir.Span) -> tuple[tuple[str, ir.Expr], ...]:
         """Keep explicit loop writes whose values exist before the loop."""
         merge_inputs = []
         for name in sorted(writes):
@@ -360,9 +348,7 @@ class ControlFlowParserMixin:
             merge_inputs.append((name, self._as_control_flow_value(name, value, span)))
         return tuple(merge_inputs)
 
-    def _create_loop_slots(
-        self, merge_inputs: tuple[tuple[str, ir.Expr], ...], span: ir.Span
-    ) -> list[_LoopMergeSlot]:
+    def _create_loop_slots(self, merge_inputs: tuple[tuple[str, ir.Expr], ...], span: ir.Span) -> list[_LoopMergeSlot]:
         """Create main-value carries for the selected explicit merge names."""
         slots: list[_LoopMergeSlot] = []
         for name, init_value in merge_inputs:
@@ -501,12 +487,8 @@ class ControlFlowParserMixin:
         info = ControlFlowInfo(merge_names)
         loop_var = self.builder.var(loop_var_name, ir.ScalarType(DataType.INT64), span)
         with self.scope_manager.change_loop_info(info):
-            body = self._parse_loop_region(
-                stmt.body, "for", span, slots, (loop_var_name, loop_var)
-            )
-        iter_args, return_vars, merged_bindings = self._finalize_loop_slots(
-            slots, info, span, is_for_loop=True
-        )
+            body = self._parse_loop_region(stmt.body, "for", span, slots, (loop_var_name, loop_var))
+        iter_args, return_vars, merged_bindings = self._finalize_loop_slots(slots, info, span, is_for_loop=True)
         for_stmt = self.builder.builder.create_for_stmt(
             loop_var,
             self._as_index_expr(range_args["start"], span),
@@ -530,9 +512,7 @@ class ControlFlowParserMixin:
         if not (isinstance(stmt.test, ast.Constant) and stmt.test.value is True):
             break_test = ast.copy_location(ast.UnaryOp(op=ast.Not(), operand=stmt.test), stmt.test)
             break_stmt = ast.copy_location(ast.Break(), stmt)
-            break_if = ast.copy_location(
-                ast.If(test=break_test, body=[break_stmt], orelse=[]), stmt
-            )
+            break_if = ast.copy_location(ast.If(test=break_test, body=[break_stmt], orelse=[]), stmt)
             ast.fix_missing_locations(break_if)
             loop_body = [break_if, *stmt.body]
 
@@ -547,9 +527,7 @@ class ControlFlowParserMixin:
         info = ControlFlowInfo(merge_names)
         with self.scope_manager.change_loop_info(info):
             body = self._parse_loop_region(loop_body, "while", span, slots)
-        iter_args, return_vars, merged_bindings = self._finalize_loop_slots(
-            slots, info, span, is_for_loop=False
-        )
+        iter_args, return_vars, merged_bindings = self._finalize_loop_slots(slots, info, span, is_for_loop=False)
         while_stmt = self.builder.builder.create_while_stmt(
             ir.ConstBool(True, span), iter_args, body, return_vars, span
         )
@@ -585,9 +563,7 @@ class ControlFlowParserMixin:
         # and flatten the original else into the parent region.
         if not info.jumps:
             synthetic_else = ir.SeqStmts([ir.YieldStmt([], span)], span)
-            self.builder.emit(
-                self.builder.builder.create_if_stmt(condition, then_body, synthetic_else, [], span)
-            )
+            self.builder.emit(self.builder.builder.create_if_stmt(condition, then_body, synthetic_else, [], span))
             self._parse_statement_list(stmt.orelse)
             return
 
@@ -617,9 +593,7 @@ class ControlFlowParserMixin:
                 raise InvalidVal("materialized If yield is missing its terminator")
             self.builder.builder.update_jump_values(jump.jump_op, list(jump.outputs))
 
-        self.builder.emit(
-            self.builder.builder.create_if_stmt(condition, then_body, else_body, return_vars, span)
-        )
+        self.builder.emit(self.builder.builder.create_if_stmt(condition, then_body, else_body, return_vars, span))
         for name, merged_var, state in merged_bindings:
             self.scope_manager.define_var(name, merged_var, allow_redef=True, span=span)
             self._update_phi_constant(merged_var, state)
@@ -692,6 +666,21 @@ class ControlFlowParserMixin:
                     'A helper @pl.vector_function(mode="simt") must return None or one scalar value',
                     span=span,
                     hint="Return Tile/Tensor data through an input parameter; return scalar results directly.",
+                    parser_retry=True,
+                )
+        elif self._void_return_only and self._current_func_type == ir.FunctionType.AicpuKernel:
+            # AICPU status ABI: `return <int>` carries the KERNEL_STATUS code
+            # (0 = OK, 1 = PARAM_INVALID) the same way the handwritten AICPU
+            # kernels return KERNEL_STATUS_*; a bare `return` stays the normal
+            # OK exit. Anything but an integer scalar is not a status code.
+            return_expr = self.parse_expression(stmt.value)
+            dtype = return_expr.type.dtype if isinstance(return_expr.type, ir.ScalarType) else None
+            if dtype is None or not dtype.is_int():
+                raise InvalidVal(
+                    "an aicpu kernel's return value must be an integer KERNEL_STATUS code",
+                    span=span,
+                    hint="Use `return` for KERNEL_STATUS_OK or `return <int>` (e.g. return 1) "
+                    "for a failed check; write data results through output parameters.",
                     parser_retry=True,
                 )
         else:

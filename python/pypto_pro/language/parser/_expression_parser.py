@@ -53,7 +53,6 @@ def _is_enum_value(value: Any) -> bool:
         hasattr(type(value), "__members__") and hasattr(value, "value")
     )
 
-
 class ExpressionParserMixin:
     """Mixin containing expression, attribute, and subscript parsing."""
 
@@ -289,6 +288,12 @@ class ExpressionParserMixin:
             )
         return result
 
+    def _tensor_data_ptr(self, value):
+        """The GM data pointer of a tensor descriptor, or None without a view."""
+        tensor_view = value.type.tensor_view
+        ptr = tensor_view.ptr if tensor_view is not None else None
+        return ptr if isinstance(ptr, ir.Expr) else None
+
     def parse_name(self, name: ast.Name) -> ir.Expr | Any:
         """Parse variable name reference.
 
@@ -489,10 +494,10 @@ class ExpressionParserMixin:
         if op_type in (ast.In, ast.NotIn):
             return self._parse_in_operator(compare, span)
 
-        # ── Handle 'is None' / 'is not None' for pointer null checks ──
-        # Converts to runtime comparison: cast(ptr, UINT64) == 0 / cast(ptr, UINT64) != 0
-        # This allows optional pl.Ptr parameters to be checked at runtime without
-        # compile-time constant folding or multiple kernel variants.
+        # ── Handle 'is None' / 'is not None' for null checks ──
+        # Lowers to cast(ptr, UINT64) == 0 / != 0. pl.Ptr checks the pointer;
+        # a tensor checks its GM data pointer, the flattened form of the
+        # cpp ``Tensor* != nullptr && GetData() != nullptr`` guard.
         if op_type in (ast.Is, ast.IsNot):
             comparator = compare.comparators[0]
             if isinstance(comparator, ast.Constant) and comparator.value is None:
@@ -503,28 +508,38 @@ class ExpressionParserMixin:
                         span=span,
                         hint="Use 'param_name is None' for null checks on pl.Ptr parameters",
                     )
-                # Parse the left operand (must be a pl.Ptr parameter)
+                # Parse the left operand. A compile-time value (for example an
+                # inline helper that returned None) folds directly; there is no
+                # pointer to test at run time.
                 left = self.parse_expression(compare.left)
-                # 'is None' only makes sense for pointer parameters. pl.Tensor is a
-                # descriptor (ptr + shape); null-checking it has no meaning and the
-                # generated code would reference an undeclared identifier. Guide users
-                # to pl.Ptr for optional inputs (reviewer guidance: optional inputs
-                # should be declared as pl.Ptr since pl.Tensor requires a shape even
-                # when the argument is None, making the shape meaningless).
-                if not isinstance(left.type, ir.PtrType):
+                is_none = op_type is ast.Is
+                if not isinstance(left, ir.Expr):
+                    return ir.ConstBool((left is None) if is_none else (left is not None), span)
+                # Runtime null check, shared by aicore and aicpu kernels.
+                # pl.Ptr tests the pointer itself; a tensor tests its GM data
+                # pointer, the flattened form of the cpp
+                # ``Tensor* != nullptr && GetData() != nullptr`` guard.
+                if isinstance(left.type, ir.PtrType):
+                    ptr = left
+                elif isinstance(left.type, ir.TensorType):
+                    ptr = self._tensor_data_ptr(left)
+                    if ptr is None:
+                        raise InvalidVal(
+                            "tensor has no pointer view to null-check",
+                            span=span,
+                            parser_retry=True,
+                        )
+                else:
                     raise InvalidVal(
-                        "'is None' / 'is not None' is only supported on pl.Ptr parameters",
+                        "'is None' / 'is not None' is only supported on pl.Ptr and pl.Tensor parameters",
                         span=span,
-                        hint="Use pl.Ptr[dtype] for optional pointer inputs; "
-                        "pl.Tensor requires a shape even when the argument is None",
+                        hint="pl.Ptr[dtype] and pl.Tensor[...] parameters (with a "
+                        "None default when optional) both support null checks",
                         parser_retry=True,
                     )
-                # Cast pointer to UINT64 for comparison (IR requires ScalarType for eq/ne)
-                left_as_int = ir.cast(left, ir.DataType.UINT64, span)
+                ptr_as_int = ir.cast(ptr, ir.DataType.UINT64, span)
                 zero = ir.ConstInt(0, ir.DataType.UINT64, span)
-                # Generate runtime comparison: cast(ptr, UINT64) == 0 or != 0
-                op = "eq" if op_type is ast.Is else "ne"
-                return _make_binary(op, left_as_int, zero, span)
+                return _make_binary("eq" if is_none else "ne", ptr_as_int, zero, span)
             else:
                 raise InvalidVal(
                     "'is' / 'is not' only supported with None",

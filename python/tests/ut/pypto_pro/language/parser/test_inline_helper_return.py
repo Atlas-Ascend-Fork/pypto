@@ -429,3 +429,45 @@ def test_vector_function_rejects_non_vector_helper_call():
             _test_result = value
 
         caller.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_helper_same_width_astype_returns_merge():
+    """The real-port idiom: every return path astype's to the SAME dtype.
+
+    C++ single-return-type signatures force the original code into this shape
+    (e.g. GetS1SeqSize returns uint32_t on every path), so the port mirrors it:
+    same-width astype on every return, and the carrier merges one scalar type.
+    """
+    def get_seq_size(seqused, cu, is_tnd, b_idx, max_seqlen):
+        if seqused is not None:
+            return pl.astype(pl.getval(seqused, b_idx), pl.DT_INT64)
+        if is_tnd and cu is not None:
+            return pl.astype(pl.getval(cu, b_idx + 1) - pl.getval(cu, b_idx), pl.DT_INT64)
+        return pl.astype(max_seqlen, pl.DT_INT64)
+
+    @pl.jit(mode="aicpu_kernel")
+    def kernel(
+        seqused: pl.Tensor[[pl.DYNAMIC], pl.DT_INT32, pl.Input],
+        cu: pl.Tensor[[pl.DYNAMIC], pl.DT_INT32, pl.Input],
+        out: pl.Tensor[[pl.DYNAMIC], pl.DT_INT64, pl.Output],
+        is_tnd: pl.DT_INT64 = 1,
+        max_seqlen: pl.DT_INT64 = 128,
+    ):
+        total = 0
+        for b in pl.range(2):
+            total += get_seq_size(seqused, cu, is_tnd, b, max_seqlen)
+        pl.setval(out, 0, total)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    func = program.get_function(kernel.__name__)
+    # The carrier merged to one INT64 scalar: the setval value operand is that
+    # scalar (every helper return path astype'd to INT64 before the merge).
+    stmts = list(_walk_statements(func.body))
+    setval_call = next(
+        stmt.value for stmt in stmts
+        if isinstance(getattr(stmt, "value", None), ir.Call) and stmt.value.name == "block.setval"
+    )
+    value_operand = setval_call.args[2]
+    assert isinstance(value_operand, ir.Var), "the setval value must be a merged scalar var"
+    assert isinstance(value_operand.type, ir.ScalarType)
+    assert value_operand.type.dtype == ir.DataType.INT64

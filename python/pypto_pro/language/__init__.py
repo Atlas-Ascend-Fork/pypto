@@ -183,6 +183,7 @@ __all__ = [
     "dequant",
     "rem",
     "getval",
+    "numel",
     "setval",
     # Scalar atomics on GM Tensor elements
     "atomic_add",
@@ -404,6 +405,7 @@ from ._api import (
     ne,
     neg,
     not_,
+    numel,
     or_,
     partadd,
     partmax,

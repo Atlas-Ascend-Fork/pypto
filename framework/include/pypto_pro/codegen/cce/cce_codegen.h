@@ -129,7 +129,9 @@ public:
      * SIMT kernels emit a __global__ entry directly.
      *
      * \param program The IR Program to generate code for
-     * \return Generated C++ code as a single string
+     * \return Generated C++ code as a single string. An AICPU_KERNEL program is emitted
+     *         bare (no __gm__/__aicore__/__aicpu__ qualifiers, no CCE TU scaffolding) for
+     *         the glue paths; every other funcType keeps the qualifiers and scaffolding.
      */
     [[nodiscard]] std::string GenerateSingle(const ir::ProgramPtr& program, npu::tile_fwk::NPUArch arch);
 
@@ -159,6 +161,11 @@ public:
     /// True when emitting a 3510 SIMT VF, callee, or SIMT kernel body.
     [[nodiscard]] bool IsInSimtContext() const { return ir::IsSimtFuncType(currentFunctionType_); }
     [[nodiscard]] ir::FunctionType GetCurrentKernelType() const { return currentKernelType_; }
+    /// GM address-space qualifier for backend emission ("" for the AICPU bare body).
+    [[nodiscard]] std::string GlobalMemoryQualifier() const
+    {
+        return currentKernelType_ == ir::FunctionType::AICPU_KERNEL ? "" : "__gm__ ";
+    }
     /// True when emitting a `__simd_vf__` or `__simd_callee__` body.
     [[nodiscard]] bool IsInSimdContext() const { return ir::IsSimdFuncType(currentFunctionType_); }
     int GetTileOffsetCounter() { return tileOffsetCounter_++; }
@@ -542,6 +549,12 @@ private:
     const ir::SectionKind target_;                                      ///< Fixed Cube/Vector target for this generator
     bool inVfSection_ = false;                                          ///< True inside a nested VF section
     bool needsScalarHelpers_ = false;
+    /// True when this GenerateSingle call emits the AICPU bare body.
+    /// Impl head qualifier: empty for the bare body (impl is a plain helper under the entry wrapper).
+    [[nodiscard]] std::string ImplHeadQualifier(const ir::FunctionPtr& func) const
+    {
+        return func->funcType_ == ir::FunctionType::AICPU_KERNEL ? "" : "__aicore__ ";
+    }
     /// Actual IR type of the SIMT function being emitted.
     ir::FunctionType currentFunctionType_ = ir::FunctionType::OPAQUE;
     /// Kernel entry type for GenerateSingle; preserved across per-function resets.

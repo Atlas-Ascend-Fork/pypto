@@ -394,6 +394,12 @@ def check_declared_types(
         allowed = accepted_types(str(parameter.annotation), declared)
         if allowed is None or value_kind(value) in allowed:
             continue
+        hint = None
+        if describe_value(value) == "PtrType" and "Tensor" in str(parameter.annotation):
+            # A raw pointer carries no shape: the op needs a typed view first.
+            hint = ("a raw pl.Ptr carries no shape; build a typed view first: "
+                    "pl.make_tensor(ptr, [n], [1], dtype=...)")
         raise InvalidType(
             f"{spelled(op_name)}: {name} expects {parameter.annotation}, got {describe_value(value)}",
+            hint=hint,
         )

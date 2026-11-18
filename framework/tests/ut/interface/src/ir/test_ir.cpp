@@ -556,6 +556,7 @@ TEST_F(IRCheckTest, TestFunctionTypeToString)
     ASSERT_EQ(FunctionTypeToString(FunctionType::SIMT_VF), "SimtVF");
     ASSERT_EQ(FunctionTypeToString(FunctionType::SIMT_CALLEE), "SimtCallee");
     ASSERT_EQ(FunctionTypeToString(FunctionType::SIMT_KERNEL), "SimtKernel");
+    ASSERT_EQ(FunctionTypeToString(FunctionType::AICPU_KERNEL), "AicpuKernel");
     ASSERT_EQ(FunctionTypeToString(static_cast<FunctionType>(999)), "Unknown");
 }
 
@@ -568,6 +569,7 @@ TEST_F(IRCheckTest, TestStringToFunctionType)
     ASSERT_EQ(StringToFunctionType("SimtVF"), FunctionType::SIMT_VF);
     ASSERT_EQ(StringToFunctionType("SimtCallee"), FunctionType::SIMT_CALLEE);
     ASSERT_EQ(StringToFunctionType("SimtKernel"), FunctionType::SIMT_KERNEL);
+    ASSERT_EQ(StringToFunctionType("AicpuKernel"), FunctionType::AICPU_KERNEL);
     ASSERT_THROW(StringToFunctionType("Invalid"), std::invalid_argument);
 }
 

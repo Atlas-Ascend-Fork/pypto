@@ -164,6 +164,7 @@ def runtime(monkeypatch):
             SimtVF="simt", SimtCallee="simt_callee", SimtKernel="simt_kernel",
             SimdVF="simd_vf", SimdCallee="simd_callee",
             SimdTileVF="simd_tile_vf", SimdTileCallee="simd_tile_callee",
+            AicpuKernel="aicpu_kernel",
         ),
         SectionKind=types.SimpleNamespace(Cube="cube", Vector="vector"),
     )
@@ -256,6 +257,7 @@ def runtime(monkeypatch):
     helper_names = {
         "_dispatch_ast_op",
         "_dispatch_op", "_check_declared_params", "_check_declared_types", "_validate_op_scope",
+        "_check_aicpu_tensor_surface",
         "parse_op_call",
         "_parse_simt_template_call", "_parse_simd_template_call",
         "_instantiate_vf_call", "_instantiate_simd_function",

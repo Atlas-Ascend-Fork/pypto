@@ -653,6 +653,9 @@ class CallParserMixin:
             return self._parse_indexed_call(call)
 
         if isinstance(func, ast.Attribute) or self._extract_op_name(func) is not None:
+            # Tensor attribute calls stay on the unified op path: numel is the
+            # function form pl.numel(t) only (the method form t.numel() is not
+            # supported -- the receiver is never injected).
             return self.parse_op_call(call)
 
         # Handle bare-name calls to external IR functions or inline Python callables.
@@ -770,6 +773,39 @@ class CallParserMixin:
             self._check_declared_params(op_name, call)
             return ast_handler(self, call)
 
+    # The aicpu kernel's GM-Tensor surface: the flattened CpuKernelContext port
+    # contract. Tensors may only flow through these ops; everything else would
+    # emit AI-Core-flavored IR the AICPU runtime cannot honor.
+    _AICPU_TENSOR_OPS = frozenset({"numel", "getval", "setval"})
+
+    def _check_aicpu_tensor_surface(self, op_name: str, args: list, kwargs: dict, span) -> None:
+        """Aicpu kernels reject any non-surface op that receives a Tensor."""
+        if self._current_func_type != ir.FunctionType.AicpuKernel:
+            return
+        if op_name in self._AICPU_TENSOR_OPS:
+            # Surface ops take GM Tensors only: the declared-types gate admits Tile
+            # for the shared AICore surface, so reject it here before the impl
+            # emits AI-Core flavored IR the AICPU runtime cannot honor.
+            for value in list(args) + list(kwargs.values()):
+                if isinstance(value, ir.Expr) and isinstance(value.type, ir.TileType):
+                    raise NotSupported(
+                        f"pl.{op_name}() on a Tile is not supported in aicpu kernels",
+                        span=span,
+                        hint="The aicpu tensor surface is: tensor is None / is not None, "
+                        "pl.numel, pl.getval, pl.setval",
+                        parser_retry=True,
+                    )
+            return
+        for value in list(args) + list(kwargs.values()):
+            if isinstance(value, ir.Expr) and isinstance(value.type, ir.TensorType):
+                raise NotSupported(
+                    f"pl.{op_name}() on a Tensor is not supported in aicpu kernels",
+                    span=span,
+                    hint="The aicpu tensor surface is: tensor is None / is not None, "
+                    "pl.numel, pl.getval, pl.setval",
+                    parser_retry=True,
+                )
+
     def _dispatch_op(self, op_name: str, call: ast.Call, op_func: Callable):
         """Check and parse arguments, then call the registered implementation."""
         span = self.span_tracker.get_span(call)
@@ -778,6 +814,7 @@ class CallParserMixin:
             args = [self.parse_expression(node) for node in call.args]
             kwargs = {keyword.arg: self.parse_expression(keyword.value) for keyword in call.keywords}
             self._check_declared_types(op_name, args, kwargs)
+            self._check_aicpu_tensor_surface(op_name, args, kwargs, span)
             self._current_node = call
             result = op_func(self, *args, **kwargs, span=span)
         self._record_op_access(

@@ -55,7 +55,7 @@ def test_simt_kernel_jit_accepts_3510_arch_and_rejects_2201():
 
 
 def test_jit_rejects_invalid_mode():
-    with pytest.raises(InvalidArgument, match="mode must be 'simd' or 'simt'"):
+    with pytest.raises(InvalidArgument, match="mode must be 'simd', 'simt' or 'aicpu_kernel'"):
         pl.jit(mode="invalid")
 
 

@@ -55,7 +55,6 @@ from ._utils import _is_simd_func_type
 _COMPOUND_STATEMENTS = (ast.For, ast.While, ast.If, ast.With, ast.Try, ast.FunctionDef)
 
 
-
 def _snake_visit_name(node: ast.AST) -> str:
     """Return the snake_case visitor handler for an AST node type."""
     chars: list[str] = []
@@ -509,6 +508,22 @@ class ASTParser(
             self._simt_entry_type = func_type
         self.scope_manager.enter_scope("function")
 
+        # Reject variable argument lists: every kernel/helper parameter must be
+        # explicit (named and typed) so the IR parameter list, ABI packing and
+        # variant cache key are all deterministic. *args, **kwargs, keyword-only
+        # and positional-only markers make the mapping between the Python
+        # signature and the IR/ABI positional slots ambiguous.
+        ast_args = func_def.args
+        if ast_args.vararg is not None or ast_args.kwarg is not None or ast_args.kwonlyargs or ast_args.posonlyargs:
+            raise InvalidType(
+                f"Function '{func_name}' must not use *args, **kwargs, "
+                "keyword-only (*) or positional-only (/) parameters; "
+                "declare every parameter explicitly with a type annotation.",
+                span=func_span,
+                hint="Write def kernel(a: pl.DT_INT32, b: pl.Tensor[...], ...) instead of def kernel(*args, **kwargs).",
+                parser_retry=True,
+            )
+
         # Collect args to process, filtering out bare 'self'
         args_to_process = [arg for arg in func_def.args.args if not (arg.arg == "self" and arg.annotation is None)]
 
@@ -582,6 +597,11 @@ class ASTParser(
 
         attrs = dict(result.attrs)
         attrs.update(func_attrs or {})
+        if func_type == ir.FunctionType.AicpuKernel and inferred:
+            # AICPU status ABI: `return <int>` carries a KERNEL_STATUS code for
+            # the entry wrappers to propagate, not a data value -- the kernel's
+            # IR signature stays void.
+            inferred = []
         result = ir.Function(
             result.name,
             list(result.params),
@@ -888,9 +908,7 @@ class ASTParser(
                     arg.annotation, parameter_name=param_name, parameter_index=parameter_index
                 )
                 with current_span(param_span):
-                    _check_type_compatible(
-                        annotated_type, callsite_type, what="SIMT parameter", name=param_name
-                    )
+                    _check_type_compatible(annotated_type, callsite_type, what="SIMT parameter", name=param_name)
             param_type = self._attach_ptr_to_tensor_type(param_name, callsite_type, param_span)
             param_var = f.param(param_name, param_type, param_span)
             self.scope_manager.define_var(param_name, param_var, allow_redef=True)

@@ -1294,6 +1294,15 @@ def getval(container: "Tile | Tensor", offset: int) -> Scalar:
 
 
 @_api_decl
+def numel(tensor: Tensor) -> Scalar:
+    """Element count of a GM Tensor (AICPU kernels only): the shape product.
+
+    Mirrors the cpp ``tensor->NumElements()``. Dynamic dims stay runtime
+    values; a static shape folds to a constant. Not available in AI Core
+    kernels -- those query extents through the tiling contract instead.
+    """
+
+@_api_decl
 def setval(container: "Tile | Tensor", offset: int, value: Union[int, float]) -> None:
     """Write a scalar value into a Tile or Tensor at the given linear offset."""
 

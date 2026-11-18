@@ -523,7 +523,7 @@ static std::string MakeBlockMakeTensorCodegenCCE(const ir::CallPtr& op, codegen:
     // the base pointer to the view element type when the dtypes differ (a no-op when they match).
     auto tensorType = ir::As<ir::TensorType>(op->GetType());
     if (tensorType && !(sourceDtype == tensorType->dtype_)) {
-        ptrCode = "(__gm__ " + tensorType->dtype_.ToCTypeString() + "*)(" + ptrCode + ")";
+        ptrCode = "(" + cg.GlobalMemoryQualifier() + tensorType->dtype_.ToCTypeString() + "*)(" + ptrCode + ")";
     }
     cg.RegisterPointer(name, ptrCode);
     for (const codegen::TensorDef* def : cg.GetTensorDefs(name)) {
@@ -567,7 +567,7 @@ static std::string MakePtrMakePtrCodegenCCE(const ir::CallPtr& op, codegen::Code
     }
     auto resultPtrType = ir::As<ir::PtrType>(op->GetType());
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, resultPtrType != nullptr) << "ptr.make_ptr result must be a PtrType";
-    return "((__gm__ " + resultPtrType->dtype_.ToCTypeString() + "*)(" + ptr + "))";
+    return "((" + codegen.GlobalMemoryQualifier() + resultPtrType->dtype_.ToCTypeString() + "*)(" + ptr + "))";
 }
 
 static std::string MakeBlockReinterpretCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& base)
@@ -1549,8 +1549,9 @@ static std::string MakeGetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
     if (codegen.GetCurrentKernelType() == ir::FunctionType::SIMT_KERNEL) {
         return castResultIfDtypeChanged("(" + tensorPtr + ")[" + offset + "]", resultType->dtype_, tensorType->dtype_);
     }
-    return castResultIfDtypeChanged("*((__gm__ " + dtypeStr + "*)" + tensorPtr + " + " + offset + ")",
-                                    resultType->dtype_, tensorType->dtype_);
+    return castResultIfDtypeChanged(
+        "*((" + codegen.GlobalMemoryQualifier() + dtypeStr + "*)" + tensorPtr + " + " + offset + ")",
+        resultType->dtype_, tensorType->dtype_);
 }
 
 static std::string MakeWindowGetCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
@@ -1622,7 +1623,8 @@ static std::string MakeSetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
         codegen.Emit("(" + tensorPtr + ")[" + offset + "] = " + value + ";");
         return "";
     }
-    codegen.Emit("*((__gm__ " + dtypeStr + "*)" + tensorPtr + " + " + offset + ") = " + value + ";");
+    codegen.Emit("*((" + codegen.GlobalMemoryQualifier() + dtypeStr + "*)" + tensorPtr + " + " + offset +
+                 ") = " + value + ";");
     return "";
 }
 

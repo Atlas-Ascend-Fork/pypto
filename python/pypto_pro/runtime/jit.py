@@ -37,7 +37,22 @@ from pypto.pypto_impl.ir import ConstInt, PtrType, ScalarType, TensorType, Tuple
 from pypto_pro import DataType
 from pypto_pro.ir._utils import _is_int
 from pypto_pro.language.typing.direction import TensorDirection
+from pypto_pro.runtime.aicpu_compile import (
+    compile_aicpu_variant as _compile_aicpu_variant_impl,
+)
 from pypto_pro.runtime.compile_config import KernelTarget, get_jit_compile_config
+from pypto_pro.runtime.entry_params import (
+    _pack_tiling_arg as _tiling_pack_args,
+)
+from pypto_pro.runtime.entry_params import (
+    collect_dyn_vars as _collect_dyn_vars,
+)
+from pypto_pro.runtime.entry_params import (
+    entry_params_from_param_specs as _entry_params_from_param_specs,
+)
+from pypto_pro.runtime.entry_params import (
+    pack_launch_args as _pack_launch_args,
+)
 from pypto_pro.runtime.platform import NpuArch, normalize_arch
 
 from .._errors import (
@@ -89,8 +104,6 @@ KERNEL_HEADER_SIMT = """\
 """
 
 
-
-
 # pl DataType -> accepted torch storage dtypes for a tensor parameter.
 _PL_DTYPE_TO_TORCH: dict[str, tuple["torch.dtype", ...]] = {}
 
@@ -108,9 +121,7 @@ def _sanitizer_sub_blocks(compiled: "CompiledKernel") -> int:
     """
     target = compiled.target
     if target is None:
-        raise RuntimeFailure(
-            "Sanitizer launch requires a resolved KernelTarget"
-        )
+        raise RuntimeFailure("Sanitizer launch requires a resolved KernelTarget")
     slots = target.aic_per_block + target.aiv_per_block
     config = get_jit_compile_config()
     for variants in config.kernel_targets.values():
@@ -118,9 +129,7 @@ def _sanitizer_sub_blocks(compiled: "CompiledKernel") -> int:
         if mixed is not None and mixed.npu_arch == target.npu_arch:
             slots = max(slots, mixed.aic_per_block + mixed.aiv_per_block)
     if slots <= 0:
-        raise RuntimeFailure(
-            "Sanitizer launch target has no AIC/AIV region participants"
-        )
+        raise RuntimeFailure("Sanitizer launch target has no AIC/AIV region participants")
     return slots
 
 
@@ -230,6 +239,10 @@ class CompiledKernel:
     # SK capability mask used at compile time: the exception-dump rebuild replays the
     # same compiler switches (defines and include roots) from it.
     sk_cap: SkCap | None = None
+    # AICPU kernel built as a fast-launch .so (bisheng, <<<>>> dispatch onto
+    # the AICPU stream): the launch entry calls the generated `<kernel>Run`
+    # shim through ctypes instead of the device `call_kernel`.
+    aicpu: bool = False
     # Lazily bound launch closure (see _build_launch_entry). It depends only on the
     # fields above, so it is built once instead of on every launch.
     entry: "Callable | None" = dataclasses.field(default=None, compare=False, repr=False)
@@ -290,6 +303,9 @@ class CodegenResult:
     required_dynamic_ub_size: int = 0
 
     simt_kernel: bool = False
+    # AICPU (control-CPU) entry: `__aicpu__` instead of `__global__`/`__aicore__`,
+    # and a direct host call instead of the device launch syntax.
+    aicpu_kernel: bool = False
     max_threads: int | None = None
 
 
@@ -378,9 +394,7 @@ def _process_identity_tag() -> str:
     return f"__{'_'.join(parts)}" if parts else ""
 
 
-def _make_artifact_build_dir(
-    prog, arch: NpuArch, test_prefix: str | None = None, tilingkey_suffix: str = ""
-) -> str:
+def _make_artifact_build_dir(prog, arch: NpuArch, test_prefix: str | None = None, tilingkey_suffix: str = "") -> str:
     """The per-kernel build dir. All tilingkeys of one kernel share this dir; each concrete
     key gets a ``tk_<packed>`` subdir under it (see :func:`_make_tilingkey_dir`)."""
     prog_name = getattr(prog, "name", None) or getattr(prog, "_name", None)
@@ -390,10 +404,7 @@ def _make_artifact_build_dir(
     readable_prefix = f"{test_prefix}__{safe_name}" if test_prefix and test_prefix != safe_name else safe_name
     work_path = os.environ.get("ASCEND_WORK_PATH", "").strip()
     root = os.path.join(os.path.expanduser(work_path), "PYPTO_PRO") if work_path else "."
-    return os.path.join(
-        root,
-        "build",
-        f"{readable_prefix}__{arch}{tilingkey_suffix}{_process_identity_tag()}")
+    return os.path.join(root, "build", f"{readable_prefix}__{arch}{tilingkey_suffix}{_process_identity_tag()}")
 
 
 def _make_tilingkey_dir(build_dir: str, tilingkey_packed: int | None) -> str:
@@ -553,14 +564,20 @@ def _pl_dtype_to_torch(dtype: DataType):
 
 
 def _get_kernel_ir_function(prog):
-    """Return the SIMD or SIMT IR kernel entry."""
+    """Return the SIMD, SIMT or AICPU IR kernel entry.
+
+    The AicpuKernel entry is accepted with the Opaque/SimtKernel entries: the
+    program's kernel entry is what codegen derives the ABI from regardless of
+    which launch path will eventually consume it -- the AICPU host-side branch
+    plugs into _compile_variant at the same depth.
+    """
     from pypto.pypto_impl.ir import FunctionType
 
     for f in prog.functions.values():
-        if f.func_type in (FunctionType.Opaque, FunctionType.SimtKernel):
+        if f.func_type in (FunctionType.Opaque, FunctionType.SimtKernel, FunctionType.AicpuKernel):
             return f
     raise CommonInner(
-        f"No Opaque or SimtKernel entry function found in program '{prog.name}' "
+        f"No Opaque, SimtKernel or AicpuKernel entry function found in program '{prog.name}' "
         f"(functions: {list(prog.functions)})"
     )
 
@@ -615,107 +632,6 @@ def _extract_param_specs(
         elif isinstance(t, ScalarType):
             specs.append(ParamSpec(var.name, ParamKind.SCALAR, t.dtype, None))
     return specs
-
-
-def _cce_cpp_type_from_dtype(dtype: DataType | None, *, param_name: str) -> str:
-    """Return the CCE C++ scalar/element type string for a DataType."""
-    if dtype is None:
-        raise InvalidType(f"Parameter '{param_name}' has no dtype")
-    cpp_type = dtype.to_c_type_string()
-    if not cpp_type or cpp_type == "unknown":
-        raise InvalidType(f"Unsupported CCE ABI dtype {dtype} for parameter '{param_name}'")
-    return cpp_type
-
-
-def _entry_params_from_param_specs(param_specs: list[ParamSpec]) -> list[tuple[str, str, bool]]:
-    """Build launcher entry params from IR metadata instead of parsing generated C++."""
-    params: list[tuple[str, str, bool]] = []
-    for spec in param_specs:
-        if spec.kind in (ParamKind.TENSOR, ParamKind.PTR):
-            params.append((_cce_cpp_type_from_dtype(spec.dtype, param_name=spec.name), spec.name, True))
-        elif spec.kind in (ParamKind.TILING, ParamKind.WINDOW):
-            # Both cross the ABI as one raw GM byte pointer.
-            params.append(("uint8_t", spec.name, True))
-        elif spec.kind == ParamKind.SCALAR:
-            params.append((_cce_cpp_type_from_dtype(spec.dtype, param_name=spec.name), spec.name, False))
-
-    params.extend(("int64_t", dim_name, False) for dim_name in _collect_dyn_vars(param_specs))
-    return params
-
-
-def _iter_tensor_dynamic_dims(spec: ParamSpec):
-    """Yield dynamic dimension symbols from a tensor param spec."""
-    if spec.kind != ParamKind.TENSOR or spec.shape is None:
-        return
-    for dim in spec.shape:
-        if isinstance(dim, str):
-            yield dim
-
-
-def _collect_dyn_vars(param_specs: list[ParamSpec]) -> list[str]:
-    """Return dynamic shape variable names in first-occurrence order (mirrors ptoas codegen)."""
-    seen: set[str] = set()
-    result: list[str] = []
-    for spec in param_specs:
-        for dim in _iter_tensor_dynamic_dims(spec):
-            if dim not in seen:
-                result.append(dim)
-                seen.add(dim)
-    return result
-
-
-def _validate_scalar_arg(i: int, arg, spec: ParamSpec) -> None:
-    """Validate one scalar arg against its ParamSpec."""
-    if not isinstance(arg, (int, float, bool)):
-        raise InvalidType(f"arg[{i}] '{spec.name}': expected Python scalar (int/float/bool), got {type(arg).__name__}")
-    # bool is a subclass of int: valid for BOOL and integer dtypes only.
-    if isinstance(arg, bool):
-        if not (spec.dtype == DataType.BOOL or spec.dtype.is_signed_int() or spec.dtype.is_unsigned_int()):
-            raise InvalidType(
-                f"arg[{i}] '{spec.name}': bool value passed for non-boolean/non-integer dtype {spec.dtype}"
-            )
-    elif isinstance(arg, float) and not spec.dtype.is_float():
-        raise InvalidType(f"arg[{i}] '{spec.name}': float value passed for non-float dtype {spec.dtype}")
-    elif isinstance(arg, int) and not spec.dtype.is_signed_int() and not spec.dtype.is_unsigned_int():
-        raise InvalidType(f"arg[{i}] '{spec.name}': int value passed for non-integer dtype {spec.dtype}")
-
-
-def _pack_tiling_arg(args: tuple) -> tuple:
-    """If the last arg is a tiling class instance, replace it with a device buffer tensor.
-
-    The tiling instance is serialized to its C-struct byte layout, wrapped in a uint8
-    CPU tensor, and moved to the same device as the other tensor args. The kernel
-    receives a single ``uint8_t*`` pointer and copies the struct in at its entry.
-
-    The returned tuple holds the device tensor as its last element, which keeps it alive
-    through the launch (the caller's ``args`` stays referenced until ``call_kernel``).
-
-    Args:
-        args: Runtime arguments tuple passed to launch.
-
-    Returns:
-        args with the tiling instance replaced by the device tensor (unchanged if no
-        tiling instance is present).
-    """
-    from pypto_pro.language.typing._tiling import is_tiling_class, tiling_instance_to_bytes
-
-    if not args:
-        return args
-    last_arg = args[-1]
-    if not is_tiling_class(type(last_arg)):
-        return args
-
-    buf = tiling_instance_to_bytes(last_arg)
-    # Pick the device from an existing tensor arg (inputs/outputs are already on device).
-    device = None
-    for a in args[:-1]:
-        dev = getattr(a, "device", None)
-        if dev is not None:
-            device = dev
-            break
-    cpu_t = torch.frombuffer(bytearray(buf), dtype=torch.uint8)
-    tiling_t = cpu_t.to(device) if device is not None else cpu_t
-    return args[:-1] + (tiling_t,)
 
 
 class _LaunchPlan:
@@ -782,14 +698,10 @@ class _LaunchPlan:
             pack = _pack_factor(spec.dtype) if checked else 1
             if checked:
                 rank = len(spec.shape)
-                consts = tuple(
-                    (d, v) for d, v in enumerate(spec.shape) if isinstance(v, int) and v != -1
-                )
+                consts = tuple((d, v) for d, v in enumerate(spec.shape) if isinstance(v, int) and v != -1)
                 for dim, value in enumerate(spec.shape):
                     if isinstance(value, str):
-                        occurrences.setdefault(value, []).append(
-                            (index, dim, pack if dim == rank - 1 else 1)
-                        )
+                        occurrences.setdefault(value, []).append((index, dim, pack if dim == rank - 1 else 1))
             # Only TENSOR params feed the dynamic ABI tail.
             own_dyn: list[int] = []
             if spec.kind == ParamKind.TENSOR and spec.shape is not None:
@@ -801,9 +713,7 @@ class _LaunchPlan:
             slots.append((True, index, spec.name, dtype, rank, consts, tuple(own_dyn), pack))
         self.slots = tuple(slots)
         # A name seen once can never disagree with itself; only repeats need checking.
-        self.dyn_checks = tuple(
-            (name, tuple(where)) for name, where in occurrences.items() if len(where) > 1
-        )
+        self.dyn_checks = tuple((name, tuple(where)) for name, where in occurrences.items() if len(where) > 1)
         self.dyn_count = len(sources)
         # The generated call_kernel signature declares its dynamic dimensions in the order
         # _collect_dyn_vars produces (via _entry_params_from_param_specs); `sources` above
@@ -837,9 +747,40 @@ def _build_launch_entry(compiled: "CompiledKernel"):
     """
     plan = _LaunchPlan(compiled.param_specs)
     lib = ctypes.CDLL(compiled.lib_path)
+    if compiled.aicpu:
+        run = getattr(lib, f"{compiled.kernel_name}Run")
+        run.argtypes = (
+            [ctypes.c_void_p if slot[0] else slot[3] for slot in plan.slots]
+            + [ctypes.c_int64] * plan.dyn_count
+            + [ctypes.c_void_p]
+        )
+        run.restype = ctypes.c_uint32
+
+        def aicpu_entry(args: tuple, launch_config, stream):
+            # <<<1, nullptr, stm>>> dispatch: the AICPU reads device memory,
+            # so tensors must live on the NPU, and the kernel runs
+            # asynchronously on the stream until the caller synchronizes.
+            abi_args = _pack_launch_args(plan, args)
+            for slot in plan.slots:
+                if not slot[0]:
+                    continue
+                tensor = args[slot[1]]
+                if tensor is not None and tensor.device.type != "npu":
+                    raise InvalidType(
+                        f"arg[{slot[1]}] '{slot[2]}': AICPU launch requires NPU "
+                        f"tensors, got a tensor on '{tensor.device}'"
+                    )
+            if stream is not None:
+                raw_stream = stream.npu_stream
+            else:
+                raw_stream = torch.npu.current_stream().npu_stream
+            status = run(*abi_args, raw_stream)
+            if status != 0:
+                raise RuntimeFailure(f"AICPU kernel '{compiled.kernel_name}' returned status {status}")
+
+        aicpu_entry.lib = lib
+        return aicpu_entry
     call_kernel = lib.call_kernel
-    n_params = plan.n_params
-    has_tiling = plan.has_tiling
     window_indices = plan.window_indices
     window_cls = None
     if window_indices:
@@ -849,7 +790,6 @@ def _build_launch_entry(compiled: "CompiledKernel"):
 
         window_cls = getattr(getattr(pypto_impl, "dist", None), "Window", None)
     slots = plan.slots
-    dyn_checks = plan.dyn_checks
     simt_kernel = compiled.simt_kernel
     # Scalars carry their own ctype; everything else crosses as an opaque pointer.
     # Dynamic dimensions use int64_t in both the generated entry and the IR.
@@ -871,97 +811,14 @@ def _build_launch_entry(compiled: "CompiledKernel"):
     from pypto_pro.runtime.exception_dump import set_dump_info as _set_dump_info
 
     def entry(args: tuple, launch_config, stream):
-        if has_tiling:
-            args = _pack_tiling_arg(args)
-        if len(args) != n_params:
-            raise InvalidType(f"Expected {n_params} args, got {len(args)}")
-
-        # Plain Python values in ABI order; argtypes converts them at the call.
-        abi_args = []
-        append = abi_args.append
-        dyn_values: list = []
-        for slot in slots:
-            index = slot[1]
-            arg = args[index]
-            if not slot[0]:
-                _validate_scalar_arg(index, arg, slot[2])
-                append(arg)
-                continue
-            if index in window_indices:
-                # pld.Window: the ABI value is the device descriptor address itself.
-                if window_cls is None or not isinstance(arg, window_cls):
-                    raise InvalidType(
-                        f"arg[{index}] '{slot[2]}': expected a pld.Window, got {type(arg).__name__}"
-                    )
-                if not arg.connected():
-                    raise InvalidOperation(
-                        f"arg[{index}] '{slot[2]}': window is not connected; call win.connect() before launching"
-                    )
-                append(arg.data_ptr())
-                continue
-            _, _, name, expected_dtypes, rank, consts, dyn_dims, pack = slot
-            if arg is None:
-                append(None)  # ctypes maps None to a null void*
-                if dyn_dims:
-                    dyn_values.extend([0] * len(dyn_dims))
-                continue
-            if not isinstance(arg, torch.Tensor):
-                raise InvalidType(f"arg[{index}] '{name}': expected torch.Tensor, got {type(arg).__name__}")
-            if rank >= 0:
-                if expected_dtypes is not None and arg.dtype not in expected_dtypes:
-                    expected = " or ".join(str(dtype) for dtype in expected_dtypes)
-                    raise InvalidType(
-                        f"arg[{index}] '{name}': dtype mismatch — expected {expected}, got {arg.dtype}"
-                    )
-                # One .shape per tensor: reused for the positivity check, the rank check,
-                # the constant-dimension checks and this parameter's slice of the dynamic
-                # ABI tail.
-                shape = arg.shape
-                if len(shape) != rank:
-                    raise InvalidType(
-                        f"arg[{index}] '{name}': rank mismatch — expected {rank}D, got {len(shape)}D"
-                    )
-                # Sub-byte dtype: torch reported the packed uint8 storage, so scale the
-                # innermost axis back to elements (see _pack_factor). Packing does not
-                # change the rank, so the check above reads either shape the same way.
-                if pack != 1 and rank:
-                    shape = tuple(shape[:-1]) + (shape[-1] * pack,)
-                # The compile path rejects a non-positive runtime dimension inside the
-                # shape-policy bind (_validate_positive_int). A cache hit skips that bind
-                # entirely, so without this a zero-sized tensor would raise on the launch
-                # that compiled the kernel and be accepted by every launch after it. One
-                # C-level pass over the torch.Size already in hand; `rank` guards the
-                # 0-d case, where min() would see an empty sequence.
-                if rank and min(shape) <= 0:
-                    raise InvalidShape(
-                        f"arg[{index}] '{name}': runtime dimensions must be positive, got {tuple(shape)}"
-                    )
-                for dim, expected in consts:
-                    if shape[dim] != expected:
-                        raise InvalidType(
-                            f"arg[{index}] '{name}': dim[{dim}] mismatch — "
-                            f"expected {expected}, got {shape[dim]}"
-                        )
-                for dim in dyn_dims:
-                    dyn_values.append(shape[dim])
-            append(arg.data_ptr())
-
-        for var_name, where in dyn_checks:
-            first = -1
-            for param_index, dim, pack_mult in where:
-                other = args[param_index]
-                if other is None:
-                    continue
-                # pack_mult is 1 unless this is a sub-byte parameter's packed axis.
-                actual = other.shape[dim] * pack_mult
-                if first < 0:
-                    first = actual
-                elif actual != first:
-                    raise InvalidShape(
-                        f"arg[{param_index}] '{slots[param_index][2]}': dynamic shape variable "
-                        f"'{var_name}' mismatch — previously {first}, got {actual} at dim[{dim}]"
-                    )
-        abi_args.extend(dyn_values)
+        # Tensor-ize the tiling struct before anything else consumes ``args``:
+        # _set_dump_info must see the packed uint8 device tensor to record the
+        # TILING parameter as the exception-dump WORKSPACE entry (pack_launch_args
+        # rebinds only its local copy). _pack_tiling_arg is idempotent, so the
+        # pack below re-receives an already-converted tail argument.
+        if plan.has_tiling:
+            args = _tiling_pack_args(args)
+        abi_args = _pack_launch_args(plan, args, window_cls)
 
         if stream is None:
             stream = torch.npu.current_stream()
@@ -1086,16 +943,14 @@ def _generate_prof_range_snippet(
         acl_dtype = _ACL_DTYPE_MAP.get(str(spec.dtype), 0)
         shape_str = "{" + ", ".join(padded) + "}"
         tensor_inits.append(
-            f"        {{{tensor_type}, {_ACL_FORMAT_ND}, {acl_dtype}, "
-            f"{min(len(dims), 8)}, {shape_str}}},"
+            f"        {{{tensor_type}, {_ACL_FORMAT_ND}, {acl_dtype}, {min(len(dims), 8)}, {shape_str}}},"
         )
 
     op_name = f"PYPTO_{kernel_name}"
     # Keep tensors alive through the post-launch report/cache call. Outside
     # collection and capture, skip tensor initialization and string registration.
     return (
-        '#include "acl/acl_prof.h"\n'
-        '#include "pypto_profiler.h"\n',
+        '#include "acl/acl_prof.h"\n#include "pypto_profiler.h"\n',
         "    {\n"
         "        // Collection and graph metadata caching independently need tensors.\n"
         "        const bool pyptoProfOn = pypto::GetProfStatus();\n"
@@ -1105,9 +960,7 @@ def _generate_prof_range_snippet(
         "== ACL_SUCCESS &&\n"
         "            pyptoCaptureAttr.cacheOpInfoSwitch;\n"
         "        if (pyptoProfOn || pyptoCaptureOn) {\n"
-        "        aclprofTensor pyptoProfTensors[] = {\n"
-        + "\n".join(tensor_inits)
-        + "\n        };\n"
+        "        aclprofTensor pyptoProfTensors[] = {\n" + "\n".join(tensor_inits) + "\n        };\n"
         "        aclprofTensorInfo pyptoProfInfo{};\n"
         "        pyptoProfInfo.opNameId = aclprofStr2Id(\"" + op_name + "\");\n"
         "        pyptoProfInfo.opTypeId = aclprofStr2Id(\"PyPTO\");\n"
@@ -1119,9 +972,7 @@ def _generate_prof_range_snippet(
         "        pyptoProfInfo.tensors = pyptoProfTensors;\n"
         "        const uint64_t pyptoProfBegin = pypto::BeginCaptureTensorReport(pyptoProfOn);\n",
         "        pypto::ReportCaptureTensorInfo(pyptoProfInfo, pyptoProfBegin, pyptoCaptureOn);\n"
-        "        } else {\n"
-        + "    " + launch_stmt
-        + "        }\n"
+        "        } else {\n" + "    " + launch_stmt + "        }\n"
         "    }\n",
     )
 
@@ -1164,6 +1015,7 @@ def _generate_caller_cpp(
     prof_param_specs: list[ParamSpec] | None = None,
     required_dynamic_ub_size: int = 0,
     simt_kernel: bool = False,
+    aicpu_kernel: bool = False,
 ) -> str:
     """Generate extern "C" wrapper that calls the __global__ kernel.
 
@@ -1192,6 +1044,9 @@ def _generate_caller_cpp(
             device launch. Zero preserves the original null launch argument.
         simt_kernel:
             Whether to generate the SIMT kernel grid/thread block launch ABI.
+        aicpu_kernel:
+            Whether the entry is a lite-AICPU ``__aicpu__`` function called
+            directly on the control CPU (no device launch geometry).
 
     Returns:
         Generated caller.cpp content as string
@@ -1205,12 +1060,21 @@ def _generate_caller_cpp(
             kernel_args.append(f"({typ} *){name}")
         else:
             cpp_params.append(f"{typ} {name}")
-            # Keep the declared scalar ABI for the SIMT kernel; only the
+            # Keep the declared scalar ABI for the SIMT/AICPU entry; only the
             # regular SIMD entry uses eight-byte physical scalar slots.
-            kernel_args.append(name if simt_kernel else _scalar_launch_abi(typ, name)[1])
+            kernel_args.append(name if (simt_kernel or aicpu_kernel) else _scalar_launch_abi(typ, name)[1])
     call_args = ", ".join(kernel_args)
 
-    if simt_kernel:
+    if aicpu_kernel:
+        # The control-CPU entry is a plain host call; blockDim/stream stay in
+        # the extern "C" signature for ABI uniformity with the other kernels.
+        launch_params = ["uint32_t blockDim"]
+        launch_config = ""
+        launch_include = ""
+        launch_setup = ""
+        block_dim_expr = "blockDim"
+        return_value = "0"
+    elif simt_kernel:
         launch_params = [
             "uint32_t gridX",
             "uint32_t gridY",
@@ -1241,14 +1105,21 @@ def _generate_caller_cpp(
         return_value = "launchDim"
 
     sig = ", ".join(launch_params + ["void* stream"] + cpp_params)
-    launch_stmt = f"    {kernel_name}<<<{launch_config}>>>({call_args});\n"
+    if aicpu_kernel:
+        launch_stmt = f"    {kernel_name}({call_args});\n"
+    else:
+        launch_stmt = f"    {kernel_name}<<<{launch_config}>>>({call_args});\n"
 
     prof_include, prof_push, prof_pop = ("", "", "")
-    if prof_param_specs:
+    if prof_param_specs and not aicpu_kernel:
         dims_in_scope = {name for _, name, _is_ptr in kernel_params}
         prof_include, prof_push, prof_pop = _generate_prof_range_snippet(
-            kernel_name, prof_param_specs, dims_in_scope, target=target,
-            launch_stmt=launch_stmt, block_dim_expr=block_dim_expr,
+            kernel_name,
+            prof_param_specs,
+            dims_in_scope,
+            target=target,
+            launch_stmt=launch_stmt,
+            block_dim_expr=block_dim_expr,
         )
 
     return (
@@ -1270,10 +1141,7 @@ def _generate_caller_cpp(
 def _detect_print_debug_from_cpp(content: str) -> bool:
     """Best-effort detection for device-side debug print usage in generated C++."""
     scrubbed = CPP_LITERAL_PATTERN.sub(" ", content)
-    return bool(
-        PTO_DUMP_CALL_PATTERN.search(scrubbed)
-        or PTO_PRINTF_CALL_PATTERN.search(scrubbed)
-    )
+    return bool(PTO_DUMP_CALL_PATTERN.search(scrubbed) or PTO_PRINTF_CALL_PATTERN.search(scrubbed))
 
 
 def _build_bisheng_flags(
@@ -1336,9 +1204,7 @@ def _prepare_codegen_inputs(
     keep concurrent codegen isolated (e.g. binary compile forks one process per dtype-combo, all
     sharing cwd) pass a caller-unique directory so distinct kernels never share a kernel.cpp.
     """
-    artifact_prefix = _artifact_prefix_from_filename(
-        getattr(kernel_def, "_source_file", None)
-    )
+    artifact_prefix = _artifact_prefix_from_filename(getattr(kernel_def, "_source_file", None))
     generated_source = None
     if kernel_def._pipeline is not None:
         from pypto_pro.runtime.pipeline import transform_pipeline
@@ -1379,8 +1245,8 @@ def _prepare_codegen_inputs(
 
     if out_dir is None:
         build_dir = _make_artifact_build_dir(
-            kernel_def, arch, test_prefix=artifact_prefix,
-            tilingkey_suffix=_static_signature_suffix(static_signature))
+            kernel_def, arch, test_prefix=artifact_prefix, tilingkey_suffix=_static_signature_suffix(static_signature)
+        )
         if datatype_hash is not None:
             build_dir = os.path.join(build_dir, f"dt_{datatype_hash}")
             write_datatype_metadata(build_dir, datatype_metadata)
@@ -1410,21 +1276,28 @@ def _make_global_entry(
     *,
     target: KernelTarget,
     simt_kernel: bool = False,
+    aicpu_kernel: bool = False,
     max_threads: int | None = None,
     schedmode: int = 0,
     body_prelude: str = "",
 ) -> str:
-    """Decode eight-byte launch slots into the original ``<kernel_name>_impl`` types.
+    """Generate the entry that adapts launch arguments to ``<kernel_name>_impl``.
 
-    This function owns only the kernel's own entry: the signature, the ``__schedmode__``
-    and SIMT ``__launch_bounds__`` qualifiers, and the forwarding call. ``body_prelude``
-    is opaque entry-local setup supplied by the caller; the SK adaptation uses it to seed
-    the block-local builtins, so this function stays independent of any SK-specific macro.
+    AICPU kernels use the lite-AICPU ``__aicpu__`` qualifier and call the impl
+    directly; AICore entries keep ``__global__`` + target/SIMT qualifiers. This
+    function owns only the kernel's own entry: the signature, the
+    ``__schedmode__`` and SIMT ``__launch_bounds__`` qualifiers, and the
+    forwarding call. ``body_prelude`` is opaque entry-local setup supplied by
+    the caller; the SK adaptation uses it to seed the block-local builtins, so
+    this function stays independent of any SK-specific macro.
     """
     decls = []
     args = []
     for typ, name, is_ptr in entry_params:
-        if simt_kernel:
+        if aicpu_kernel:
+            decls.append(f"__gm__ {typ}* {name}" if is_ptr else f"{typ} {name}")
+            args.append(name)
+        elif simt_kernel:
             decls.append(f"{typ}{'*' if is_ptr else ''} {name}")
             args.append(name)
         elif is_ptr:
@@ -1436,6 +1309,10 @@ def _make_global_entry(
             args.append(decoded)
     sig = ", ".join(decls)
     call_args = ", ".join(args)
+
+    if aicpu_kernel:
+        return f"__aicpu__ void {kernel_name}({sig})\n{{\n    {kernel_name}_impl({call_args});\n}}\n"
+
     qualifier = f"__launch_bounds__({max_threads})" if simt_kernel else target.entry_qualifier
     sched = f"__schedmode__({schedmode}) " if schedmode else ""
 
@@ -1452,6 +1329,7 @@ def _make_global_entry(
 # bytes each and silently corrupted the strides of any sub-kernel that had both a
 # narrow scalar *and* dynamic dimensions (e.g. the cube example: 3/4 of the output
 # rows were never written).
+
 
 class SkCap(IntFlag):
     """SuperKernel capability bits, one member per official ``SK_BIND`` bit.
@@ -1525,6 +1403,7 @@ def _resolve_sk_cap(sk_cap: SkCap | None) -> SkCap | None:
 # both records. SIMT VF must receive the adapted block count/index from the outer
 # SIMD kernel instead of reading gridDim/blockIdx directly.
 
+
 def _make_sk_bind_block(
     kernel_name: str,
     entry_params: list[tuple[str, str, bool]],
@@ -1595,8 +1474,7 @@ def _make_sk_bind_block(
     # ``skNumBlocks`` is AIV-granular; GetTaskRatio() restores the logical block count.
     sk_body = (
         "    __pypto_seed_block_idx((uint32_t)sysArgs->skBlockIdx);\n"
-        "    __pypto_seed_block_num((uint32_t)(sysArgs->skNumBlocks / AscendC::GetTaskRatio()));\n"
-        + sk_body
+        "    __pypto_seed_block_num((uint32_t)(sysArgs->skNumBlocks / AscendC::GetTaskRatio()));\n" + sk_body
     )
     return (
         f"#include <basic_api/kernel_operator_sys_var_intf.h>\n"
@@ -1643,6 +1521,7 @@ def _codegen_target_cce(
     kernel_func = _get_kernel_ir_function(prog)
     kernel_name = kernel_func.name
     simt_kernel = kernel_func.func_type == ir.FunctionType.SimtKernel
+    aicpu_kernel = kernel_func.func_type == ir.FunctionType.AicpuKernel
     param_specs = _extract_param_specs(prog, declared_directions)
     entry_params = _entry_params_from_param_specs(param_specs)
     has_cross_sync = "set_intra_block" in cpp_code
@@ -1660,15 +1539,13 @@ def _codegen_target_cce(
         has_vector=target == ir.SectionKind.Vector,
         required_dynamic_ub_size=required_dynamic_ub_size,
         simt_kernel=simt_kernel,
+        aicpu_kernel=aicpu_kernel,
         max_threads=kernel_func.get_attr("max_threads") if simt_kernel else None,
     )
 
 
 def _entry_param_declarations(entry_params: list[tuple[str, str, bool]]) -> str:
-    return ", ".join(
-        f"__gm__ {typ}* {name}" if is_ptr else f"{typ} {name}"
-        for typ, name, is_ptr in entry_params
-    )
+    return ", ".join(f"__gm__ {typ}* {name}" if is_ptr else f"{typ} {name}" for typ, name, is_ptr in entry_params)
 
 
 def _target_call_args(result: CodegenResult) -> str:
@@ -1686,7 +1563,6 @@ def _assemble_cv_source(
     if vector is not None and vector.simt_kernel:
         return vector
 
-
     reference = results[0]
     for result in results[1:]:
         if result.kernel_name != reference.kernel_name:
@@ -1702,9 +1578,10 @@ def _assemble_cv_source(
 
     entry_params = list(reference.entry_params)
 
+    aicpu_kernel = any(result.aicpu_kernel for result in results)
     wrapper_lines = [
         "",
-        f"__aicore__ inline void {reference.kernel_name}_impl("
+        f"{'__aicpu__' if aicpu_kernel else '__aicore__'} inline void {reference.kernel_name}_impl("
         f"{_entry_param_declarations(entry_params)})",
         "{",
     ]
@@ -1738,6 +1615,7 @@ def _assemble_cv_source(
         has_cube=cube is not None,
         has_vector=vector is not None,
         required_dynamic_ub_size=max(result.required_dynamic_ub_size for result in results),
+        aicpu_kernel=aicpu_kernel,
     )
 
 
@@ -1808,15 +1686,19 @@ def _parse_and_codegen_targets(
         from pypto.pypto_impl.ir import Pass as IRPass
 
         sanitizer_pass = IRPass.sanitizer()
-        target_list = [t for t in (ir.SectionKind.Cube, ir.SectionKind.Vector)
-                       if matched.get(t) and programs.get(t) is not None]
+        target_list = [
+            t for t in (ir.SectionKind.Cube, ir.SectionKind.Vector) if matched.get(t) and programs.get(t) is not None
+        ]
         for target in target_list:
             programs[target] = sanitizer_pass(programs[target])
 
     results = {
         target: (
             _codegen_target_cce(
-                programs.get(target), arch, build_dir, target=target,
+                programs.get(target),
+                arch,
+                build_dir,
+                target=target,
                 declared_directions=declared_directions,
                 required_dynamic_ub_size=required_dynamic_ub_size,
             )
@@ -2036,8 +1918,15 @@ def _codegen(
         raise CommonInner("CCE codegen requires a KernelDef with an explicit target section")
 
     source, out_dir = _prepare_codegen_inputs(
-        prog, arch, tilingkey_packed, out_dir, datatype_hash, datatype_metadata,
-        bound_signature=bound_signature, static_signature=static_signature)
+        prog,
+        arch,
+        tilingkey_packed,
+        out_dir,
+        datatype_hash,
+        datatype_metadata,
+        bound_signature=bound_signature,
+        static_signature=static_signature,
+    )
 
     cube, vector = _parse_and_codegen_targets(
         source,
@@ -2095,6 +1984,7 @@ def _make_sk_caller_parts(
     )
     return prelude, entries
 
+
 def _build_jit_so(
     cg: CodegenResult,
     arch: str,
@@ -2112,14 +2002,17 @@ def _build_jit_so(
 
     # call_kernel.cpp owns the caller-side entries: the __global__ entry (always needed
     # for CCE) and, when sk_cap is set, the SK prelude + __sk__ / SK_BIND block.
-    sk_prelude, sk_entry = (
-        _make_sk_caller_parts(cg, target, sk_cap) if sk_cap is not None else ("", "")
-    )
-    entries = (
+    sk_prelude, sk_entry = _make_sk_caller_parts(cg, target, sk_cap) if sk_cap is not None else ("", "")
+    global_entry = (
         _make_global_entry(
-            cg.kernel_name, cg.entry_params, target=target,
-            simt_kernel=cg.simt_kernel, max_threads=cg.max_threads,
-            schedmode=schedmode, body_prelude=sk_prelude,
+            cg.kernel_name,
+            cg.entry_params,
+            target=target,
+            simt_kernel=cg.simt_kernel,
+            aicpu_kernel=cg.aicpu_kernel,
+            max_threads=cg.max_threads,
+            schedmode=schedmode,
+            body_prelude=sk_prelude,
         )
         + sk_entry
     )
@@ -2128,11 +2021,12 @@ def _build_jit_so(
         kernel_cpp_name="kernel.cpp",
         kernel_name=cg.kernel_name,
         enable_print_debug=cg.needs_print_debug,
-        global_entry=entries,
+        global_entry=global_entry,
         target=target,
         prof_param_specs=cg.param_specs,
         required_dynamic_ub_size=cg.required_dynamic_ub_size,
         simt_kernel=cg.simt_kernel,
+        aicpu_kernel=cg.aicpu_kernel,
     )
     _atomic_write_text(Path(paths.final_kernel), caller_content)
 
@@ -2275,8 +2169,8 @@ def _replay_sanitizer(log_buffer, capacity_u32, block_dim, build_dir, kernel_nam
         ctr = int(ctr) & 0xFFFFFFFF  # torch.int32 carries the device's unsigned counter.
         if ctr > capacity_u32:
             from pypto_pro.runtime.sanitizer_replay import SanitizerReportError
-            raise SanitizerReportError(
-                f"region {region_idx}: counter {ctr} exceeds capacity {capacity_u32}")
+
+            raise SanitizerReportError(f"region {region_idx}: counter {ctr} exceeds capacity {capacity_u32}")
         written = ctr
         # The counter has no drop count; warn when one more record might not fit.
         if capacity_u32 - written < MAX_RECORD_WORDS:
@@ -2295,9 +2189,11 @@ def _replay_sanitizer(log_buffer, capacity_u32, block_dim, build_dir, kernel_nam
         with open(report_file, "a", encoding="utf-8") as f:
             f.write(f"===== kernel '{kernel_name}' launch {launch_id} ({build_dir}) =====\n")
             if capacity_limited_regions:
-                f.write("WARNING: sanitizer log capacity is nearly exhausted in regions "
-                        f"{limited_summary}; records may have been dropped. "
-                        "Full coverage is not guaranteed, especially for SIMT loops.\n")
+                f.write(
+                    "WARNING: sanitizer log capacity is nearly exhausted in regions "
+                    f"{limited_summary}; records may have been dropped. "
+                    "Full coverage is not guaranteed, especially for SIMT loops.\n"
+                )
             if capacity_limited_regions and not findings:
                 f.write("no issues detected in captured records; full coverage is not guaranteed\n")
             else:
@@ -2307,10 +2203,13 @@ def _replay_sanitizer(log_buffer, capacity_u32, block_dim, build_dir, kernel_nam
         raise SanitizerReplayError(findings)
     if capacity_limited_regions:
         import warnings
+
         warnings.warn(
             "Sanitizer log capacity is nearly exhausted in regions "
             f"{limited_summary}; records may have been dropped. "
-            f"Full coverage is not guaranteed. See {report_file}", RuntimeWarning, stacklevel=2,
+            f"Full coverage is not guaranteed. See {report_file}",
+            RuntimeWarning,
+            stacklevel=2,
         )
 
 
@@ -2320,13 +2219,9 @@ def _validate_block_dim(block_dim):
     Raises ValueError if block_dim is not an int or is <= 0.
     """
     if not isinstance(block_dim, int) or isinstance(block_dim, bool):
-        raise InvalidType(
-            f"block_dim must be a positive integer, got {type(block_dim).__name__}: {block_dim}"
-        )
+        raise InvalidType(f"block_dim must be a positive integer, got {type(block_dim).__name__}: {block_dim}")
     if block_dim <= 0:
-        raise InvalidType(
-            f"block_dim must be a positive integer, got {block_dim}"
-        )
+        raise InvalidType(f"block_dim must be a positive integer, got {block_dim}")
 
 
 # block_dim handed to the native launcher when the caller did not pick a core
@@ -2335,6 +2230,10 @@ def _validate_block_dim(block_dim):
 # validated positive by _validate_block_dim and saturated before the ABI, so a
 # user-supplied 0 cannot reach this protocol.
 _AUTO_BLOCK_DIM = 0
+
+# An AICPU (AicpuKernel) kernel executes as one logical block on the control
+# CPU; the launch carries this fixed count instead of the SIMD auto sentinel.
+_AICPU_BLOCK_DIM = 1
 
 
 def _auto_block_upper_bound(compiled: "CompiledKernel") -> int:
@@ -2386,9 +2285,7 @@ def _build_sanitizer_entry(compiled: "CompiledKernel", build_dir: str):
         regions = sized_dim if compiled.target.aiv_per_block == 0 else sub_blocks * sized_dim
         words_per_region = KSANITIZER_LOG_BUDGET_BYTES // (4 * regions)
         if words_per_region <= 1:
-            raise RuntimeFailure(
-                "Sanitizer log budget is too small for the launch region count"
-            )
+            raise RuntimeFailure("Sanitizer log budget is too small for the launch region count")
         nbytes = words_per_region * 4 * regions
         log_buffer = torch.empty(nbytes, dtype=torch.uint8, device="npu")
         # Only the per-region ctr word must start at zero; the record area is
@@ -2426,6 +2323,45 @@ def _validate_tilingkey_no_var_conflict(f, tilingkey_schema, closure_vars):
         raise InvalidOperation(f"TilingKey field name(s) conflict with module-level variable name(s): {conflicts}")
 
 
+def _reject_aicpu_kernel_options(
+    *,
+    arch,
+    name,
+    pipeline,
+    tiling_key,
+    datatype,
+    sanitizer,
+    compile_timeout,
+    max_threads,
+    sk_cap=None,
+    schedmode=0,
+):
+    """Reject the tile/SIMT-only decorator options on an aicpu kernel.
+
+    ``arch``/``name``/``compile_timeout``/``max_threads`` are accepted: arch and
+    name feed the CCE codegen and symbol naming through the standard decorator
+    fields, compile_timeout bounds the bisheng cross-compile, and max_threads is
+    dropped by the non-SIMT func_attrs filter (harmless metadata). The options
+    below have no meaning on the control CPU and fail fast instead.
+    ``auto_mutex`` is handled by the caller (forced off) because its bool default
+    cannot be told apart from an explicit pass.
+    """
+    unsupported = [
+        option
+        for option, value in (
+            ("pipeline", pipeline),
+            ("tiling_key", tiling_key),
+            ("datatype", datatype),
+            ("sanitizer", sanitizer if sanitizer else None),
+            ("sk_cap", sk_cap),
+            ("schedmode", schedmode if schedmode else None),
+        )
+        if value is not None
+    ]
+    if unsupported:
+        raise NotSupported(f"jit() accepts no options for aicpu kernels (got: {', '.join(unsupported)})")
+
+
 def jit(
     target=None,
     *,
@@ -2456,7 +2392,9 @@ def jit(
         pipeline: PipelineConfig for automatic preload pipeline transformation.
         compile_timeout: Compilation timeout in seconds (default 600).
         mode: Programming mode. ``None`` and ``"simd"`` use the existing JIT path;
-            ``"simt"`` compiles a host-launched SIMT kernel.
+            ``"simt"`` compiles a host-launched SIMT kernel; ``"aicpu_kernel"`` marks
+            a control-CPU (AicpuKernel) kernel. AICPU kernels must pass this mode
+            explicitly; there is no body-based auto-classification.
         max_threads: Maximum threads per thread block for a SIMT kernel. Required when
             ``mode="simt"``.
 
@@ -2501,15 +2439,27 @@ def jit(
             ...
 
         simt_kernel[stream, grid, thread_block](x)
+
+    Usage (AICPU kernel -- explicit mode, CpuKernelContext flattened)::
+
+        @pl.jit(mode="aicpu_kernel")
+        def metadata_kernel(
+            seq_lens: pl.Tensor[[pl.DYNAMIC], pl.DT_INT64],
+            metadata: pl.Tensor[[pl.DYNAMIC], pl.DT_UINT32, pl.Output],
+            num_heads: pl.DT_INT32,
+            soc_version: str,
+        ):
+            n = seq_lens.size()
+            head = pl.getval(seq_lens, 0)
+
+        metadata_kernel(seq_lens, metadata, 8, "Ascend960")  # or metadata_kernel[stream](...)
     """
 
     if not isinstance(auto_mutex, bool):
         raise TypeError(f"auto_mutex must be a bool, got {type(auto_mutex).__name__}")
     sk_cap = _resolve_sk_cap(sk_cap)
     if not isinstance(schedmode, int) or isinstance(schedmode, bool) or schedmode not in (0, 1):
-        raise ValueError(
-            f"schedmode must be 0 (normal) or 1 (batch), got {schedmode}"
-        )
+        raise ValueError(f"schedmode must be 0 (normal) or 1 (batch), got {schedmode}")
 
     if arch is not None:
         arch = normalize_arch(arch)
@@ -2540,11 +2490,32 @@ def jit(
         arch = NpuArch.DAV_3510
         auto_mutex = False
         func_type = ir.FunctionType.SimtKernel
+    elif actual_mode == "aicpu_kernel":
+        # The AICPU frontend contract: the decorator carries nothing but the mode
+        # itself. Everything else is either a tile/SIMT-only mechanism or build
+        # plumbing that the AICPU backend does not define yet.
+        _reject_aicpu_kernel_options(
+            arch=arch,
+            name=name,
+            pipeline=pipeline,
+            tiling_key=tiling_key,
+            datatype=datatype,
+            sanitizer=sanitizer,
+            compile_timeout=compile_timeout,
+            max_threads=max_threads,
+            sk_cap=sk_cap,
+            schedmode=schedmode,
+        )
+        # Device-side mutex insertion is meaningless on the control CPU; auto_mutex
+        # cannot be told apart from its True default here, so it is forced like the
+        # SIMT branch forces it.
+        auto_mutex = False
+        func_type = ir.FunctionType.AicpuKernel
     elif actual_mode == "simd":
         if max_threads is not None:
             raise NotSupported("max_threads is only supported when mode='simt'")
     else:
-        raise InvalidArgument("mode must be 'simd' or 'simt'")
+        raise InvalidArgument("mode must be 'simd', 'simt' or 'aicpu_kernel'")
 
     # Build the tilingkey schema eagerly so malformed schemas fail at decoration time.
     tilingkey_schema = None
@@ -2565,9 +2536,7 @@ def jit(
 
     def decorator(f):
         if kwargs:
-            raise InvalidArgument(
-                f"jit() got unexpected keyword argument(s): {', '.join(kwargs.keys())}."
-            )
+            raise InvalidArgument(f"jit() got unexpected keyword argument(s): {', '.join(kwargs.keys())}.")
         if isinstance(f, _TileJitKernel):
             return f
         if tilingkey_schema is not None:
@@ -2613,6 +2582,11 @@ class _TileJitKernel:
     SIMT launch forms:
         kernel[stream, grid, thread_block](x, y, z)
         kernel[grid, thread_block](x, y, z)
+
+    AICPU (AicpuKernel) launch forms -- no launch geometry exists for a
+    control-CPU kernel, so the stream is the only bracket element:
+        kernel(x, y, z)                     — current stream
+        kernel[stream](x, y, z)             — explicit stream
     """
 
     def __init__(
@@ -2650,6 +2624,12 @@ class _TileJitKernel:
         from pypto_pro.runtime.shape_policy import KernelSignatureSpec
 
         self._shape_signature_spec = KernelSignatureSpec.from_callable(func, closure_vars)
+        # Per-instance recompile cache shared by every kernel type, keyed by
+        # (static_signature, dtype_hash, tilingkey_packed). AICPU kernels reject
+        # tilingkey/datatype at decoration, so their key degenerates to
+        # (static_signature, None, None). Instance-scoped: each decoration owns its
+        # variants, so re-decoration (module reload, repeated test imports) recompiles
+        # instead of sharing. See ``_ensure_compiled``.
         self._compiled_by_signature: dict[tuple[tuple, str | None, int | None], "CompiledKernel"] = {}
         self._static_dim_slots_cache: tuple | None = None
         # Resolved bracket keys: sorted (tilingkey, datatype) items -> (tk snapshot,
@@ -2691,10 +2671,33 @@ class _TileJitKernel:
 
             kernel[stream, block_dim, {"NeedAttnMask": 1}](...)
 
+        For AICPU kernels the bracket carries only the stream (a block_dim has
+        no effect: the generated Run shim always launches <<<1>>>)::
+
+            kernel[stream](...)
+
         """
         if self._func_type == ir.FunctionType.SimtKernel:
             stream, grid, thread_block = _parse_simt_launch_key(key)
             launch_config = _validate_simt_launch_config(grid, thread_block, self._func_attrs["max_threads"])
+            tk_snapshot = dtype_snapshot = None
+            spec = _NO_SPEC
+        elif self._func_type == ir.FunctionType.AicpuKernel:
+            # A control-CPU kernel has no grid/thread_block geometry: the bracket
+            # carries only the stream. An explicit block_dim would be validated and
+            # then silently dropped (the generated Run shim hardcodes <<<1>>>), so
+            # the two-element form fails fast instead of misleading the caller.
+            if isinstance(key, tuple):
+                if len(key) == 1:
+                    stream = key[0]
+                else:
+                    raise InvalidArgument(
+                        "Expected kernel[stream] for an aicpu kernel; a block_dim "
+                        "has no effect (the shim always launches <<<1>>>)"
+                    )
+            else:
+                stream = key
+            launch_config = _AICPU_BLOCK_DIM
             tk_snapshot = dtype_snapshot = None
             spec = _NO_SPEC
         else:
@@ -2744,30 +2747,44 @@ class _TileJitKernel:
             # A complete positional call is already normalized; skip the bind entirely.
             if kwargs or len(args) != arity:
                 args = self._normalize_launch_args(args, kwargs)
-            compiled = self._ensure_compiled(
-                args, concrete_key=tk_snapshot, dtype_key=dtype_snapshot, spec=spec
-            )
+            compiled = self._ensure_compiled(args, concrete_key=tk_snapshot, dtype_key=dtype_snapshot, spec=spec)
             _launch(compiled, args, launch_config, stream)
 
         return launcher
 
     def __call__(self, *args, **kwargs_):
-        """Direct SIMD call: default stream, block_dim resolved to the stream's full budget."""
+        """Direct call on the default stream.
+
+        SIMD resolves block_dim to the stream's full core budget; AICPU uses
+        the same path because the direct call is its native form (no launch
+        geometry); SIMT requires a bracket instead.
+        """
         if self._func_type == ir.FunctionType.SimtKernel:
             raise InvalidOperation(
                 f"SIMT kernel '{self.__name__}' requires launch configuration; "
                 "use kernel[stream, grid, thread_block] or kernel[grid, thread_block]"
             )
-        if self._tilingkey_schema is not None or self._datatype_schema is not None:
-            raise NotSupported(
-                f"Kernel '{self.__name__}' has compile-time specialization and cannot be called directly; "
-                "use bracket-launch syntax"
-            )
+        if self._func_type == ir.FunctionType.AicpuKernel:
+            # The direct call IS the AICPU form: no launch geometry exists, so
+            # unlike SIMT there is nothing a bracket would pin. Optional
+            # attributes arrive as defaulted parameters and may be omitted.
+            # Its tilingkey/datatype schemas are provably None (decoration
+            # rejects both), so the specialization check below cannot fire.
+            launch_config = _AICPU_BLOCK_DIM
+        else:
+            if self._tilingkey_schema is not None or self._datatype_schema is not None:
+                raise NotSupported(
+                    f"Kernel '{self.__name__}' has compile-time specialization and cannot be called directly; "
+                    "use bracket-launch syntax"
+                )
+            launch_config = _AUTO_BLOCK_DIM
+        # Shared tail with the AICore (SIMD) path: optional parameters are
+        # normalized through the exact same bind + apply_defaults sequence.
         self._validate_launch_arch()
         if kwargs_ or len(args) != self._positional_arity:
             args = self._normalize_launch_args(args, kwargs_)
         compiled = self._ensure_compiled(args, spec=_NO_SPEC)
-        _launch(compiled, args, _AUTO_BLOCK_DIM, None)
+        _launch(compiled, args, launch_config, None)
 
     def _validate_launch_arch(self) -> None:
         from pypto_pro.runtime.platform import get_platform_info
@@ -2879,7 +2896,10 @@ class _TileJitKernel:
         return tilingkey_packed, dtype_consts, dtype_metadata, _datatype_hash(dtype_metadata)
 
     def _ensure_compiled(
-        self, args: tuple, concrete_key: dict | None = None, dtype_key: dict | None = None,
+        self,
+        args: tuple,
+        concrete_key: dict | None = None,
+        dtype_key: dict | None = None,
         spec: tuple | None = None,
     ):
         """Return the compiled variant for one launch, compiling it on first use.
@@ -2908,7 +2928,11 @@ class _TileJitKernel:
             bound_signature = self._bind_runtime_args(args)
             static_signature = bound_signature.static_signature
 
-        cached = self._compiled_by_signature.get((static_signature, dtype_hash, tilingkey_packed))
+        # Unified recompile decision: every kernel type keys the per-instance
+        # signature cache (AICPU's tilingkey/datatype are rejected at decoration,
+        # so its key degenerates to (static_signature, None, None)).
+        cache_key = (static_signature, dtype_hash, tilingkey_packed)
+        cached = self._compiled_by_signature.get(cache_key)
         if cached is not None:
             # No validation here: every caller launches immediately afterwards and the
             # launch path checks type, dtype, rank and every dimension. Doing it twice
@@ -2930,7 +2954,8 @@ class _TileJitKernel:
         tilingkey_packed, _, _, dtype_hash = spec
         bound_signature = self._bind_static_shapes(None)
         static_signature = bound_signature.static_signature
-        cached = self._compiled_by_signature.get((static_signature, dtype_hash, tilingkey_packed))
+        cache_key = (static_signature, dtype_hash, tilingkey_packed)
+        cached = self._compiled_by_signature.get(cache_key)
         if cached is not None:
             return cached
         return self._compile_variant(concrete_key, spec, bound_signature, static_signature)
@@ -2942,6 +2967,8 @@ class _TileJitKernel:
         the IR; the packed 64-bit value keys the in-process cache and the per-key output subdir
         ``<build_dir>/tk_<packed>``. Codegen and compile are both per-key (the constants differ).
         """
+        if self._func_type == ir.FunctionType.AicpuKernel:
+            return _compile_aicpu_variant_impl(self, concrete_key, spec, bound_signature, static_signature)
         tilingkey_packed, dtype_consts, dtype_metadata, dtype_hash = spec
         self._arch = _setup_arch_env(self._arch)
         arch = self._arch
@@ -2969,11 +2996,14 @@ class _TileJitKernel:
         # Resolve once for compiler flags, the native block-budget check and debug
         # recompilation. Every consumer must use this binary's same core geometry.
         target = get_jit_compile_config().resolve_kernel_target(
-            arch, has_cube=cg.has_cube, has_vector=cg.has_vector,
+            arch,
+            has_cube=cg.has_cube,
+            has_vector=cg.has_vector,
         )
         compile_timeout = self._compile_timeout
         if compile_timeout is None:
             from pypto import pypto_impl
+
             compile_timeout = pypto_impl.CurrentScope().GetAllConfig().get("host.compile_timeout", 600)
         lib_path = _build_jit_so(
             cg,
@@ -2991,12 +3021,18 @@ class _TileJitKernel:
         # is bounded by the vector core count rather than the total core count.
         is_aiv_only = cg.has_vector and not cg.has_cube
         compiled = CompiledKernel(
-            lib_path=lib_path, param_specs=cg.param_specs, is_aiv_only=is_aiv_only,
-            kernel_name=cg.kernel_name, build_dir=cg.build_dir,
-            has_cube=cg.has_cube, has_vector=cg.has_vector,
-            target=target, source_file=cg.source_file,
+            lib_path=lib_path,
+            param_specs=cg.param_specs,
+            is_aiv_only=is_aiv_only,
+            kernel_name=cg.kernel_name,
+            build_dir=cg.build_dir,
+            has_cube=cg.has_cube,
+            has_vector=cg.has_vector,
+            target=target,
+            source_file=cg.source_file,
             simt_kernel=cg.simt_kernel,
-            needs_print_debug=cg.needs_print_debug, sk_cap=self._sk_cap,
+            needs_print_debug=cg.needs_print_debug,
+            sk_cap=self._sk_cap,
         )
         if self._sanitizer:
             # Pre-bind the sanitizer wrapper as the launch entry: it allocates
@@ -3004,10 +3040,13 @@ class _TileJitKernel:
             # launches via the upstream entry, builds the single report file
             # and scans it for detections.
             compiled.entry = _build_sanitizer_entry(compiled, cg.build_dir)
+        # Unified install: write to the same cache and key the lookup above reads.
         self._compiled_by_signature[(static_signature, dtype_hash, tilingkey_packed)] = compiled
         return compiled
 
     def _launch_key_error(self) -> str:
+        if self._func_type == ir.FunctionType.AicpuKernel:
+            return "Expected kernel[stream] or a direct call for an aicpu kernel"
         if self._tilingkey_schema is not None and self._datatype_schema is not None:
             return "Expected kernel[stream, block_dim, tilingkey, datatype]"
         if self._tilingkey_schema is not None:

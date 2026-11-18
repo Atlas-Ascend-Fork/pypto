@@ -20,6 +20,11 @@ artifacts. The generated per-op wrapper (ops-transformer ``ascendc_impl_build.py
 ``compile_op``.
 """
 
-__all__ = ["prepare_binary_headers", "pypto_compile_op"]
+__all__ = [
+    "prepare_binary_headers",
+    "pypto_compile_op",
+    "prepare_aicpu_kernel_sources",
+]
 
+from .aclnn_aicpu_codegen import prepare_aicpu_kernel_sources
 from .pypto_compile import prepare_binary_headers, pypto_compile_op

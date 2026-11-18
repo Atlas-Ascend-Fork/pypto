@@ -44,19 +44,21 @@ inline constexpr char kMaxThreadsAttr[] = "max_threads";
  * - SimtKernel: 3510 SIMT kernel launched directly from host
  * - SimdVF: 3510 SIMD vector function (__simd_vf__) launched from an AIV kernel
  * - SimdCallee: 3510 SIMD helper callable from a SimdVF or another SimdCallee
+ * - AicpuKernel: 3510 Aicpu kernel launched directly from host
  */
 enum class FunctionType : uint8_t {
-    OPAQUE = 0,           ///< Default: unspecified function type
-    ORCHESTRATION = 1,    ///< Host/AICPU control and coordination
-    IN_CORE = 2,          ///< AICore sub-graph execution
-    HELPER = 3,           ///< Scalar helper function callable from kernels
-    SIMT_VF = 4,          ///< 3510 SIMT vector function launched from an AIV kernel
-    SIMT_CALLEE = 5,      ///< 3510 SIMT helper callable from SIMT functions
-    SIMT_KERNEL = 6,      ///< 3510 SIMT kernel launched directly from host
-    SIMD_VF = 7,          ///< 3510 SIMD vector function (__simd_vf__) launched from an AIV kernel
-    SIMD_CALLEE = 8,      ///< 3510 SIMD helper callable from SIMD functions
-    SIMD_TILE_VF = 9,     ///< Tile instructions expanded into a SIMD vector function
-    SIMD_TILE_CALLEE = 10 ///< Tile instructions expanded into a SIMD helper
+    OPAQUE = 0,            ///< Default: unspecified function type
+    ORCHESTRATION = 1,     ///< Host/AICPU control and coordination
+    IN_CORE = 2,           ///< AICore sub-graph execution
+    HELPER = 3,            ///< Scalar helper function callable from kernels
+    SIMT_VF = 4,           ///< 3510 SIMT vector function launched from an AIV kernel
+    SIMT_CALLEE = 5,       ///< 3510 SIMT helper callable from SIMT functions
+    SIMT_KERNEL = 6,       ///< 3510 SIMT kernel launched directly from host
+    SIMD_VF = 7,           ///< 3510 SIMD vector function (__simd_vf__) launched from an AIV kernel
+    SIMD_CALLEE = 8,       ///< 3510 SIMD helper callable from SIMD functions
+    SIMD_TILE_VF = 9,      ///< Tile instructions expanded into a SIMD vector function
+    SIMD_TILE_CALLEE = 10, ///< Tile instructions expanded into a SIMD helper
+    AICPU_KERNEL = 11      ///< 3510 Aicpu kernel launched directly from host
 };
 
 /// True for a SIMT function type (`__simt_vf__` / `__simt_callee__` / `__simt_kernel__`).
@@ -104,6 +106,8 @@ inline std::string FunctionTypeToString(FunctionType type)
             return "SimdTileVF";
         case FunctionType::SIMD_TILE_CALLEE:
             return "SimdTileCallee";
+        case FunctionType::AICPU_KERNEL:
+            return "AicpuKernel";
         default:
             return "Unknown";
     }
@@ -139,6 +143,8 @@ inline FunctionType StringToFunctionType(const std::string& str)
         return FunctionType::SIMD_TILE_VF;
     } else if (str == "SimdTileCallee") {
         return FunctionType::SIMD_TILE_CALLEE;
+    } else if (str == "AicpuKernel") {
+        return FunctionType::AICPU_KERNEL;
     } else {
         throw std::invalid_argument("Unknown FunctionType: " + str);
     }

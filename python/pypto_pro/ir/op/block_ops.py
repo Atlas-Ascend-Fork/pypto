@@ -45,6 +45,7 @@ from pypto.pypto_impl.ir import (
     TStoreL2Hint,
 )
 from pypto.pypto_impl.ir import TileType as _IRTileType  # IR-level TileType (C++ binding);
+from pypto_pro.ir._operators import make_binary as _make_binary_op
 from pypto_pro.ir._utils import (
     _const_int_value,
     _const_int_values,
@@ -655,6 +656,34 @@ def _check_init_output_bounds(
         raise InvalidShape(
             f"init_output: offset ({offset_val}) + size ({size_val}) exceeds tensor element count ({numel})"
         )
+
+
+@op_impl("numel")
+def _build_numel(self, tensor: Expr, *, span: Span | None = None) -> Expr:
+    """``pl.numel(t)`` -- element count of the tensor (AICPU kernel surface).
+
+    Mirrors the cpp ``tensor->NumElements()``: the shape product, folded from
+    the tensor's TensorType dims (compile-time type computation; dynamic
+    dims stay runtime, no device op call is emitted). Only AICPU kernels
+    support the surface: the builder itself rejects other function types so
+    the rejection is the standard op-channel message regardless of syntax.
+    """
+    from ..._errors import InvalidType, NotSupported
+    if self._current_func_type != _ir_core.FunctionType.AicpuKernel:
+        raise NotSupported(
+            "pl.numel() is only supported in aicpu kernels",
+            span=span,
+            parser_retry=True,
+        )
+    if not isinstance(tensor, _ir_core.Expr) or not isinstance(tensor.type, _ir_core.TensorType):
+        raise InvalidType("pl.numel() requires a tensor", span=span)
+    if not tensor.type.shape:
+        return _ir_core.ConstInt(1, _ir_core.DataType.INT64, span)
+    count = None
+    for dim in tensor.type.shape:
+        term = dim if isinstance(dim, _ir_core.Expr) else _ir_core.ConstInt(dim, _ir_core.DataType.INT64, span)
+        count = term if count is None else _make_binary_op("mul", count, term, span)
+    return count
 
 
 @op_impl("init_output")
