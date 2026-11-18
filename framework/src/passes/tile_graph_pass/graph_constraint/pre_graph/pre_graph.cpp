@@ -177,6 +177,24 @@ static Status HubSpecialProcess(Function& function)
     return SUCCESS;
 }
 
+namespace {
+void ProcessSpecialCopyOps(OperationsViewer opList)
+{
+    SetCopyAttr setCopyAttr;
+    for (auto& op : opList) {
+        bool* distCopyType = op.GetAttr<bool>(OpAttributeKey::isDistCopyOut);
+        if (IsCopyOut(op.GetOpcode()) && (op.GetOpAttribute() == nullptr) &&
+            op.GetOpcode() != Opcode::OP_RESHAPE_COPY_OUT && !(distCopyType && *distCopyType)) {
+            setCopyAttr.ProcessSpecialMTEOperation(op);
+        }
+        if (IsCopyIn(op.GetOpcode()) && (op.GetOpAttribute() == nullptr) &&
+            op.GetOpcode() != Opcode::OP_RESHAPE_COPY_IN && !(distCopyType && !*distCopyType)) {
+            setCopyAttr.ProcessMoveInOperation(op);
+        }
+    }
+}
+} // namespace
+
 Status PreGraphProcess::RunOnFunction(Function& function)
 {
     APASS_LOG_INFO_F(Elements::Operation, "===> combine the hub subgraph to a nearby subgraph.");
@@ -194,23 +212,12 @@ Status PreGraphProcess::RunOnFunction(Function& function)
     SetBoundary setBoundary;
     setBoundary.SetTensorBoundary(function);
     // Processing Special Ops
-    SetCopyAttr setCopyAttr;
     RemoveRedundantAssemble removeRedundantAssemble;
     if (removeRedundantAssemble.ProcessViewToCopyIn(function) != SUCCESS) {
         APASS_LOG_ERROR_F(Elements::Function, "ProcessViewToCopyIn failed.");
         return FAILED;
     }
-    for (auto& op : opList) {
-        bool* distCopyType = op.GetAttr<bool>(OpAttributeKey::isDistCopyOut);
-        if (IsCopyOut(op.GetOpcode()) && (op.GetOpAttribute() == nullptr) &&
-            op.GetOpcode() != Opcode::OP_RESHAPE_COPY_OUT && !(distCopyType && *distCopyType)) {
-            setCopyAttr.ProcessSpecialMTEOperation(op);
-        }
-        if (IsCopyIn(op.GetOpcode()) && (op.GetOpAttribute() == nullptr) &&
-            op.GetOpcode() != Opcode::OP_RESHAPE_COPY_IN && !(distCopyType && !*distCopyType)) {
-            setCopyAttr.ProcessMoveInOperation(op);
-        }
-    }
+    ProcessSpecialCopyOps(opList);
     if (removeRedundantAssemble.DeleteRedundantAssemble(function) != SUCCESS) {
         APASS_LOG_ERROR_F(Elements::Function, "DeleteRedundantAssemble failed.");
         return FAILED;

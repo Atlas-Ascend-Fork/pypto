@@ -200,14 +200,9 @@ bool GetViewOffset(const ViewOpAttribute& viewAttr, std::vector<OpImmediate>& vi
     return !viewOffset.empty();
 }
 
-bool CanMergeViewToCopyIn(const Operation& viewOp, std::vector<Operation*>& copyIns,
-                          std::vector<std::vector<OpImmediate>>& mergedOffsets)
+namespace {
+bool IsZeroOffsetDdrViewInput(const LogicalTensorPtr& viewInput, const LogicalTensorPtr& viewOutput)
 {
-    if (viewOp.GetIOperands().size() != 1 || viewOp.GetOOperands().size() != 1) {
-        return false;
-    }
-    const auto& viewInput = viewOp.GetIOperands().front();
-    const auto& viewOutput = viewOp.GetOOperands().front();
     if (viewInput == nullptr || viewOutput == nullptr || viewInput->GetRawTensor() == nullptr ||
         viewInput->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR ||
         viewInput->GetShape().size() != viewOutput->GetShape().size() || viewOutput->GetConsumers().empty()) {
@@ -217,36 +212,66 @@ bool CanMergeViewToCopyIn(const Operation& viewOp, std::vector<Operation*>& copy
     // 此时from不再是相对view输入的纯窗口偏移; 继续折叠会使copyIn新输入(view输入)自身的offset与from中
     // 已吸收的输入offset重复累加, 导致搬运地址错误。仅当view输入的offset(静态+符号)全为零时,
     // from无论是否被吸收过取值都一致, 折叠才是安全的。
-    if (!IsZeroTensorOffset(viewInput)) {
-        return false;
-    }
+    return IsZeroTensorOffset(viewInput);
+}
+
+bool GetFoldableViewOffset(const Operation& viewOp, const LogicalTensorPtr& viewInput,
+                           std::vector<OpImmediate>& viewOffset)
+{
     auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(viewOp.GetOpAttribute());
-    std::vector<OpImmediate> viewOffset;
     if (viewAttr == nullptr || !GetViewOffset(*viewAttr, viewOffset) ||
         viewOffset.size() != viewInput->GetShape().size()) {
         return false;
     }
+    return true;
+}
+
+bool CollectFoldableCopyIn(Operation* consumer, const std::vector<OpImmediate>& viewOffset,
+                           std::vector<std::vector<OpImmediate>>& mergedOffsets)
+{
+    if (consumer == nullptr ||
+        (consumer->GetOpcode() != Opcode::OP_COPY_IN && consumer->GetOpcode() != Opcode::OP_L1_COPY_IN_CONV) ||
+        consumer->GetIOperands().size() != 1 || consumer->GetOOperands().size() != 1) {
+        return false;
+    }
+    // ReplaceTensor::InsertCopyDDROp插入的copyIn, 其fromOffset已吸收view窗口偏移(绝对量),
+    // codegen对DDR copyIn只使用fromOffset; 再将view偏移折叠进fromOffset会重复累加, 跳过折叠
+    if (consumer->HasAttr(COPY_IN_VIEW_OFFSET_ABSORBED)) {
+        return false;
+    }
+    auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(consumer->GetOpAttribute());
+    if (copyAttr == nullptr) {
+        mergedOffsets.push_back(viewOffset);
+        return true;
+    }
+    const auto& copyOffset = copyAttr->GetFromOffset();
+    if (copyAttr->IsCopyOut() || copyOffset.size() != viewOffset.size() ||
+        (!copyAttr->GetRawShape().empty() && copyAttr->GetRawShape().size() != viewOffset.size())) {
+        return false;
+    }
+    mergedOffsets.push_back(SumOffset(viewOffset, copyOffset));
+    return true;
+}
+} // namespace
+
+bool CanMergeViewToCopyIn(const Operation& viewOp, std::vector<Operation*>& copyIns,
+                          std::vector<std::vector<OpImmediate>>& mergedOffsets)
+{
+    if (viewOp.GetIOperands().size() != 1 || viewOp.GetOOperands().size() != 1) {
+        return false;
+    }
+    const auto& viewInput = viewOp.GetIOperands().front();
+    const auto& viewOutput = viewOp.GetOOperands().front();
+    if (!IsZeroOffsetDdrViewInput(viewInput, viewOutput)) {
+        return false;
+    }
+    std::vector<OpImmediate> viewOffset;
+    if (!GetFoldableViewOffset(viewOp, viewInput, viewOffset)) {
+        return false;
+    }
     for (auto* consumer : viewOutput->GetConsumers()) {
-        if (consumer == nullptr ||
-            (consumer->GetOpcode() != Opcode::OP_COPY_IN && consumer->GetOpcode() != Opcode::OP_L1_COPY_IN_CONV) ||
-            consumer->GetIOperands().size() != 1 || consumer->GetOOperands().size() != 1) {
+        if (!CollectFoldableCopyIn(consumer, viewOffset, mergedOffsets)) {
             return false;
-        }
-        // ReplaceTensor::InsertCopyDDROp插入的copyIn, 其fromOffset已吸收view窗口偏移(绝对量),
-        // codegen对DDR copyIn只使用fromOffset; 再将view偏移折叠进fromOffset会重复累加, 跳过折叠
-        if (consumer->HasAttr(COPY_IN_VIEW_OFFSET_ABSORBED)) {
-            return false;
-        }
-        auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(consumer->GetOpAttribute());
-        if (copyAttr == nullptr) {
-            mergedOffsets.push_back(viewOffset);
-        } else {
-            const auto& copyOffset = copyAttr->GetFromOffset();
-            if (copyAttr->IsCopyOut() || copyOffset.size() != viewOffset.size() ||
-                (!copyAttr->GetRawShape().empty() && copyAttr->GetRawShape().size() != viewOffset.size())) {
-                return false;
-            }
-            mergedOffsets.push_back(SumOffset(viewOffset, copyOffset));
         }
         copyIns.push_back(consumer);
     }
@@ -656,14 +681,10 @@ bool IsOnlyConsumedByTransDataThroughCopy(const LogicalTensorPtr& reshapeOut)
     return true;
 }
 
-bool MatchConvReshapePattern(const LogicalTensorPtr& viewInput, const LogicalTensorPtr& reshapeIn,
-                             const LogicalTensorPtr& reshapeOut, const ViewOpAttribute& viewAttr)
+namespace {
+bool HasConvReshapeLayout(const LogicalTensorPtr& reshapeIn, const LogicalTensorPtr& reshapeOut,
+                          const Shape& inputShape, const Shape& outputShape)
 {
-    const auto& inputShape = reshapeIn->GetShape();
-    const auto& outputShape = reshapeOut->GetShape();
-    const auto& sourceShape = viewInput->GetShape();
-    const auto& sourceRaw = viewInput->GetRawTensor();
-    const auto& rawShape = sourceRaw->GetRawShape();
     // 与 InferMemoryConflict 侧对齐的安全前提：仅 ND 行主序、dtype 一致才可按源 raw 重写布局。
     if (reshapeIn->Format() != TileOpFormat::TILEOP_ND || reshapeOut->Format() != TileOpFormat::TILEOP_ND ||
         reshapeIn->Datatype() != reshapeOut->Datatype()) {
@@ -673,13 +694,11 @@ bool MatchConvReshapePattern(const LogicalTensorPtr& viewInput, const LogicalTen
     if (inputShape.size() < DIMENSIONS_3D || inputShape.size() > DIMENSIONS_5D || outputShape.size() != DIMENSIONS_2D) {
         return false;
     }
-    if (outputShape[0] != inputShape[0]) {
-        return false;
-    }
-    // VIEW 输出只能被当前 RESHAPE 使用，避免删除后影响其他消费者。
-    if (reshapeIn->GetConsumers().size() != 1) {
-        return false;
-    }
+    return outputShape[0] == inputShape[0];
+}
+
+bool MatchesConvWindowShape(const Shape& inputShape, const Shape& sourceShape, const Shape& rawShape)
+{
     // 源逻辑布局和物理布局的尾轴必须与窗口完整对应。
     if (sourceShape.size() != inputShape.size() || rawShape.size() != inputShape.size()) {
         return false;
@@ -690,7 +709,26 @@ bool MatchConvReshapePattern(const LogicalTensorPtr& viewInput, const LogicalTen
     // 源 raw 第三轴起须与逻辑尾轴一致：tile 允许裁切第二轴（行前缀块仍稠密，行跨度由
     // raw 尾轴积锚定承载）；更深轴不一致会使行内出现交错间隔，展平按连续行块寻址
     // 会读入间隔数据，须拒绝。
-    if (!std::equal(sourceShape.begin() + 2, sourceShape.end(), rawShape.begin() + 2)) {
+    return std::equal(sourceShape.begin() + 2, sourceShape.end(), rawShape.begin() + 2);
+}
+} // namespace
+
+bool MatchConvReshapePattern(const LogicalTensorPtr& viewInput, const LogicalTensorPtr& reshapeIn,
+                             const LogicalTensorPtr& reshapeOut, const ViewOpAttribute& viewAttr)
+{
+    const auto& inputShape = reshapeIn->GetShape();
+    const auto& outputShape = reshapeOut->GetShape();
+    const auto& sourceShape = viewInput->GetShape();
+    const auto& sourceRaw = viewInput->GetRawTensor();
+    const auto& rawShape = sourceRaw->GetRawShape();
+    if (!HasConvReshapeLayout(reshapeIn, reshapeOut, inputShape, outputShape)) {
+        return false;
+    }
+    // VIEW 输出只能被当前 RESHAPE 使用，避免删除后影响其他消费者。
+    if (reshapeIn->GetConsumers().size() != 1) {
+        return false;
+    }
+    if (!MatchesConvWindowShape(inputShape, sourceShape, rawShape)) {
         return false;
     }
     Shape tailShape(inputShape.begin() + 1, inputShape.end());
@@ -994,32 +1032,41 @@ After：
 RESHAPE -> COPYIN
         -> COPYIN
 */
+namespace {
+bool HasSingleViewProducerWithOnlyCopyInConsumers(Operation& reshapeOp, Operation*& producerOp,
+                                                  LogicalTensorPtr& viewInput)
+{
+    auto producers = reshapeOp.GetIOperands().front()->GetProducers();
+    if (producers.empty()) {
+        APASS_LOG_INFO_F(Elements::Operation, "No producers found for RESHAPE op's input %d.", reshapeOp.GetOpMagic());
+        return false;
+    }
+    if (*producers.begin() == nullptr || producers.size() != 1 ||
+        (*producers.begin())->GetOpcode() != Opcode::OP_VIEW) {
+        return false;
+    }
+    producerOp = *producers.begin();
+    viewInput = producerOp->GetIOperands().front();
+    for (auto reshapeConsumer : reshapeOp.GetOOperands().front()->GetConsumers()) {
+        if (!IsCopyIn(reshapeConsumer->GetOpcode())) {
+            APASS_LOG_INFO_F(Elements::Operation, "Skip RESHAPE op %d as output has non-CopyIn consumer.",
+                             reshapeOp.GetOpMagic());
+            return false;
+        }
+    }
+    return true;
+}
+} // namespace
+
 Status RemoveRedundantAssemble::RemoveViewSingleReshape(Function& function) const
 {
     for (auto& op : function.Operations()) {
         if (op.GetOpcode() != Opcode::OP_RESHAPE)
             continue;
         auto& reshapeOp = op;
-        auto producers = reshapeOp.GetIOperands().front()->GetProducers();
-        if (producers.empty()) {
-            APASS_LOG_INFO_F(Elements::Operation, "No producers found for RESHAPE op's input %d.",
-                             reshapeOp.GetOpMagic());
-            continue;
-        }
-        auto producerOp = *producers.begin();
-        if (producerOp == nullptr || producers.size() != 1 || producerOp->GetOpcode() != Opcode::OP_VIEW)
-            continue;
-        auto viewInput = producerOp->GetIOperands().front();
-        bool allConsumersCopyIn = true;
-        for (auto reshapeConsumer : reshapeOp.GetOOperands().front()->GetConsumers()) {
-            if (!IsCopyIn(reshapeConsumer->GetOpcode())) {
-                allConsumersCopyIn = false;
-                break;
-            }
-        }
-        if (!allConsumersCopyIn) {
-            APASS_LOG_INFO_F(Elements::Operation, "Skip RESHAPE op %d as output has non-CopyIn consumer.",
-                             reshapeOp.GetOpMagic());
+        Operation* producerOp = nullptr;
+        LogicalTensorPtr viewInput;
+        if (!HasSingleViewProducerWithOnlyCopyInConsumers(reshapeOp, producerOp, viewInput)) {
             continue;
         }
         auto opAttr = std::dynamic_pointer_cast<ViewOpAttribute>(producerOp->GetOpAttribute());
@@ -1170,6 +1217,25 @@ Status RemoveRedundantAssemble::ProcessReshape(Function& function, Operation*& o
     return SUCCESS;
 }
 
+namespace {
+void RemoveSingletonAxes(const std::vector<int64_t>& oriRawShape, const std::vector<SymbolicScalar>& oriDynRawShape,
+                         Shape& newShape, std::vector<SymbolicScalar>& newDynShape)
+{
+    std::remove_copy_if(oriRawShape.begin(), oriRawShape.end(), std::back_inserter(newShape),
+                        [](const auto& e) { return e == 1; });
+    if (!oriDynRawShape.empty() && oriDynRawShape.size() == oriRawShape.size()) {
+        for (size_t idx = 0; idx < oriRawShape.size(); ++idx) {
+            if (oriRawShape[idx] != 1) {
+                newDynShape.push_back(oriDynRawShape[idx]);
+            }
+        }
+    }
+    if (newDynShape.empty() && !newShape.empty()) {
+        newDynShape = CommonUtils::CreateConstIntVector(newShape);
+    }
+}
+} // namespace
+
 /*
 删除冗余RESHAPE
 Before:
@@ -1209,19 +1275,8 @@ Status RemoveRedundantAssemble::RemoveViewMultiReshape(
         auto oriRawShape = secondReshape->GetIOperands().front()->GetRawTensor()->GetRawShape();
         auto oriDynRawShape = secondReshape->GetIOperands().front()->GetRawTensor()->GetDynRawShape();
         Shape newShape;
-        std::remove_copy_if(oriRawShape.begin(), oriRawShape.end(), std::back_inserter(newShape),
-                            [](const auto& e) { return e == 1; });
         std::vector<SymbolicScalar> newDynShape;
-        if (!oriDynRawShape.empty() && oriDynRawShape.size() == oriRawShape.size()) {
-            for (size_t idx = 0; idx < oriRawShape.size(); ++idx) {
-                if (oriRawShape[idx] != 1) {
-                    newDynShape.push_back(oriDynRawShape[idx]);
-                }
-            }
-        }
-        if (newDynShape.empty() && !newShape.empty()) {
-            newDynShape = CommonUtils::CreateConstIntVector(newShape);
-        }
+        RemoveSingletonAxes(oriRawShape, oriDynRawShape, newShape, newDynShape);
         secondReshape->GetOOperands().front()->GetRawTensor()->UpdateRawShape(newShape);
         secondReshape->GetOOperands().front()->GetRawTensor()->UpdateDynRawShape(newDynShape);
         MoveReshapeViewTokenBeforeRemove(*secondReshape->BelongTo(), *firstReshape, *viewOp);
@@ -1266,6 +1321,38 @@ bool RemoveRedundantAssemble::CalculateReshapeToAssembleInfo(Operation& assemble
     return true;
 }
 
+namespace {
+Status UpdateSingleCopyOutOffset(Operation* copyOut, const std::vector<OpImmediate>& reshapeOffset,
+                                 const std::vector<int64_t>& newRawShape,
+                                 const std::vector<SymbolicScalar>& newDynOffset)
+{
+    auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(copyOut->GetOpAttribute());
+    if (copyAttr == nullptr) {
+        APASS_LOG_ERROR_F(Elements::Operation,
+                          "Failed to update CopyOut before Reshape because CopyOut op:%s[%d] attr is nullptr.",
+                          copyOut->GetOpcodeStr().c_str(), copyOut->GetOpMagic());
+        return FAILED;
+    }
+    auto oriCopyOffset = copyAttr->GetToOffset();
+    std::vector<OpImmediate> newOffset = reshapeOffset;
+    if (newOffset.size() < oriCopyOffset.size()) {
+        APASS_LOG_ERROR_F(
+            Elements::Operation,
+            "Failed to update CopyOut op:%s[%d] before Reshape because new offset size [%zu] is smaller than "
+            "original CopyOut offset size [%zu]. newDynOffset: %s, oriCopyOffset: %s.",
+            copyOut->GetOpcodeStr().c_str(), copyOut->GetOpMagic(), newOffset.size(), oriCopyOffset.size(),
+            IntVecToStr(newDynOffset).c_str(), OpImmediateVecToStr(oriCopyOffset).c_str());
+        return FAILED;
+    }
+    for (size_t i = 0; i < oriCopyOffset.size(); i++) {
+        newOffset[i] = newOffset[i] + oriCopyOffset[i];
+    }
+    copyAttr->SetRawShape(OpImmediate::Specified(newRawShape));
+    copyAttr->SetToOffset(newOffset);
+    return SUCCESS;
+}
+} // namespace
+
 Status RemoveRedundantAssemble::UpdateCopyOutBeforeReshape(LogicalTensorPtr reshapeInput,
                                                            const std::vector<int64_t>& newRawShape,
                                                            const std::vector<SymbolicScalar>& newDynOffset) const
@@ -1296,29 +1383,9 @@ Status RemoveRedundantAssemble::UpdateCopyOutBeforeReshape(LogicalTensorPtr resh
             updateCopyIn();
             return SUCCESS;
         }
-        auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(copyOut->GetOpAttribute());
-        if (copyAttr == nullptr) {
-            APASS_LOG_ERROR_F(Elements::Operation,
-                              "Failed to update CopyOut before Reshape because CopyOut op:%s[%d] attr is nullptr.",
-                              copyOut->GetOpcodeStr().c_str(), copyOut->GetOpMagic());
+        if (UpdateSingleCopyOutOffset(copyOut, reshapeOffset, newRawShape, newDynOffset) != SUCCESS) {
             return FAILED;
         }
-        auto oriCopyOffset = copyAttr->GetToOffset();
-        std::vector<OpImmediate> newOffset = reshapeOffset;
-        if (newOffset.size() < oriCopyOffset.size()) {
-            APASS_LOG_ERROR_F(
-                Elements::Operation,
-                "Failed to update CopyOut op:%s[%d] before Reshape because new offset size [%zu] is smaller than "
-                "original CopyOut offset size [%zu]. newDynOffset: %s, oriCopyOffset: %s.",
-                copyOut->GetOpcodeStr().c_str(), copyOut->GetOpMagic(), newOffset.size(), oriCopyOffset.size(),
-                IntVecToStr(newDynOffset).c_str(), OpImmediateVecToStr(oriCopyOffset).c_str());
-            return FAILED;
-        }
-        for (size_t i = 0; i < oriCopyOffset.size(); i++) {
-            newOffset[i] = newOffset[i] + oriCopyOffset[i];
-        }
-        copyAttr->SetRawShape(OpImmediate::Specified(newRawShape));
-        copyAttr->SetToOffset(newOffset);
         if (copyOut->BelongTo() != nullptr) {
             function = copyOut->BelongTo();
         }

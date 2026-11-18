@@ -18,6 +18,40 @@
 #include <unordered_set>
 
 namespace npu::tile_fwk {
+namespace {
+void CollectTensorSubgraphIds(const LogicalTensorPtr& output, Function& function, std::vector<int>& producerIds,
+                              std::vector<int>& consumerIds, std::vector<bool>& producerSeen,
+                              std::vector<bool>& consumerSeen)
+{
+    for (const auto* producer : output->GetProducers()) {
+        if (producer->BelongTo() != &function) {
+            continue;
+        }
+        int subgraphId = producer->GetSubgraphID();
+        if (subgraphId < 0 || subgraphId >= static_cast<int>(function.GetTotalSubGraphCount())) {
+            continue;
+        }
+        if (!producerSeen[subgraphId]) {
+            producerSeen[subgraphId] = true;
+            producerIds.emplace_back(subgraphId);
+        }
+    }
+    for (const auto* consumer : output->GetConsumers()) {
+        if (consumer->BelongTo() != &function) {
+            continue;
+        }
+        int subgraphId = consumer->GetSubgraphID();
+        if (subgraphId < 0 || subgraphId >= static_cast<int>(function.GetTotalSubGraphCount())) {
+            continue;
+        }
+        if (!consumerSeen[subgraphId]) {
+            consumerSeen[subgraphId] = true;
+            consumerIds.emplace_back(subgraphId);
+        }
+    }
+}
+} // namespace
+
 void ColorGraph::BuildSubgraphDependencyGraph(Function& function, std::vector<std::set<int>>& subgraphInGraph,
                                               std::vector<std::set<int>>& subgraphOutGraph)
 {
@@ -35,32 +69,8 @@ void ColorGraph::BuildSubgraphDependencyGraph(Function& function, std::vector<st
             }
             producerSubgraphIds.clear();
             consumerSubgraphIds.clear();
-            for (const auto* producer : output->GetProducers()) {
-                if (producer->BelongTo() != &function) {
-                    continue;
-                }
-                int subgraphId = producer->GetSubgraphID();
-                if (subgraphId < 0 || subgraphId >= static_cast<int>(function.GetTotalSubGraphCount())) {
-                    continue;
-                }
-                if (!producerSubgraphSeen[subgraphId]) {
-                    producerSubgraphSeen[subgraphId] = true;
-                    producerSubgraphIds.emplace_back(subgraphId);
-                }
-            }
-            for (const auto* consumer : output->GetConsumers()) {
-                if (consumer->BelongTo() != &function) {
-                    continue;
-                }
-                int subgraphId = consumer->GetSubgraphID();
-                if (subgraphId < 0 || subgraphId >= static_cast<int>(function.GetTotalSubGraphCount())) {
-                    continue;
-                }
-                if (!consumerSubgraphSeen[subgraphId]) {
-                    consumerSubgraphSeen[subgraphId] = true;
-                    consumerSubgraphIds.emplace_back(subgraphId);
-                }
-            }
+            CollectTensorSubgraphIds(output, function, producerSubgraphIds, consumerSubgraphIds, producerSubgraphSeen,
+                                     consumerSubgraphSeen);
             for (int producerSubgraphId : producerSubgraphIds) {
                 for (int consumerSubgraphId : consumerSubgraphIds) {
                     if (producerSubgraphId != consumerSubgraphId) {

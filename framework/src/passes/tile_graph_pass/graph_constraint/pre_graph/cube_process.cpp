@@ -43,6 +43,15 @@ void AlignCopyOutAttr(LogicalTensorPtr& resetDdr, Operation* copyOutOp)
     }
 }
 
+namespace {
+void SetL1CopyInOuterInner(Operation* l1CopyInOp, int outerValue, int innerValue, const char* scene)
+{
+    l1CopyInOp->SetAttribute(L1_COPY_IN_OUTER, outerValue);
+    l1CopyInOp->SetAttribute(L1_COPY_IN_INNER, innerValue);
+    APASS_LOG_DEBUG_F(Elements::Operation, "%s: Outer: %d, Inner: %d.", scene, outerValue, innerValue);
+}
+} // namespace
+
 Status CubeProcess::AddL1CopyInAttr(const std::shared_ptr<LogicalTensor> input, int nzValue, int mValue, int kValue,
                                     int nValue) const
 {
@@ -68,28 +77,20 @@ Status CubeProcess::AddL1CopyInAttr(const std::shared_ptr<LogicalTensor> input, 
                       L1CopyInOp->GetOpMagic(), nzValue);
     if (copyInOp->GetOpcode() == Opcode::OP_L1_TO_L0A || copyInOp->GetOpcode() == Opcode::OP_LOAD3D_CONV ||
         copyInOp->GetOpcode() == Opcode::OP_L1_TO_L0A_CONV_DW) {
-        L1CopyInOp->SetAttribute(L1_COPY_IN_OUTER, mValue);
-        L1CopyInOp->SetAttribute(L1_COPY_IN_INNER, kValue);
-        APASS_LOG_DEBUG_F(Elements::Operation, "OP_L1_TO_L0A: Outer: %d, Inner: %d.", mValue, kValue);
+        SetL1CopyInOuterInner(L1CopyInOp, mValue, kValue, "OP_L1_TO_L0A");
         return SUCCESS;
     }
     if (copyInOp->GetOpcode() == Opcode::OP_L1_TO_L0B || copyInOp->GetOpcode() == Opcode::OP_LOAD2D_CONV ||
         copyInOp->GetOpcode() == Opcode::OP_LOAD2DDX_CONV || copyInOp->GetOpcode() == Opcode::OP_LOAD3D_CONV_DW) {
-        L1CopyInOp->SetAttribute(L1_COPY_IN_OUTER, kValue);
-        L1CopyInOp->SetAttribute(L1_COPY_IN_INNER, nValue);
-        APASS_LOG_DEBUG_F(Elements::Operation, "OP_L1_TO_L0B: Outer: %d, Inner: %d.", kValue, nValue);
+        SetL1CopyInOuterInner(L1CopyInOp, kValue, nValue, "OP_L1_TO_L0B");
         return SUCCESS;
     }
     if (copyInOp->GetOpcode() == Opcode::OP_L1_TO_L0_AT) {
-        L1CopyInOp->SetAttribute(L1_COPY_IN_OUTER, kValue);
-        L1CopyInOp->SetAttribute(L1_COPY_IN_INNER, mValue);
-        APASS_LOG_DEBUG_F(Elements::Operation, "OP_L1_TO_L0_AT: Outer: %d, Inner: %d.", kValue, mValue);
+        SetL1CopyInOuterInner(L1CopyInOp, kValue, mValue, "OP_L1_TO_L0_AT");
         return SUCCESS;
     }
     if (copyInOp->GetOpcode() == Opcode::OP_L1_TO_L0_BT) {
-        L1CopyInOp->SetAttribute(L1_COPY_IN_OUTER, nValue);
-        L1CopyInOp->SetAttribute(L1_COPY_IN_INNER, kValue);
-        APASS_LOG_DEBUG_F(Elements::Operation, "OP_L1_TO_L0_BT: Outer: %d, Inner: %d.", nValue, kValue);
+        SetL1CopyInOuterInner(L1CopyInOp, nValue, kValue, "OP_L1_TO_L0_BT");
         return SUCCESS;
     }
     APASS_LOG_ERROR_F(Elements::Operation, "Invalid Cube input %d, produced by %s[%d]. %s", input->GetMagic(),
