@@ -570,8 +570,12 @@ INLINE __gm__ DevAscendFunctionOperationSuccInfo* DrcoGetCurrentRootFuncSuccInfo
 #if !ENABLE_AICORE_BN_PARALLEL
 INLINE __gm__ DrcoDeviceTask* GetCurrentDeviceTask(__gm__ DrcoDeviceTaskReadyQueue* queue)
 {
-    uint32_t head = DrcoGmLoad(&queue->head);
-    uint32_t tail = DrcoGmLoad(&queue->tail);
+    // head/tail are adjacent and 8-byte aligned: read both with one dcci'd u64 load
+    // (same pattern as DrcoMiddleQueueInit's headId/size). The 8-byte access cannot
+    // cross a 64B line, so head and tail need not share a cache line.
+    uint64_t headTail = DrcoGmLoad(reinterpret_cast<__gm__ uint64_t*>(&queue->head));
+    uint32_t head = static_cast<uint32_t>(headTail);
+    uint32_t tail = static_cast<uint32_t>(headTail >> 32);
     if (head < tail) {
         __gm__ DrcoDeviceTask* elem = &queue->dynFuncDataListList[head % npu::tile_fwk::DEVICE_TASK_QUEUE_SIZE];
         if (DrcoGmLoad(&elem->dynFuncDataList) != nullptr) {
@@ -2500,8 +2504,10 @@ INLINE bool DrcoPerCoreForceFetchConsume(DrcoEntryState* state, __gm__ npu::tile
 INLINE void ExecDrcoPerCoreTasks(DrcoEntryState* state, __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue,
                                  __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList)
 {
-    uint32_t perCoreQueueSize = DrcoGmLoad(&perCoreQueue->size);
-    uint32_t perCoreQueueHead = DrcoGmLoad(&perCoreQueue->head);
+    // head/tail/size 与 taskList 起始同处队列首行：一次 dcci 覆盖，随后普通读两字段
+    DRCO_DCCI_SINGLE_CACHE_LINE(perCoreQueue);
+    uint32_t perCoreQueueSize = perCoreQueue->size;
+    uint32_t perCoreQueueHead = perCoreQueue->head;
     while (perCoreQueueSize > perCoreQueueHead) {
         uint32_t taskId = DrcoGmLoadArray(perCoreQueue->taskList, perCoreQueueHead);
         PerfDevTaskFirstLeafTask(state);
@@ -2559,6 +2565,19 @@ INLINE void ExecDrcoReadyQueueTasks(DrcoEntryState* state, __gm__ npu::tile_fwk:
 // 老路径写 state->mqStorage；并行窗口模式 activation 将 mq 重定向到 per-槽容器后复用本函数
 INLINE void DrcoMiddleQueueInit(DrcoEntryState* state, __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList)
 {
+    // Read the region count first; skip per-slot GM reads when no middleQueue exists.
+    state->mq->middleQueuePending = false;
+    state->mq->verifiedSlot = 0xFF;
+    state->mq->regionHeadCount = DrcoGmLoad(&rootFuncList->middleQueueRegionHeadCount);
+    if (state->mq->regionHeadCount == 0) {
+        for (uint32_t s = 0; s < npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM; s++) {
+            state->mq->middleQueue[s] = nullptr;
+            state->mq->middleQueueConsumed[s] = false;
+            state->mq->middleQueueHeadId[s] = 0;
+            state->mq->middleQueueSize[s] = 0;
+        }
+        return;
+    }
     for (uint32_t s = 0; s < npu::tile_fwk::DRCO_MIDDLE_QUEUE_SLOT_NUM; s++) {
         __gm__ npu::tile_fwk::PerCoreMiddleQueue* mq = DrcoGmLoad(
             &rootFuncList->perCoreMiddleQueueArray[BlockDescBlockIdx(state->blockDesc)][s]);
@@ -2574,9 +2593,6 @@ INLINE void DrcoMiddleQueueInit(DrcoEntryState* state, __gm__ npu::tile_fwk::Drc
             state->mq->middleQueueSize[s] = 0;
         }
     }
-    state->mq->middleQueuePending = false;
-    state->mq->verifiedSlot = 0xFF;
-    state->mq->regionHeadCount = DrcoGmLoad(&rootFuncList->middleQueueRegionHeadCount);
     for (uint32_t i = 0;
          i < state->mq->regionHeadCount && i < npu::tile_fwk::DrcoRootFuncList::DRCO_MIDDLE_QUEUE_REGION_MAX; i++) {
         state->mq->regionHeadList[i] = DrcoGmLoad(&rootFuncList->middleQueueRegionHeadList[i]);
@@ -3074,6 +3090,29 @@ INLINE void KernelEntryDrcoParallel(DrcoEntryState* state)
 }
 #endif
 
+// ssbuf 段基址（__ssbuf__ 段起点）：MIX C2V 通信区域。老路径 per-devTask Init + 仅用 [0] 环
+// （并行入口有独立的多槽 Init，不调用本函数）。
+// C2V ready queue 只服务 HUB_MIX 后继，按 DRCO_FLAG_HAS_MIX 编译期裁剪；warp 计数/完成镜像
+// 与 EVENT_ID14 放行服务 1C2V 计数协议，非 mix 图同样需要，不能随 mix 门控裁剪。
+INLINE void DrcoInitSsbufPerDevTask(DrcoEntryState* state)
+{
+    state->ssbuf = reinterpret_cast<npu::tile_fwk::DrcoSsbufState*>(0);
+#if defined(__AIV__)
+    wait_intra_block(PIPE_S, EVENT_ID14);
+#else
+#if DRCO_FLAG_HAS_MIX
+    npu::tile_fwk::DrcoMixHubC2VReadyQueue::Init(&state->ssbuf->mixHubC2VReadyQueue[0][0]);
+    npu::tile_fwk::DrcoMixHubC2VReadyQueue::Init(&state->ssbuf->mixHubC2VReadyQueue[0][1]);
+#endif
+    // V 计数/完成镜像复位：须在 set_intra_block 放行 V 之前（跨 devTask 不残留，V 只读不承担复位）
+    npu::tile_fwk::DrcoWarpExecuteCount::Init(&state->ssbuf->warpExecuteCount);
+    set_intra_block(PIPE_S, EVENT_ID14); // 作用于Vec0
+#if defined(__DAV_C310__)
+    set_intra_block(PIPE_S, EVENT_ID14 + EVENT_NUMS_PER_AIV); // 作用与Vec1
+#endif
+#endif
+}
+
 INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, int64_t workspace, int64_t tilingdata,
                             int64_t cfgdata)
 {
@@ -3104,50 +3143,33 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
         __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList = deviceTask->drcoRootFuncList;
         state.ctx.lastTaskFinishCycle = 0;
         state.isExectedLeafTask = false;
+        DrcoInitSsbufPerDevTask(&state);
         // size 与静态预累加 staticExecCount 只读且 devTask 内不变：入口一次性 dcci 读入并合成
         // 期望动态计数，热路径完成判定用缓存值（动态计数走分片），不再反复 dcci 该行。
         // ssbuf 协议下 V 端无判定职责，不缓存；C 端另缓存 AIV 期望动态计数并复位聚合状态
         // （快照须与随后 ssbuf 复位后的零值对齐；tick 复位保证每 devTask 首次空转聚合即判，
         // 空类型预置 flag 及时补发镜像）
         if (IS_AIC) {
-            state.drcoCountDynExpect = DrcoGmLoad(&rootFuncList->devTaskCountList.count[DRCO_CORE_TYPE].size) -
-                                       DrcoGmLoad(
-                                           &rootFuncList->devTaskCountList.count[DRCO_CORE_TYPE].staticExecCount);
-            state.warpAggState
-                .vectorCountDynExpect = DrcoGmLoad(
-                                            &rootFuncList->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIV].size) -
-                                        DrcoGmLoad(&rootFuncList->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIV]
-                                                        .staticExecCount);
+            __gm__ npu::tile_fwk::DrcoDevTaskCountList::CoreTypeCount* coreCnt = &rootFuncList->devTaskCountList
+                                                                                      .count[DRCO_CORE_TYPE];
+            DRCO_DCCI_SINGLE_CACHE_LINE(coreCnt);
+            state.drcoCountDynExpect = coreCnt->size - coreCnt->staticExecCount;
+            __gm__ npu::tile_fwk::DrcoDevTaskCountList::CoreTypeCount*
+                vectorCnt = &rootFuncList->devTaskCountList.count[npu::tile_fwk::DRCO_QUEUE_AIV];
+            DRCO_DCCI_SINGLE_CACHE_LINE(vectorCnt);
+            state.warpAggState.vectorCountDynExpect = vectorCnt->size - vectorCnt->staticExecCount;
             state.warpAggState.lastVCount[0] = 0;
             state.warpAggState.lastVCount[1] = 0;
             state.warpAggState.vectorFinishPublished = false;
             state.warpAggState.vectorFinishPollTick = 0;
         }
-        state.hasStitchNode = DrcoGmLoad(&rootFuncList->hasStitchNode) != 0;
 #if DRCO_PERCORE_EAGER_CONSUME
         // host 侧图特征门控结果（每 devTask 入口载入一次，强制点只读本地缓存）
         state.percoreEagerConsume = DrcoGmLoad(&rootFuncList->percoreEagerConsumeEnable);
 #endif // DRCO_PERCORE_EAGER_CONSUME
         __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue = DrcoGmLoad(
             &rootFuncList->perCorePendingQueueArray[BlockDescBlockIdx(state.blockDesc)]);
-        DRCO_DCCI_SINGLE_CACHE_LINE(perCoreQueue);
 
-        // ssbuf 段基址（__ssbuf__ 段起点）：MIX C2V 通信区域。老路径 per-devTask Init + 仅用 [0] 环
-        state.ssbuf = reinterpret_cast<npu::tile_fwk::DrcoSsbufState*>(0);
-#if defined(__MIX__)
-#if defined(__AIV__)
-        wait_intra_block(PIPE_S, EVENT_ID14);
-#else
-        npu::tile_fwk::DrcoMixHubC2VReadyQueue::Init(&state.ssbuf->mixHubC2VReadyQueue[0][0]);
-        npu::tile_fwk::DrcoMixHubC2VReadyQueue::Init(&state.ssbuf->mixHubC2VReadyQueue[0][1]);
-        // V 计数/完成镜像复位：须在 set_intra_block 放行 V 之前（跨 devTask 不残留，V 只读不承担复位）
-        npu::tile_fwk::DrcoWarpExecuteCount::Init(&state.ssbuf->warpExecuteCount);
-        set_intra_block(PIPE_S, EVENT_ID14); // 作用于Vec0
-#if defined(__DAV_C310__)
-        set_intra_block(PIPE_S, EVENT_ID14 + EVENT_NUMS_PER_AIV); // 作用与Vec1
-#endif
-#endif
-#endif
         if (DrcoGmLoad(&rootFuncList->totalTaskCount) == 0) {
             uint32_t oldHead = DrcoAtomicLoad(&state.deviceTaskReadyQueue->head);
             DrcoAtomicCasToU32(&state.deviceTaskReadyQueue->head, oldHead, oldHead + 1);
@@ -3168,6 +3190,8 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
         // 头在 perCore 中执行完成（写门哨兵开门）后立即消费 middleQueue——省去进入
         // fetch 自旋到探测到门开的轮询延迟；未开门时 Consume 内部按槽过滤，无害
         DrcoTryMiddleQueueConsume(&state, rootFuncList);
+        // hasStitchNode is only used by the fetch loop; load it after the first task.
+        state.hasStitchNode = DrcoGmLoad(&rootFuncList->hasStitchNode) != 0;
         ExecDrcoReadyQueueTasks(&state, rootFuncList, perCoreQueue);
 
         SyncAllMix();
