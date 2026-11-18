@@ -14,6 +14,7 @@
  */
 
 #include <gtest/gtest.h>
+#include <algorithm>
 #include <vector>
 #include "tilefwk/tile_shape.h"
 #include "tilefwk/tilefwk_op.h"
@@ -40,7 +41,8 @@ protected:
 TEST_F(TestConvVecTileInference, InferConv1d_FP16)
 {
     ConvTile convTile;
-    convTile.tileL1Info = Conv::TileL1Info(1, 1, 64, 64, 16, 16, 16, 1);
+    int64_t tileCinWeight = 16;
+    convTile.tileL1Info = Conv::TileL1Info(1, 1, 64, 64, 16, tileCinWeight, 16, 1);
     convTile.tileL0Info = Conv::TileL0Info(1, 64, 16, 16);
     convTile.setL0Tile = true;
 
@@ -56,7 +58,7 @@ TEST_F(TestConvVecTileInference, InferConv1d_FP16)
     EXPECT_EQ(result.fmapVecTile.tile[0], 1);
     EXPECT_EQ(result.fmapVecTile.tile[1], c0);
     EXPECT_EQ(result.weightVecTile.tile[0], 16);
-    EXPECT_EQ(result.weightVecTile.tile[1], oriWeightShape[1]);
+    EXPECT_EQ(result.weightVecTile.tile[1], std::min(oriWeightShape[1], tileCinWeight));
     EXPECT_EQ(result.outVecTile.tile.back(), c0);
 }
 

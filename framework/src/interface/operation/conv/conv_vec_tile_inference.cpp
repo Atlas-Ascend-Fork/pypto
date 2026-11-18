@@ -37,6 +37,8 @@ constexpr uint32_t PAD_STRIDE_W = 1;
 constexpr uint32_t PAD_STRIDE_D = 2;
 constexpr int64_t MKN_N_VAL = 16;
 constexpr int64_t FZ_MERGE_LAST_AXES_LIMIT = 169;
+constexpr size_t VEC_TILE_C_DIM = 1;
+constexpr int64_t MIN_VEC_TILE_C_BLOCKS = 1;
 
 inline size_t GetUbLimit()
 {
@@ -94,6 +96,19 @@ inline void GrowDimByTransdataBytes(std::vector<int64_t>& tile, size_t dimIdx, i
         }
         tile = tmp;
     }
+}
+
+inline int64_t ClampFzVecTileC(int64_t cin, int64_t c0, int64_t wanted)
+{
+    int64_t c1Total = (cin + c0 - 1) / c0;
+    int64_t minC = MIN_VEC_TILE_C_BLOCKS * c0;
+    for (int64_t c = (wanted / c0) * c0; c > minC; c -= c0) {
+        int64_t lastOffset = ((cin + c - 1) / c - 1) * c;
+        if (lastOffset / c0 + (c + c0 - 1) / c0 <= c1Total) {
+            return c;
+        }
+    }
+    return minC;
 }
 
 struct ConvInferContext {
@@ -160,12 +175,14 @@ VecTile InferFmapVecTile(const ConvInferContext& ctx, int64_t dtypeSize, size_t 
         GrowDim(vecTile.tile, 4, c0, winL1, dtypeSize, ubLimit);
         GrowDim(vecTile.tile, 3, 1, hinL1, dtypeSize, ubLimit);
         GrowDim(vecTile.tile, 2, 1, dinL1, dtypeSize, ubLimit);
-        GrowDim(vecTile.tile, 1, c0, cinMax, dtypeSize, ubLimit);
+        GrowDim(vecTile.tile, VEC_TILE_C_DIM, c0, cinMax, dtypeSize, ubLimit);
+        vecTile.tile[VEC_TILE_C_DIM] = ClampFzVecTileC(cinPerGroup, c0, vecTile.tile[VEC_TILE_C_DIM]);
     } else {
         vecTile.tile = {1, c0, 1, c0};
         GrowDim(vecTile.tile, 3, c0, winL1, dtypeSize, ubLimit);
         GrowDim(vecTile.tile, 2, 1, hinL1, dtypeSize, ubLimit);
-        GrowDim(vecTile.tile, 1, c0, cinMax, dtypeSize, ubLimit);
+        GrowDim(vecTile.tile, VEC_TILE_C_DIM, c0, cinMax, dtypeSize, ubLimit);
+        vecTile.tile[VEC_TILE_C_DIM] = ClampFzVecTileC(cinPerGroup, c0, vecTile.tile[VEC_TILE_C_DIM]);
     }
     return vecTile;
 }
@@ -216,17 +233,20 @@ VecTile InferWeightVecTile(const ConvInferContext& ctx, int64_t dtypeSize, size_
         return InferWeightVecTileLegacy(ctx, dtypeSize, ubLimit);
     }
 
-    int64_t coutMax = ctx.oriWeightShape[1];
+    int64_t cinWeight = ctx.oriWeightShape[NCHW_C_IDX];
+    int64_t cinMax = std::min(cinWeight, ctx.tileL1Info.tileCinWeight);
 
     VecTile vecTile;
     if (isConv3D) {
         int64_t ubSize = static_cast<int64_t>(Platform::Instance().GetAIVCore().GetMemorySize(MemoryType::MEM_UB));
         vecTile.tile = {n0, c0, kd, kh, kw};
-        GrowDimByTransdataBytes(vecTile.tile, 1, c0, coutMax, dtypeSize, ubSize);
+        GrowDimByTransdataBytes(vecTile.tile, VEC_TILE_C_DIM, c0, cinMax, dtypeSize, ubSize);
+        vecTile.tile[VEC_TILE_C_DIM] = ClampFzVecTileC(cinWeight, c0, vecTile.tile[VEC_TILE_C_DIM]);
         GrowDimByTransdataBytes(vecTile.tile, 0, n0, nMax, dtypeSize, ubSize);
     } else {
         vecTile.tile = {n0, c0, kh, kw};
-        GrowDim(vecTile.tile, 1, c0, coutMax, dtypeSize, ubLimit);
+        GrowDim(vecTile.tile, VEC_TILE_C_DIM, c0, cinMax, dtypeSize, ubLimit);
+        vecTile.tile[VEC_TILE_C_DIM] = ClampFzVecTileC(cinWeight, c0, vecTile.tile[VEC_TILE_C_DIM]);
         GrowDim(vecTile.tile, 0, n0, nMax, dtypeSize, ubLimit);
     }
     return vecTile;

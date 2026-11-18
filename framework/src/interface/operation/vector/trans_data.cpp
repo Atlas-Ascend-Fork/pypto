@@ -29,6 +29,8 @@ constexpr int64_t FZ3D_TILE_PARAMS_D_IDX = 12;
 constexpr int64_t FZ3D_TILE_PARAMS_H_IDX = 13;
 constexpr int64_t FZ3D_TILE_PARAMS_W_IDX = 14;
 constexpr int64_t FZ3D_SCRATCH_PLANE_NUM = 2;
+constexpr char FZ_PAD_ZERO_TOKEN_PREFIX[] = "fzPadZero";
+constexpr char FZ_PAD_ZERO_TOKEN_SUFFIX[] = "_w";
 
 struct TransDataTileInfoPara {
     TileInfo inputTileInfo;
@@ -123,16 +125,19 @@ std::shared_ptr<LogicalTensor> transDataPadFractalZ(Function& function, const st
     vecDupOp.SetAttribute(OpAttributeKey::scalar, Element(inputTile->Datatype(), 0));
     vecDupOp.SetAttribute(OP_ATTR_PREFIX + "shape", resShape);
     vecDupOp.SetAttribute(OP_ATTR_PREFIX + "validShape", SymbolicScalar::FromConcrete(resShape));
-    auto dupStmt = std::static_pointer_cast<const ir::Stmt>(vecDupOp.shared_from_this());
-    auto dupToken = IRBuilder().CreateTokenVar(vecDupOp.GetSpan());
-    vecDupOp.result_token_.push_back(dupToken);
-    function.GetVarDependency().AddProducer(dupToken, dupStmt);
+    auto opsAfterZero = function.Operations(false);
+    Operation* zeroAssemble = &opsAfterZero.back();
 
     std::shared_ptr<LogicalTensor> tmpResTile = resTile->View(function, inputTile->GetShape(), {0, 0}, true);
-    auto& copyOp1 = function.AddOperation(Opcode::OP_REGISTER_COPY, {inputTile}, {tmpResTile});
-    auto copyStmt = std::static_pointer_cast<const ir::Stmt>(copyOp1.shared_from_this());
-    function.GetVarDependency().AddConsumer(dupToken, copyStmt);
-    copyOp1.tokens_.push_back(dupToken);
+    [[maybe_unused]] auto& copyOp1 = function.AddOperation(Opcode::OP_REGISTER_COPY, {inputTile}, {tmpResTile});
+    auto opsAfterCopy = function.Operations(false);
+    Operation* copyAssemble = &opsAfterCopy.back();
+
+    auto zeroToken = IRContext::Get().MakeSemanticToken(
+        FZ_PAD_ZERO_TOKEN_PREFIX + std::to_string(vecDupOp.GetOpMagic()) + FZ_PAD_ZERO_TOKEN_SUFFIX,
+        ir::TokenKind::WRITE, vecDupOp.GetSpan());
+    zeroAssemble->result_token_.push_back(zeroToken);
+    copyAssemble->tokens_.push_back(zeroToken);
 
     resTile->UpdateDynValidShape(resValidShape);
     return resTile;
@@ -172,16 +177,19 @@ std::shared_ptr<LogicalTensor> transDataPadFractalZ3D(Function& function,
     vecDupOp.SetAttribute(OpAttributeKey::scalar, Element(inputTile->Datatype(), 0));
     vecDupOp.SetAttribute(OP_ATTR_PREFIX + "shape", resShape);
     vecDupOp.SetAttribute(OP_ATTR_PREFIX + "validShape", SymbolicScalar::FromConcrete(resShape));
-    auto dupStmt = std::static_pointer_cast<const ir::Stmt>(vecDupOp.shared_from_this());
-    auto dupToken = IRBuilder().CreateTokenVar(vecDupOp.GetSpan());
-    vecDupOp.result_token_.push_back(dupToken);
-    function.GetVarDependency().AddProducer(dupToken, dupStmt);
+    auto opsAfterZero = function.Operations(false);
+    Operation* zeroAssemble = &opsAfterZero.back();
 
     std::shared_ptr<LogicalTensor> tmpResTile = resTile->View(function, inputTile->GetShape(), {0, 0}, true);
-    auto& copyOp1 = function.AddOperation(Opcode::OP_REGISTER_COPY, {inputTile}, {tmpResTile});
-    auto copyStmt = std::static_pointer_cast<const ir::Stmt>(copyOp1.shared_from_this());
-    function.GetVarDependency().AddConsumer(dupToken, copyStmt);
-    copyOp1.tokens_.push_back(dupToken);
+    [[maybe_unused]] auto& copyOp1 = function.AddOperation(Opcode::OP_REGISTER_COPY, {inputTile}, {tmpResTile});
+    auto opsAfterCopy = function.Operations(false);
+    Operation* copyAssemble = &opsAfterCopy.back();
+
+    auto zeroToken = IRContext::Get().MakeSemanticToken(
+        FZ_PAD_ZERO_TOKEN_PREFIX + std::to_string(vecDupOp.GetOpMagic()) + FZ_PAD_ZERO_TOKEN_SUFFIX,
+        ir::TokenKind::WRITE, vecDupOp.GetSpan());
+    zeroAssemble->result_token_.push_back(zeroToken);
+    copyAssemble->tokens_.push_back(zeroToken);
 
     resTile->UpdateDynValidShape(resValidShape);
     return resTile;
