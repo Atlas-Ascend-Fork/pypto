@@ -71,8 +71,6 @@ def _sk_context(mode="static", combined=True):
 def _enable_sk(monkeypatch):
     monkeypatch.setattr(aclnn_compile, "get_current_build_config", lambda name: True)
     monkeypatch.setattr(aclnn_compile.global_var_storage, "get_variable", lambda name: True)
-    native = SimpleNamespace(gen_sk_bind_source=lambda *args: b"")
-    monkeypatch.setattr(aclnn_compile.importlib, "import_module", lambda name: native)
 
 
 def test_sk_request_accepts_missing_sk_cap(monkeypatch):
@@ -109,22 +107,6 @@ def test_sk_requires_static_combined_workflow(monkeypatch, mode, combined, messa
     with pytest.raises(NotSupported, match=message):
         aclnn_compile._validate_sk_request(SimpleNamespace(_sk_cap=None), context)
 
-
-@pytest.mark.parametrize("native_binding", [False, True])
-def test_sk_requires_native_capability_binding(monkeypatch, native_binding):
-    monkeypatch.setattr(aclnn_compile, "get_current_build_config", lambda name: True)
-    monkeypatch.setattr(aclnn_compile.global_var_storage, "get_variable", lambda name: True)
-    native = SimpleNamespace()
-    if native_binding:
-        native.gen_sk_bind_source = lambda *args: b""
-    monkeypatch.setattr(aclnn_compile.importlib, "import_module", lambda name: native)
-    context = SimpleNamespace(get_op_mode=lambda: "static", get_addition=lambda name: True)
-    kernel = SimpleNamespace(_sk_cap=None)
-    if native_binding:
-        assert aclnn_compile._validate_sk_request(kernel, context)
-    else:
-        with pytest.raises(NotSupported, match="macro-based SK binding"):
-            aclnn_compile._validate_sk_request(kernel, context)
 
 
 @pytest.mark.parametrize("shape", [[-1, 128], [-2]])

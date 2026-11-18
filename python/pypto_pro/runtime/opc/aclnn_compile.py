@@ -12,7 +12,6 @@ variants, binding, linking and metadata. PyPTO supplies a template-compatible so
 whose implementation consumes the native static Tiling macros.
 """
 
-import importlib
 import inspect
 from pathlib import Path
 
@@ -45,9 +44,6 @@ def _validate_sk_request(kernel, context) -> bool:
         raise NotSupported("PyPTO ACLNN SuperKernel compilation requires static operator inputs")
     if context.get_addition("super_kernel_sub_combine") is not True:
         raise NotSupported("PyPTO ACLNN SuperKernel requires the normal/sub-kernel combined compile workflow")
-    native = importlib.import_module("asc_op_compile_base.asc_op_compiler.compile_op")
-    if getattr(native, "gen_sk_bind_source", None) is None:
-        raise NotSupported("ACLNN SuperKernel requires CANN with macro-based SK binding capabilities")
     return True
 
 
