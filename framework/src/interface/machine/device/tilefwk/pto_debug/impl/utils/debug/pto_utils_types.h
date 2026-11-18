@@ -17,7 +17,7 @@
 
 #include <cstdint>
 #include <type_traits>
-#include "impl/utils/common_types.h"
+#include "impl/utils/pto_common_types.h"
 
 struct PtoTlvHead { // TLV Head include type and length
     uint16_t type;

@@ -9,17 +9,21 @@
  */
 
 /*!
- * \file common_types.h
+ * \file pto_common_types.h
  * \brief PyPTO-vendored subset: pypto::Hardware for dump position tags.
+ *
+ * The file name and the include guard deliberately do not reuse asc-devkit's
+ * impl/utils/common_types.h. bisheng injects the asc-devkit include root before
+ * user include directories, so a same-named header would be shadowed and its
+ * guard would make this definition invisible.
  */
-#ifndef IMPL_UTILS_COMMON_TYPES_H
-#define IMPL_UTILS_COMMON_TYPES_H
+#ifndef PYPTO_IMPL_UTILS_COMMON_TYPES_H
+#define PYPTO_IMPL_UTILS_COMMON_TYPES_H
 
 #include <cstdint>
-#include "sys_macros_impl.h"
 
 namespace pypto {
 enum class Hardware : uint8_t { GM, UB, L1, L0A, L0B, L0C, BIAS, FIXBUF, MAX };
 } // namespace pypto
 
-#endif // IMPL_UTILS_COMMON_TYPES_H
+#endif // PYPTO_IMPL_UTILS_COMMON_TYPES_H

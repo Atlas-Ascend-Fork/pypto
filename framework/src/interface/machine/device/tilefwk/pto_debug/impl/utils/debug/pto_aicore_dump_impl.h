@@ -19,7 +19,7 @@
 
 #ifndef PTO_CPU_DEBUG
 #include "impl/utils/sys_macros_impl.h"
-#include "impl/utils/common_types.h"
+#include "impl/utils/pto_common_types.h"
 #include "impl/utils/debug/pto_debug_types.h"
 #include "impl/utils/debug/pto_debug_utils.h"
 
@@ -507,7 +507,7 @@ __aicore__ inline void _dump_tensor_window_impl(__gm__ T* input, uint32_t desc, 
     _publish_dump_window_record(record);
 }
 
-template <DumpLayout layout, AscendC::Hardware hardware>
+template <DumpLayout layout, pypto::Hardware hardware>
 __aicore__ inline void _get_local_window_coordinate(const DumpTensorView& view, int64_t physicalOffset, int64_t& row,
                                                     int64_t& col)
 {
@@ -556,7 +556,7 @@ __aicore__ inline void _get_local_window_coordinate(const DumpTensorView& view, 
 
         int64_t rowInBlock;
         int64_t colInBlock;
-        if constexpr (hardware == AscendC::Hardware::L0C) {
+        if constexpr (hardware == pypto::Hardware::L0C) {
             // The L0C debug-bus stream exposes each 16x16 NZ block in 2-row x 4-column microblocks.
             const int64_t pairWidth = 2 * view.innerCols;
             const int64_t offsetInPair = offsetInBlock % pairWidth;
@@ -588,7 +588,7 @@ __aicore__ inline void _pack_direct_window(SourcePtr input, const DumpTensorView
     for (int64_t physicalOffset = 0; physicalOffset < rows * cols; ++physicalOffset) {
         int64_t row;
         int64_t col;
-        _get_local_window_coordinate<layout, AscendC::Hardware::UB>(view, physicalOffset, row, col);
+        _get_local_window_coordinate<layout, pypto::Hardware::UB>(view, physicalOffset, row, col);
         if (row >= rowBegin && row < rowEnd && col >= colBegin && col < colEnd) {
             const uint64_t outputOffset = view.physicalOrder ?
                                               physicalOutputOffset++ :
