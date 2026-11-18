@@ -627,14 +627,14 @@ bool LoopCreatesAddrReg(const ir::StmtPtr& body, const std::map<std::string, ir:
     return false;
 }
 
-bool CreatesAddrRegLoop(const ir::ForStmtPtr& op, const std::map<std::string, ir::FunctionPtr>& callees,
-                        const std::string& step)
+bool CheckAddrRegLoop(const ir::ForStmtPtr& forStmt, const std::map<std::string, ir::FunctionPtr>& callees,
+                      const std::string& step)
 {
     std::unordered_set<std::string> visited;
-    if (!LoopCreatesAddrReg(op->body_, callees, visited)) {
+    if (!LoopCreatesAddrReg(forStmt->body_, callees, visited)) {
         return false;
     }
-    auto stepCi = ir::As<ir::ConstInt>(op->step_);
+    auto stepCi = ir::As<ir::ConstInt>(forStmt->step_);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, stepCi != nullptr && stepCi->value_ == 1)
         << "ForStmt containing " << VF_CREATE_ADDR_REG
         << " (AddrReg) only supports a single-step ++ induction variable, got step " << step;
@@ -1572,7 +1572,7 @@ void CCECodegen::VisitStmt_(const ir::ForStmtPtr& op)
     std::string step = currentExprValue_;
     currentExprValue_ = "";
 
-    const bool createsAddrReg = CreatesAddrRegLoop(op, simdCallees_, step);
+    const bool hasAddrRegLoop = CheckAddrRegLoop(op, simdCallees_, step);
 
     // --- Emit for-loop with hoisting ---
     // In a __simd_vf__ body, bisheng requires uint16_t loop variables AND the bound expression to
@@ -1590,7 +1590,7 @@ void CCECodegen::VisitStmt_(const ir::ForStmtPtr& op)
         emitter_.EmitLine("const uint16_t " + boundName + " = " + stopExpr + ";");
         stopExpr = boundName;
     }
-    std::string increment = createsAddrReg ? ("++" + loopVarName) : (loopVarName + " += " + step);
+    std::string increment = hasAddrRegLoop ? ("++" + loopVarName) : (loopVarName + " += " + step);
     std::string header = "for (" + loopType + " " + loopVarName + " = " + start + "; " + loopVarName + " < " +
                          stopExpr + "; " + increment + ") {";
     EmitLoop(header, op->body_, op->iterArgs_, op->returnVars_, iterArgNames, false);

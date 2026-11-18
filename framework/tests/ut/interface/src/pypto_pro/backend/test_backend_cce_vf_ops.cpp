@@ -1597,11 +1597,11 @@ TEST(BackendCCEVFOpsTest, EmitsB64SelectCompareAndMiscSequences)
                   "psel(cmp_dst, cmp_dst_cmps__lor_", "punpack(cmp_dst, cmp_dst, LOWER)"},
                  {src64a, Int(5), mask}, {}, "cmp_dst");
 
-    // Interleave/de_interleave (b64): all operands reinterpreted as u32.
-    ExpectInvoke(codegen, VF_INTERLEAVE, {"vintlv((RegTensor<uint32_t>&)dst64"}, {src64a, src64b}, {}, "dst64",
-                 int64RegPair);
-    ExpectInvoke(codegen, VF_DE_INTERLEAVE, {"vdintlv((RegTensor<uint32_t>&)dst64"}, {src64a, src64b}, {}, "dst64",
-                 int64RegPair);
+    // Interleave/de_interleave (b64): split low/high 32-bit halves, gather the
+    // element-level even/odd lanes, then recombine.
+    ExpectInvoke(codegen, VF_INTERLEAVE, {"vdintlv(", "vintlv(", "_ilv"}, {src64a, src64b}, {}, "dst64", int64RegPair);
+    ExpectInvoke(codegen, VF_DE_INTERLEAVE, {"vselr(", "vintlv((RegTensor<uint32_t>&)dst64"}, {src64a, src64b}, {},
+                 "dst64", int64RegPair);
 
     // AbsSub (b64): borrow-chain sub + signed sign-check + negate + vsel +
     // interleave + b64 zeroing (no native b64 vabsdif).

@@ -3351,8 +3351,23 @@ static std::string EmitVFInterleave(const ir::CallPtr& op, codegen::CodegenBase&
         << "vf.interleave requires src0 and src1 to have the same type, got src0=" << DTypeStr(src0Dt)
         << " src1=" << DTypeStr(src1Dt);
     if (src0Dt.GetBit() == 64) {
+        std::string p = dst0 + "_ilv";
+        EmitB64Deinterleave(codegen, p + "_s0", src0);
+        EmitB64Deinterleave(codegen, p + "_s1", src1);
+        std::string lo0 = p + "_s0_lo_", hi0 = p + "_s0_hi_";
+        std::string lo1 = p + "_s1_lo_", hi1 = p + "_s1_hi_";
+        std::string lo = p + "_lo_", hi = p + "_hi_";
+        std::string loDump = p + "_lod_", hiDump = p + "_hid_";
+        EmitRtWrapDecl(codegen, ir::DataType::UINT32, lo);
+        EmitRtWrapDecl(codegen, ir::DataType::UINT32, hi);
+        EmitRtWrapDecl(codegen, ir::DataType::UINT32, loDump);
+        EmitRtWrapDecl(codegen, ir::DataType::UINT32, hiDump);
+        codegen.Emit("vintlv((RegTensor<uint32_t>&)" + lo + ", (RegTensor<uint32_t>&)" + loDump +
+                     ", (RegTensor<uint32_t>&)" + lo0 + ", (RegTensor<uint32_t>&)" + lo1 + ");");
+        codegen.Emit("vintlv((RegTensor<uint32_t>&)" + hi + ", (RegTensor<uint32_t>&)" + hiDump +
+                     ", (RegTensor<uint32_t>&)" + hi0 + ", (RegTensor<uint32_t>&)" + hi1 + ");");
         codegen.Emit("vintlv((RegTensor<uint32_t>&)" + dst0 + ", (RegTensor<uint32_t>&)" + dst1 +
-                     ", (RegTensor<uint32_t>&)" + src0 + ", (RegTensor<uint32_t>&)" + src1 + ");");
+                     ", (RegTensor<uint32_t>&)" + lo + ", (RegTensor<uint32_t>&)" + hi + ");");
     } else {
         codegen.Emit("vintlv(" + dst0 + ", " + dst1 + ", " + src0 + ", " + src1 + ");");
     }
@@ -4678,8 +4693,55 @@ static std::string EmitVFDeInterleave(const ir::CallPtr& op, codegen::CodegenBas
         << "vf.de_interleave requires src0 and src1 to have the same type, got src0=" << DTypeStr(s0Dt)
         << " src1=" << DTypeStr(s1Dt);
     if (s0Dt.GetBit() == 64) {
-        codegen.Emit("vdintlv((RegTensor<uint32_t>&)" + dst0 + ", (RegTensor<uint32_t>&)" + dst1 +
-                     ", (RegTensor<uint32_t>&)" + src0 + ", (RegTensor<uint32_t>&)" + src1 + ");");
+        std::string p = dst0 + "_dilv";
+        EmitB64Deinterleave(codegen, p + "_s0", src0);
+        EmitB64Deinterleave(codegen, p + "_s1", src1);
+        std::string lo0 = p + "_s0_lo_", hi0 = p + "_s0_hi_";
+        std::string lo1 = p + "_s1_lo_", hi1 = p + "_s1_hi_";
+        std::string cLo = p + "_clo_", cHi = p + "_chi_", dump = p + "_cd_";
+        std::string idx = p + "_idx_", idx4 = p + "_idx4_", idx4m = p + "_idx4m_";
+        std::string idx0 = p + "_idx0_", idx1 = p + "_idx1_", zero = p + "_zero_";
+        std::string d0lo = p + "_d0lo_", d1lo = p + "_d1lo_";
+        std::string d0hi = p + "_d0hi_", d1hi = p + "_d1hi_";
+        EmitRtWrapDecl(codegen, ir::DataType::UINT32, cLo);
+        EmitRtWrapDecl(codegen, ir::DataType::UINT32, cHi);
+        EmitRtWrapDecl(codegen, ir::DataType::UINT32, dump);
+        EmitRtWrapDecl(codegen, ir::DataType::INT32, idx);
+        EmitRtWrapDecl(codegen, ir::DataType::INT32, idx4);
+        EmitRtWrapDecl(codegen, ir::DataType::INT32, idx4m);
+        EmitRtWrapDecl(codegen, ir::DataType::INT32, idx0);
+        EmitRtWrapDecl(codegen, ir::DataType::INT32, idx1);
+        EmitRtWrapDecl(codegen, ir::DataType::INT32, zero);
+        EmitRtWrapDecl(codegen, ir::DataType::UINT32, d0lo);
+        EmitRtWrapDecl(codegen, ir::DataType::UINT32, d1lo);
+        EmitRtWrapDecl(codegen, ir::DataType::UINT32, d0hi);
+        EmitRtWrapDecl(codegen, ir::DataType::UINT32, d1hi);
+        codegen.Emit("MaskReg " + p + "_mall_ = pset_b32(PAT_ALL);");
+        codegen.Emit("MaskReg " + p + "_m16_ = pset_b32(PAT_VL16);");
+        codegen.Emit("MaskReg " + p + "_m32_ = pset_b32(PAT_VL32);");
+        codegen.Emit("vdup(" + zero + ", 0, " + p + "_mall_, MODE_ZEROING);");
+        // C = [A0, B0, A1, B1, ...]. Gather [0,4,...,60,1,5,...,61] for the
+        // even elements and the same pattern +2 for the odd elements.
+        codegen.Emit("vintlv((RegTensor<uint32_t>&)" + cLo + ", (RegTensor<uint32_t>&)" + dump +
+                     ", (RegTensor<uint32_t>&)" + lo0 + ", (RegTensor<uint32_t>&)" + lo1 + ");");
+        codegen.Emit("vintlv((RegTensor<uint32_t>&)" + cHi + ", (RegTensor<uint32_t>&)" + dump +
+                     ", (RegTensor<uint32_t>&)" + hi0 + ", (RegTensor<uint32_t>&)" + hi1 + ");");
+        codegen.Emit("vci(" + idx + ", 0, INC_ORDER);");
+        codegen.Emit("vshls(" + idx4 + ", " + idx + ", (int16_t)2, " + p + "_mall_, MODE_ZEROING);");
+        codegen.Emit("vadds(" + idx4m + ", " + idx4 + ", (int32_t)-63, " + p + "_mall_, MODE_ZEROING);");
+        codegen.Emit("vsel(" + idx0 + ", " + idx4 + ", " + idx4m + ", " + p + "_m16_);");
+        codegen.Emit("vsel(" + idx0 + ", " + idx0 + ", " + zero + ", " + p + "_m32_);");
+        codegen.Emit("vadds(" + idx1 + ", " + idx0 + ", (int32_t)2, " + p + "_mall_, MODE_ZEROING);");
+        codegen.Emit("vselr((RegTensor<uint32_t>&)" + d0lo + ", (RegTensor<uint32_t>&)" + cLo +
+                     ", (RegTensor<uint32_t>&)" + idx0 + ");");
+        codegen.Emit("vselr((RegTensor<uint32_t>&)" + d1lo + ", (RegTensor<uint32_t>&)" + cLo +
+                     ", (RegTensor<uint32_t>&)" + idx1 + ");");
+        codegen.Emit("vselr((RegTensor<uint32_t>&)" + d0hi + ", (RegTensor<uint32_t>&)" + cHi +
+                     ", (RegTensor<uint32_t>&)" + idx0 + ");");
+        codegen.Emit("vselr((RegTensor<uint32_t>&)" + d1hi + ", (RegTensor<uint32_t>&)" + cHi +
+                     ", (RegTensor<uint32_t>&)" + idx1 + ");");
+        EmitB64Interleave(codegen, dst0, d0lo, d0hi, p + "_o0");
+        EmitB64Interleave(codegen, dst1, d1lo, d1hi, p + "_o1");
     } else {
         codegen.Emit("vdintlv(" + dst0 + ", " + dst1 + ", " + src0 + ", " + src1 + ");");
     }
