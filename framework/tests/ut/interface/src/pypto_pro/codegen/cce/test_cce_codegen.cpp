@@ -534,9 +534,49 @@ TEST(CCECodegenTest, PreservesSingleIterationLoopForAddrReg)
     CCECodegen codegen(ir::SectionKind::Vector);
     std::string generated = codegen.GenerateSingle(MakeProgram(for_loop), npu::tile_fwk::NPUArch::DAV_3510);
 
-    EXPECT_NE(generated.find("for (int64_t i"), std::string::npos);
+    // AddrReg loops are VAG hardware loops: the induction variable must use ++.
+    EXPECT_NE(generated.find("for (int64_t i = 0; i < 1; ++i)"), std::string::npos);
     EXPECT_NE(generated.find("AddrReg addr"), std::string::npos);
     EXPECT_NE(generated.find("_vag_b32_1(1)"), std::string::npos);
+}
+
+TEST(CCECodegenTest, RejectsNonUnitStepLoopForAddrReg)
+{
+    auto scalar_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
+    auto addrRegType = std::make_shared<const ir::RegType>(ir::RegKind::AddrReg, ir::DataType::UINT32);
+    auto loop_var = MakeVar("i", scalar_type);
+    auto addr_reg = MakeVar("addr", addrRegType);
+    auto create_addr = std::make_shared<const ir::Call>("vf.create_addr_reg", std::vector<ir::ExprPtr>{MakeConstInt(1)},
+                                                        addrRegType, ir::Span::Unknown());
+    auto assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{addr_reg}, create_addr,
+                                                         ir::Span::Unknown());
+    auto for_loop = std::make_shared<const ir::ForStmt>(loop_var, MakeConstInt(0), MakeConstInt(4), MakeConstInt(2),
+                                                        std::vector<ir::IterArgPtr>{}, assign,
+                                                        std::vector<ir::VarPtr>{}, ir::Span::Unknown());
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    try {
+        (void)codegen.GenerateSingle(MakeProgram(for_loop), npu::tile_fwk::NPUArch::DAV_3510);
+        FAIL() << "Expected an AddrReg loop with step != 1 to fail code generation";
+    } catch (const std::exception& error) {
+        EXPECT_NE(std::string(error.what()).find("single-step"), std::string::npos);
+    }
+}
+
+TEST(CCECodegenTest, KeepsExplicitStepForNonAddrRegLoop)
+{
+    // The single-step restriction only applies to AddrReg loops: a plain loop
+    // keeps its explicit step.
+    auto scalar_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
+    auto loop_var = MakeVar("i", scalar_type);
+    auto for_loop = std::make_shared<const ir::ForStmt>(
+        loop_var, MakeConstInt(0), MakeConstInt(8), MakeConstInt(2), std::vector<ir::IterArgPtr>{},
+        std::make_shared<const ir::ContinueStmt>(ir::Span::Unknown()), std::vector<ir::VarPtr>{}, ir::Span::Unknown());
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    std::string generated = codegen.GenerateSingle(MakeProgram(for_loop), npu::tile_fwk::NPUArch::DAV_3510);
+
+    EXPECT_NE(generated.find("for (int64_t i = 0; i < 8; i += 2)"), std::string::npos);
 }
 
 TEST(CCECodegenTest, UsesOneBackingArrayForDynamicAndStaticTupleReads)

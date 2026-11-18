@@ -40,7 +40,7 @@ from .._vf_api import Vf
 from . import _argument_checker
 from ._control_flow_parser import _is_bare_return
 from ._span_tracker import SpanTracker
-from ._utils import _is_simt_func_type
+from ._utils import _is_simd_func_type, _is_simt_func_type
 from .diagnostics import check_in_range
 
 # Largest thread count a SIMT function may declare.
@@ -354,21 +354,14 @@ def _dtypes_compatible(a: ir.DataType, b: ir.DataType) -> bool:
     return a == b or (a.is_int() and b.is_int()) or (a.is_float() and b.is_float())
 
 
-def _is_const_arg(arg: ir.Expr) -> bool:
-    """True for call-site arguments that SIMD VF instantiation specializes out."""
-    return isinstance(arg, (ir.ConstBool, ir.ConstInt))
+def _is_const_arg(arg: Any) -> bool:
+    """True for call-site arguments that SIMD VF instantiation folds into the body.
 
-
-def _const_name_value(const: ir.Expr) -> str:
-    """Render a compile-time constant for a specialized function-name suffix.
-
-    Booleans carry a ``b`` prefix so a ``True`` specialization can never collide
-    with an integer ``1`` specialization under the same parameter name.
+    Parsed runtime values are ``ir.Expr``; anything else in the bound argument
+    list is a compile-time value (DataType or enum), which belongs in the cache
+    key and the specialized body rather than the emitted signature.
     """
-    value = const.value
-    if isinstance(const, ir.ConstBool):
-        return "b1" if value else "b0"
-    return str(value).replace("-", "n")
+    return not isinstance(arg, ir.Expr) or isinstance(arg, (ir.ConstBool, ir.ConstInt))
 
 
 def _types_compatible(annotated: ir.Type, actual: ir.Type) -> bool:
@@ -878,23 +871,26 @@ class CallParserMixin:
     def _parse_simt_template_call(self, local_name: str, fn: Callable, call: ast.Call) -> ir.Expr:
         """Instantiate and call one helper @pl.vector_function(mode="simt") template."""
         span = self.span_tracker.get_span(call)
-        if call.keywords or any(isinstance(arg, ast.Starred) for arg in call.args):
-            raise InvalidArgument(
-                'Helper @pl.vector_function(mode="simt") calls accept positional arguments only',
-            )
-        args = [self.parse_expression(arg) for arg in call.args]
-        callee = self._instantiate_simt_function(local_name, fn, args)
-        self._validate_vf_function_arguments(callee, args, kind="SIMT function")
-        return self._make_call_with_return_type(ir.Op(callee.name), args, callee.return_types, span)
+        callee, runtime_args = self._instantiate_vf_call(
+            local_name, fn, call, ir.FunctionType.SimtCallee, span
+        )
+        self._validate_vf_function_arguments(callee, runtime_args, kind="SIMT function")
+        return self._make_call_with_return_type(ir.Op(callee.name), runtime_args, callee.return_types, span)
 
     def _instantiate_simt_function(
         self,
         local_name: str,
         fn: Callable,
-        args: list[ir.Expr],
+        args: list[Any],
     ) -> ir.Function:
         """Parse a marked SIMT callable once its actual argument types are known."""
         from .decorator import get_simt_max_threads
+
+        if any(not isinstance(arg, ir.Expr) for arg in args):
+            raise NotSupported(
+                f"SIMT function '{fn.__name__}' does not support compile-time arguments",
+                hint="Pass only runtime scalar, Tile, or Tensor arguments.",
+            )
 
         max_threads = get_simt_max_threads(fn)
         launchable = max_threads is not None
@@ -904,7 +900,7 @@ class CallParserMixin:
             check_in_range(max_threads, 1, _MAX_SIMT_THREADS, subject="max_threads", error=ValueError)
 
         func_type = ir.FunctionType.SimtVF if launchable else ir.FunctionType.SimtCallee
-        cache_key, type_variant = self._vf_specialization_key(fn, func_type, (), [arg.type for arg in args])
+        cache_key = self._vf_specialization_key(fn, func_type, (), [arg.type for arg in args])
         cached = self.vf_func_cache.get(cache_key)
         if cached is not None:
             self._register_vf_external(cached)
@@ -924,7 +920,7 @@ class CallParserMixin:
         _validate_simt_parameters(
             parsed, "SIMT function" if launchable else "SIMT helper", entry_type=self._simt_entry_type
         )
-        specialized_name = f"{parsed.name}__type_{type_variant}" if type_variant else parsed.name
+        specialized_name = self._vf_function_name(parsed)
         result = ir.Function(
             specialized_name,
             list(parsed.params),
@@ -972,16 +968,9 @@ class CallParserMixin:
             decorator_label,
         )
         func_args = func_def.args
-        if (
-            func_args.posonlyargs
-            or func_args.vararg is not None
-            or func_args.kwarg is not None
-            or func_args.kwonlyargs
-            or func_args.defaults
-            or func_args.kw_defaults
-        ):
+        if self._has_unsupported_inline_params(func_args) or func_args.defaults:
             raise NotSupported(
-                f"{role} '{fn.__name__}' only supports required positional parameters",
+                f"{role} '{fn.__name__}' only supports required positional-or-keyword parameters",
             )
         params = list(func_args.args)
         if len(args) != len(params):
@@ -991,10 +980,7 @@ class CallParserMixin:
             )
 
         const_param_values = None
-        if func_type in (
-            ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee,
-            ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee,
-        ):
+        if _is_simd_func_type(func_type):
             const_param_values = {
                 param.arg: arg for param, arg in zip(params, args) if _is_const_arg(arg)
             } or None
@@ -1002,14 +988,13 @@ class CallParserMixin:
         # kernel in one place, and a vector function is called as one op: the ops of its body
         # belong to the statement holding the call, so they are parsed into the caller's facts
         # under the caller's recording site.
-        record_accesses = self.auto_pipeline_enabled and func_type in (
-            ir.FunctionType.SimdVF,
-            ir.FunctionType.SimdCallee,
-            ir.FunctionType.SimdTileVF,
-            ir.FunctionType.SimdTileCallee,
-        )
+        record_accesses = self.auto_pipeline_enabled and _is_simd_func_type(func_type)
         callsite_param_buffers = (
-            {param.arg: self.buffer_refs_of(actual) for param, actual in zip(params, args)}
+            {
+                param.arg: self.buffer_refs_of(actual)
+                for param, actual in zip(params, args)
+                if not _is_const_arg(actual)
+            }
             if record_accesses
             else None
         )
@@ -1042,7 +1027,11 @@ class CallParserMixin:
             parsed = parser.parse_function(
                 func_def,
                 func_type=func_type,
-                callsite_param_types={param.arg: actual.type for param, actual in zip(params, args)},
+                callsite_param_types={
+                    param.arg: actual.type
+                    for param, actual in zip(params, args)
+                    if isinstance(actual, ir.Expr)
+                },
                 const_param_values=const_param_values,
                 callsite_param_buffers=callsite_param_buffers,
             )
@@ -1082,6 +1071,40 @@ class CallParserMixin:
                 name=param.name,
             )
 
+    def _instantiate_vf_call(
+        self,
+        local_name: str,
+        fn: Callable,
+        call: ast.Call,
+        func_type: ir.FunctionType,
+        span,
+    ) -> tuple[ir.Function, list[Any]]:
+        for argument in call.args:
+            if isinstance(argument, ast.Starred):
+                raise InvalidArgument(
+                    f"call to '{fn.__name__}' does not support *args",
+                    span=self.span_tracker.get_span(argument),
+                )
+        for keyword in call.keywords:
+            if keyword.arg is None:
+                raise InvalidArgument(
+                    f"call to '{fn.__name__}' does not support **kwargs",
+                    span=self.span_tracker.get_span(keyword.value),
+                )
+        signature = inspect.signature(fn)
+        try:
+            bound = signature.bind(*call.args, **{keyword.arg: keyword.value for keyword in call.keywords})
+        except TypeError as error:
+            raise InvalidArgument(f"call to '{fn.__name__}': {error}", span=span) from error
+
+        args = [self.parse_expression(value) for value in bound.arguments.values()]
+
+        if func_type in (ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee):
+            callee = self._instantiate_simt_function(local_name, fn, args)
+            return callee, args
+        callee = self._instantiate_simd_function(local_name, fn, args, func_type)
+        return callee, [arg for arg in args if not _is_const_arg(arg)]
+
     def _parse_simd_template_call(
         self,
         local_name: str,
@@ -1096,14 +1119,7 @@ class CallParserMixin:
         ``_parse_simd_inbody_call`` a direct named call (like SIMT callee calls).
         """
         span = self.span_tracker.get_span(call)
-        if call.keywords or any(isinstance(arg, ast.Starred) for arg in call.args):
-            raise InvalidArgument(
-                '@pl.vector_function calls accept positional arguments only',
-            )
-        args = [self.parse_expression(arg) for arg in call.args]
-
-        callee = self._instantiate_simd_function(local_name, fn, args, func_type)
-        runtime_args = [a for a in args if not _is_const_arg(a)]
+        callee, runtime_args = self._instantiate_vf_call(local_name, fn, call, func_type, span)
         self._validate_vf_function_arguments(callee, runtime_args, kind="VF function")
         return callee, runtime_args, span
 
@@ -1129,12 +1145,17 @@ class CallParserMixin:
 
     def _vf_specialization_key(
         self, fn: Callable, func_type: ir.FunctionType, const_spec: tuple, arg_types: list[ir.Type]
-    ) -> tuple[tuple, int]:
+    ) -> tuple:
         """Share actual-type identity across VF modes, including specialized constants."""
-        prefix = (id(fn), func_type, const_spec)
-        key = (*prefix, _VfTypeKey(tuple(arg_types)))
-        type_variant = sum(existing[:3] == prefix for existing in self.vf_func_cache)
-        return key, type_variant
+        return (id(fn), func_type, const_spec, _VfTypeKey(tuple(arg_types)))
+
+    def _vf_function_name(self, parsed: ir.Function) -> str:
+        name = parsed.name
+        index = 1
+        while name in self.external_funcs:
+            name = f"{parsed.name}_version_{index}"
+            index += 1
+        return name
 
     def _instantiate_simd_function(
         self,
@@ -1154,18 +1175,16 @@ class CallParserMixin:
         """
         if func_type in (ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee):
             for arg in args:
-                if not isinstance(arg.type, (ir.TileType, ir.ScalarType)):
+                if isinstance(arg, ir.Expr) and not isinstance(arg.type, (ir.TileType, ir.ScalarType)):
                     raise InvalidType(
                         "simd_tile parameters must be TileType or ScalarType",
                     )
-        const_flags = [_is_const_arg(arg) for arg in args]
         const_spec = tuple(
-            (idx, type(arg).__name__, arg.value)
-            for idx, arg in enumerate(args)
-            if const_flags[idx]
+            (arg.value if isinstance(arg, ir.Expr) else repr(arg)) if _is_const_arg(arg) else None
+            for arg in args
         )
-        arg_types = [arg.type for arg in args]
-        cache_key, type_variant = self._vf_specialization_key(fn, func_type, const_spec, arg_types)
+        arg_types = [arg.type for arg in args if isinstance(arg, ir.Expr)]
+        cache_key = self._vf_specialization_key(fn, func_type, const_spec, arg_types)
         cached = self.vf_func_cache.get(cache_key)
         if cached is not None and not self.auto_pipeline_enabled:
             self._register_vf_external(cached)
@@ -1186,18 +1205,7 @@ class CallParserMixin:
             # The body was parsed for this call site's accesses; the function is the cached one.
             self._register_vf_external(cached)
             return cached
-        specialized_name = parsed.name
-        if const_spec:
-            suffix = "_".join(
-                f"{param.arg}_{_const_name_value(arg)}"
-                for param, arg in zip(params, args)
-                if _is_const_arg(arg)
-            )
-            specialized_name = f"{parsed.name}__{suffix}"
-        if func_type in (ir.FunctionType.SimdCallee, ir.FunctionType.SimdTileCallee):
-            specialized_name += "__callee"
-        if type_variant:
-            specialized_name += f"__type_{type_variant}"
+        specialized_name = self._vf_function_name(parsed)
         result = ir.Function(
             specialized_name,
             list(parsed.params),

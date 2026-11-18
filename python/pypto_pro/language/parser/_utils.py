@@ -11,7 +11,7 @@
 
 from __future__ import annotations
 
-__all__ = ["_is_const_expr", "_is_simt_func_type"]
+__all__ = ["_is_const_expr", "_is_simd_func_type", "_is_simt_func_type"]
 
 from pypto.pypto_impl import ir
 
@@ -30,4 +30,14 @@ def _is_simt_func_type(func_type: ir.FunctionType) -> bool:
     """Return whether a function uses the SIMT execution context."""
     return func_type in (
         ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee, ir.FunctionType.SimtKernel
+    )
+
+
+def _is_simd_func_type(func_type: ir.FunctionType) -> bool:
+    """Return whether a function uses the SIMD vector-function context."""
+    return func_type in (
+        ir.FunctionType.SimdVF,
+        ir.FunctionType.SimdCallee,
+        ir.FunctionType.SimdTileVF,
+        ir.FunctionType.SimdTileCallee,
     )

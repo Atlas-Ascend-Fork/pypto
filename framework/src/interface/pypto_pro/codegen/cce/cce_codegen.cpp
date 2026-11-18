@@ -34,11 +34,13 @@
 #include "ir/function.h"
 #include "ir/pipe.h"
 #include "ir/program.h"
+#include "ir/reg_op.h"
 #include "ir/scalar_expr.h"
 #include "ir/scalar_expr_ops.h"
 #include "ir/stmt.h"
 #include "ir/kind_traits.h"
 #include "ir/transforms/base/mutator.h"
+#include "ir/transforms/base/visitor.h"
 #include "ir/transforms/structural_comparison.h"
 #include "ir/type.h"
 #include "pypto_pro/error.h"
@@ -579,6 +581,65 @@ public:
         ir::IRVisitor::VisitExpr_(op);
     }
 };
+
+// Collects the calls in one loop's own body. A nested loop is a separate VAG
+// loop whose induction variable is checked when that loop is emitted, so it
+// must not be attributed to the enclosing loop.
+class LoopCallCollector : public ir::IRVisitor {
+public:
+    using ir::IRVisitor::VisitExpr_;
+    using ir::IRVisitor::VisitStmt_;
+
+    std::vector<std::string> calls_;
+
+    void VisitExpr_(const ir::CallPtr& op) override
+    {
+        calls_.push_back(op->name_);
+        ir::IRVisitor::VisitExpr_(op);
+    }
+
+protected:
+    void VisitStmt_(const ir::ForStmtPtr&) override {}
+    void VisitStmt_(const ir::WhileStmtPtr&) override {}
+};
+
+// True when the loop body itself creates an AddrReg. VF callees are always
+// inlined, so a create_addr_reg at the callee's top level belongs to the
+// caller's loop; a create_addr_reg inside the callee's own loop is checked
+// when that loop is emitted.
+bool LoopCreatesAddrReg(const ir::StmtPtr& body, const std::map<std::string, ir::FunctionPtr>& callees,
+                        std::unordered_set<std::string>& visited)
+{
+    LoopCallCollector collector;
+    collector.VisitStmt(body);
+    for (const auto& name : collector.calls_) {
+        if (name == VF_CREATE_ADDR_REG) {
+            return true;
+        }
+        auto it = callees.find(name);
+        if (it == callees.end() || !visited.insert(name).second) {
+            continue;
+        }
+        if (LoopCreatesAddrReg(it->second->body_, callees, visited)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool CreatesAddrRegLoop(const ir::ForStmtPtr& op, const std::map<std::string, ir::FunctionPtr>& callees,
+                        const std::string& step)
+{
+    std::unordered_set<std::string> visited;
+    if (!LoopCreatesAddrReg(op->body_, callees, visited)) {
+        return false;
+    }
+    auto stepCi = ir::As<ir::ConstInt>(op->step_);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, stepCi != nullptr && stepCi->value_ == 1)
+        << "ForStmt containing " << VF_CREATE_ADDR_REG
+        << " (AddrReg) only supports a single-step ++ induction variable, got step " << step;
+    return true;
+}
 
 bool HasWindowParam(const ir::FunctionPtr& func)
 {
@@ -1511,6 +1572,8 @@ void CCECodegen::VisitStmt_(const ir::ForStmtPtr& op)
     std::string step = currentExprValue_;
     currentExprValue_ = "";
 
+    const bool createsAddrReg = CreatesAddrRegLoop(op, simdCallees_, step);
+
     // --- Emit for-loop with hoisting ---
     // In a __simd_vf__ body, bisheng requires uint16_t loop variables AND the bound expression to
     // also resolve to uint16_t (otherwise -Wcce-compat -Werror fails the build), so cast inside a
@@ -1527,8 +1590,9 @@ void CCECodegen::VisitStmt_(const ir::ForStmtPtr& op)
         emitter_.EmitLine("const uint16_t " + boundName + " = " + stopExpr + ";");
         stopExpr = boundName;
     }
+    std::string increment = createsAddrReg ? ("++" + loopVarName) : (loopVarName + " += " + step);
     std::string header = "for (" + loopType + " " + loopVarName + " = " + start + "; " + loopVarName + " < " +
-                         stopExpr + "; " + loopVarName + " += " + step + ") {";
+                         stopExpr + "; " + increment + ") {";
     EmitLoop(header, op->body_, op->iterArgs_, op->returnVars_, iterArgNames, false);
 }
 

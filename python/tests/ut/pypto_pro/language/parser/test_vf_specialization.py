@@ -74,6 +74,22 @@ def test_vf_constant_specialization_preserves_dtype(mode):
     assert all(len(f.params) == 1 for f in functions)
 
 
+def test_vf_constant_specialization_distinguishes_raw_value_types():
+    @pl.vector_function(mode="simd")
+    def helper(value):
+        return
+
+    parser = _parser()
+    kind = ir.FunctionType.SimdVF
+    boolean = parser._instantiate_simd_function("helper", helper, [True], kind)
+    integer = parser._instantiate_simd_function("helper", helper, [1], kind)
+    fp32 = parser._instantiate_simd_function("helper", helper, [pl.DT_FP32], kind)
+    fp16 = parser._instantiate_simd_function("helper", helper, [pl.DT_FP16], kind)
+    assert boolean is not integer
+    assert fp32 is not fp16
+    assert len({boolean.name, integer.name, fp32.name, fp16.name}) == 4
+
+
 @pytest.mark.parametrize("mode", ["simd"])
 def test_vf_entry_and_callee_have_distinct_names(mode):
     @pl.vector_function(mode=mode)
@@ -93,7 +109,7 @@ def test_vf_entry_and_callee_have_distinct_names(mode):
     entry_kind = ir.FunctionType.SimdVF
     callee_kind = ir.FunctionType.SimdCallee
     assert program.get_function("inner").func_type == entry_kind
-    assert program.get_function("inner__callee").func_type == callee_kind
+    assert program.get_function("inner_version_1").func_type == callee_kind
 
 
 @pytest.mark.parametrize("callee_mode", ["simd"])

@@ -10,7 +10,7 @@ template<class Tile, uint32_t N> struct SyncedTile {
 #endif
 #include <pypto_dump.h>
 #include <pypto_vf_support.h>
-__simd_callee__ inline void copy_valid__callee(__ubuf__ float* dst_0, __ubuf__ float* src_0)
+__simd_callee__ inline void copy_valid(__ubuf__ float* dst_0, __ubuf__ float* src_0)
 {
     auto _expr_tmp_0_0 = (int64_t)(1);
     const uint16_t row__iterator_0_ub = (uint16_t)(_expr_tmp_0_0);
@@ -32,9 +32,9 @@ __simd_callee__ inline void copy_valid__callee(__ubuf__ float* dst_0, __ubuf__ f
 __simd_vf__ inline void pointer_bindings(__ubuf__ float* dst_0, __ubuf__ float* src_0, int32_t count_0)
 {
     __ubuf__ float* alias_0 = (src_0 + (0));
-    copy_valid__callee(dst_0, alias_0);
+    copy_valid(dst_0, alias_0);
     __ubuf__ float* _expr_tmp_0_0 = (src_0 + (0));
-    copy_valid__callee(dst_0, _expr_tmp_0_0);
+    copy_valid(dst_0, _expr_tmp_0_0);
     const uint16_t ___iterator_0_ub = (uint16_t)(count_0);
     __ubuf__ float* alias_1 = alias_0;
 
@@ -43,7 +43,7 @@ __simd_vf__ inline void pointer_bindings(__ubuf__ float* dst_0, __ubuf__ float* 
         alias_1 = alias_2;
         continue;
     }
-    copy_valid__callee(dst_0, alias_1);
+    copy_valid(dst_0, alias_1);
     return;
 }
 

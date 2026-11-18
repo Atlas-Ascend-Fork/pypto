@@ -44,7 +44,7 @@ def test_simd_valid_shape_codegen(assert_golden):
     cube, vector = _parse_and_codegen_targets(pointer_kernel.to_kernel_def(), NpuArch.DAV_3510, "")
     source = _assemble_cv_source(cube, vector).content
     assert_golden(source, "cce")
-    assert "__simd_callee__ inline void copy_valid__callee(__ubuf__ float* dst_0, __ubuf__ float* src_0)" in source
+    assert "__simd_callee__ inline void copy_valid(__ubuf__ float* dst_0, __ubuf__ float* src_0)" in source
     assert (
         "__simd_vf__ inline void pointer_bindings(__ubuf__ float* dst_0, __ubuf__ float* src_0, int32_t count_0)"
         in source
@@ -62,15 +62,15 @@ def test_simd_valid_shape_codegen(assert_golden):
 
     bindings = [
         "__ubuf__ float* alias_0 = (src_0 + (0));",
-        "copy_valid__callee(dst_0, alias_0);",
+        "copy_valid(dst_0, alias_0);",
         "__ubuf__ float* _expr_tmp_0_0 = (src_0 + (0));",
-        "copy_valid__callee(dst_0, _expr_tmp_0_0);",
+        "copy_valid(dst_0, _expr_tmp_0_0);",
         "const uint16_t ___iterator_0_ub = (uint16_t)(count_0);",
         "__ubuf__ float* alias_1 = alias_0;",
         "for (uint16_t ___iterator_0 = 0; ___iterator_0 < ___iterator_0_ub; ___iterator_0 += 1)",
         "__ubuf__ float* alias_2 = (alias_1 + (0));",
         "alias_1 = alias_2;",
-        "copy_valid__callee(dst_0, alias_1);",
+        "copy_valid(dst_0, alias_1);",
     ]
     positions = [source.index(binding) for binding in bindings]
     assert positions == sorted(positions)

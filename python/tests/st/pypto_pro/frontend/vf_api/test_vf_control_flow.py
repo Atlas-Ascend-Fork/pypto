@@ -3748,3 +3748,134 @@ def test_vf_const_specialization():
     torch.npu.synchronize()
     expected = (x + 3.0).cpu()
     torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+
+
+@pl.vector_function
+def _dtype_param_vf(src, dst, count, dtype):
+    # `dtype` is a compile-time DataType argument: the parser folds it into the
+    # body (mask/const/load dtype kwargs) and drops it from the emitted VF
+    # signature, so the simd.call carries only the runtime tile/scalar arguments.
+    for offset in pl.range(0, count, BLOCK):
+        active = pl.max(0, pl.min(count - offset, BLOCK))
+        mask = vf.update_mask(active, dtype=dtype)
+        reg = vf.load_align(src, offset, dtype=dtype)
+        reg = vf.adds(reg, pl.const(1.0, dtype), mask)
+        vf.store_align(dst, reg, mask, offset)
+
+
+@pl.jit(auto_mutex=True)
+def _dtype_param_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _dtype_param_vf(src, dst, count, pl.DT_FP32)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_dtype_parameter():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    count = 96
+    y = torch.full((1, N), SENTINEL, device=device)
+    _dtype_param_kernel[None, 1](x, y, count)
+    torch.npu.synchronize()
+    expected = _expected_with_sentinel(x + 1.0, slice(0, count))
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+
+
+@pl.vector_function
+def _keyword_call_vf(src, dst, count, dtype):
+    for offset in pl.range(0, count, BLOCK):
+        active = pl.max(0, pl.min(count - offset, BLOCK))
+        mask = vf.update_mask(active, dtype=dtype)
+        reg = vf.load_align(src, offset, dtype=dtype)
+        reg = vf.muls(reg, pl.const(2.0, dtype), mask)
+        vf.store_align(dst, reg, mask, offset)
+
+
+@pl.jit(auto_mutex=True)
+def _keyword_call_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        # Keyword arguments bind to the declaration order (src, dst, count,
+        # dtype) regardless of the order written here; the dtype keyword is a
+        # compile-time argument like the positional form above.
+        _keyword_call_vf(count=count, dtype=pl.DT_FP32, dst=dst, src=src)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_call_keyword_arguments():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    count = 96
+    y = torch.full((1, N), SENTINEL, device=device)
+    _keyword_call_kernel[None, 1](x, y, count)
+    torch.npu.synchronize()
+    expected = _expected_with_sentinel(x * 2.0, slice(0, count))
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+
+
+@pl.vector_function
+def _nested_addr_reg_vf(src, dst):
+    # Only the inner loop creates the AddrReg, so it is the VAG loop; the outer
+    # loop keeps its non-unit step instead of being forced to ++.
+    preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
+    for _block in pl.range(0, 2, 2):
+        for _inner in pl.range(0, 2, 1):
+            a_reg = vf.create_addr_reg(BLOCK, dtype=pl.DT_FP32)
+            reg = vf.load_align(src, a_reg)
+            vf.store_align(dst, reg, preg, a_reg)
+
+
+@pl.jit(auto_mutex=True)
+def _nested_addr_reg_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _nested_addr_reg_vf(src, dst)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_nested_addr_reg_loop():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    y = torch.full((1, N), SENTINEL, device=device)
+    _nested_addr_reg_kernel[None, 1](x, y)
+    torch.npu.synchronize()
+    torch.testing.assert_close(y.cpu(), x.cpu(), rtol=0, atol=0)

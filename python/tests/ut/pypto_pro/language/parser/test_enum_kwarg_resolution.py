@@ -319,6 +319,58 @@ def test_vf_enum_kwarg_closure_var():
     _parse_vf_mask_kernel(pat)
 
 
+def _parse_vf_dtype_param_kernel(dtype):
+    """Parse a VF helper that takes a DataType as a compile-time parameter."""
+
+    @pl.vector_function
+    def vf_body(in_a, t_out, dtype):
+        preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=dtype)
+        reg_a = vf.load_align(in_a, 0)
+        vf.store_align(t_out, reg_a, preg)
+
+    @pl.jit()
+    def kernel(a: pl.Tensor[[_VF_N, _VF_M], pl.DT_FP32], out: pl.Tensor[[_VF_N, _VF_M], pl.DT_FP32]):
+        tf = pl.TileType(shape=[_VF_N, _VF_M], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        in_a = pl.make_tile(tf, addr=0)
+        t_out = pl.make_tile(tf, addr=_VF_TILE_SIZE)
+        with pl.section_vector():
+            pl.load(in_a, a, [0, 0])
+            vf_body(in_a, t_out, dtype)
+            pl.store(out, t_out, [0, 0])
+
+    return kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.soc("950")
+def test_vf_dtype_parameter_is_compile_time():
+    """A DataType passed as a VF argument is folded like a const parameter."""
+    dtype = pl.DT_FP32
+    _parse_vf_dtype_param_kernel(dtype)
+
+
+@pytest.mark.soc("950")
+def test_vf_call_accepts_keyword_arguments():
+    """VF calls may bind runtime and compile-time arguments by keyword."""
+
+    @pl.vector_function
+    def vf_body(in_a, t_out, dtype):
+        preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=dtype)
+        reg_a = vf.load_align(in_a, 0)
+        vf.store_align(t_out, reg_a, preg)
+
+    @pl.jit()
+    def kernel(a: pl.Tensor[[_VF_N, _VF_M], pl.DT_FP32], out: pl.Tensor[[_VF_N, _VF_M], pl.DT_FP32]):
+        tf = pl.TileType(shape=[_VF_N, _VF_M], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        in_a = pl.make_tile(tf, addr=0)
+        t_out = pl.make_tile(tf, addr=_VF_TILE_SIZE)
+        with pl.section_vector():
+            pl.load(in_a, a, [0, 0])
+            vf_body(in_a=in_a, t_out=t_out, dtype=pl.DT_FP32)
+            pl.store(out, t_out, [0, 0])
+
+    kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
 @pytest.mark.soc("950")
 def test_simd_vf_scalar_parameter_annotation_is_validated():
     """A scalar dtype annotation on a SIMD VF parameter is checked against the call site."""

@@ -49,6 +49,7 @@ from ._span_tracker import SpanTracker
 from ._struct_parser import StructParserMixin
 from ._tuple_type_registry import TupleTypeRegistry
 from ._type_resolver import TypeResolver
+from ._utils import _is_simd_func_type
 
 # Statements whose span covers a whole indented suite rather than one line, so
 # publishing it as the ambient location would underline the entire block.
@@ -166,10 +167,7 @@ class ASTParser(
 
     def _in_simd_vf_body(self) -> bool:
         """True while parsing a __simd_vf__/__simd_callee__ function body."""
-        return self._current_func_type in (
-            ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee,
-            ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee,
-        )
+        return _is_simd_func_type(self._current_func_type)
 
     def _in_simd_tile_body(self) -> bool:
         return self._current_func_type in (ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee)
@@ -467,13 +465,9 @@ class ASTParser(
             callsite_param_types is not None
             or const_param_values is not None
             or callsite_param_buffers is not None
-        ) and func_type not in (
+        ) and not _is_simd_func_type(func_type) and func_type not in (
             ir.FunctionType.SimtVF,
             ir.FunctionType.SimtCallee,
-            ir.FunctionType.SimdVF,
-            ir.FunctionType.SimdCallee,
-            ir.FunctionType.SimdTileVF,
-            ir.FunctionType.SimdTileCallee,
         ):
             raise NotSupported(
                 "callsite_param_types/const_param_values/callsite_param_buffers is only "

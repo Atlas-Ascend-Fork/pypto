@@ -257,7 +257,7 @@ def test_simt_kernel_parser_rejects_unsupported_parameters(annotation, error_typ
     assert exc_info.value.span["line"] == 1
 
 
-def test_simt_indexed_invocation_rejects_keyword_arguments():
+def test_simt_indexed_invocation_accepts_keyword_arguments():
     @pl.vector_function(mode="simt", max_threads=32)
     def entry(value: pl.DT_INT32):
         return
@@ -267,7 +267,25 @@ def test_simt_indexed_invocation_rejects_keyword_arguments():
         with pl.section_vector():
             entry[32](value=value)
 
-    with pytest.raises(InvalidArgument, match="accepts positional arguments only"):
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert program.get_function("entry") is not None
+
+
+def test_simt_call_rejects_compile_time_argument():
+    @pl.vector_function(mode="simt")
+    def helper(dtype):
+        return
+
+    @pl.vector_function(mode="simt", max_threads=32)
+    def entry():
+        helper(pl.DT_FP32)
+
+    @pl.jit
+    def kernel():
+        with pl.section_vector():
+            entry[32]()
+
+    with pytest.raises(NotSupported, match="does not support compile-time arguments"):
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
@@ -753,7 +771,7 @@ def test_simt_function_specializes_unannotated_argument_types():
     program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     functions = [f for f in program.functions.values() if f.func_type == ir.FunctionType.SimtVF]
     assert len(functions) == 2
-    assert {f.name for f in functions} == {"entry", "entry__type_1"}
+    assert {f.name for f in functions} == {"entry", "entry_version_1"}
     functions = sorted(functions, key=lambda f: f.name)
     assert [f.params[0].type.dtype for f in functions] == [pl.DT_INT32, pl.DT_FP32]
 

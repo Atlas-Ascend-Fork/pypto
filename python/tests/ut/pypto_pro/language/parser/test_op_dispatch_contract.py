@@ -257,7 +257,8 @@ def runtime(monkeypatch):
         "_dispatch_ast_op",
         "_dispatch_op", "_check_declared_params", "_check_declared_types", "_validate_op_scope",
         "parse_op_call",
-        "_parse_simt_template_call", "_parse_simd_template_call", "_instantiate_simd_function",
+        "_parse_simt_template_call", "_parse_simd_template_call",
+        "_instantiate_vf_call", "_instantiate_simd_function",
     }
     call_tree = ast.parse((_SOURCE / "language/parser/_call_parser.py").read_text(encoding="utf-8"))
     mixin = next(node for node in call_tree.body if isinstance(node, ast.ClassDef) and node.name == "CallParserMixin")
@@ -291,6 +292,10 @@ def runtime(monkeypatch):
         "_const_int_value": utils._const_int_value,
         "_is_simt_func_type": lambda func_type: func_type in (
             ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee, ir.FunctionType.SimtKernel
+        ),
+        "_is_simd_func_type": lambda func_type: func_type in (
+            ir.FunctionType.SimdVF, ir.FunctionType.SimdCallee,
+            ir.FunctionType.SimdTileVF, ir.FunctionType.SimdTileCallee,
         ),
         "_OP_REGISTRY": registry._OP_REGISTRY, "_AST_OP_REGISTRY": registry._AST_OP_REGISTRY,
         "ExprEvaluator": types.SimpleNamespace(ir_to_python_value=_constant_value),
@@ -747,17 +752,22 @@ def test_vf_template_calls_use_shared_validation_without_error_span_arguments(ru
     callee = types.SimpleNamespace(name="helper", return_types=[])
     checked = []
     parser._validate_vf_function_arguments = lambda fn, args, *, kind: checked.append((fn, args, kind))
+
+    def helper(a, b):
+        pass
+
     if mode == "simt":
         runtime.ir.Op = lambda name: name
         parser._instantiate_simt_function = lambda name, fn, args: callee
         parser._make_call_with_return_type = lambda op, args, returns, span: (op, args)
-        _, args = parser._parse_simt_template_call("helper", object(), parser.call)
+        _, args = parser._parse_simt_template_call("helper", helper, parser.call)
         assert args[0].value == 1 and args[1] is value
         expected_kind = "SIMT function"
     else:
         parser._instantiate_simd_function = lambda name, fn, args, func_type: callee
+
         result, args, span = parser._parse_simd_template_call(
-            "helper", object(), parser.call, runtime.ir.FunctionType.SimdVF,
+            "helper", helper, parser.call, runtime.ir.FunctionType.SimdVF,
         )
         assert result is callee and args == [value]
         assert span.begin_column == 1
@@ -1481,7 +1491,7 @@ def test_cached_vf_reparses_accesses_only_for_pipeline_analysis(runtime, auto_pi
     kind = runtime.ir.FunctionType.SimdVF
     cache_key = object()
     parser.vf_func_cache = {cache_key: cached}
-    parser._vf_specialization_key = lambda *args: (cache_key, 0)
+    parser._vf_specialization_key = lambda *args: cache_key
     parser.auto_pipeline_enabled = auto_pipeline
     reparsed, registered = [], []
     parser._instantiate_vf_body = lambda *args, **kwargs: (reparsed.append(args) or object(), [])

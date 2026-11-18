@@ -442,7 +442,7 @@ def test_vf_entry_and_callee_have_distinct_names(mode):
     entry_kind = ir.FunctionType.SimdVF if mode == "simd" else ir.FunctionType.SimdTileVF
     callee_kind = ir.FunctionType.SimdCallee if mode == "simd" else ir.FunctionType.SimdTileCallee
     assert program.get_function("inner").func_type == entry_kind
-    assert program.get_function("inner__callee").func_type == callee_kind
+    assert program.get_function("inner_version_1").func_type == callee_kind
 
 
 @pytest.mark.parametrize("callee_mode", ["simd_tile"])

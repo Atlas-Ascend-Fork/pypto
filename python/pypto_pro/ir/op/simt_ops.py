@@ -22,7 +22,6 @@ from pypto.pypto_impl.ir import Call, Expr, Function, Span
 
 from ..._errors import (
     CommonExternal,
-    InvalidArgument,
     InvalidOperation,
     InvalidShape,
     InvalidType,
@@ -143,12 +142,6 @@ def _parse_simt_launch(parser: Any, call: ast.Call, local_name: str, callee_temp
             hint="SIMT vector functions execute on AIV and cannot be invoked from Cube or shared kernel code.",
         )
 
-    if call.keywords or any(isinstance(arg, ast.Starred) for arg in call.args):
-        raise InvalidArgument(
-            "SIMT vector-function invocation accepts positional arguments only",
-            hint="Use: simt_func[threads](arg0, arg1, ...)",
-        )
-
     if get_simt_max_threads(callee_template) is None:
         raise InvalidVal(
             f"'{local_name}' is not a launchable "
@@ -168,8 +161,9 @@ def _parse_simt_launch(parser: Any, call: ast.Call, local_name: str, callee_temp
         thread_nodes = [threads_node]
     thread_dims = [parser.parse_expression(dim) for dim in thread_nodes]
 
-    launch_args = [parser.parse_expression(arg) for arg in call.args]
-    callee = parser._instantiate_simt_function(local_name, callee_template, launch_args)
+    callee, launch_args = parser._instantiate_vf_call(
+        local_name, callee_template, call, _ir_core.FunctionType.SimtVF, span
+    )
     parser._validate_vf_function_arguments(callee, launch_args, kind="SIMT function")
     result = _simt_builder(launch, callee, threads=tuple(thread_dims), args=launch_args, span=span)
     parser.requires_simt = True

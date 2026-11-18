@@ -67,7 +67,7 @@ def test_vf_valid_shape_abi(mode, dynamic_row, dynamic_col, assert_golden):
         expected_value = metadata if dynamic else str(constant)
         assert f"auto {variable}_0 = (int64_t)({expected_value});" in source
 
-    leaf_name = "leaf__callee" if mode == "simd" else "leaf"
+    leaf_name = "leaf"
     signature = ", ".join(params)
     assert f"__{mode}_callee__ inline void {leaf_name}({signature})" in source
     assert f"{leaf_name}({', '.join(callee_args)});" in source
