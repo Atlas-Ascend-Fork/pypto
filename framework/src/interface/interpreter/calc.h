@@ -217,11 +217,6 @@ inline void QuantHiF4(LogicalTensorDataPtr out, LogicalTensorDataPtr exp, Logica
     GetCalcOps()->QuantHiF4(Trans(out), Trans(exp), Trans(scratch), Trans(self), scaleAlg, axis);
 }
 
-inline void MoveUbToUb(LogicalTensorDataPtr out, LogicalTensorDataPtr self)
-{
-    GetCalcOps()->MoveUbToUb(Trans(out), Trans(self));
-}
-
 inline void Interleave(LogicalTensorDataPtr out0, LogicalTensorDataPtr out1, LogicalTensorDataPtr self,
                        LogicalTensorDataPtr other)
 {
@@ -312,6 +307,11 @@ inline void Div(LogicalTensorDataPtr out, LogicalTensorDataPtr self, LogicalTens
 inline void FloorDiv(LogicalTensorDataPtr out, LogicalTensorDataPtr self, LogicalTensorDataPtr other)
 {
     GetCalcOps()->FloorDiv(Trans(out), Trans(self), Trans(other));
+}
+inline void DivMod(LogicalTensorDataPtr quotient, LogicalTensorDataPtr remainder, LogicalTensorDataPtr self,
+                   LogicalTensorDataPtr other)
+{
+    GetCalcOps()->DivMod(Trans(quotient), Trans(remainder), Trans(self), Trans(other));
 }
 inline void Fmod(LogicalTensorDataPtr out, LogicalTensorDataPtr self, LogicalTensorDataPtr other)
 {

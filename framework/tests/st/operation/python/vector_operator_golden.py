@@ -4515,6 +4515,48 @@ def gen_floor_divs_golden(case_name: str, output: Path, case_index: int = None) 
 
 @GoldenRegister.reg_golden_func(
     case_names=[
+        "TestDivMod/DivModOperationTest.TestDivMod",
+    ]
+)
+def gen_divmod_op_golden(case_name: str, output: Path, case_index: int = None) -> bool:
+    def _zero_divisor_poison(dtype, dividend):
+        info = np.iinfo(dtype)
+        zero = dividend == 0
+        if np.issubdtype(dtype, np.signedinteger):
+            q = np.where(zero, 0, np.where(dividend > 0, info.max, info.min))
+        else:
+            q = np.where(zero, 0, info.max)
+        r = np.where(zero, info.max, dividend)
+        return q.astype(dtype), r.astype(dtype)
+
+    def generate_wrapper(
+        inputs: List[np.ndarray],
+        config: Dict[str, Any],
+    ) -> List[np.ndarray]:
+        dividend = inputs[0]
+        divisor = inputs[1]
+        # np.divmod == (np.floor_divide, np.remainder); the result keeps the input dtype,
+        # including uint16/uint32/uint64 which torch CPU cannot divide.
+        # Zero-divisor contract: emit a sign-based poison (q, r) pair that normal
+        # division cannot produce, so an abnormal result is obvious in the output.
+        dividend_b, divisor_b = np.broadcast_arrays(dividend, divisor)
+        zero_mask = divisor_b == 0
+        safe_divisor = np.where(zero_mask, np.ones_like(divisor_b), divisor_b)
+        quotient, remainder = np.divmod(dividend_b, safe_divisor)
+        if np.any(zero_mask):
+            q_zero, r_zero = _zero_divisor_poison(dividend_b.dtype, dividend_b)
+            quotient = np.where(zero_mask, q_zero, quotient)
+            remainder = np.where(zero_mask, r_zero, remainder)
+        quotient = quotient.astype(dividend_b.dtype)
+        remainder = remainder.astype(dividend_b.dtype)
+        return [quotient, remainder]
+
+    logging.debug(f"Generating golden files of {case_name} ...")
+    return gen_op_golden("DivMod", generate_wrapper, output, case_index)
+
+
+@GoldenRegister.reg_golden_func(
+    case_names=[
         "TestAxpy/AxpyOperationTest.TestAxpy",
     ]
 )

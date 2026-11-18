@@ -183,6 +183,7 @@ struct CalcOps {
     void (*Mul)(const TensorData&, const TensorData&, const TensorData&);
     void (*Div)(const TensorData&, const TensorData&, const TensorData&);
     void (*FloorDiv)(const TensorData&, const TensorData&, const TensorData&);
+    void (*DivMod)(const TensorData&, const TensorData&, const TensorData&, const TensorData&);
     void (*Fmod)(const TensorData&, const TensorData&, const TensorData&);
     void (*Remainder)(const TensorData&, const TensorData&, const TensorData&);
     void (*Pow)(const TensorData&, const TensorData&, const TensorData&);
@@ -275,7 +276,6 @@ struct CalcOps {
     void (*TopK)(const TensorData&, const TensorData&, const TensorData&, int, int, bool);
     void (*QuantMX)(const TensorData&, const TensorData&, const TensorData&, const TensorData&, const TensorData&, bool,
                     int64_t, int64_t);
-    void (*MoveUbToUb)(const TensorData&, const TensorData&);
     void (*QuantHiF4)(const TensorData&, const TensorData&, const TensorData&, const TensorData&, int64_t, int64_t);
     void (*Interleave)(const TensorData&, const TensorData&, const TensorData&, const TensorData&);
     void (*DeInterleave)(const TensorData&, const TensorData&, const TensorData&, const TensorData&);

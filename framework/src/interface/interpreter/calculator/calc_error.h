@@ -55,12 +55,11 @@ enum class CalculatorErrorScene : uint32_t {
     // QuantMX 相关
     QUANTMX_RANK_INVALID = 0xBF010U, // QuantMX 仅支持 1D~4D 输入
 
-    // MoveUbToUb 相关
-    MOVEUB2UB_SHAPE_MISMATCH = 0xBF01CU, // MoveUbToUb 输入/输出 shape 或 valid shape 不一致
-    MOVEUB2UB_DTYPE_MISMATCH = 0xBF01DU, // MoveUbToUb 输入/输出 dtype 不一致
-
     // QuantHiF4 相关
     QUANTHIF4_RANK_INVALID = 0xBF020U, // QuantHiF4 仅支持 1D~4D 输入
+
+    // DivMod 相关
+    DIVMOD_DTYPE_UNSUPPORTED = 0xBF021U, // DivMod 仅支持 dtype 相同的整型输入
 
     // Gather / GatherINUB 相关
     GATHER_AXIS_OUT_OF_RANGE = 0xBF00EU,             // Gather 中 axis 超出 params 维度范围

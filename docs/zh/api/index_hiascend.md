@@ -116,6 +116,7 @@
     - [pypto.dequantize](tensor_api/operation/pypto-dequantize.md)
     - [pypto.digamma](tensor_api/operation/pypto-digamma.md)
     - [pypto.div](tensor_api/operation/pypto-div.md)
+    - [pypto.divmod](tensor_api/operation/pypto-divmod.md)
     - [pypto.eq](tensor_api/operation/pypto-eq.md)
     - [pypto.erf](tensor_api/operation/pypto-erf.md)
     - [pypto.erfc](tensor_api/operation/pypto-erfc.md)

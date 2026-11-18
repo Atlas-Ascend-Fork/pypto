@@ -287,6 +287,8 @@ Tensor Pow(const Tensor& self, const Element& other, PrecisionType precisionType
 Tensor Remainder(const Tensor& self, const Tensor& other, PrecisionType precisionType = PrecisionType::INTRINSIC);
 Tensor Remainder(const Tensor& self, const Element& other, PrecisionType precisionType = PrecisionType::INTRINSIC);
 Tensor Remainder(const Element& self, const Tensor& other, PrecisionType precisionType = PrecisionType::INTRINSIC);
+std::tuple<Tensor, Tensor> DivMod(const Tensor& self, const Tensor& other,
+                                  PrecisionType precisionType = PrecisionType::INTRINSIC);
 Tensor CopySign(const Tensor& self, const Tensor& other);
 Tensor PReLU(const Tensor& self, const Tensor& weight);
 Tensor Atan2(const Tensor& y, const Tensor& x);

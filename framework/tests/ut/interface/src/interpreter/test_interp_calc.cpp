@@ -1200,14 +1200,126 @@ TEST_F(TorchAdaptorTest, BinaryPairOps)
     }
 }
 
-TEST_F(TorchAdaptorTest, MoveUbToUbCopiesData)
+TEST_F(TorchAdaptorTest, CopyCopiesData)
 {
     auto input = makeTensorData(DT_FP32, {8, 64}, 3.0f);
     auto out = makeTensorData(DT_FP32, {8, 64}, 0.0f);
     auto golden = makeTensorData(DT_FP32, {8, 64}, 3.0f);
 
-    calc::MoveUbToUb(out, input);
+    calc::Copy(out, input);
     ASSERT_ALLCLOSE(out, golden);
+}
+
+TEST_F(TorchAdaptorTest, DivMod)
+{
+    // 对齐 FloorDiv 用例：一次校验商和余数两路输出（floor 语义）。
+    std::vector<int32_t> sdata = {5, -5, 7, -7};
+    std::vector<int32_t> odata = {2, 2, -3, -3};
+    auto self = makeTensorData(DT_INT32, {2, 2}, sdata);
+    auto other = makeTensorData(DT_INT32, {2, 2}, odata);
+    auto quotient = makeTensorData(DT_INT32, {2, 2}, 0);
+    auto remainder = makeTensorData(DT_INT32, {2, 2}, 0);
+    auto quotientGolden = makeTensorData(DT_INT32, {2, 2}, std::vector<int32_t>{2, -3, -3, 2});
+    auto remainderGolden = makeTensorData(DT_INT32, {2, 2}, std::vector<int32_t>{1, 1, -2, -1});
+    calc::DivMod(quotient, remainder, self, other);
+    ASSERT_ALLCLOSE(quotient, quotientGolden);
+    ASSERT_ALLCLOSE(remainder, remainderGolden);
+}
+
+TEST_F(TorchAdaptorTest, DivModIntegerDtypes)
+{
+    // Cover the integer dtype dispatch and uint64 emulation.
+    {
+        std::vector<uint8_t> sdata = {7, 255, 8, 0};
+        std::vector<uint8_t> odata = {3, 2, 4, 5};
+        auto self = makeTensorData(DT_UINT8, {4}, sdata);
+        auto other = makeTensorData(DT_UINT8, {4}, odata);
+        auto quotient = makeTensorData(DT_UINT8, {4}, static_cast<uint8_t>(0));
+        auto remainder = makeTensorData(DT_UINT8, {4}, static_cast<uint8_t>(0));
+        auto quotientGolden = makeTensorData(DT_UINT8, {4}, std::vector<uint8_t>{2, 127, 2, 0});
+        auto remainderGolden = makeTensorData(DT_UINT8, {4}, std::vector<uint8_t>{1, 1, 0, 0});
+        calc::DivMod(quotient, remainder, self, other);
+        ASSERT_ALLCLOSE(quotient, quotientGolden);
+        ASSERT_ALLCLOSE(remainder, remainderGolden);
+    }
+    {
+        std::vector<uint16_t> sdata = {65535, 7, 0, 9};
+        std::vector<uint16_t> odata = {2, 3, 4, 2};
+        auto self = makeTensorData(DT_UINT16, {4}, sdata);
+        auto other = makeTensorData(DT_UINT16, {4}, odata);
+        auto quotient = makeTensorData(DT_UINT16, {4}, static_cast<uint16_t>(0));
+        auto remainder = makeTensorData(DT_UINT16, {4}, static_cast<uint16_t>(0));
+        auto quotientGolden = makeTensorData(DT_UINT16, {4}, std::vector<uint16_t>{32767, 2, 0, 4});
+        auto remainderGolden = makeTensorData(DT_UINT16, {4}, std::vector<uint16_t>{1, 1, 0, 1});
+        calc::DivMod(quotient, remainder, self, other);
+        ASSERT_ALLCLOSE(quotient, quotientGolden);
+        ASSERT_ALLCLOSE(remainder, remainderGolden);
+    }
+    {
+        std::vector<uint32_t> sdata = {4294967295U, 7, 0, 9};
+        std::vector<uint32_t> odata = {2, 3, 4, 2};
+        auto self = makeTensorData(DT_UINT32, {4}, sdata);
+        auto other = makeTensorData(DT_UINT32, {4}, odata);
+        auto quotient = makeTensorData(DT_UINT32, {4}, static_cast<uint32_t>(0));
+        auto remainder = makeTensorData(DT_UINT32, {4}, static_cast<uint32_t>(0));
+        auto quotientGolden = makeTensorData(DT_UINT32, {4}, std::vector<uint32_t>{2147483647U, 2, 0, 4});
+        auto remainderGolden = makeTensorData(DT_UINT32, {4}, std::vector<uint32_t>{1, 1, 0, 1});
+        calc::DivMod(quotient, remainder, self, other);
+        ASSERT_ALLCLOSE(quotient, quotientGolden);
+        ASSERT_ALLCLOSE(remainder, remainderGolden);
+    }
+    {
+        std::vector<uint64_t> sdata = {18446744073709551615ULL, 7, 8, 9};
+        std::vector<uint64_t> odata = {2, 3, 3, 2};
+        auto self = makeTensorData(DT_UINT64, {4}, sdata);
+        auto other = makeTensorData(DT_UINT64, {4}, odata);
+        auto quotient = makeTensorData(DT_UINT64, {4}, static_cast<uint64_t>(0));
+        auto remainder = makeTensorData(DT_UINT64, {4}, static_cast<uint64_t>(0));
+        auto quotientGolden = makeTensorData(DT_UINT64, {4}, std::vector<uint64_t>{9223372036854775807ULL, 2, 2, 4});
+        auto remainderGolden = makeTensorData(DT_UINT64, {4}, std::vector<uint64_t>{1, 1, 2, 1});
+        calc::DivMod(quotient, remainder, self, other);
+        ASSERT_ALLCLOSE(quotient, quotientGolden);
+        ASSERT_ALLCLOSE(remainder, remainderGolden);
+    }
+    {
+        std::vector<int8_t> sdata = {7, -7, 7, -7};
+        std::vector<int8_t> odata = {3, 3, -2, -2};
+        auto self = makeTensorData(DT_INT8, {4}, sdata);
+        auto other = makeTensorData(DT_INT8, {4}, odata);
+        auto quotient = makeTensorData(DT_INT8, {4}, static_cast<int8_t>(0));
+        auto remainder = makeTensorData(DT_INT8, {4}, static_cast<int8_t>(0));
+        auto quotientGolden = makeTensorData(DT_INT8, {4}, std::vector<int8_t>{2, -3, -4, 3});
+        auto remainderGolden = makeTensorData(DT_INT8, {4}, std::vector<int8_t>{1, 2, -1, -1});
+        calc::DivMod(quotient, remainder, self, other);
+        ASSERT_ALLCLOSE(quotient, quotientGolden);
+        ASSERT_ALLCLOSE(remainder, remainderGolden);
+    }
+    {
+        std::vector<int16_t> sdata = {1000, -1000, 7, -7};
+        std::vector<int16_t> odata = {-3, 3, -2, -2};
+        auto self = makeTensorData(DT_INT16, {4}, sdata);
+        auto other = makeTensorData(DT_INT16, {4}, odata);
+        auto quotient = makeTensorData(DT_INT16, {4}, static_cast<int16_t>(0));
+        auto remainder = makeTensorData(DT_INT16, {4}, static_cast<int16_t>(0));
+        auto quotientGolden = makeTensorData(DT_INT16, {4}, std::vector<int16_t>{-334, -334, -4, 3});
+        auto remainderGolden = makeTensorData(DT_INT16, {4}, std::vector<int16_t>{-2, 2, -1, -1});
+        calc::DivMod(quotient, remainder, self, other);
+        ASSERT_ALLCLOSE(quotient, quotientGolden);
+        ASSERT_ALLCLOSE(remainder, remainderGolden);
+    }
+    {
+        std::vector<int64_t> sdata = {1000, -1000, 7, -7};
+        std::vector<int64_t> odata = {-3, 3, -2, -2};
+        auto self = makeTensorData(DT_INT64, {4}, sdata);
+        auto other = makeTensorData(DT_INT64, {4}, odata);
+        auto quotient = makeTensorData(DT_INT64, {4}, static_cast<int64_t>(0));
+        auto remainder = makeTensorData(DT_INT64, {4}, static_cast<int64_t>(0));
+        auto quotientGolden = makeTensorData(DT_INT64, {4}, std::vector<int64_t>{-334, -334, -4, 3});
+        auto remainderGolden = makeTensorData(DT_INT64, {4}, std::vector<int64_t>{-2, 2, -1, -1});
+        calc::DivMod(quotient, remainder, self, other);
+        ASSERT_ALLCLOSE(quotient, quotientGolden);
+        ASSERT_ALLCLOSE(remainder, remainderGolden);
+    }
 }
 
 } // namespace npu::tile_fwk

@@ -942,6 +942,106 @@ TEST_F(CalcCommonTest, ExecuteOpBinaryScalarFloorDivWithTmpOutput)
     }
 }
 
+// 测试 DivMod，校验融合双输出（商 + 余数）与 floor 语义
+TEST_F(CalcCommonTest, ExecuteOpDivModWithTmpOutput)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "TestDivMod", "TestDivMod", nullptr);
+
+    std::vector<int64_t> shape = {2, 32};
+    std::vector<int64_t> tmpShape = {64};
+    std::vector<int32_t> lhsValues(shape[0] * shape[1]);
+    std::vector<int32_t> rhsValues(shape[0] * shape[1]);
+    std::vector<int32_t> expectedQuotient(shape[0] * shape[1]);
+    std::vector<int32_t> expectedRemainder(shape[0] * shape[1]);
+    const std::vector<int32_t> lhsPattern = {5, -5, 7, -7, 1, -1};
+    const std::vector<int32_t> rhsPattern = {2, 2, -3, -3, -2, 3};
+    const std::vector<int32_t> quotientPattern = {2, -3, -3, 2, -1, -1};
+    const std::vector<int32_t> remainderPattern = {1, 1, -2, -1, -1, 2};
+    for (size_t i = 0; i < lhsValues.size(); i++) {
+        lhsValues[i] = lhsPattern[i % lhsPattern.size()];
+        rhsValues[i] = rhsPattern[i % rhsPattern.size()];
+        expectedQuotient[i] = quotientPattern[i % quotientPattern.size()];
+        expectedRemainder[i] = remainderPattern[i % remainderPattern.size()];
+    }
+    auto lhsTensor = std::make_shared<LogicalTensor>(*func, DT_INT32, shape);
+    auto rhsTensor = std::make_shared<LogicalTensor>(*func, DT_INT32, shape);
+    auto quotientTensor = std::make_shared<LogicalTensor>(*func, DT_INT32, shape);
+    auto remainderTensor = std::make_shared<LogicalTensor>(*func, DT_INT32, shape);
+    auto tmpTensor = std::make_shared<LogicalTensor>(*func, DT_INT32, tmpShape);
+    auto& divModOp = func->AddOperation(Opcode::OP_DIVMOD, {lhsTensor, rhsTensor},
+                                        {quotientTensor, remainderTensor, tmpTensor});
+
+    Tensor lhsTensorData(DT_INT32, shape);
+    Tensor rhsTensorData(DT_INT32, shape);
+    Tensor quotientTensorData(DT_INT32, shape);
+    Tensor remainderTensorData(DT_INT32, shape);
+    Tensor tmpTensorData(DT_INT32, tmpShape);
+
+    auto lhsData = RawTensorData::CreateTensor<int32_t>(lhsTensorData, lhsValues);
+    auto rhsData = RawTensorData::CreateTensor<int32_t>(rhsTensorData, rhsValues);
+    auto quotientData = RawTensorData::CreateConstantTensor<int32_t>(quotientTensorData, 0);
+    auto remainderData = RawTensorData::CreateConstantTensor<int32_t>(remainderTensorData, 0);
+    auto tmpData = RawTensorData::CreateConstantTensor<int32_t>(tmpTensorData, 0);
+
+    auto lhsView = std::make_shared<LogicalTensorData>(lhsData);
+    auto rhsView = std::make_shared<LogicalTensorData>(rhsData);
+    auto quotientView = std::make_shared<LogicalTensorData>(quotientData);
+    auto remainderView = std::make_shared<LogicalTensorData>(remainderData);
+    auto tmpView = std::make_shared<LogicalTensorData>(tmpData);
+
+    auto inoutDataPair = std::make_shared<FunctionIODataPair>();
+    FunctionFrame frame(func.get(), nullptr, nullptr, inoutDataPair, 0);
+    OperationInterpreter opInter;
+    std::vector<LogicalTensorDataPtr> ioperandDataViewList = {lhsView, rhsView};
+    std::vector<LogicalTensorDataPtr> ooperandInplaceDataViewList = {quotientView, remainderView, tmpView};
+    ExecuteOperationContext ctx = {
+        &frame, &opInter, &divModOp, &ioperandDataViewList, nullptr, &ooperandInplaceDataViewList};
+    opInter.ExecuteOperation(&ctx);
+
+    ASSERT_EQ(quotientView->GetSize(), static_cast<int64_t>(expectedQuotient.size()));
+    ASSERT_EQ(remainderView->GetSize(), static_cast<int64_t>(expectedRemainder.size()));
+    for (size_t i = 0; i < expectedQuotient.size(); i++) {
+        EXPECT_EQ(quotientView->Get<int32_t>(i), expectedQuotient[i]);
+        EXPECT_EQ(remainderView->Get<int32_t>(i), expectedRemainder[i]);
+    }
+}
+
+// 测试 ExecuteOpMoveUbToUb，校验解释器通过 calc::Copy 完成同 shape/同 dtype 的 UB 间搬运
+TEST_F(CalcCommonTest, ExecuteOpMoveUbToUbBasic)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "TestMoveUbToUb", "TestMoveUbToUb", nullptr);
+
+    std::vector<int64_t> shape = {2, 32};
+    std::vector<int32_t> srcValues(shape[0] * shape[1]);
+    for (size_t i = 0; i < srcValues.size(); i++) {
+        srcValues[i] = static_cast<int32_t>(i + 1);
+    }
+    auto srcTensor = std::make_shared<LogicalTensor>(*func, DT_INT32, shape);
+    auto outTensor = std::make_shared<LogicalTensor>(*func, DT_INT32, shape);
+    auto& moveOp = func->AddOperation(Opcode::OP_MOVE_UB_TO_UB, {srcTensor}, {outTensor});
+
+    Tensor srcTensorData(DT_INT32, shape);
+    Tensor outTensorData(DT_INT32, shape);
+    auto srcData = RawTensorData::CreateTensor<int32_t>(srcTensorData, srcValues);
+    auto outData = RawTensorData::CreateConstantTensor<int32_t>(outTensorData, 0);
+    auto srcView = std::make_shared<LogicalTensorData>(srcData);
+    auto outView = std::make_shared<LogicalTensorData>(outData);
+
+    auto inoutDataPair = std::make_shared<FunctionIODataPair>();
+    FunctionFrame frame(func.get(), nullptr, nullptr, inoutDataPair, 0);
+    OperationInterpreter opInter;
+    std::vector<LogicalTensorDataPtr> ioperandDataViewList = {srcView};
+    std::vector<LogicalTensorDataPtr> ooperandInplaceDataViewList = {outView};
+    ExecuteOperationContext ctx = {
+        &frame, &opInter, &moveOp, &ioperandDataViewList, nullptr, &ooperandInplaceDataViewList};
+    opInter.ExecuteOperation(&ctx);
+
+    ASSERT_EQ(outView->GetSize(), static_cast<int64_t>(srcValues.size()));
+    for (size_t i = 0; i < srcValues.size(); i++) {
+        EXPECT_EQ(outView->Get<int32_t>(i), srcValues[i]);
+    }
+}
+
 // 测试 ExecuteOpLog1p，验证 calc::Log1p 行为
 TEST_F(CalcCommonTest, ExecuteOpLog1pBasic)
 {

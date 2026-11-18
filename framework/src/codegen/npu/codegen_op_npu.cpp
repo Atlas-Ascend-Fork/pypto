@@ -201,6 +201,7 @@ CodeGenOpNPU::CodeGenOpNPU(const CodeGenOpNPUCtx& ctx)
           {Opcode::OP_PRELU, [this]() { return GenPreluOp(); }},
           {Opcode::OP_ATAN2, [this]() { return GenBinaryOpWithTmp(); }},
           {Opcode::OP_FLOORDIV, [this]() { return GenBinaryOpWithTmp(); }},
+          {Opcode::OP_DIVMOD, [this]() { return GenDivModOp(); }},
           {Opcode::OP_AXPY, [this]() { return GenAxpyOp(); }},
 
           // binary op: broadcast associated vector

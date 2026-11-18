@@ -2616,3 +2616,81 @@ def prelu(self: Tensor, weight: Tensor) -> Tensor:
     Output y: [-0.25, 2.0, -0.125, 3.0]
     """
     return pypto_impl.PReLU(self, weight)
+
+@op_wrapper
+def divmod(
+    input: Tensor,
+    other: Tensor,
+    precision_type: PrecisionType = PrecisionType.INTRINSIC,
+) -> Tuple[Tensor, Tensor]:
+    """
+    Computes the element-wise integer quotient and remainder of ``input`` divided by ``other``.
+
+    Both inputs must have the same integer dtype; dtype promotion is not supported. For every
+    element it returns ``(q, r)`` following the flooring definition:
+
+        input == q * other + r,   q = floor(input / other)
+
+    and ``r`` has the same sign as ``other`` (or is zero). Broadcasting is supported.
+
+    Parameters
+    ----------
+    input : Tensor
+        The dividend integer tensor.
+    other : Tensor
+        The divisor integer tensor. It must have the same dtype as ``input`` and be
+        broadcastable to its shape.
+    precision_type : PrecisionType, optional
+        Reserved for compatibility; the integer implementation does not use it.
+
+    Returns
+    -------
+    Tuple[Tensor, Tensor]
+        A tuple ``(quotient, remainder)`` with the same dtype as the inputs.
+
+    Raises
+    ------
+    PyptoError
+        If either operand is not a Tensor, if the dtypes differ, if a non-integer dtype
+        is used, if the shapes are not broadcastable, or if an A5-only dtype
+        (int64 / uint64 / uint32) is used on A2/A3.
+
+    Notes
+    -----
+    Supported dtypes: int8, uint8, int16, int32, int64, uint16, uint32 and uint64.
+    int64, uint64 and uint32 are only supported on A5. uint16 runs natively on A5 and
+    uses an exact emulation on A2/A3. Floating-point dtypes are rejected.
+
+    The operator is implemented as one fused dual-output tile kernel using
+    FloorDiv-compatible integer division; the remainder is derived as ``r = x - q*y``
+    in the same tile loop and is exact for all supported integer types.
+
+    Division by zero does not raise: results are hardware-defined. Integer overflow such
+    as ``INT_MIN / -1`` wraps around in the target dtype, matching NumPy.
+
+    Examples
+    --------
+    a = pypto.tensor([2, 3], pypto.DT_INT32)
+    b = pypto.tensor([2, 3], pypto.DT_INT32)
+    q, r = pypto.divmod(a, b)
+
+    Input  a : [[7 8 9],
+                [-7 -8 -9]]
+           b : [[3 3 3],
+                [3 3 3]]
+    Output q : [[2 2 3],
+                [-3 -3 -3]]
+           r : [[1 2 0],
+                [2 1 0]]
+
+    See Also
+    --------
+    floor_div : The floor division operation.
+    remainder : The remainder operation.
+    """
+    if not isinstance(other, pypto_impl.Tensor):
+        raise PyptoError(
+            0xF00001,
+            TypeError(f"divmod() expects both operands to be Tensors, but got {type(other).__name__}."),
+        )
+    return pypto_impl.DivMod(input, other, precision_type)

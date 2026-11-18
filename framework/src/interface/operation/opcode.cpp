@@ -277,6 +277,10 @@ void OpcodeManager::RegisterVectorBinary()
                  {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::TFloorDivS", PIPE_V, PIPE_V, CoreType::AIV},
                  OpCalcType::BROADCAST, {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse},
                  TileShapeVerifier::Verify);
+    RegisterInfo(Opcode::OP_DIVMOD, OpCoreType::AIV, "DIVMOD", {MemoryType::MEM_UB, MemoryType::MEM_UB},
+                 {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
+                 {"TileOp::TDivMod", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::ELMWISE,
+                 {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse}, TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_AXPY, OpCoreType::AIV, "AXPY", {MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {MemoryType::MEM_UB}, {"TileOp::TAXPY", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::BROADCAST,
                  {OpAttributeKey::scalar, OpAttributeKey::inplaceInfo, OpAttributeKey::inputCombineAxis},
@@ -1457,6 +1461,7 @@ std::unordered_map<Opcode, std::string> SUPPORT_TILETENSOR_OPS{
     {Opcode::OP_COPYSIGN, "TCopysign"},
     {Opcode::OP_FLOORDIV, "TFloorDiv"},
     {Opcode::OP_FLOORDIVS, "TFloorDivS"},
+    {Opcode::OP_DIVMOD, "TDivMod"},
     {Opcode::OP_QUANTIZE_SYM, "TQuant"},
     {Opcode::OP_QUANTIZE_ASYM, "TQuant"},
     {Opcode::OP_DEQUANTIZE, "TDequant"},

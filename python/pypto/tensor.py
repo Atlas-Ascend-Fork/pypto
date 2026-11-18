@@ -410,6 +410,10 @@ class Tensor:
         return pypto.floor(pypto.div(self, other))
 
     @source_location
+    def __divmod__(self, other: 'Tensor') -> 'Tuple[Tensor, Tensor]':
+        return pypto.divmod(self, other)
+
+    @source_location
     def __mod__(self, other: 'Tensor | int | float') -> 'Tensor':
         return pypto.remainder(self, other)
 

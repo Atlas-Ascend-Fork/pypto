@@ -1245,6 +1245,46 @@ TEST_F(InferShapeTest, L0CCopyUBConvInsertPathMergesProducerWindow)
     EXPECT_EQ(outValid[3].Concrete(), 6);
 }
 
+TEST_F(InferShapeTest, TestDivModInferShape)
+{
+    struct DivModCase {
+        DataType dtype;
+        NPUArch arch;
+    };
+    const std::vector<DivModCase> cases = {
+        {DT_INT8, NPUArch::DAV_2201},   {DT_UINT8, NPUArch::DAV_2201},  {DT_INT16, NPUArch::DAV_2201},
+        {DT_INT32, NPUArch::DAV_2201},  {DT_UINT16, NPUArch::DAV_2201}, {DT_INT8, NPUArch::DAV_3510},
+        {DT_UINT8, NPUArch::DAV_3510},  {DT_INT16, NPUArch::DAV_3510},  {DT_INT32, NPUArch::DAV_3510},
+        {DT_INT64, NPUArch::DAV_3510},  {DT_UINT16, NPUArch::DAV_3510}, {DT_UINT32, NPUArch::DAV_3510},
+        {DT_UINT64, NPUArch::DAV_3510},
+    };
+    for (const auto& c : cases) {
+        Program::GetInstance().Reset();
+        config::Reset();
+        Platform::Instance().GetSoc().SetNPUArch(c.arch);
+
+        auto func = std::make_shared<Function>(Program::GetInstance(), "TestDivModInferShape", "TestDivModInferShape",
+                                               nullptr);
+        std::vector<int64_t> shape = {8, 16};
+        auto in0 = IRBuilder().CreateTensorVar(c.dtype, shape, std::vector<SymbolicScalar>{});
+        auto in1 = IRBuilder().CreateTensorVar(c.dtype, shape, std::vector<SymbolicScalar>{});
+        auto quotient = IRBuilder().CreateTensorVar(c.dtype, shape, std::vector<SymbolicScalar>{});
+        auto remainder = IRBuilder().CreateTensorVar(c.dtype, shape, std::vector<SymbolicScalar>{});
+        auto tmp = IRBuilder().CreateTensorVar(DT_FP32, shape, std::vector<SymbolicScalar>{});
+        auto validShape = std::vector<SymbolicScalar>{CreateTestScalarVar("divmod_dim0"),
+                                                      CreateTestScalarVar("divmod_dim1")};
+        in0->UpdateDynValidShape(validShape);
+        in1->UpdateDynValidShape(validShape);
+
+        auto& op = func->AddOperation(Opcode::OP_DIVMOD, {in0, in1}, {quotient, remainder, tmp});
+        InferShapeRegistry::GetInstance().CallInferShapeFunc(&op);
+        EXPECT_EQ(quotient->GetDynValidShape().size(), validShape.size());
+        EXPECT_EQ(remainder->GetDynValidShape().size(), validShape.size());
+        EXPECT_EQ(tmp->GetDynValidShape().size(), validShape.size());
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
 // VIEW (大搬小) 路径 InferFunc 只是 l0cValidMN/realCutW 的消费者: 按维裁剪推导本窗口的 NCHW valid,
 // 不得把裁剪结果回写 op 属性 (属性刷新由 GenerateMoveOp 按view窗口负责)。
 // 若恢复回写 (旧实现写 l0cValidMN={validRows,validN}、realCutW=validW), 矩阵级 (M,N) 与切割宽

@@ -20,5 +20,6 @@
 #include "binary/extended.h"
 #include "binary/floor_div.h"
 #include "binary/gcd.h"
+#include "binary/divmod.h"
 
 #endif // TILEOP_TILE_OPERATOR_BINARY_H

@@ -944,9 +944,21 @@ void ExecuteOpMoveUbToUb(ExecuteOperationContext* ctx)
         << "MoveUbToUb requires input and output to have the same shape.";
     ASSERT(ExecuteOperationScene::INVALID_TENSOR_DTYPE, src->GetDataType() == out->GetDataType())
         << "MoveUbToUb requires input and output to have the same dtype.";
-    calc::MoveUbToUb(out, src);
+    calc::Copy(out, src);
 }
 REGISTER_CALC_OP(OP_MOVE_UB_TO_UB, Opcode::OP_MOVE_UB_TO_UB, ExecuteOpMoveUbToUb);
+
+void ExecuteOpDivMod(ExecuteOperationContext* ctx)
+{
+    ASSERT(ExecuteOperationScene::CTX_INPUT_COUNT_MISMATCH, ctx->ioperandDataViewList->size() == 2);
+    ASSERT(ExecuteOperationScene::CTX_OUTPUT_COUNT_MISMATCH, ctx->ooperandInplaceDataViewList->size() >= 2);
+    auto quotient = ctx->ooperandInplaceDataViewList->at(0);
+    auto remainder = ctx->ooperandInplaceDataViewList->at(1);
+    auto dividend = ctx->ioperandDataViewList->at(0);
+    auto divisor = ctx->ioperandDataViewList->at(1);
+    calc::DivMod(quotient, remainder, dividend, divisor);
+}
+REGISTER_CALC_OP(OP_DIVMOD, Opcode::OP_DIVMOD, ExecuteOpDivMod);
 
 void ExecuteOpInterleave(ExecuteOperationContext* ctx)
 {

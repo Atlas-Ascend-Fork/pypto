@@ -318,6 +318,60 @@ Tensor FloorDiv(const Tensor& self, const Tensor& other)
     RETURN_CALL(BinaryOperation<BinaryOpType::FLOORDIV>, *Program::GetInstance().GetCurrentFunction(), self, other);
 }
 
+namespace {
+bool IsDivModA5OnlyDtype(DataType dtype) { return dtype == DT_INT64 || dtype == DT_UINT64 || dtype == DT_UINT32; }
+} // namespace
+
+std::tuple<Tensor, Tensor> DivMod(const Tensor& self, const Tensor& other, PrecisionType precisionType)
+{
+    (void)precisionType;
+    DECLARE_TRACER();
+    CheckVectorOperand(self.GetStorage(), "DivMod");
+    CheckVectorOperand(other.GetStorage(), "DivMod");
+
+    std::unordered_set<DataType> supportedTypes = {DT_INT8,  DT_INT16,  DT_INT32,  DT_INT64,
+                                                   DT_UINT8, DT_UINT16, DT_UINT32, DT_UINT64};
+    CheckTensorDataType(self.GetStorage(), supportedTypes, "DivMod");
+    DataType dtype = self.GetDataType();
+    CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED, dtype == other.GetDataType())
+        << "DivMod requires identical input dtypes (promotion is not supported): " << DataType2String(dtype) << " vs "
+        << DataType2String(other.GetDataType());
+    if (IsDivModA5OnlyDtype(dtype)) {
+        CHECK(VectorErrorCode::ERR_PARAM_DTYPE_UNSUPPORTED,
+              Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510)
+            << "DivMod only supports " << DataType2String(dtype) << " on A5 (DAV_3510)";
+    }
+
+    auto dividend = self.GetStorage();
+    auto divisor = other.GetStorage();
+    if (dividend->shape.size() != divisor->shape.size()) {
+        std::vector<int> broadCastShape = GetBroadCastShape(dividend, divisor);
+        dividend = BinaryOperationBroadCast(dividend, broadCastShape);
+        divisor = BinaryOperationBroadCast(divisor, broadCastShape);
+    }
+    CheckBinaryInputTensors(dividend, divisor, "DivMod");
+
+    std::vector<SymbolicScalar> resultValidShape;
+    std::vector<int64_t> resultShape = BinaryOperationResultShape(dividend, divisor);
+    size_t shapeSize = resultShape.size();
+    if ((!dividend->GetDynValidShape().empty()) && (!divisor->GetDynValidShape().empty())) {
+        for (size_t i = 0; i < shapeSize; ++i) {
+            if (resultShape[i] == dividend->shape[i]) {
+                resultValidShape.push_back(dividend->GetDynValidShape()[i]);
+            } else {
+                resultValidShape.push_back(divisor->GetDynValidShape()[i]);
+            }
+        }
+    }
+
+    auto function = Program::GetInstance().GetCurrentFunction();
+    auto format = dividend->Format();
+    auto quotientTensor = std::make_shared<LogicalTensor>(*function, dtype, resultShape, resultValidShape, format);
+    auto remainderTensor = std::make_shared<LogicalTensor>(*function, dtype, resultShape, resultValidShape, format);
+    function->AddOperation(Opcode::OP_DIVMOD, {dividend, divisor}, {quotientTensor, remainderTensor});
+    return {Tensor(quotientTensor), Tensor(remainderTensor)};
+}
+
 Tensor CeilDiv(const Tensor& self, const Tensor& other)
 {
     DECLARE_TRACER();
@@ -375,6 +429,77 @@ int64_t GetRemainderTmpCols(int64_t tileCols, DataType dtype, Opcode opcode, int
     return std::max(legacyCols, highPrecisionCols);
 }
 
+namespace {
+void TileDivModOperation(Function& function, const TileShape& tileShape, size_t cur, LogicalInput& input1,
+                         LogicalInput& input2, const LogicalTensorPtr& result1, const LogicalTensorPtr& result2,
+                         TileInfo& resultTileInfo)
+{
+    size_t shapeSize = input1.tensor->GetShape().size();
+    if (cur == shapeSize) {
+        auto inputTile1 = input1.tensor->View(function, input1.tileInfo.shape, input1.tileInfo.offset);
+        auto inputTile2 = input2.tensor->View(function, input2.tileInfo.shape, input2.tileInfo.offset);
+        auto resultTile1 = result1->View(function, resultTileInfo.shape, resultTileInfo.offset);
+        auto resultTile2 = result2->View(function, resultTileInfo.shape, resultTileInfo.offset);
+
+        auto tmpShape = resultTileInfo.shape;
+        auto alignSize = std::max<int64_t>(BLOCK_SIZE / BytesOf(result1->Datatype()), 8);
+        tmpShape.back() = AlignUp(tmpShape.back(), alignSize);
+        auto dtype = result1->Datatype();
+        int64_t tmpPlaneCount = NUM_VALUE_5;
+        if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) {
+            if (dtype == DT_UINT16 || dtype == DT_UINT32 || dtype == DT_UINT64) {
+                tmpPlaneCount = NUM_VALUE_2;
+            } else if (dtype == DT_INT8 || dtype == DT_UINT8) {
+                tmpPlaneCount = NUM_VALUE_5;
+            } else if (dtype == DT_INT16) {
+                tmpPlaneCount = NUM_VALUE_3;
+            } else {
+                tmpPlaneCount = NUM_VALUE_4;
+            }
+        } else if (dtype == DT_INT16) {
+            tmpPlaneCount = NUM_VALUE_3;
+        } else if (dtype == DT_INT32 || dtype == DT_UINT16) {
+            tmpPlaneCount = NUM_VALUE_6;
+        }
+        tmpShape.front() *= tmpPlaneCount;
+        auto tmpType = result1->Datatype() == DT_INT64 ? DT_INT64 : DT_FP32;
+        auto tmpTensor = std::make_shared<LogicalTensor>(function, tmpType, tmpShape);
+        function.AddOperation(Opcode::OP_DIVMOD, {inputTile1, inputTile2}, {resultTile1, resultTile2, tmpTensor});
+        return;
+    }
+
+    auto& vecTile = tileShape.GetVecTile();
+    for (int64_t i = 0; i < result1->shape[cur]; i += vecTile[cur]) {
+        resultTileInfo.offset[cur] = i;
+        resultTileInfo.shape[cur] = std::min(result1->shape[cur] - resultTileInfo.offset[cur], vecTile[cur]);
+        input1.tileInfo.offset[cur] = i % input1.tensor->GetShape()[cur];
+        input1.tileInfo.shape[cur] = std::min(input1.tensor->GetShape()[cur] - input1.tileInfo.offset[cur],
+                                              vecTile[cur]);
+        input2.tileInfo.offset[cur] = i % input2.tensor->GetShape()[cur];
+        input2.tileInfo.shape[cur] = std::min(input2.tensor->GetShape()[cur] - input2.tileInfo.offset[cur],
+                                              vecTile[cur]);
+        TileDivModOperation(function, tileShape, cur + 1, input1, input2, result1, result2, resultTileInfo);
+    }
+}
+
+void DivModOperationTileFunc(Function& function, const TileShape& tileShape,
+                             const std::vector<LogicalTensorPtr>& iOperand,
+                             const std::vector<LogicalTensorPtr>& oOperand, [[maybe_unused]] const Operation& op)
+{
+    LogicalTensorPtr operand1 = iOperand[0];
+    LogicalTensorPtr operand2 = iOperand[1];
+    BroadcastOperandTensor(operand1, operand2, oOperand[0], function, tileShape);
+    BroadcastOperandTensor(operand2, operand1, oOperand[0], function, tileShape);
+
+    TileInfo tileInfo1(operand1->shape.size(), operand1->offset.size());
+    TileInfo tileInfo2(operand2->shape.size(), operand2->offset.size());
+    TileInfo resultTileInfo(oOperand[0]->shape.size(), oOperand[0]->offset.size());
+    auto input1 = LogicalInput{operand1, tileInfo1};
+    auto input2 = LogicalInput{operand2, tileInfo2};
+    TileDivModOperation(function, tileShape, 0, input1, input2, oOperand[0], oOperand[1], resultTileInfo);
+}
+} // namespace
+
 REGISTER_OPERATION_TILED_FUNC(OP_ADD, Opcode::OP_ADD, BinaryOperationTileFunc<BinaryOpType::ADD>);
 REGISTER_OPERATION_TILED_FUNC(OP_SUB, Opcode::OP_SUB, BinaryOperationTileFunc<BinaryOpType::SUB>);
 REGISTER_OPERATION_TILED_FUNC(OP_MUL, Opcode::OP_MUL, BinaryOperationTileFunc<BinaryOpType::MUL>);
@@ -385,5 +510,6 @@ REGISTER_OPERATION_TILED_FUNC(OP_MOD, Opcode::OP_MOD, BinaryOperationTileFunc<Bi
 REGISTER_OPERATION_TILED_FUNC(OP_REM, Opcode::OP_REM, BinaryOperationTileFunc<BinaryOpType::REM>);
 REGISTER_OPERATION_TILED_FUNC(OP_GCD, Opcode::OP_GCD, BinaryOperationTileFunc<BinaryOpType::GCD>);
 REGISTER_OPERATION_TILED_FUNC(OP_FLOORDIV, Opcode::OP_FLOORDIV, BinaryOperationTileFunc<BinaryOpType::FLOORDIV>);
+REGISTER_OPERATION_TILED_FUNC(OP_DIVMOD, Opcode::OP_DIVMOD, DivModOperationTileFunc);
 
 } // namespace npu::tile_fwk

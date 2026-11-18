@@ -45,6 +45,7 @@ pypto-deinterleave
 pypto-dequantize
 pypto-digamma
 pypto-div
+pypto-divmod
 pypto-eq
 pypto-erf
 pypto-erfc

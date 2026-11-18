@@ -72,6 +72,13 @@ void BindOperation(py::module_& m)
         py::arg("self"), py::arg("other"), py::arg("precision_type") = PrecisionType::HIGH_PRECISION,
         "Scalar remainder tensor.");
     m.def(
+        "DivMod",
+        [](const Tensor& self, const Tensor& other, PrecisionType precisionType) {
+            return npu::tile_fwk::DivMod(self, other, precisionType);
+        },
+        py::arg("self"), py::arg("other"), py::arg("precision_type") = PrecisionType::INTRINSIC,
+        "Tensor divmod returning quotient and remainder.");
+    m.def(
         "BitwiseAnd", [](const Tensor& self, const Tensor& other) { return npu::tile_fwk::BitwiseAnd(self, other); },
         "Tensor bitwise and.");
     m.def(

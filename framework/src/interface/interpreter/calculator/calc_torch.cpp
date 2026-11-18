@@ -1101,6 +1101,93 @@ DEFINE_BINARY_OPS(Gcd, gcd_out)
 DEFINE_BINARY_OPS(Pow, pow_out)
 DEFINE_BINARY_OPS(FloorDiv, floor_divide_out)
 
+namespace {
+
+// The torch adaptor reinterprets unsigned integers as same-width signed types
+// (see FromDataType), so zero-extend before doing any arithmetic.
+torch::Tensor ZeroExtendIntegerToInt64(const torch::Tensor& value, DataType dtype)
+{
+    auto widened = value.to(torch::kInt64);
+    switch (dtype) {
+        case DT_UINT8:
+            return widened.bitwise_and(0xFF);
+        case DT_UINT16:
+            return widened.bitwise_and(0xFFFF);
+        case DT_UINT32:
+            return widened.bitwise_and(0xFFFFFFFFLL);
+        default:
+            return widened;
+    }
+}
+
+// uint64 has no wider signed torch dtype, so emulate the unsigned 64-bit divide
+// element by element while keeping the full value range exact.
+void DivModUint64(const torch::Tensor& quotient, const torch::Tensor& remainder, const torch::Tensor& self,
+                  const torch::Tensor& other)
+{
+    auto dividend = self.expand(quotient.sizes()).contiguous().view(-1);
+    auto divisor = other.expand(quotient.sizes()).contiguous().view(-1);
+    auto quotientFlat = torch::empty_like(dividend);
+    auto remainderFlat = torch::empty_like(dividend);
+    const uint64_t* dividendPtr = reinterpret_cast<const uint64_t*>(dividend.data_ptr<int64_t>());
+    const uint64_t* divisorPtr = reinterpret_cast<const uint64_t*>(divisor.data_ptr<int64_t>());
+    uint64_t* quotientPtr = reinterpret_cast<uint64_t*>(quotientFlat.data_ptr<int64_t>());
+    uint64_t* remainderPtr = reinterpret_cast<uint64_t*>(remainderFlat.data_ptr<int64_t>());
+    const int64_t numel = dividend.numel();
+    for (int64_t i = 0; i < numel; ++i) {
+        const uint64_t dividendValue = dividendPtr[i];
+        const uint64_t divisorValue = divisorPtr[i];
+        if (divisorValue == 0) {
+            quotientPtr[i] = 0;
+            remainderPtr[i] = dividendValue;
+        } else {
+            const uint64_t quotientValue = dividendValue / divisorValue;
+            quotientPtr[i] = quotientValue;
+            remainderPtr[i] = dividendValue - quotientValue * divisorValue;
+        }
+    }
+    quotient.copy_(quotientFlat.view(quotient.sizes()));
+    remainder.copy_(remainderFlat.view(remainder.sizes()));
+}
+
+} // namespace
+
+static void DivMod(const TensorData& quotient, const TensorData& remainder, const TensorData& self,
+                   const TensorData& other)
+{
+    const bool isInteger = self.dtype == DT_INT8 || self.dtype == DT_INT16 || self.dtype == DT_INT32 ||
+                           self.dtype == DT_INT64 || self.dtype == DT_UINT8 || self.dtype == DT_UINT16 ||
+                           self.dtype == DT_UINT32 || self.dtype == DT_UINT64;
+    ASSERT(CalculatorErrorScene::DIVMOD_DTYPE_UNSUPPORTED, isInteger && self.dtype == other.dtype)
+        << "DivMod interpreter only supports matching integer dtypes, got " << DataType2String(self.dtype) << " and "
+        << DataType2String(other.dtype);
+
+    auto tquotient = From(quotient);
+    auto tremamainder = From(remainder);
+    auto tself = From(self);
+    auto tother = From(other);
+    auto quotientView = tquotient.second;
+    auto remainderView = tremamainder.second;
+
+    // DivMod zero-divisor behavior is implementation-defined on hardware. Use a
+    // deterministic reference (q = 0, r = dividend) so verification never throws.
+    if (self.dtype == DT_UINT64) {
+        DivModUint64(quotientView, remainderView, tself.second, tother.second);
+        return;
+    }
+
+    auto dividend = ZeroExtendIntegerToInt64(tself.second, self.dtype);
+    auto divisor = ZeroExtendIntegerToInt64(tother.second, self.dtype);
+    auto zeroDivisor = (divisor == 0);
+    auto safeDivisor = torch::where(zeroDivisor, torch::ones_like(divisor), divisor);
+    auto quotientValue = torch::floor_divide(dividend, safeDivisor);
+    auto remainderValue = dividend - quotientValue * safeDivisor;
+    quotientValue = torch::where(zeroDivisor, torch::zeros_like(quotientValue), quotientValue);
+    remainderValue = torch::where(zeroDivisor, dividend, remainderValue);
+    quotientView.copy_(quotientValue.to(quotientView.scalar_type()));
+    remainderView.copy_(remainderValue.to(remainderView.scalar_type()));
+}
+
 static void BitwiseAnd(const TensorData& out, const TensorData& self, const TensorData& other)
 {
     auto tout = From(out);
@@ -3955,17 +4042,6 @@ static void QuantMX(const TensorData& out, const TensorData& exp, const TensorDa
     CopyQuantMXOutputs(tout, texp, tmax, tscaling, quantRaw, expRaw, maxTemp, scalingTemp, shapes, performanceMode);
 }
 
-static void MoveUbToUb(const TensorData& out, const TensorData& self)
-{
-    auto tout = From(out);
-    auto tself = From(self);
-    ASSERT(CalculatorErrorScene::MOVEUB2UB_SHAPE_MISMATCH, tout.first.sizes() == tself.first.sizes())
-        << "MoveUbToUb requires input and output to have the same shape.";
-    ASSERT(CalculatorErrorScene::MOVEUB2UB_DTYPE_MISMATCH, out.dtype == self.dtype)
-        << "MoveUbToUb requires input and output to have the same dtype.";
-    tout.first.copy_(tself.first);
-}
-
 #define HIF4_QUANT_BLOCK 64
 #define HIF4_QUANT_SUB_BLOCK 8
 #define HIF4_QUANT_MICRO_BLOCK 4
@@ -4287,6 +4363,7 @@ static struct CalcOps calcOps = {
     .Mul = Mul,
     .Div = Div,
     .FloorDiv = FloorDiv,
+    .DivMod = DivMod,
     .Fmod = Fmod,
     .Remainder = Remainder,
     .Pow = Pow,
@@ -4362,7 +4439,6 @@ static struct CalcOps calcOps = {
     .MrgSort = MrgSort,
     .TopK = TopK,
     .QuantMX = QuantMX,
-    .MoveUbToUb = MoveUbToUb,
     .QuantHiF4 = QuantHiF4,
     .Interleave = Interleave,
     .DeInterleave = DeInterleave,

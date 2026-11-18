@@ -199,6 +199,7 @@ enum class Opcode {
     OP_BITWISEXOR,
     OP_FLOORDIV,
     OP_FLOORDIVS,
+    OP_DIVMOD,
     OP_QUANT_MX,
     OP_MOVE_UB_TO_UB,
     OP_QUANT_HIF4,

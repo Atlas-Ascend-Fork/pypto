@@ -304,6 +304,21 @@ std::string CodeGenOpNPU::GenGcdScalarOp() const
     return requiresSimt ? GenVectorScalarOp() : GenVectorScalarOpWithTmp();
 }
 
+std::string CodeGenOpNPU::GenDivModOp() const
+{
+    constexpr unsigned DIVMOD_TMP_IDX = 2;
+    constexpr int DIVMOD_OPERAND_CNT = 5;
+
+    ASSERT(OperErr::OPERAND_COUNT_EXCEEDED, operandCnt == DIVMOD_OPERAND_CNT)
+        << "DivMod expects" << DIVMOD_OPERAND_CNT << " operands (quotient, remainder, tmp, src0, src1), got "
+        << operandCnt;
+
+    std::vector<std::string> params = GetTileOpParamsWithTmpBuf({DIVMOD_TMP_IDX});
+    std::ostringstream oss;
+    oss << tileOpName << WrapParamByParentheses(params) << STMT_END;
+    return oss.str();
+}
+
 std::string CodeGenOpNPU::GenVectorScalarOpWithTmp() const
 {
     std::string dstTensor = QueryTileTensorNameByIdx(ToUnderlying(MIMOIdx::DST_IDX));

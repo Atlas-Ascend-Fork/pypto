@@ -111,6 +111,7 @@ public:
     std::string GenGcdOp() const;
     std::string GenGcdScalarOp() const;
     std::string GenPairArgReduce() const;
+    std::string GenDivModOp() const;
 
     std::string GenInterleaveLikeOp() const;
 

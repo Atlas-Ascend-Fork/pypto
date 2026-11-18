@@ -282,6 +282,37 @@ void FloorDivInferShapeFunc(Operation* op, std::vector<std::vector<SymbolicScala
 REGISTER_INFER_SHAPE_FUNC(OP_FLOORDIV, Opcode::OP_FLOORDIV, FloorDivInferShapeFunc);
 REGISTER_INFER_SHAPE_FUNC(OP_FLOORDIVS, Opcode::OP_FLOORDIVS, FloorDivInferShapeFunc);
 
+void DivModInferShapeFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
+{
+    auto inputValidShape = op->GetIOperands()[0]->GetDynValidShape();
+    if (inputValidShape.empty()) {
+        return;
+    }
+
+    auto dtype = op->GetIOperands()[0]->Datatype();
+    int64_t tmpPlaceCount = NUM_VALUE_5;
+    if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510) {
+        if (dtype == DT_UINT16 || dtype == DT_UINT32 || dtype == DT_UINT64) {
+            tmpPlaceCount = NUM_VALUE_2;
+        } else if (dtype == DT_INT8 || dtype == DT_UINT8) {
+            tmpPlaceCount = NUM_VALUE_5;
+        } else if (dtype == DT_INT16) {
+            tmpPlaceCount = NUM_VALUE_3;
+        } else {
+            tmpPlaceCount = NUM_VALUE_4;
+        }
+    } else if (dtype == DT_INT16) {
+        tmpPlaceCount = NUM_VALUE_3;
+    } else if (dtype == DT_INT32 || dtype == DT_UINT16) {
+        tmpPlaceCount = NUM_VALUE_6;
+    }
+    outValidShapes.emplace_back(inputValidShape);
+    outValidShapes.emplace_back(inputValidShape);
+    inputValidShape.front() = inputValidShape.front() * tmpPlaceCount;
+    outValidShapes.emplace_back(inputValidShape);
+}
+REGISTER_INFER_SHAPE_FUNC(OP_DIVMOD, Opcode::OP_DIVMOD, DivModInferShapeFunc);
+
 template <int64_t TailScale>
 void InferShapeWithTailScaleFunc(Operation* op, std::vector<std::vector<SymbolicScalar>>& outValidShapes)
 {

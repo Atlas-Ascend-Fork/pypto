@@ -279,6 +279,88 @@ TEST_F(OperationOpsTest, QuantMX_NonPerformanceTileQuantizationAxisAlignment)
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
 }
 
+TEST_F(OperationOpsTest, DivMod_OutputShapeAndDtype)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    TileShape::Current().SetVecTile(8, 64);
+    Tensor dividend(DT_INT32, {8, 64});
+    Tensor divisor(DT_INT32, {8, 64});
+
+    FUNCTION("DivModInt32", {dividend, divisor})
+    {
+        auto [quotient, remainder] = DivMod(dividend, divisor);
+        EXPECT_EQ(quotient.GetDataType(), DT_INT32);
+        EXPECT_EQ(remainder.GetDataType(), DT_INT32);
+        EXPECT_EQ(quotient.GetShape(), std::vector<int64_t>({8, 64}));
+        EXPECT_EQ(remainder.GetShape(), std::vector<int64_t>({8, 64}));
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationOpsTest, DivMod_Broadcast)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    TileShape::Current().SetVecTile(8, 64);
+    Tensor dividend(DT_INT32, {8, 1});
+    Tensor divisor(DT_INT32, {8, 64});
+
+    FUNCTION("DivModBroadcast", {dividend, divisor})
+    {
+        auto [quotient, remainder] = DivMod(dividend, divisor);
+        EXPECT_EQ(quotient.GetDataType(), DT_INT32);
+        EXPECT_EQ(remainder.GetDataType(), DT_INT32);
+        EXPECT_EQ(quotient.GetShape(), std::vector<int64_t>({8, 64}));
+        EXPECT_EQ(remainder.GetShape(), std::vector<int64_t>({8, 64}));
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationOpsTest, DivMod_A5WideDtypes)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    TileShape::Current().SetVecTile(8, 64);
+    Tensor dividend64(DT_INT64, {8, 64});
+    Tensor divisor64(DT_INT64, {8, 64});
+    Tensor dividendU16(DT_UINT16, {8, 64});
+    Tensor divisorU16(DT_UINT16, {8, 64});
+    Tensor dividendU32(DT_UINT32, {8, 64});
+    Tensor divisorU32(DT_UINT32, {8, 64});
+    Tensor dividendU64(DT_UINT64, {8, 64});
+    Tensor divisorU64(DT_UINT64, {8, 64});
+
+    FUNCTION("DivModA5Wide",
+             {dividend64, divisor64, dividendU16, divisorU16, dividendU32, divisorU32, dividendU64, divisorU64})
+    {
+        auto res64 = DivMod(dividend64, divisor64);
+        EXPECT_EQ(std::get<0>(res64).GetDataType(), DT_INT64);
+        auto resU16 = DivMod(dividendU16, divisorU16);
+        EXPECT_EQ(std::get<0>(resU16).GetDataType(), DT_UINT16);
+        auto resU32 = DivMod(dividendU32, divisorU32);
+        EXPECT_EQ(std::get<0>(resU32).GetDataType(), DT_UINT32);
+        auto resU64 = DivMod(dividendU64, divisorU64);
+        EXPECT_EQ(std::get<0>(resU64).GetDataType(), DT_UINT64);
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
+TEST_F(OperationOpsTest, DivMod_Uint16OnA2A3)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
+    TileShape::Current().SetVecTile(8, 64);
+    Tensor dividend(DT_UINT16, {8, 64});
+    Tensor divisor(DT_UINT16, {8, 64});
+
+    FUNCTION("DivModUint16A2A3", {dividend, divisor})
+    {
+        auto [quotient, remainder] = DivMod(dividend, divisor);
+        EXPECT_EQ(quotient.GetDataType(), DT_UINT16);
+        EXPECT_EQ(remainder.GetDataType(), DT_UINT16);
+        EXPECT_EQ(quotient.GetShape(), std::vector<int64_t>({8, 64}));
+        EXPECT_EQ(remainder.GetShape(), std::vector<int64_t>({8, 64}));
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
 TEST_F(OperationOpsTest, QuantHiF4Bf16)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
