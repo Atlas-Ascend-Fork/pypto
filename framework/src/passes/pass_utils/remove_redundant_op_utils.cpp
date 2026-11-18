@@ -2106,8 +2106,8 @@ bool RemoveRedundantOpUtils::CollectSliceContractSliceRewrites(const SliceContra
                                                          rewrite.localOffset, rewrite.localDynOffset);
         if (isFanout && !keepL1Fanout) {
             if (rewrite.isFullSlice && !IsContractInputEqualSliceOutput(*chain.contract, *consumer)) {
-                // Mirror the single-consumer rejection: bypassing a full slice whose dynamic valid shape
-                // differs from the contract input would drop that shape from the surviving graph.
+                // fanout 的动态偏移回退仍按 isFullSlice 直接回接共享输入，会丢失消费者的动态有效形状。
+                // 在各重写路径统一支持逐消费者的有效形状保留前，保持整条链不变。
                 return false;
             }
             if (!ComposeSliceContractOffset(chain, *consumer, rewrite.composedOffset)) {
@@ -2275,7 +2275,7 @@ bool RemoveRedundantOpUtils::RewriteDynamicFanoutFallback(Function& function, co
 }
 
 void RemoveRedundantOpUtils::RewriteSliceContractSliceConsumer(
-    Function& function, Operation& contract, Operation& consumer, bool isFullSlice,
+    Function& function, Operation& contract, Operation& consumer, bool canBypassSlice,
     const std::vector<int64_t>& localOffset, const std::vector<SymbolicScalar>& localDynOffset,
     const LogicalTensorPtr& contractInput, LogicalTensorPtr& survivingInput, bool redirectEnabled,
     const LogicalTensorPtr& redirectTarget, std::vector<Operation*>& newOps, bool& operationUpdated)
@@ -2284,7 +2284,7 @@ void RemoveRedundantOpUtils::RewriteSliceContractSliceConsumer(
     if (SliceRequiresL1(consumer) && contractInput->GetProducers().size() == 1) {
         TransferL1CopyAttrs(consumer, **contractInput->GetProducers().begin());
     }
-    if (isFullSlice) {
+    if (canBypassSlice) {
         auto* precedingSlice = GetReplaceablePrecedingSlice(contract, consumer, survivingInput, sliceOutput);
         if (precedingSlice != nullptr) {
             sliceOutput->SetMemoryTypeBoth(MemoryType::MEM_L1, true);
@@ -2344,7 +2344,10 @@ void RemoveRedundantOpUtils::ProcessSliceContractSliceSingle(Function& function,
     // requirement transfer and the partial-slice VIEW fallback), but keep it in this dedicated
     // slice-contract-slice pass so ProcessSingleContractMultiSlice never handles this pattern.
     auto* consumer = rewrite.consumer;
-    if (rewrite.isFullSlice && !IsContractInputEqualSliceOutput(*chain.contract, *consumer)) {
+    // 动态有效形状不一致时保留显式 VIEW，避免直接回接输入丢失消费者的有效形状约束。
+    const bool canBypassSlice = rewrite.isFullSlice && IsContractInputEqualSliceOutput(*chain.contract, *consumer);
+    if (rewrite.isFullSlice && !canBypassSlice && GetViewAttr(*consumer)->GetToDynValidShape().empty()) {
+        // 缺少显式有效形状时，无法保证 VIEW 推导结果与原 SLICE 一致。
         return;
     }
 
@@ -2357,7 +2360,7 @@ void RemoveRedundantOpUtils::ProcessSliceContractSliceSingle(Function& function,
     // Keep the replacement tensor explicit.  Replacing a full L1 slice may detach the original contract
     // input from its preceding slice; any later rewrite must consume the tensor that actually survived.
     LogicalTensorPtr survivingInput = chain.contractInput;
-    RewriteSliceContractSliceConsumer(function, *chain.contract, *consumer, rewrite.isFullSlice, rewrite.localOffset,
+    RewriteSliceContractSliceConsumer(function, *chain.contract, *consumer, canBypassSlice, rewrite.localOffset,
                                       rewrite.localDynOffset, chain.contractInput, survivingInput, false, nullptr,
                                       newOps, operationUpdated);
     chain.contract->SetAsDeleted();

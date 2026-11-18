@@ -3396,5 +3396,45 @@ TEST_F(SplitLargeFanoutTensorTest, ContractSliceFoldingPreservesTokenBearingAcce
     }
 }
 
+// VIEW 合并后形成的 SLICE-CONTRACT-SLICE 仍需清理，并保留 L1 消费者的有效形状。
+TEST_F(SplitLargeFanoutTensorTest, FoldContractSliceAfterMergingPrecedingViews)
+{
+    config::SetPassOption("enable_slice", true);
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {16, 16}, {"source"}));
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {8, 16}, {"tile", "alias", "middle", "read", "out"}));
+    ASSERT_TRUE(graph.AddOps({Opcode::OP_SLICE, Opcode::OP_VIEW, Opcode::OP_CONTRACT, Opcode::OP_SLICE, Opcode::OP_EXP},
+                             {{"source"}, {"tile"}, {"alias"}, {"middle"}, {"read"}},
+                             {{"tile"}, {"alias"}, {"middle"}, {"read"}, {"out"}},
+                             {"load", "view", "write", "read", "consumer"}, true));
+    const std::vector<SymbolicScalar> sourceValidShape = {CreateTestScalarVar("valid_rows"), 16};
+    const auto consumerValidShape = SymbolicScalar::FromConcrete({8, 16});
+    for (const auto& name : {"load", "view"}) {
+        graph.GetOp(name)->SetOpAttribute(
+            std::make_shared<ViewOpAttribute>(Offset{0, 0}, std::vector<SymbolicScalar>{}, sourceValidShape));
+    }
+    graph.GetTensor("tile")->UpdateDynValidShape(sourceValidShape);
+    graph.GetTensor("alias")->UpdateDynValidShape(sourceValidShape);
+    graph.GetOp("write")->SetAssembleOpAttribute({0, 0});
+    graph.GetOp("read")->SetOpAttribute(std::make_shared<ViewOpAttribute>(
+        Offset{0, 0}, MemoryType::MEM_L1, std::vector<SymbolicScalar>{}, consumerValidShape));
+    ASSERT_TRUE(graph.SetInCast({"source"}));
+    ASSERT_TRUE(graph.SetOutCast({"out"}));
+    auto* function = graph.GetFunction();
+    SplitLargeFanoutTensor pass;
+
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+
+    for (auto& op : function->Operations(false)) {
+        EXPECT_NE(op.GetOpcode(), Opcode::OP_CONTRACT);
+    }
+    auto input = graph.GetOp("consumer")->GetIOperands().front();
+    ASSERT_EQ(input->GetProducers().size(), 1UL);
+    auto attr = std::dynamic_pointer_cast<ViewOpAttribute>((*input->GetProducers().begin())->GetOpAttribute());
+    ASSERT_NE(attr, nullptr);
+    EXPECT_EQ(attr->GetTo(), MemoryType::MEM_L1);
+    EXPECT_EQ(attr->GetToDynValidShape(), consumerValidShape);
+}
+
 } // namespace tile_fwk
 } // namespace npu

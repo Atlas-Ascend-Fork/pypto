@@ -329,6 +329,7 @@ Status DynAttrToStatic::BuildLeafToCaller(Function* func)
 Status DynAttrToStatic::BuildNewCoa(std::reference_wrapper<SymbolicScalar>& dynScalar,
                                     std::vector<std::vector<SymbolicScalar>>& callopArglistOneDim)
 {
+    constexpr int kMinCoaIndex = 0;
     constexpr int kNonImmediateSentinel = -2; // sentinel for non-immediate callop attr
     // 1. 拆解dynScalar到对应的COA表达式
     std::string dynParamExpr = SymbolicExpressionTable::BuildExpression(dynScalar);
@@ -347,6 +348,13 @@ Status DynAttrToStatic::BuildNewCoa(std::reference_wrapper<SymbolicScalar>& dynS
     // 2. 遍历不同caller下的取值，确认是否是常数
     std::set<int> scalarValue;
     for (auto& argList : callopArglistOneDim) {
+        if (coaIndex < kMinCoaIndex || static_cast<size_t>(coaIndex) >= argList.size()) {
+            APASS_LOG_ERROR_F(
+                Elements::Operation,
+                "BuildNewCoa COA index %d is missing from dynParam expression %s, valid range is [%d, %zu).", coaIndex,
+                dynParamExpr.c_str(), kMinCoaIndex, argList.size());
+            return FAILED;
+        }
         auto& callopAttr = argList[coaIndex];
         if (!callopAttr.IsImmediate()) {
             scalarValue.insert(kNonImmediateSentinel);
@@ -509,6 +517,19 @@ Status DynAttrToStatic::TryRemoveDynAttr(Function* leafFunc, std::vector<Operati
     // 3. 为dynParam的赋值刷新coa宏
     ReplaceCommonSymbol(leafFunc, callopArglistOneDim);
     ReBuildConcreteParam(leafFunc, callopArglistOneDim);
+    // 动态维度参数同样按全部 caller 分类，避免通用 COA 读取重复判断槽位类型。
+    for (const auto& [name, info] : leafFunc->GetDynParamTable()) {
+        if (!info.dim.IsValid() || !info.replacedSymbol.empty() || !info.dim.IsExpression() ||
+            info.dim.Raw()->GetExpressionOpcode() != SymbolicOpcode::T_MOP_CALL) {
+            continue;
+        }
+        auto dim = std::ref(leafFunc->GetMutableDynParam(name).dim);
+        if (BuildNewCoa(dim, callopArglistOneDim) != SUCCESS) {
+            APASS_LOG_WARN_F(Elements::Operation,
+                             "TryRemoveDynAttr keeps raw dynamic expression for dynParam[%s] of %s.", name.c_str(),
+                             leafFunc->GetRawName().c_str());
+        }
+    }
     return SUCCESS;
 }
 

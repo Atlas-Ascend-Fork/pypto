@@ -110,7 +110,7 @@ private:
                                       std::vector<SliceContractSliceRewrite>& rewrites, bool hasL1Consumer,
                                       std::vector<Operation*>& newOps, bool& operationUpdated);
     void RewriteSliceContractSliceConsumer(Function& function, Operation& contract, Operation& consumer,
-                                           bool isFullSlice, const std::vector<int64_t>& localOffset,
+                                           bool canBypassSlice, const std::vector<int64_t>& localOffset,
                                            const std::vector<SymbolicScalar>& localDynOffset,
                                            const LogicalTensorPtr& contractInput, LogicalTensorPtr& survivingInput,
                                            bool redirectEnabled, const LogicalTensorPtr& redirectTarget,

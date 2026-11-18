@@ -101,47 +101,6 @@ bool VerifyNewMacroExpr(std::reference_wrapper<SymbolicScalar>& dynScalar)
     return false;
 }
 
-/*
- * DynParam表专用校验（TestDynExpression）：与VerifyNewMacroExpr相比，额外接受well-formed的raw COA宏。
- *
- * 背景说明：slice-contract-slice对消（RemoveRedundantOpUtils::ProcessSliceContractSlice）落地后，
- * 混合L1/UB fan-out的contract链会保持物化，叶子函数首个输入tensor的valid shape[0]从编译期常量
- * （如1）变为运行时加载的COA宏（如RUNTIME_COA_GET_PARAM_VALID_SHAPE(2, 1, 0)）。此时该槽位在
- * 所有caller实参中取值不一致，ReBuildConcreteParam无法将其折叠为常量，dim只能保留raw宏。
- *
- * 这个结果是合法的：DynAttrToStatic对dynParam表的dim只做常量化改写（取值一致时折叠为常量），
- * MAYBE_CONST分类仅保证作用于op动态属性（BuildNewCoa）；不可常量化的dynParam dim保留raw宏
- * 是既有设计。raw宏与MAYBE_CONST(VARIABLE)运行时展开等价（GetCoa索引计算相同，均为运行时加载），
- * codegen对两种形式均兼容。
- *
- * 校验仍保留形态检查：dim要么是常量（非COA宏），要么是可被CoaInfo::ParseCoaString识别的
- * 四类合法COA宏之一（PARAM_OFFSET/VALID_SHAPE/PARAM/RAW_SHAPE），不允许出现畸形态表达式。
- */
-bool VerifyDynParamExpr(std::reference_wrapper<SymbolicScalar>& dynScalar)
-{
-    std::string dynParamExpr = SymbolicExpressionTable::BuildExpression(dynScalar);
-    if (dynParamExpr.find(COA_PREFIX) != 1) { // 非COA宏（常量或其他符号），无需MAYBE_CONST检查
-        return true;
-    }
-    // COA宏：接受MAYBE_CONST分类形式，或well-formed的raw COA宏（合法宏名+参数列表）
-    if (VerifyNewMacroExpr(dynScalar)) {
-        return true;
-    }
-    static const std::vector<std::string> kRawCoaMacros = {
-        "RUNTIME_COA_GET_PARAM_OFFSET(",
-        "RUNTIME_COA_GET_PARAM_VALID_SHAPE(",
-        "RUNTIME_COA_GET_PARAM_RAW_SHAPE(",
-        "RUNTIME_COA_GET_PARAM(",
-    };
-    for (const auto& macro : kRawCoaMacros) {
-        size_t pos = dynParamExpr.find(macro);
-        if (pos != std::string::npos && dynParamExpr.find(')', pos) != std::string::npos) {
-            return true;
-        }
-    }
-    return false;
-}
-
 TEST_F(DynAttrToStaticTest, TestGetTensorData)
 {
     int tiling = 32;
@@ -321,12 +280,90 @@ TEST_F(DynAttrToStaticTest, TestDynExpression)
         for (const auto& dynParam : leafFunc->GetDynParamTable()) {
             if (dynParam.second.replacedSymbol.empty() && dynParam.second.dim.IsValid()) {
                 std::reference_wrapper<SymbolicScalar> dynExpr = const_cast<SymbolicScalar&>(dynParam.second.dim);
-                // 使用DynParam表专用校验：物化链保持后首输入的valid shape变为运行时COA宏，
-                // 不可常量化的dim允许保留raw形式（详见VerifyDynParamExpr处的说明）。
-                EXPECT_EQ(VerifyDynParamExpr(dynExpr), true);
+                EXPECT_EQ(VerifyNewMacroExpr(dynExpr), true) << dynExpr.get().Dump();
             }
         }
     }
+}
+
+TEST_F(DynAttrToStaticTest, DynamicParametersUseCallerClassification)
+{
+    const auto runtimeRows = SymbolicScalar("runtime_rows");
+    const std::vector<std::vector<SymbolicScalar>> cases{
+        {runtimeRows, runtimeRows + 1}, {8, 16}, {runtimeRows, 8}, {8, 8}};
+    const std::vector<int> expectedModes{2, 3, 0, 1};
+    for (size_t idx = 0; idx < cases.size(); ++idx) {
+        auto leaf = std::make_shared<Function>(Program::GetInstance(), "leaf", "leaf", nullptr);
+        auto caller = std::make_shared<Function>(Program::GetInstance(), "caller", "caller", nullptr);
+        DynParamInfo info{1,     0,
+                          0,     DynParamInfoType::VALID_SHAPE,
+                          0,     SymbolicScalar(AddRuntimeCoaPrefix("GET_PARAM_VALID_SHAPE"))(1, 0, 0),
+                          false, ""};
+        leaf->InsertDynParam("rows", info);
+        std::vector<Operation*> calls;
+        for (const auto& rows : cases[idx]) {
+            auto& call = caller->AddOperation(Opcode::OP_CALL, {}, {});
+            auto attr = std::make_shared<CallOpAttribute>();
+            attr->GetLinearArgList() = {0, 0, 0, 0, rows};
+            call.SetOpAttribute(attr);
+            calls.push_back(&call);
+        }
+        DynAttrToStatic pass;
+        ASSERT_EQ(pass.TryRemoveDynAttr(leaf.get(), calls), SUCCESS);
+        auto actual = leaf->GetDynParamTable().at("rows").dim;
+        auto expected = expectedModes[idx] == 1 ? SymbolicScalar(8) :
+                                                  MAYBE_CONST_COA_GetValidShape(expectedModes[idx], -2, 1, 0, 0);
+        EXPECT_EQ(actual.Dump(), expected.Dump()) << "scenario " << idx;
+    }
+}
+
+TEST_F(DynAttrToStaticTest, MissingCallerArgumentKeepsCoaExpression)
+{
+    const std::vector<std::vector<SymbolicScalar>> missingArgumentCases{{}, {0, 0, 0, 0}};
+    for (const auto& arguments : missingArgumentCases) {
+        auto expression = SymbolicScalar(AddRuntimeCoaPrefix("GET_PARAM_VALID_SHAPE"))(1, 0, 0);
+        const auto originalExpression = expression.Dump();
+        auto dynScalar = std::ref(expression);
+        std::vector<std::vector<SymbolicScalar>> callerArguments{arguments};
+
+        DynAttrToStatic pass;
+        EXPECT_EQ(pass.BuildNewCoa(dynScalar, callerArguments), FAILED);
+        EXPECT_EQ(expression.Dump(), originalExpression);
+    }
+}
+
+TEST_F(DynAttrToStaticTest, CompoundDynamicParameterKeepsArithmetic)
+{
+    auto leaf = std::make_shared<Function>(Program::GetInstance(), "leaf", "leaf", nullptr);
+    auto caller = std::make_shared<Function>(Program::GetInstance(), "caller", "caller", nullptr);
+    auto expression = SymbolicScalar(AddRuntimeCoaPrefix("GET_PARAM_VALID_SHAPE"))(1, 0, 0) + 1;
+    DynParamInfo info{1, 0, 0, DynParamInfoType::VALID_SHAPE, 0, expression, false, ""};
+    leaf->InsertDynParam("rows", info);
+    auto& call = caller->AddOperation(Opcode::OP_CALL, {}, {});
+    auto attr = std::make_shared<CallOpAttribute>();
+    attr->GetLinearArgList() = {0, 0, 0, 0, SymbolicScalar("runtime_rows")};
+    call.SetOpAttribute(attr);
+
+    DynAttrToStatic pass;
+    ASSERT_EQ(pass.TryRemoveDynAttr(leaf.get(), {&call}), SUCCESS);
+    EXPECT_EQ(leaf->GetDynParamTable().at("rows").dim.Dump(), expression.Dump());
+}
+
+TEST_F(DynAttrToStaticTest, UnsupportedDynamicParameterKeepsExpression)
+{
+    auto leaf = std::make_shared<Function>(Program::GetInstance(), "leaf", "leaf", nullptr);
+    auto caller = std::make_shared<Function>(Program::GetInstance(), "caller", "caller", nullptr);
+    auto expression = SymbolicScalar(AddRuntimeCoaPrefix("GET_PARAM_ADDR"))(0);
+    DynParamInfo info{1, 0, 0, DynParamInfoType::VALID_SHAPE, 0, expression, false, ""};
+    leaf->InsertDynParam("rows", info);
+    auto& call = caller->AddOperation(Opcode::OP_CALL, {}, {});
+    auto attr = std::make_shared<CallOpAttribute>();
+    attr->GetLinearArgList() = {0, 0, 0, 0, SymbolicScalar("runtime_rows")};
+    call.SetOpAttribute(attr);
+
+    DynAttrToStatic pass;
+    ASSERT_EQ(pass.TryRemoveDynAttr(leaf.get(), {&call}), SUCCESS);
+    EXPECT_EQ(leaf->GetDynParamTable().at("rows").dim.Dump(), expression.Dump());
 }
 
 TEST_F(DynAttrToStaticTest, EdgeCases)

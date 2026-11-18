@@ -239,8 +239,22 @@ Status SplitLargeFanoutTensor::RunOnFunction(Function& function)
             return FAILED;
         }
     }
+    if (!config::EnableSlice()) {
+        APASS_LOG_INFO_F(Elements::Function, "===> End SplitLargeFanoutTensor.");
+        return SUCCESS;
+    }
+    // VIEW 链合并和有效形状推导可能形成新的 SLICE-CONTRACT-SLICE，完成后再次清理。
+    bool contractSliceUpdated = false;
+    if (RemoveRedundantOpUtils::ProcessContractSlice(function, addedOps_, contractSliceUpdated) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Function, "ProcessContractSlice after view merge failed.");
+        return FAILED;
+    }
+    if (contractSliceUpdated && !addedOps_.empty() && InferShapeUtils::InferShape(function, addedOps_) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Function, "InferShape after ProcessContractSlice failed.");
+        return FAILED;
+    }
     // 图清理后按实际写入源比较新建的 M-to-M 拆分块。
-    if (config::EnableSlice() && mtoMSplitTensors_.size() > 1) {
+    if (mtoMSplitTensors_.size() > 1) {
         MergeEquivalentMtoMRegions(function);
     }
     APASS_LOG_INFO_F(Elements::Function, "===> End SplitLargeFanoutTensor.");

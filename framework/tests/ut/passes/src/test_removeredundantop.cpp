@@ -4355,6 +4355,161 @@ TEST_F(TestRemoveRedundantOpPass, SliceContractSliceSinglePartialSliceShouldGene
 }
 
 /*
+SliceContractSliceSingleFullSliceWithDifferentDynValidShape
+静态区域完整覆盖，但源 Tensor 和消费者携带不同的动态有效形状。直接回接前置 Slice 会丢失消费者约束，
+因此通过生成 VIEW 保留有效形状，同时删除 CONTRACT 和尾部 SLICE。
+*/
+TEST_F(TestRemoveRedundantOpPass, SliceContractSliceSingleFullSliceWithDifferentDynValidShapeShouldGenerateView)
+{
+    const std::vector<std::pair<MemoryType, bool>> scenarios = {
+        {MemoryType::MEM_UNKNOWN, true}, {MemoryType::MEM_L1, true}, {MemoryType::MEM_L1, false}};
+    for (const auto& scenario : scenarios) {
+        const auto targetMemory = scenario.first;
+        const auto hasExplicitValidShape = scenario.second;
+        SCOPED_TRACE(static_cast<int>(targetMemory));
+        SCOPED_TRACE(hasExplicitValidShape);
+        auto function = std::make_shared<Function>(Program::GetInstance(), "SliceContractSliceDynValidShape",
+                                                   "SliceContractSliceDynValidShape", nullptr);
+        ASSERT_NE(function, nullptr);
+
+        std::vector<int64_t> shape = {kNumEight, kNumExpFour};
+        std::vector<int64_t> zeroOffset = {kNumZero, kNumZero};
+        std::vector<int64_t> inputShape = {kNumExpFour, kNumExpFour};
+        auto input = IRBuilder().CreateTensorVar(DT_FP32, inputShape, CreateTestConstIntVector(inputShape));
+        auto contractInput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        auto contractOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        auto sliceOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        auto output = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape),
+                                                  TileOpFormat::TILEOP_ND, "out");
+        const std::vector<SymbolicScalar> sourceValidShape = {CreateTestScalarVar("source_valid_rows"), kNumExpFour};
+        const auto consumerValidShape = SymbolicScalar::FromConcrete(shape);
+        contractInput->UpdateDynValidShape(sourceValidShape);
+        sliceOutput->UpdateDynValidShape(consumerValidShape);
+
+        auto& precedingSlice = PassOperationUtils::AddOperation(
+            *function, Opcode::OP_SLICE, {input}, {contractInput}, [&zeroOffset, &sourceValidShape](Operation& op) {
+                op.SetOpAttribute(
+                    std::make_shared<ViewOpAttribute>(zeroOffset, std::vector<SymbolicScalar>{}, sourceValidShape));
+            });
+        PassOperationUtils::AddOperation(
+            *function, Opcode::OP_CONTRACT, {contractInput}, {contractOutput},
+            [&zeroOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset)); });
+        auto& tailSlice = PassOperationUtils::AddOperation(
+            *function, Opcode::OP_SLICE, {contractOutput}, {sliceOutput},
+            [&zeroOffset, &consumerValidShape, targetMemory, hasExplicitValidShape](Operation& op) {
+                auto attr = std::make_shared<ViewOpAttribute>(
+                    zeroOffset, std::vector<SymbolicScalar>{},
+                    hasExplicitValidShape ? consumerValidShape : std::vector<SymbolicScalar>{});
+                attr->SetToType(targetMemory);
+                op.SetOpAttribute(attr);
+                op.SetAttr<int64_t>(OpAttributeKey::copyInMode, kNumOne);
+            });
+        if (!hasExplicitValidShape) {
+            std::dynamic_pointer_cast<ViewOpAttribute>(tailSlice.GetOpAttribute())->SetToDynValidShape({});
+        }
+        auto& exp = PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {sliceOutput}, {output});
+
+        std::vector<Operation*> newOps;
+        bool operationUpdated = false;
+        ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+        if (!hasExplicitValidShape) {
+            EXPECT_FALSE(operationUpdated);
+            EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumOne);
+            EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumTwo);
+            EXPECT_EQ(CountOpcode(function, Opcode::OP_VIEW), kNumZero);
+            continue;
+        }
+        EXPECT_TRUE(operationUpdated);
+        EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumZero);
+        EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumOne);
+        EXPECT_EQ(CountOpcode(function, Opcode::OP_VIEW), kNumOne);
+        auto* generatedView = FindSingleOp(function, Opcode::OP_VIEW);
+        ASSERT_NE(generatedView, nullptr);
+        EXPECT_EQ(generatedView->GetIOperands().front(), contractInput);
+        EXPECT_EQ(exp.GetIOperands().front(), generatedView->GetOOperands().front());
+        auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(generatedView->GetOpAttribute());
+        ASSERT_NE(viewAttr, nullptr);
+        EXPECT_EQ(viewAttr->GetFromOffset(), zeroOffset);
+        EXPECT_EQ(viewAttr->GetToDynValidShape(), consumerValidShape);
+        EXPECT_EQ(contractInput->GetDynValidShape().size(), sourceValidShape.size());
+        EXPECT_EQ(contractInput->GetDynValidShape().front().Dump(), sourceValidShape.front().Dump());
+        if (targetMemory == MemoryType::MEM_L1) {
+            EXPECT_EQ(viewAttr->GetTo(), MemoryType::MEM_L1);
+            EXPECT_EQ(contractInput->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
+            int64_t copyInMode = kNumZero;
+            EXPECT_TRUE(precedingSlice.GetAttr<int64_t>(OpAttributeKey::copyInMode, copyInMode));
+            EXPECT_EQ(copyInMode, kNumOne);
+        }
+    }
+}
+
+// fanout 回退会直接回接完整 SLICE；有效形状不同时保留整链和两条读分支。
+TEST_F(TestRemoveRedundantOpPass, SliceContractSliceFanoutWithDifferentDynValidShapeShouldKeepMaterialization)
+{
+    for (bool hasDynamicOffset : {false, true}) {
+        SCOPED_TRACE(hasDynamicOffset);
+        auto function = std::make_shared<Function>(Program::GetInstance(), "SliceContractSliceFanoutDynValidShape",
+                                                   "SliceContractSliceFanoutDynValidShape", nullptr);
+        const std::vector<int64_t> inputShape = {kNumExpFour, kNumExpFour};
+        const std::vector<int64_t> fullShape = {kNumEight, kNumExpFour};
+        const std::vector<int64_t> partShape = {kNumFour, kNumExpFour};
+        const std::vector<int64_t> zeroOffset = {kNumZero, kNumZero};
+        const std::vector<int64_t> partOffset = {kNumFour, kNumZero};
+        const std::vector<SymbolicScalar> sourceValidShape = {CreateTestScalarVar("source_valid_rows"), kNumExpFour};
+        const auto consumerValidShape = SymbolicScalar::FromConcrete(fullShape);
+        const auto precedingDynOffset = hasDynamicOffset ?
+                                            std::vector<SymbolicScalar>{CreateTestScalarVar("source_row"), kNumZero} :
+                                            std::vector<SymbolicScalar>{};
+        auto input = IRBuilder().CreateTensorVar(DT_FP32, inputShape, CreateTestConstIntVector(inputShape));
+        auto contractInput = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+        auto contractOutput = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+        auto fullSliceOutput = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+        auto partSliceOutput = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+        auto fullOutput = IRBuilder().CreateTensorVar(DT_FP32, fullShape, CreateTestConstIntVector(fullShape));
+        auto partOutput = IRBuilder().CreateTensorVar(DT_FP32, partShape, CreateTestConstIntVector(partShape));
+        contractInput->UpdateDynValidShape(sourceValidShape);
+        fullSliceOutput->UpdateDynValidShape(consumerValidShape);
+        PassOperationUtils::AddOperation(
+            *function, Opcode::OP_SLICE, {input}, {contractInput},
+            [&zeroOffset, &precedingDynOffset, &sourceValidShape](Operation& op) {
+                op.SetOpAttribute(std::make_shared<ViewOpAttribute>(zeroOffset, precedingDynOffset, sourceValidShape));
+            });
+        PassOperationUtils::AddOperation(
+            *function, Opcode::OP_CONTRACT, {contractInput}, {contractOutput},
+            [&zeroOffset](Operation& op) { op.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zeroOffset)); });
+        auto& fullSlice = PassOperationUtils::AddOperation(
+            *function, Opcode::OP_SLICE, {contractOutput}, {fullSliceOutput},
+            [&zeroOffset, &consumerValidShape](Operation& op) {
+                op.SetOpAttribute(
+                    std::make_shared<ViewOpAttribute>(zeroOffset, std::vector<SymbolicScalar>{}, consumerValidShape));
+            });
+        PassOperationUtils::AddOperation(
+            *function, Opcode::OP_SLICE, {contractOutput}, {partSliceOutput},
+            [&partOffset](Operation& op) { op.SetOpAttribute(std::make_shared<ViewOpAttribute>(partOffset)); });
+        auto& fullReader = PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {fullSliceOutput}, {fullOutput});
+        auto& partReader = PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {partSliceOutput}, {partOutput});
+
+        std::vector<Operation*> newOps;
+        bool operationUpdated = false;
+        ASSERT_EQ(RemoveRedundantOpUtils::ProcessContractSlice(*function, newOps, operationUpdated), SUCCESS);
+
+        ASSERT_FALSE(operationUpdated);
+        EXPECT_TRUE(newOps.empty());
+        EXPECT_EQ(CountOpcode(function, Opcode::OP_CONTRACT), kNumOne);
+        EXPECT_EQ(CountOpcode(function, Opcode::OP_SLICE), kNumThree);
+        EXPECT_EQ(fullReader.GetIOperands().front(), fullSliceOutput);
+        EXPECT_EQ(partReader.GetIOperands().front(), partSliceOutput);
+        EXPECT_EQ(fullSliceOutput->GetProducers().size(), kSizeOne);
+        EXPECT_EQ(contractInput->GetDynValidShape().front().Dump(), sourceValidShape.front().Dump());
+        EXPECT_EQ(fullSlice.GetIOperands().front(), contractOutput);
+        auto attr = std::dynamic_pointer_cast<ViewOpAttribute>(fullSlice.GetOpAttribute());
+        ASSERT_NE(attr, nullptr);
+        EXPECT_EQ(attr->GetToDynValidShape(), consumerValidShape);
+    }
+}
+
+/*
 SliceContractSliceMixedFanout
 input{8,16}->slice(preceding)->contractInput{8,16}->contract->contractOutput{8,16}
                                                        ->slice0{0,0}->sliceOut0{4,16}->exp0
