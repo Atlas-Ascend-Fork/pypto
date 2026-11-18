@@ -36,7 +36,7 @@ pypto_pro.language.system.sync_all(
 ## 约束说明
 
 - 所有参与同步的核必须以相同顺序执行相同次数的sync_all。若循环次数或分支条件不一致，导致部分核少执行或多执行sync_all，可能发生死锁。MIX模式下，AIC侧与AIV侧的调用必须一一对应。
-- 纯Vector Kernel使用AIV_ONLY，纯Cube Kernel使用AIC_ONLY。MIX模式要求Cube侧AIC和Vector侧AIV都执行对应的sync_all；只在一侧调用会使另一侧无法到达屏障，导致Kernel超时。
+- 纯Vector Kernel须显式使用AIV_ONLY，纯Cube Kernel须显式使用AIC_ONLY。MIX模式要求AIC和AIV两侧都执行对应的sync_all；若缺少任一侧的调用，同步条件不满足，可能触发AI Core Error。
 - 多流或多个算子并发执行，且并发算子申请的核数总和超过物理核数时，如果至少两个并发算子使用sync_all，部分核可能因未被调度而无法到达屏障，造成死锁。须保证每个同步算子所需的核能够同时执行。
 - sync_all建立参与核之间的屏障。屏障前后需要跨核读写GM数据时，还需满足相应的数据可见性要求。
 - 与set_cross_core/wait_cross_core并用时，两侧的MIX屏障必须位于该SET/WAIT对的同一侧；禁止Cube侧先执行sync_all再SET、Vector侧先WAIT再执行sync_all，否则会形成环形等待。
