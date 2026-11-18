@@ -89,6 +89,14 @@ TILEOP void TLoad3D(T& dst, U& src, const int64_t& mPos, const int64_t& kPos, co
 
     uint8_t values[4] = {static_cast<uint8_t>(padLeft), static_cast<uint8_t>(padRight), static_cast<uint8_t>(padTop),
                          static_cast<uint8_t>(padBottom)};
+    int64_t fmapH = isConv3D ? shape3 : shape2;
+    int64_t fmapW = isConv3D ? shape4 : shape3;
+    int64_t hOut = (fmapH + values[2] + values[3] - dilationH * (filterH - 1) - 1) / strideH + 1;
+    int64_t wOut = (fmapW + values[0] + values[1] - dilationW * (filterW - 1) - 1) / strideW + 1;
+    int64_t mPerBatch = (isConv3D ? shape1 : 1) * hOut * wOut;
+    if (mPos >= shape0 * mPerBatch) {
+        return;
+    }
     SetConvTileParams<isConv3D>(l1, values, filterH, filterW, dilationH, dilationW, strideH, strideW, padValue, mL0,
                                 kL0, shape1, shape2, shape3, shape4, c0Size, repeatStride, repeatTime, dstStride);
 

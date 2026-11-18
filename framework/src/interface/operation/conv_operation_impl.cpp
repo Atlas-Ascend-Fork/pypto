@@ -447,8 +447,8 @@ LogicalTensorPtr ConstructBiasTile(Function& function, const ConvGraphNodes& ten
 }
 
 static void SetImg2ColSymPadAttr(Operation& op, const ConvAttrParam& convAttrParam, const ConvIterInfo& iterInfo,
-                                 const LogicalTensorPtr& aL1TensorPtr, int64_t strideH, int64_t strideW,
-                                 int64_t dilatedKernelH, int64_t dilatedKernelW)
+                                 const ConvTileInfo& convTileInfo, const LogicalTensorPtr& aL1TensorPtr,
+                                 int64_t strideH, int64_t strideW, int64_t dilatedKernelH, int64_t dilatedKernelW)
 {
     uint32_t indexH = convAttrParam.isConv3D ? NCDHW_H_IDX : NCHW_H_IDX;
     uint32_t indexW = convAttrParam.isConv3D ? NCDHW_W_IDX : NCHW_W_IDX;
@@ -464,10 +464,25 @@ static void SetImg2ColSymPadAttr(Operation& op, const ConvAttrParam& convAttrPar
     SymbolicScalar symPadLeft = kernelPadLeft.ConcreteValid() ?
                                     SymbolicScalar(iterInfo.wL1InOffset >= 0 ? 0 : -iterInfo.wL1InOffset) :
                                     iterInfo.symPadLeftL1;
+    SymbolicScalar validHoutL1 = convTileInfo.dynValidHout.Sub(SymbolicScalar(iterInfo.hL1OutOffset))
+                                     .Min(SymbolicScalar(convTileInfo.hAL1Out))
+                                     .Max(SymbolicScalar(0));
+    SymbolicScalar validWoutL1 = convTileInfo.dynValidWout.Sub(SymbolicScalar(iterInfo.wL1OutOffset))
+                                     .Min(SymbolicScalar(convTileInfo.wAL1Out))
+                                     .Max(SymbolicScalar(0));
+    SymbolicScalar symPadBottomFull = (fullH - l1ValidH - symPadTop).Max(SymbolicScalar(0));
+    SymbolicScalar symPadRightFull = (fullW - l1ValidW - symPadLeft).Max(SymbolicScalar(0));
+    SymbolicScalar symPadBottomNeed = ((validHoutL1 - 1) * strideH + dilatedKernelH - l1ValidH).Max(SymbolicScalar(0));
+    SymbolicScalar symPadRightNeed = ((validWoutL1 - 1) * strideW + dilatedKernelW - l1ValidW).Max(SymbolicScalar(0));
+    constexpr int64_t fmatrixPadFieldMax = 255;
+    SymbolicScalar symPadBottom = (symPadBottomFull > SymbolicScalar(fmatrixPadFieldMax))
+                                      .Ternary(symPadBottomNeed, symPadBottomFull);
+    SymbolicScalar symPadRight = (symPadRightFull > SymbolicScalar(fmatrixPadFieldMax))
+                                     .Ternary(symPadRightNeed, symPadRightFull);
     op.SetAttribute(OpAttributeKey::symPaddingTop, symPadTop);
-    op.SetAttribute(OpAttributeKey::symPaddingBottom, fullH - l1ValidH - symPadTop);
+    op.SetAttribute(OpAttributeKey::symPaddingBottom, symPadBottom);
     op.SetAttribute(OpAttributeKey::symPaddingLeft, symPadLeft);
-    op.SetAttribute(OpAttributeKey::symPaddingRight, fullW - l1ValidW - symPadLeft);
+    op.SetAttribute(OpAttributeKey::symPaddingRight, symPadRight);
 }
 
 static void SetImg2ColConcretePadAttr(Operation& op, const ConvAttrParam& convAttrParam, const ConvIterInfo& iterInfo,
@@ -508,8 +523,8 @@ void SetImg2ColAttr(Operation& load3dOpAl0, const ConvAttrParam& convAttrParam, 
     load3dOpAl0.SetAttribute(OpAttributeKey::dilationW, dilationW);
     load3dOpAl0.SetAttribute(OpAttributeKey::filterH, convTileInfo.orgKh);
     load3dOpAl0.SetAttribute(OpAttributeKey::filterW, convTileInfo.orgKw);
-    SetImg2ColSymPadAttr(load3dOpAl0, convAttrParam, iterInfo, aL1TensorPtr, strideH, strideW, dilatedKernelH,
-                         dilatedKernelW);
+    SetImg2ColSymPadAttr(load3dOpAl0, convAttrParam, iterInfo, convTileInfo, aL1TensorPtr, strideH, strideW,
+                         dilatedKernelH, dilatedKernelW);
     SetImg2ColConcretePadAttr(load3dOpAl0, convAttrParam, iterInfo, convTileInfo, true);
     SetImg2ColConcretePadAttr(load3dOpAl0, convAttrParam, iterInfo, convTileInfo, false);
     // cal postm postk
