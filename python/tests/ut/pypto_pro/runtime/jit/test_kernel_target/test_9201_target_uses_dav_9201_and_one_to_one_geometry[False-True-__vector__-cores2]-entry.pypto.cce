@@ -1,4 +1,4 @@
-__global__ __vector__ void probe()
+extern "C" __global__ __vector__ void probe()
 {
     probe_impl();
 }

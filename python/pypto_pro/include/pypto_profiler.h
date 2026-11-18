@@ -39,9 +39,7 @@ inline uint64_t BeginCaptureTensorReport(bool profiling)
     if (!profiling) {
         return 0;
     }
-    // Report for every launch, captured or eager: the toolchain launch stub no
-    // longer reports node basics and the range (Tx) pipeline no longer persists
-    // eager tensor data, so the exporter needs the full record set from us.
+    // Measure the launch window used to associate our node and tensor records.
     return MsprofSysCycleTime();
 }
 
@@ -114,10 +112,7 @@ inline void ReportCaptureTensorInfo(const aclprofTensorInfo& info, uint64_t begi
     const uint64_t timestamp = end;
     const auto threadId = static_cast<uint32_t>(syscall(SYS_gettid));
 
-    // The exporter anchors eager kernel rows on an aging node-basic record and
-    // only then attaches the additional tensor information, as the aclnn op
-    // framework reports both with one shared timestamp. Emit the anchor first:
-    // newer toolkits no longer report it from the launch stub.
+    // Report node and tensor metadata with the same name and timestamp.
     MsprofCompactInfo anchor{};
     anchor.level = MSPROF_REPORT_NODE_LEVEL;
     anchor.type = MSPROF_REPORT_NODE_BASIC_INFO_TYPE;

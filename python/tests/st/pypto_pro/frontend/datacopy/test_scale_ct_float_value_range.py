@@ -50,7 +50,9 @@ def _make_k(device: str) -> torch.Tensor:
 def _make_ct_kernel(scale_value: float):
     """Factory: FP32->INT8 store kernel with a compile-time float scale literal."""
 
-    @pl.jit(name=f"ct_float_scale_{scale_value}")
+    scale_name = str(scale_value).replace("-", "neg_").replace("+", "pos_").replace(".", "p")
+
+    @pl.jit(name=f"ct_float_scale_{scale_name}")
     def kernel(
         q: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
         k: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],

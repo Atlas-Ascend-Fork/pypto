@@ -24,15 +24,19 @@ __all__ = ["KernelDef"]
 
 import ast
 import inspect
+import re
 import textwrap
 from typing import Any, Callable, TypeVar
 
 from pypto.pypto_impl import ir
 from pypto_pro.language.parser._ast_parser import ASTParser
+from pypto_pro.language.parser._struct_parser import _CPP_KEYWORDS
 from pypto_pro.language.typing.direction import TensorDirection
 
 from .._errors import (
     CommonInner,
+    InvalidArgument,
+    InvalidType,
     NameNotFound,
     PyptoProError,
     RuntimeFailure,
@@ -42,6 +46,18 @@ from .._errors import (
     span_of_spec_message,
     spec_head_of,
 )
+
+
+def _validate_kernel_name(name: str) -> None:
+    """Validate a name that will become a global C++ kernel symbol."""
+    if not isinstance(name, str):
+        raise InvalidType("name must be a string")
+    if re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name) is None or name in _CPP_KEYWORDS:
+        raise InvalidArgument("name must be a valid ASCII C++ identifier")
+    if name == "call_kernel":
+        raise InvalidArgument("name 'call_kernel' is reserved for the JIT host launcher")
+    if name.startswith("__") or re.match(r"_[A-Z]", name) or name in {"AICORE", "SK_BIND"}:
+        raise InvalidArgument(f"name '{name}' is reserved for C++ or the kernel toolchain")
 
 
 def _calculate_col_offset(source_lines: list[str]) -> int:
@@ -175,7 +191,7 @@ class KernelDef:
         col_offset: Column indentation offset.
         func_def: AST FunctionDef node.
         closure_vars: Captured caller scope for name resolution.
-        name: Optional program name.
+        name: Optional program and kernel function name.
         func_type: IR function type (Opaque, InCore, Helper).
         strict_ssa: Whether to enforce SSA.
         meta_data: Optional metadata.
@@ -275,7 +291,8 @@ class KernelDef:
         resolution. Parser tables retain their parse-time metadata. The observer
         must not mutate either object; its exceptions propagate to the caller.
         """
-        program_name = self._name if self._name is not None else self._func.__name__
+        kernel_name = self._name if self._name is not None else self._func.__name__
+        _validate_kernel_name(kernel_name)
 
         try:
             # The Program owns one IRDebugInfo; share it with the parser so all
@@ -300,6 +317,7 @@ class KernelDef:
                 allow_early_return=True,
             )
 
+            self._func_def.name = kernel_name
             try:
                 ir_func = parser.parse_function(
                     self._func_def,
@@ -351,11 +369,17 @@ class KernelDef:
                 wrapper = error_class_of_spec_message(str(e)) or RuntimeFailure
                 raise wrapper(message, span=span, hint=hint) from e
 
+            if ir_func.name in parser.external_funcs:
+                raise InvalidArgument(
+                    f"kernel name '{ir_func.name}' conflicts with a referenced VF function",
+                    span=ir_func.span,
+                    hint="Choose a different @pl.jit(name=...) or rename the VF function.",
+                )
             external_funcs = list(parser.external_funcs.values())
             starting_line = self._line_offset + 1
             program_span = ir.Span(self._source_file, starting_line, self._col_offset)
             program = ir.Program(
-                external_funcs + [ir_func], program_name, program_span, parser.debug_info
+                external_funcs + [ir_func], kernel_name, program_span, parser.debug_info
             )
             # Tensor directions are resolved with parameter types and keyed by
             # stable parameter index for JIT profiling metadata.

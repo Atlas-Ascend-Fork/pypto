@@ -93,7 +93,7 @@ static void RecordLaunch(uint32_t dim, void*)
         caller = caller.replace("call_kernel(", f"call_kernel_{name}(")
         # Substitute only the device launch syntax: all surrounding host code is real.
         caller = caller.replace(
-            "probe<<<blockDim, nullptr, stream>>>(",
+            "::probe<<<blockDim, nullptr, stream>>>(",
             "RecordLaunch(blockDim, stream",
         )
         harness += caller

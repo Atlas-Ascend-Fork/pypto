@@ -7,6 +7,6 @@ extern "C" int64_t call_kernel(uint32_t blockDim, void* stream)
         return launchDim;
     }
     blockDim = static_cast<uint32_t>(launchDim);
-    probe<<<blockDim, nullptr, stream>>>();
+    ::probe<<<blockDim, nullptr, stream>>>();
     return launchDim;
 }

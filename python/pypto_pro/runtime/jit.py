@@ -922,6 +922,7 @@ def _generate_prof_range_snippet(
     String registration uses ``aclprofStr2Id`` from libmsprofiler; the
     ``ProfStr2Id`` alias in libprofapi must not be used (it can crash).
     Metadata failures must never break a launch.
+    The reported name matches the kernel symbol. No metadata is emitted without Tensor parameters.
     """
     tensors = [s for s in param_specs if s.kind == ParamKind.TENSOR]
     if not tensors:
@@ -946,7 +947,6 @@ def _generate_prof_range_snippet(
             f"        {{{tensor_type}, {_ACL_FORMAT_ND}, {acl_dtype}, {min(len(dims), 8)}, {shape_str}}},"
         )
 
-    op_name = f"PYPTO_{kernel_name}"
     # Keep tensors alive through the post-launch report/cache call. Outside
     # collection and capture, skip tensor initialization and string registration.
     return (
@@ -962,7 +962,7 @@ def _generate_prof_range_snippet(
         "        if (pyptoProfOn || pyptoCaptureOn) {\n"
         "        aclprofTensor pyptoProfTensors[] = {\n" + "\n".join(tensor_inits) + "\n        };\n"
         "        aclprofTensorInfo pyptoProfInfo{};\n"
-        "        pyptoProfInfo.opNameId = aclprofStr2Id(\"" + op_name + "\");\n"
+        f'        pyptoProfInfo.opNameId = aclprofStr2Id("{kernel_name}");\n'
         "        pyptoProfInfo.opTypeId = aclprofStr2Id(\"PyPTO\");\n"
         "        pyptoProfInfo.resv = 0;\n"
         f"        pyptoProfInfo.tensorNum = {len(tensor_inits)};\n"
@@ -1108,7 +1108,7 @@ def _generate_caller_cpp(
     if aicpu_kernel:
         launch_stmt = f"    {kernel_name}({call_args});\n"
     else:
-        launch_stmt = f"    {kernel_name}<<<{launch_config}>>>({call_args});\n"
+        launch_stmt = f"    ::{kernel_name}<<<{launch_config}>>>({call_args});\n"
 
     prof_include, prof_push, prof_pop = ("", "", "")
     if prof_param_specs and not aicpu_kernel:
@@ -1316,8 +1316,9 @@ def _make_global_entry(
     qualifier = f"__launch_bounds__({max_threads})" if simt_kernel else target.entry_qualifier
     sched = f"__schedmode__({schedmode}) " if schedmode else ""
 
+    # Use C linkage to avoid C++ name mangling of the device entry.
     return (
-        f"{sched}__global__ {qualifier} void {kernel_name}({sig})\n"
+        f'extern "C" {sched}__global__ {qualifier} void {kernel_name}({sig})\n'
         f"{{\n{body_prelude}    {kernel_name}_impl({call_args});\n}}\n"
     )
 
@@ -2388,7 +2389,9 @@ def jit(
         arch: Target architecture ("3510" or "9201" -- the __NPU_ARCH__ version;
             "a5" is a deprecated alias; or None for auto-detect).
         auto_mutex: Boolean flag to enable automatic mutex lock/unlock insertion.
-        name: Custom kernel name for build artifact path isolation.
+        name: Custom kernel name used for build artifacts, IR, device entry,
+            launch/SK binding and profiling. Defaults to the Python function name.
+            Names must be non-reserved ASCII C++ identifiers, including the default function name.
         pipeline: PipelineConfig for automatic preload pipeline transformation.
         compile_timeout: Compilation timeout in seconds (default 600).
         mode: Programming mode. ``None`` and ``"simd"`` use the existing JIT path;

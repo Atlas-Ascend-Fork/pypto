@@ -133,7 +133,7 @@ def test_static_shapes_are_literals():
     assert 'ReportCaptureTensorInfo(pyptoProfInfo, pyptoProfBegin, pyptoCaptureOn)' in pop
     assert 'aclprofRange' not in push + pop
     assert 'aclprofEventAttributes' not in push
-    assert "aclprofStr2Id(\"PYPTO_k\")" in push
+    assert "aclprofStr2Id(\"k\")" in push
     assert "pyptoProfInfo.tensorNum = 3;" in push
     assert "pyptoProfInfo.kernelType = 2;" in push
 
@@ -209,7 +209,7 @@ def test_caller_embeds_metadata_around_launch_static(simt_kernel):
         simt_kernel=simt_kernel,
     )
     assert '#include "acl/acl_prof.h"' in content
-    assert f'aclprofStr2Id("PYPTO_{cg.kernel_name}")' in content
+    assert f'aclprofStr2Id("{cg.kernel_name}")' in content
     push_idx = content.index("BeginCaptureTensorReport")
     launch = (
         "<<<dim3(gridX, gridY, gridZ), dim3(threadBlockX, threadBlockY, threadBlockZ), 0, stream>>>"
@@ -273,17 +273,20 @@ def test_metadata_checks_collection_and_capture_independently():
     assert "ReportCaptureTensorInfo" not in content[else_idx:]
 
 
-def test_native_metadata_gate(tmp_path):
+@pytest.mark.parametrize("kernel_name,expected_name", [("k", b"k"), ("custom_silu", b"custom_silu")])
+def test_native_metadata_gate(tmp_path, kernel_name, expected_name):
     """Execute the emitted control flow with recording APIs; an ordinary launch must not report."""
     target = get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3510, has_cube=False, has_vector=True)
     _inc, push, pop = _generate_prof_range_snippet(
-        "k", [_spec("a", [64], "fp32", pl.Input)], set(), target=target, launch_stmt="    ++launches;\n"
+        kernel_name, [_spec("a", [64], "fp32", pl.Input)], set(), target=target, launch_stmt="    ++launches;\n",
     )
     # Only API types/functions and the device launch are stubs; compile the actual generated guard.
     harness = r"""
 #include <cassert>
 #include <cstdint>
 #include <cstdio>
+#include <cstring>
+static const unsigned char expectedName[] = {EXPECTED_NAME_BYTES, 0};
 constexpr int ACL_SUCCESS = 0, ACL_STREAM_ATTR_CACHE_OP_INFO = 7;
 struct aclrtStreamAttrValue { bool cacheOpInfoSwitch; };
 struct aclprofTensor { uint32_t type, format, dataType, dimNum, shape[8]; };
@@ -305,7 +308,11 @@ static int aclrtGetStreamAttribute(void* stream, int attribute, aclrtStreamAttrV
     value->cacheOpInfoSwitch = capture;
     return queryError;
 }
-static uint64_t aclprofStr2Id(const char*) { return ++strings; }
+static uint64_t aclprofStr2Id(const char* name) {
+    const char* expected = strings == 0 ? reinterpret_cast<const char*>(expectedName) : "PyPTO";
+    assert(std::strcmp(name, expected) == 0);
+    return ++strings;
+}
 namespace pypto {
 static uint64_t BeginCaptureTensorReport(bool profiling)
 {
@@ -338,7 +345,7 @@ int main()
 }
 """
     source = tmp_path / "range_gate.cpp"
-    source.write_text(harness)
+    source.write_text(harness.replace("EXPECTED_NAME_BYTES", ", ".join(map(str, expected_name))), encoding="utf-8")
     binary = tmp_path / "range_gate"
     subprocess.run(["g++", "-std=c++17", "-O2", str(source), "-o", str(binary)],
                    check=True, capture_output=True, text=True)

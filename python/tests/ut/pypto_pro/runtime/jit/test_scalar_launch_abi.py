@@ -83,7 +83,7 @@ static void probe_impl({signature})
         'extern "C" int64_t call_kernel(', check_launch_slots + 'extern "C" int64_t call_kernel(', 1
     )
     # Replace only the ASC dispatch; compile the real host encoder and device decoder.
-    caller = caller.replace("probe<<<blockDim, nullptr, stream>>>(", "CheckLaunchSlots(")
+    caller = caller.replace("::probe<<<blockDim, nullptr, stream>>>(", "CheckLaunchSlots(")
     source = root / "caller.cpp"
     source.write_text(caller)
     library = root / "caller.so"

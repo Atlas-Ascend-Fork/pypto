@@ -55,7 +55,9 @@ def _make_scale_tensor(device: str, scale_values: list) -> torch.Tensor:
 def _make_per_tensor_store_kernel(scale_value: float):
     """Factory: per-tensor FP32->INT8 store kernel with a compile-time float scale."""
 
-    @pl.jit(name=f"p4_per_tensor_store_{scale_value}")
+    scale_name = str(scale_value).replace("-", "neg_").replace("+", "pos_").replace(".", "p")
+
+    @pl.jit(name=f"p4_per_tensor_store_{scale_name}")
     def kernel(
         q: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
         k: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
@@ -102,7 +104,9 @@ def _make_per_tensor_store_kernel(scale_value: float):
 def _make_per_tensor_relu_kernel(scale_value: float):
     """Factory: per-tensor FP32->INT8 store kernel with scale + ReLU fusion."""
 
-    @pl.jit(name=f"p4_per_tensor_relu_{scale_value}")
+    scale_name = str(scale_value).replace("-", "neg_").replace("+", "pos_").replace(".", "p")
+
+    @pl.jit(name=f"p4_per_tensor_relu_{scale_name}")
     def kernel(
         q: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],
         k: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32],

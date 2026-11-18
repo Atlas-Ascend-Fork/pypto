@@ -39,4 +39,4 @@ def test_aicpu_entry_uses_aicpu_qualifier_and_direct_call():
 
 def test_aicore_entry_keeps_global_qualifier():
     entry = _make_global_entry("k", _PARAMS, target=_TARGET)
-    assert entry.startswith("__global__ __mix__(1, 2) void k(")
+    assert entry.startswith('extern "C" __global__ __mix__(1, 2) void k(')

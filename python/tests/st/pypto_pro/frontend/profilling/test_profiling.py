@@ -219,6 +219,59 @@ def test_profiler_api_outputs(tmp_path, kind, mode):
 
 
 @pytest.mark.soc("950", "960")
+@pytest.mark.parametrize("name", [None, "pypto_pro_exact_profile_alias"])
+@pytest.mark.parametrize("mode", ["eager", "graph_before_collection"])
+def test_op_summary_exact_name(tmp_path, monkeypatch, name, mode):
+    """Require the exact Op Name; mangled names and extra prefixes must fail."""
+    _check_npu()
+    monkeypatch.setenv("ASCEND_WORK_PATH", str(tmp_path))
+
+    @pl.jit(name=name)
+    def prof_named_kernel(out: pl.Tensor[[32], pl.DT_INT32, pl.Output]):
+        with pl.section_vector():
+            out[0] = 7
+
+    out = torch.zeros(32, dtype=torch.int32, device=ST_DEVICE)
+    prof_named_kernel[1](out)
+    torch.npu.synchronize()
+    out.zero_()
+    torch.npu.synchronize()
+    output_dir = str(tmp_path / "profiler")
+    skip_first = int(mode == "graph_before_collection")
+    with torch_npu.profiler.profile(
+        activities=[torch_npu.profiler.ProfilerActivity.NPU],
+        experimental_config=_build_experimental_config(),
+        schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=1, repeat=1, skip_first=skip_first),
+        on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(output_dir, analyse_flag=True),
+    ) as prof:
+        for step in range(skip_first + 1):
+            if mode == "eager":
+                prof_named_kernel[1](out)
+            else:
+                if step == 0:
+                    graph = torch.npu.NPUGraph()
+                    with torch.npu.graph(graph):
+                        prof_named_kernel[1](out)
+                graph.replay()
+            torch.npu.synchronize()
+            prof.step()
+    assert out[0].item() == 7
+    expected = name if name is not None else "prof_named_kernel"
+    files = []
+    names = []
+    for _ in range(60):
+        files = glob.glob(os.path.join(output_dir, "**", "op_summary_*.csv"), recursive=True)
+        names = []
+        for csv_file in files:
+            with open(csv_file, encoding="utf-8", newline="") as stream:
+                names.extend(row.get("Op Name", "") for row in csv.DictReader(stream))
+        if expected in names:
+            break
+        time.sleep(0.5)
+    assert expected in names, f"Expected exact Op Name {expected!r}; files={files}, observed={names}"
+
+
+@pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("warm_kernel", [False, True], ids=["loaded_during_collection", "loaded_before_collection"])
 def test_tensor_reports_stop_with_collection(tmp_path, monkeypatch, warm_kernel):
     """Count reporting before/during/after collection, including loading a library while profiling."""

@@ -77,6 +77,13 @@ def test_asc_targets_keep_entry_profiling_and_launch_geometry_consistent(
     assert f"ResolveLaunchBlockDim<{cores[0]}, {cores[1]}>" in caller
 
 
+def test_global_entry_uses_c_linkage_for_a_stable_kernel_symbol():
+    """Device entries use C linkage to avoid C++ name mangling."""
+    target = get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3510, has_cube=False, has_vector=True)
+    entry = jit._make_global_entry("silu_pypto_kernel", [], target=target)
+    assert entry.startswith('extern "C" __global__ __vector__ void silu_pypto_kernel(')
+
+
 def test_simt_launcher_bakes_inferred_dynamic_ub_into_generated_caller():
     target = get_jit_compile_config().resolve_kernel_target(NpuArch.DAV_3510, has_cube=False, has_vector=True)
     caller = jit._generate_caller_cpp(
@@ -110,14 +117,15 @@ def test_simt_kernel_caller_emits_entry_and_launch(monkeypatch, tmp_path, max_th
     caller = (tmp_path / "call_kernel.cpp").read_text()
 
     assert caller.count("__global__") == 1
-    signature = next(line for line in caller.splitlines() if line.startswith("__global__"))
-    assert f"__global__ __launch_bounds__({max_threads}) void simt_kernel(" in signature
+    signature = next(line for line in caller.splitlines() if line.startswith('extern "C" __global__'))
+    assert f'extern "C" __global__ __launch_bounds__({max_threads}) void simt_kernel(' in signature
     assert "float* out" in signature
     assert "float scale" in signature
     assert "uint32_t count" in signature
     assert "__gm__" not in signature
     assert "simt_kernel_impl(" in caller
-    assert caller.index('#include "kernel.cpp"') < caller.index(signature) < caller.index('extern "C"')
+    call_kernel_linkage = caller.index('extern "C" int64_t call_kernel(')
+    assert caller.index('#include "kernel.cpp"') < caller.index(signature) < call_kernel_linkage
     assert "uint32_t gridX" in caller
     assert "uint32_t threadBlockZ" in caller
     assert "dynUbufSize" not in caller
