@@ -26,7 +26,7 @@ width将一个Warp划分为若干连续的逻辑子组，每个子组独立交�
 
 下图展示完整的32-Lane Warp。width=16时，线程0～15和线程16～31组成两个逻辑子组；第二行的组内Lane ID在每组中分别从0编号到15。调用warp_shfl(value, 3, 16)后，两组分别读取线程3和线程19持有的值。
 
-![warp_shfl结果示意图](../../figures/warp_shfl.jpg "warp_shfl结果示意图")
+![warp_shfl结果示意图](../../figures/warp_shfl.svg "warp_shfl结果示意图")
 
 ## 函数原型
 

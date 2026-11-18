@@ -2,7 +2,7 @@
 
 适用范围：`docs/` 下所有文档。
 
-规则编号范围：`TRM-01~02、06~12`（TRM-03~05 与维度 1 开源写作规范重复，已删除——术语首次出现全称解释、昇腾通用术语写法检查归 md-review-skill TERM-01/02）。
+规则编号范围：`TRM-01~02、06~12`（TRM-03~05 与维度 1 开源文档通用质检重复，已删除——术语首次出现全称解释、昇腾通用术语写法检查由维度 1 承载）。
 
 本文件分两部分：**规则**——术语约定（TRM-01~02、06：PyPTO 术语写法、常见变体对照、环境变量来源）与表达约定（TRM-07~12：全文通用的标识符引用、锚点与链接规范、pro 接口命名、数据类型写法、功能开关用词）；**检查方法**——文末统一给出对应排查手段。
 
@@ -19,8 +19,8 @@
 
 | 编号 | 规则 | 严重级别 |
 |------|------|---------|
-| TRM-01 | PyPTO 专有术语的写法（大小写、分合写、中英文选择）必须与第一级术语表（glossary.md）完全一致；昇腾/CANN 通用术语的写法由维度 1 开源写作规范及 md-review-skill TERM-01 约束（以昇腾术语表为准） | HIGH |
-| TRM-02 | 检查新文档时，若引入了两级术语表均未覆盖且面向用户的新领域术语，PR 须同步扩展 `glossary.md`（新增一行术语+含义）；属昇腾通用术语的，确认官方术语表已有定义即可 | MEDIUM |
+| TRM-01 | PyPTO 专有术语的写法（大小写、分合写、中英文选择）必须与第一级术语表（glossary.md）完全一致；昇腾/CANN 通用术语的写法由维度 1 开源文档通用质检约束（以昇腾术语表为准） | 严重 |
+| TRM-02 | 检查新文档时，若引入了两级术语表均未覆盖且面向用户的新领域术语，PR 须同步扩展 `glossary.md`（新增一行术语+含义）；属昇腾通用术语的，确认官方术语表已有定义即可 | 一般 |
 
 ### 常见变体对照
 
@@ -68,7 +68,7 @@
 
 | 编号 | 规则 | 严重级别 |
 |------|------|---------|
-| TRM-06 | 文档中使用的环境变量须来源于上述两个范围之一，**禁止使用范围外的环境变量**——引用不存在的环境变量会误导用户配置无效参数；确需引入新环境变量时，须在同一 PR 中于 `docs/zh/guide/appendix/env_vars/` 下新增对应说明文档并登记 index.md 的 toctree（见 STR-01） | HIGH |
+| TRM-06 | 文档中使用的环境变量须来源于上述两个范围之一，**禁止使用范围外的环境变量**——引用不存在的环境变量会误导用户配置无效参数；确需引入新环境变量时，须在同一 PR 中于 `docs/zh/guide/appendix/env_vars/` 下新增对应说明文档并登记 index.md 的 toctree（见 STR-01） | 严重 |
 
 ### 表达约定（TRM-07~12，全文通用）
 
@@ -76,12 +76,12 @@
 
 | 编号 | 规则 | 严重级别 |
 |------|------|---------|
-| TRM-07 | 叙述正文中提及接口名、参数名、类型名、枚举值、取值/默认值时**裸写**，不加反引号（如"input和other都为Tensor时"、"应通过set_vec_tile_shapes设置"、"默认为False"、"默认为HIGH_PRECISION"）——存量文档主体风格为裸写，agent 生成文档高频误用反引号或引号包裹，造成风格不一致；反引号仅用于命令、文件路径及完整调用表达式（如 `pypto.tensor([2], pypto.DT_INT16)`）；环境变量文档的取值反引号为其既定风格，不在此列；引用日志或报错原文的情况除外；同一文档内不得混用两种风格 | MEDIUM |
-| TRM-08 | 文内引用本文档其他章节使用锚点链接（如 `[约束说明](#约束说明)`），避免"参见下文"等模糊表述 | LOW |
-| TRM-09 | 正文描述中引用 pro 接口时，须使用完整模块路径名（如 pypto_pro.language.trap()、pypto_pro.language.CastLayout.ZERO），**禁止使用导入别名缩写**（如 pl.trap()、pl.Input）——别名依赖示例中的 import 语句，脱离上下文后用户无法定位接口；别名仅可出现在调用示例代码中，且示例须包含对应的 `import pypto_pro.language as pl` 语句 | HIGH |
-| TRM-10 | 数据类型写法须与对应接口体系的 DataType 枚举值保持一致，不得混用两个体系的写法：Tensor 接口参考 `docs/zh/api/tensor_api/datatype/DataType.md`（如 DT_INT8、DT_FP16、DT_BF16）；pro 接口参考 `docs/zh/api/pro_api/SIMD-API/basic_data_structures/DataType.md`（如 DT_FP4、DT_FP8E4M3FN） | HIGH |
-| TRM-11 | 链接引用规范：① 参见**本仓库**文档内容时，使用相对路径链接（如 `[术语表](./guide/appendix/glossary.md)`、`[约束说明](#约束说明)`），**禁止使用指向本仓库的绝对链接**（如 `https://gitcode.com/cann/pypto/blob/master/docs/...`）——绝对链接会跳出文档中心且路径易失效（指向 issues 等平台功能的链接除外）；② 参见 **CANN 其他产品文档**时，使用 [comterms.md](https://gitcode.com/cann/docs/blob/master/specification/comterms.md)（CANN 组织文档路径汇总）中登记的官方入口链接 | HIGH |
-| TRM-12 | 描述功能、特性、选项的启动/开启时，**禁止使用“使能”**，应使用“启用”或“开启”（如“启用tensor dump功能”），以免引起歧义 | HIGH |
+| TRM-07 | 叙述正文中提及接口名、参数名、类型名、枚举值、取值/默认值时**裸写**，不加反引号（如"input和other都为Tensor时"、"应通过set_vec_tile_shapes设置"、"默认为False"、"默认为HIGH_PRECISION"）——存量文档主体风格为裸写，agent 生成文档高频误用反引号或引号包裹，造成风格不一致；反引号仅用于命令、文件路径及完整调用表达式（如 `pypto.tensor([2], pypto.DT_INT16)`）；环境变量文档的取值反引号为其既定风格，不在此列；引用日志或报错原文的情况除外；同一文档内不得混用两种风格 | 一般 |
+| TRM-08 | 文内引用本文档其他章节使用锚点链接（如 `[约束说明](#约束说明)`），避免"参见下文"等模糊表述 | 提示 |
+| TRM-09 | 正文描述中引用 pro 接口时，须使用完整模块路径名（如 pypto_pro.language.trap()、pypto_pro.language.CastLayout.ZERO），**禁止使用导入别名缩写**（如 pl.trap()、pl.Input）——别名依赖示例中的 import 语句，脱离上下文后用户无法定位接口；别名仅可出现在调用示例代码中，且示例须包含对应的 `import pypto_pro.language as pl` 语句 | 严重 |
+| TRM-10 | 数据类型写法须与对应接口体系的 DataType 枚举值保持一致，不得混用两个体系的写法：Tensor 接口参考 `docs/zh/api/tensor_api/datatype/DataType.md`（如 DT_INT8、DT_FP16、DT_BF16）；pro 接口参考 `docs/zh/api/pro_api/SIMD-API/basic_data_structures/DataType.md`（如 DT_FP4、DT_FP8E4M3FN） | 严重 |
+| TRM-11 | 链接引用规范：① 参见**本仓库**文档内容时，使用相对路径链接（如 `[术语表](./guide/appendix/glossary.md)`、`[约束说明](#约束说明)`），**禁止使用指向本仓库的绝对链接**（如 `https://gitcode.com/cann/pypto/blob/master/docs/...`）——绝对链接会跳出文档中心且路径易失效（指向 issues 等平台功能的链接除外）；② 参见 **CANN 其他产品文档**时，使用 [comterms.md](https://gitcode.com/cann/docs/blob/master/specification/comterms.md)（CANN 组织文档路径汇总）中登记的官方入口链接 | 严重 |
+| TRM-12 | 描述功能、特性、选项的启动/开启时，**禁止使用“使能”**，应使用“启用”或“开启”（如“启用tensor dump功能”），以免引起歧义 | 严重 |
 
 ## 检查方法
 

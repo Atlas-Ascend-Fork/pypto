@@ -1,6 +1,6 @@
 ---
 name: pypto-doc-reviewer
-description: PyPTO 文档（docs/目录）质量检查，支持两种模式：开发者提交 PR 前自检、Committer 检视文档 PR。覆盖开源写作规范（复用 CANN 社区规范，含产品型号与芯片标签）、API 文档写作规范、术语及表达约定、目录文件维护要求四个维度。触发词：自检文档、文档自检、检查文档、检视文档、文档检视、review文档、检视PR、文档PR、docs检视。
+description: PyPTO 文档（docs/目录）质量检查，支持两种模式：开发者提交 PR 前自检、Committer 检视文档 PR。覆盖开源文档通用质检（复用 cannbot-skills 的 docs-common-review）、API 文档写作规范、术语及表达约定、目录文件维护要求四个维度。触发词：自检文档、文档自检、检查文档、检视文档、文档检视、review文档、检视PR、文档PR、docs检视。
 ---
 
 # PyPTO Doc Reviewer
@@ -18,11 +18,11 @@ description: PyPTO 文档（docs/目录）质量检查，支持两种模式：�
 
 ## 检查维度
 
-共 4 个维度。维度 1 复用 CANN 社区外部规范（含产品型号命名规范、产品标签使用规范，配套 md-review-skill 的 PR/TG 检视规则），其余规则在 `references/` 下；每个规则文件均分「规则」与「检查方法」（bash 命令与核对要点）两部分：
+共 4 个维度。维度 1 复用 cannbot-skills 的通用文档质检规则（docs-common-review：hub 入口，编排 markdownlint、标签闭合、链接有效性、资源存在性、拼写、文件命名、标点符号、合规、AI 语义 9 项检查），其余规则在 `references/` 下；每个规则文件均分「规则」与「检查方法」（bash 命令与核对要点）两部分：
 
 | # | 维度 | 何时必查 | 规则来源 |
 |---|------|---------|----------|
-| 1 | 开源写作规范 | 所有 `.md` | 外部（webfetch 读取，配套使用）：[开源文档写作规范](https://gitcode.com/cann/docs/blob/master/specification/document_writing_specs.md)（事实来源，含产品型号命名规范、产品标签使用规范）及配套检视规则 [md-review-skill](https://gitcode.com/cann/docs/blob/master/skills/md-review-skill/SKILL.md) |
+| 1 | 开源文档通用质检 | 所有 `.md` | 外部（webfetch 读取；本地已装 docs-common-review 家族 skills 时直接调用）：[docs-common-review 通用文档质检规则](https://gitcode.com/cann/cannbot-skills/blob/master/infra/docs-common-review/SKILL.md)（固定按其**全量模式**执行） |
 | 2 | API 文档写作规范 | `docs/zh/api/` 下文件 | [rules-api.md](references/rules-api.md) |
 | 3 | 术语及表达约定 | 所有 `.md` | [rules-terms.md](references/rules-terms.md) |
 | 4 | 目录文件维护要求 | 文件新增/删除/移动/重命名，或修改 `index.md`/toctree 时 | [rules-structure.md](references/rules-structure.md) |
@@ -32,10 +32,10 @@ description: PyPTO 文档（docs/目录）质量检查，支持两种模式：�
 对检查范围内每个 `.md` 文件：
 
 1. **选维度**：按上表「何时必查」确定该文件命中的维度
-2. **读规则**：读取命中维度的规则文件（维度 1 用 webfetch 读取开源文档写作规范及配套的 md-review-skill 检视规则）
+2. **读规则**：读取命中维度的规则文件（维度 1 使用 docs-common-review 通用文档质检规则——固定按其**全量模式**执行 9 项检查，模式显式指定、不再询问；本地已装 docs-common-review 时直接读取并遵循其 `workflows/full-review.md`，否则按上表链接 webfetch 后执行）
 3. **读文件**：新文件读全文；修改文件按检查粒度——变更点检查读 diff 及所在章节上下文，全量检查读全文
 4. **逐条核对**：按「规则」逐项检查，并执行文件末尾「检查方法」中的排查命令。通用排版排查（维度 1，对所有 `.md` 执行）：`grep -nP '[\x{4e00}-\x{9fa5}] [A-Za-z0-9\x{4e00}-\x{9fa5}]|[A-Za-z0-9] [\x{4e00}-\x{9fa5}]' <目标文件>`——中文与英文之间、中文与中文之间均不加空格
-5. **记录**：命中问题按「问题输出格式」记为 findings，定级 CRITICAL/HIGH/MEDIUM/LOW。排查命令为文件级扫描，报告按检查粒度过滤——变更点检查（检视模式同）仅报变更行及其上下文内的问题，全量检查报全部命中
+5. **记录**：命中问题按「问题输出格式」记为 findings，定级 严重/一般/提示。排查命令为文件级扫描，报告按检查粒度过滤——变更点检查（检视模式同）仅报变更行及其上下文内的问题，全量检查报全部命中
 
 ---
 
@@ -60,22 +60,22 @@ description: PyPTO 文档（docs/目录）质量检查，支持两种模式：�
 
 ### 阶段 3：输出修复建议报告
 
-问题按严重级别排序（CRITICAL → LOW），每条给出：位置、规则编号、问题描述、修复建议。报告骨架：
+问题按严重级别排序（严重 → 提示），每条给出：位置、规则编号、问题描述、修复建议。报告骨架：
 
 ```markdown
 ## 文档自检报告: <文件/目录，或"未提交变更">（粒度：变更点/全量）
 
 ### 概览
-| 维度 | CRITICAL | HIGH | MEDIUM | LOW |
+| 维度 | 严重 | 一般 | 提示 |
 |------|----------|------|--------|-----|
 
 ### 问题列表
-**[1]** [CRITICAL] [维度][规则编号] 文件:行号
+**[1]** [严重] [维度][规则编号] 文件:行号
 - 问题：...
 - 建议：...
 
 ### 结论
-各维度问题数统计；CRITICAL/HIGH 清零后才建议提交 PR
+各维度问题数统计；严重清零后才建议提交 PR
 ```
 
 ## 工作流 B：检视模式（Committer）
@@ -84,7 +84,7 @@ description: PyPTO 文档（docs/目录）质量检查，支持两种模式：�
 
 **必须先确认 MR 的目标分支（base），再同步该分支并切换。目标分支不一定是 master，也可能是 9.2.0 等发布分支；基准选错（如用了落后的本地 master）会把已合入其他分支的提交误算进 PR 范围。** 确认方法按优先级：
 
-1. 查 MR 信息：`GET /repos/cann/pypto/pulls/<pr_number>` 返回的 base 字段（复用 md-review-skill 的 api_client.py），或直接询问用户
+1. 查 MR 信息：`GET /repos/cann/pypto/pulls/<pr_number>` 返回的 base 字段（用本 skill 的 `scripts/api_client.py`，无需 token 的 GET 也可不带配置调用），或直接询问用户
 2. 本地启发式（无法查 API 时）：先 fetch MR head，再对候选分支（`git ls-remote --heads upstream` 列出的 master 与各发布分支）逐一执行 `git merge-base pr_<pr_number> remotes/upstream/<分支>`——正确目标分支的 merge-base 紧贴该分支 tip，且 `git log remotes/upstream/<分支>..pr_<pr_number> --oneline` 只包含 PR 自身提交；两个候选都满足时须询问用户，不得默认 master
 
 merge-requests ref 只存在于上游仓 `cann/pypto`，本地 origin 若是 fork 则取不到，统一通过 upstream 远端获取：
@@ -122,41 +122,64 @@ git diff remotes/upstream/<目标分支>...pr_<pr_number> -p -- docs/
 ## 文档检视报告: PR #<N> - [PR标题]
 
 ### 概览
-| 维度 | CRITICAL | HIGH | MEDIUM | LOW |
+| 维度 | 严重 | 一般 | 提示 |
 |------|----------|------|--------|-----|
 
 ### 问题列表
-**[1]** [CRITICAL] [API文档写作规范][API-14] docs/zh/api/.../pypto-xxx.md:45
+**[1]** [严重] [API文档写作规范][API-14] docs/zh/api/.../pypto-xxx.md:45
 - 问题：...
 - 建议：...
 ```
 
 ### 阶段 5：评论提交（可选，需用户确认）
 
-生成报告后询问用户需提交哪些意见。**严禁未经确认自动提交。**
+生成报告后询问用户需提交哪些意见（提交全部 / 提交部分指定编号 / 不提交）。**严禁未经用户确认自动提交。**
 
-**Token 配置（提交评论的前提）**：提交评论须调用 GitCode API 做鉴权，Token 存于本地配置文件，由 `api_client.py` 读取，全程不回显、不打印：
+**Token 配置（提交评论的前提）**：Token 存于本地配置文件，由 `api_client.py` 读取，全程不回显、不打印、不暴露给上下文：
 
-- 默认路径：`~/.config/opencode/skills/md-review-skill/config/gitcode-config.json`（或经 `--config` 参数指定自定义路径）
-- 文件格式：`{"token": "<GitCode 私人令牌>", "baseUrl": "https://api.gitcode.com/api/v5"}`
+- 默认路径：`~/.config/opencode/skills/pypto-doc-reviewer/config/gitcode-config.json`（或经 `--config` 参数指定自定义路径）
+- 文件格式：`{"token": "<GitCode 私人令牌>", "baseUrl": "https://api.gitcode.com/api/v5"}`（`baseUrl` 可省略，缺省即此值）
 - **配置缺失时停止提交**，指引用户自行创建该文件（令牌在 GitCode「设置 → 私人令牌」生成，需具备 PR 评论写权限），待用户完成后再继续
 
-**提交方法**：复用 md-review-skill 的 `api_client.py`（实际位置用 `find / -name 'api_client.py' -path '*md-review*' 2>/dev/null` 定位）：
+**评论正文格式**：
 
-```bash
-python3 <api_client.py路径> POST /repos/cann/pypto/pulls/<pr_number>/comments --config <配置路径> \
-  --data '{"body": "[级别] [维度][规则编号] 文件:行号\n\n**问题**：...\n\n**建议**：...", "path": "docs/zh/api/.../pypto-xxx.md", "position": 42, "side": "RIGHT"}'
+- 首行：`[级别] [维度][规则编号] 文件:行号`。`[维度]` 与 `[规则编号]` 为两个独立字段：维度填检查维度名（维度 1 的问题填具体检查项名，如 标点符号、文件命名）；规则编号填具体编号（如 API-14、STR-02），多个用「、」分隔，维度无对应编号时省略该段
+- 正文仅保留 **问题** 与 **建议** 两段：首行已含级别、维度、规则编号、文件与行号，正文不重复这些信息（不复述规则名称与编号，不重复文件路径和行号）。评论须自明——「问题」写清现象与违反的要求，「建议」给出明确、可直接落地的修改（如修正后的文本或写法）
+- 填充实例：
+
+```markdown
+[严重] [API文档写作规范][API-14] docs/zh/api/tensor_api/operation/pypto-xxx.md:45
+
+**问题**：约束说明中 store 模式列表缺少 l2_cache_mode 取值，与 .py 签名不一致。
+
+**建议**：补充 l2_cache_mode 取值说明，与函数原型保持一致。
 ```
 
-- POST 字段为扁平的 `path`/`position`/`side`，勿写嵌套 position 对象（会被 400 拒绝）；`position` 为 PR head 侧**绝对行号**
-- **`path` 必须是 PR 变更文件列表中的文件**：问题涉及不在 diff 中的文件时（如漏登记 `index_hiascend.md`），评论挂到相关变更文件上（如新增文档本身）
+**行内评论字段**：GitCode 接受 GitHub 风格的三个扁平字段——`path`（文件路径，必填）、`position`（**PR head 侧绝对行号**，直接取报告中的 `文件:行号` 使用，无需 diff hunk 偏移反算）、`side`（默认 `"RIGHT"`）。POST 只接受扁平字段，勿写嵌套 `position` 对象（会被 400 拒绝）。**`path` 必须是 PR 变更文件列表中的文件**：问题涉及不在 diff 中的文件时（如漏登记 `index_hiascend.md`），评论挂到相关变更文件上（如新增文档本身）。
+
+**提交方法**：使用本 skill 自带的 `scripts/api_client.py`（Token 不暴露），**必须用 `python3` 调用**（Linux 系统通常无 `python`）：
+
+```bash
+python3 ~/.config/opencode/skills/pypto-doc-reviewer/scripts/api_client.py POST \
+  /repos/cann/pypto/pulls/<pr_number>/comments \
+  --config ~/.config/opencode/skills/pypto-doc-reviewer/config/gitcode-config.json \
+  --data '{
+    "body": "[严重] [API文档写作规范][API-14] docs/zh/api/.../pypto-xxx.md:45\n\n**问题**：...\n\n**建议**：...",
+    "path": "docs/zh/api/.../pypto-xxx.md",
+    "position": 45,
+    "side": "RIGHT"
+  }'
+```
+
+（已安装副本（`~/.config/opencode/skills/pypto-doc-reviewer/`）与本仓源（`.agents/skills/pypto-doc-reviewer/`）结构一致，`scripts/api_client.py` 与 `config/` 均随 skill 提供。）
 
 **流程：先 smoke test 再批量**：
 
-1. 先 POST 1 条，取响应中数字型 `id`（即 note_id；`discussion_id` 为 SHA，不能用于 API 路径）
-2. `GET /repos/cann/pypto/pulls/comments/<note_id>` 验证 `position.new_line` 与目标行号一致
-3. 错位则 `DELETE /repos/cann/pypto/pulls/comments/<note_id>` 撤回（返回 204 即成功），修正字段后重发
+1. 先 POST 1 条。响应中数字型 `id` 即 `note_id`（后续 GET/DELETE 均用它作路径参数）；`discussion_id` 是 SHA 字符串，**不能**用于 API 路径（会 400 `Invalid path parameter: note_id, number required`）
+2. `GET /repos/cann/pypto/pulls/comments/<note_id>` 验证返回的 `position.new_line` 与目标行号一致——这是 GitCode 文档不完整情况下唯一可信的对错验证
+3. 错位则立即 `DELETE /repos/cann/pypto/pulls/comments/<note_id>` 撤回（返回 204 即成功），修正字段重新 POST；**不要**先批量提交再发现全错位
 4. 验证通过后批量提交剩余意见，最后 GET 评论列表复核
+5. 兜底：某文件 POST 行内评论返回 400 `diff failed to be generated due to invalid params under position param`（该文件无法锚定 position）时，降级为不带 `path`/`position` 的普通评论，文件与行号写在正文首行
 
 ---
 
@@ -166,7 +189,7 @@ python3 <api_client.py路径> POST /repos/cann/pypto/pulls/<pr_number>/comments 
 
 ```json
 {
-  "severity": "CRITICAL|HIGH|MEDIUM|LOW",
+  "severity": "严重|一般|提示",
   "file": "docs/zh/api/tensor_api/operation/pypto-xxx.md",
   "line": 42,
   "rule_id": "API-14",
@@ -181,7 +204,6 @@ python3 <api_client.py路径> POST /repos/cann/pypto/pulls/<pr_number>/comments 
 
 | 级别 | 含义 | 示例 |
 |------|------|------|
-| CRITICAL | 导致构建失败或信息错误误导用户 | toctree 漏登记导致文档不可见；原型与代码不一致；npu 标签不配对 |
-| HIGH | 违反强制规范 | 产品型号名写错；术语与术语表冲突 |
-| MEDIUM | 违反建议性规范 | 数据结构类文档固定部分顺序改变；示例缺注释 |
-| LOW | 体验优化 | 标点、空行等 |
+| 严重 | 导致构建失败或信息错误误导用户；违反强制规范 | toctree 漏登记导致文档不可见；原型与代码不一致；npu 标签不配对；产品型号名写错；术语与术语表冲突 |
+| 一般 | 违反建议性规范 | 数据结构类文档固定部分顺序改变；示例缺注释 |
+| 提示 | 体验优化 | 标点、空行等 |

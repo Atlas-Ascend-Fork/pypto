@@ -20,7 +20,7 @@
 
 **图1** lanemask_eq示意图
 
-![lanemask_eq示意图](../../figures/lanemask_eq.jpg "lanemask_eq示意图")
+![lanemask_eq示意图](../../figures/lanemask_eq.svg "lanemask_eq示意图")
 
 ## 函数原型
 

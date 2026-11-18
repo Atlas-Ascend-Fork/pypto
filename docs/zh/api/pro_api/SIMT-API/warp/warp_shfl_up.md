@@ -23,7 +23,7 @@ width将一个Warp划分为若干连续的逻辑子组，每个子组独立交�
 
 下图展示完整的32-Lane Warp。width=16时，线程0～15和线程16～31组成两个逻辑子组；第二行的组内Lane ID在每组中分别从0编号到15。调用warp_shfl_up(value, 1, 16)后，各组内除第一个Lane外均读取前一个Lane的值，线程0和线程16保留自己的值。
 
-![warp_shfl_up结果示意图](../../figures/warp_shfl_up.jpg "warp_shfl_up结果示意图")
+![warp_shfl_up结果示意图](../../figures/warp_shfl_up.svg "warp_shfl_up结果示意图")
 
 ## 函数原型
 

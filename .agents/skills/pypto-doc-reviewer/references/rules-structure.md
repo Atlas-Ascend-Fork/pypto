@@ -6,7 +6,7 @@
 
 本文件分两部分：**规则**（文件增删移时必须同步执行的要求）与**检查方法**（排查是否漏登记、漏同步的手段）。
 
-> 文件编码格式、文件命名（FN-01~06）与图片存放/命名（IMG-01~02）属于开源文档写作规范，在检查 `.md` 文件时执行，不在本文件重复。检视时须注意两处与本仓惯例的差异，以仓内惯例为准：① IMG-02 要求图片存放于文档**同级** `figures/`，本仓惯例为分类级（上级）`figures/`（如 `tensor_api/figures/`、`guide/figures/`）；② 社区版规范要求文件名多单词用下划线连接，本仓 API 文档惯用中划线（如 `pypto-abs.md`，md-review-skill 版 FN-02 两者皆可）。
+> 文件编码格式与文件命名（FN-01~06）由维度 1 开源文档通用质检承载（docs-common-review：compliance 脚本步骤、filename-check），在检查 `.md` 文件时执行，不在本文件重复；图片存放/命名（IMG-01~02）见 rules-api.md 的 API-12。检视时须注意两处与本仓惯例的差异，以仓内惯例为准：① IMG-02 要求图片存放于文档**同级** `figures/`，本仓惯例为分类级（上级）`figures/`（如 `tensor_api/figures/`、`guide/figures/`）；② 社区版规范要求文件名多单词用下划线连接，本仓 API 文档惯用中划线（如 `pypto-abs.md`）。
 
 ## 目录结构
 
@@ -33,15 +33,15 @@ docs/
 
 | 编号 | 规则 | 严重级别 |
 |------|------|---------|
-| STR-01 | toctree 须与文件实际状态保持一致：新增文档须登记到所在目录 `index.md` 的 `{toctree}`（条目为去掉 `.md` 后缀的文件名）；新增子目录时须同时新建该目录的 `index.md`，并将其登记到上级 `index.md` 的 toctree；条目须与实际文件名完全一致（拼写错误会导致 Sphinx 构建告警且链接失效）；删除/移动/重命名文件时，须同步更新引用它的所有 toctree 及全仓交叉链接。**漏登记或漏同步会导致文档无法出现在文档中心或产生死链** | CRITICAL |
-| STR-02 | `docs/zh/api/`、`docs/zh/guide/` 下任何层级的 `.md` 文件新增/删除/移动/重命名时，须同步更新 `api/index_hiascend.md`、`guide/index_hiascend.md` 聚合清单。`index_hiascend.md` 为 Markdown 链接清单，条目为带相对路径的 `.md` 文件 | CRITICAL |
-| STR-04 | 各级目录 `index.md`（父节点索引，如 `docs/zh/api/tensor_api/operation/index.md`）只允许包含：标题、`{toctree}` 围栏块（含 `:maxdepth:` 等指令参数与条目）、空行，**不得添加"本章介绍xxx"等描述性正文或其他代码块**——昇腾社区发布渠道不渲染 toctree 索引页的正文内容，写了也无法展示；引导性说明应写入具体子文档或 guide 正文页。文档根 `index.md`（docs/zh/index.md，文档中心首页）豁免 | HIGH |
+| STR-01 | toctree 须与文件实际状态保持一致：新增文档须登记到所在目录 `index.md` 的 `{toctree}`（条目为去掉 `.md` 后缀的文件名）；新增子目录时须同时新建该目录的 `index.md`，并将其登记到上级 `index.md` 的 toctree；条目须与实际文件名完全一致（拼写错误会导致 Sphinx 构建告警且链接失效）；删除/移动/重命名文件时，须同步更新引用它的所有 toctree 及全仓交叉链接。**漏登记或漏同步会导致文档无法出现在文档中心或产生死链** | 严重 |
+| STR-02 | `docs/zh/api/`、`docs/zh/guide/` 下任何层级的 `.md` 文件新增/删除/移动/重命名时，须同步更新 `api/index_hiascend.md`、`guide/index_hiascend.md` 聚合清单。`index_hiascend.md` 为 Markdown 链接清单，条目为带相对路径的 `.md` 文件 | 严重 |
+| STR-04 | 各级目录 `index.md`（父节点索引，如 `docs/zh/api/tensor_api/operation/index.md`）只允许包含：标题、`{toctree}` 围栏块（含 `:maxdepth:` 等指令参数与条目）、空行，**不得添加"本章介绍xxx"等描述性正文或其他代码块**——昇腾社区发布渠道不渲染 toctree 索引页的正文内容，写了也无法展示；引导性说明应写入具体子文档或 guide 正文页。文档根 `index.md`（docs/zh/index.md，文档中心首页）豁免 | 严重 |
 
 ### 成对文件同步（STR-03）
 
 | 编号 | 规则 | 严重级别 |
 |------|------|---------|
-| STR-03 | `docs/` 根下 README 与 CONTRIBUTION_DOC 为中英文成对文件（`xxx.md` + `xxx_en.md`），修改其一须评估另一份是否需同步 | MEDIUM |
+| STR-03 | `docs/` 根下 README 与 CONTRIBUTION_DOC 为中英文成对文件（`xxx.md` + `xxx_en.md`），修改其一须评估另一份是否需同步 | 一般 |
 
 ## 检查方法
 

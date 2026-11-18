@@ -20,7 +20,7 @@
 
 **图1** lanemask_lt示意图
 
-![lanemask_lt示意图](../../figures/lanemask_lt.jpg "lanemask_lt示意图")
+![lanemask_lt示意图](../../figures/lanemask_lt.svg "lanemask_lt示意图")
 
 ## 函数原型
 
