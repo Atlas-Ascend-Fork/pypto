@@ -684,16 +684,19 @@ def _filter_tiling_keys(tiling_key_list, extend_options, ctx, kernel_name):
     return filtered
 
 
-def _codegen_variants(kernel, cce_file, arch, dtype_consts, tiling_keys, kernel_meta_dir):
+def _codegen_variants(kernel, cce_file, arch, dtype_consts, tiling_keys, kernel_meta_dir, kernel_name):
     """Specialize independent keys before touching shared OPC state or output files."""
     from pypto_pro.runtime.jit import _codegen
 
     from ._parallel_codegen import codegen_budget, parallel_codegen
 
     tasks = [(int(key), _decode_tiling_key(kernel.tilingkey_schema, int(key))) for key in tiling_keys]
+    log_prefix = f"pypto codegen: kernel_name={kernel_name}, {len(tasks)} tilingkeys"
     started = time.perf_counter()
     with codegen_budget(len(tasks)) as budget:
-        logger.info("pypto codegen: %d tilingkeys, up to %d workers", len(tasks), budget.limit)
+        start_message = f"{log_prefix}, up to {budget.limit} workers"
+        logger.info(start_message)
+        print(start_message, flush=True)
         if budget.limit > 1:
             results = parallel_codegen(cce_file, arch, dtype_consts, tasks, kernel_meta_dir, budget)
         else:
@@ -717,7 +720,10 @@ def _codegen_variants(kernel, cce_file, arch, dtype_consts, tiling_keys, kernel_
                     has_cube=cg.has_cube,
                     has_vector=cg.has_vector,
                 ))
-    logger.info("pypto codegen: %d tilingkeys completed in %.3fs", len(tasks), time.perf_counter() - started)
+    elapsed = time.perf_counter() - started
+    end_message = f"{log_prefix} completed in {elapsed:.3f}s"
+    logger.info(end_message)
+    print(end_message, flush=True)
     return results
 
 
@@ -830,7 +836,7 @@ def pypto_compile_op(
     )
 
     op_info = _prepare_dfx(op_info, tiling_info, compile_info)
-    codegen_results = _codegen_variants(kernel, cce_file, arch, dtype_consts, tiling_keys, kernel_meta_dir)
+    codegen_results = _codegen_variants(kernel, cce_file, arch, dtype_consts, tiling_keys, kernel_meta_dir, kernel_name)
     obj_files: list[str] = []
     cmds_by_core: dict[str, list] = {core: [] for core in _CORE_COMPILE_TARGETS}
     tiling_keys_by_core: dict[str, list] = {core: [] for core in _CORE_COMPILE_TARGETS}

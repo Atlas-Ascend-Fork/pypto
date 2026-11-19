@@ -68,16 +68,20 @@ def kernel_file(tmp_path):
 
 
 @pytest.mark.parametrize("dtype", [DataType.FP16, DataType.BF16])
-def test_spawn_matches_serial_sources_headers_and_abi(kernel_file, tmp_path, monkeypatch, dtype):
+def test_spawn_matches_serial_sources_headers_and_abi(kernel_file, tmp_path, monkeypatch, dtype, capsys):
     kernel = _load_kernel(str(kernel_file))
+    kernel_name = f"probe_{dtype}"
     outputs = []
     for workers in (1, 2):
         monkeypatch.setattr(os, "sched_getaffinity", lambda _: set(range(workers)))
         directory = tmp_path / str(workers)
         directory.mkdir()
         results = _codegen_variants(
-            kernel, str(kernel_file), NpuArch.DAV_3510, {"input_dtype": dtype}, ["1", "0"], str(directory)
+            kernel, str(kernel_file), NpuArch.DAV_3510, {"input_dtype": dtype}, ["1", "0"], str(directory), kernel_name
         )
+        stdout = capsys.readouterr().out
+        assert f"kernel_name={kernel_name}, 2 tilingkeys, up to {workers} workers" in stdout
+        assert f"kernel_name={kernel_name}, 2 tilingkeys completed in " in stdout
         outputs.append([
             (
                 cg.kernel_name, cg.entry_params, cg.has_cube, cg.has_vector,
@@ -102,7 +106,7 @@ def test_worker_error_keeps_key_dtype_and_source(kernel_file, tmp_path):
     output.mkdir()
     with pytest.raises(RuntimeFailure) as error:
         _codegen_variants(
-            kernel, str(kernel_file), NpuArch.DAV_3510, {"input_dtype": DataType.BF16}, ["1", "0"], str(output)
+            kernel, str(kernel_file), NpuArch.DAV_3510, {"input_dtype": DataType.BF16}, ["1", "0"], str(output), "probe"
         )
     message = str(error.value)
     for expected in ("tilingkey 1", "input_dtype", str(DataType.BF16), "probe.py", "missing_operation"):
@@ -290,7 +294,7 @@ def test_running_codegen_uses_late_jobserver_tokens(kernel_file, tmp_path):
         os.sched_getaffinity = lambda _: set(range(4))
         from pypto_pro.runtime.opc.pypto_compile import _codegen_variants, _load_kernel
         kernel = _load_kernel(sys.argv[1])
-        results = _codegen_variants(kernel, sys.argv[1], "3510", None, ["3", "2", "1", "0"], sys.argv[2])
+        results = _codegen_variants(kernel, sys.argv[1], "3510", None, ["3", "2", "1", "0"], sys.argv[2], "probe")
         Path(sys.argv[2], "order.json").write_text(json.dumps([result.build_dir for result in results]))
     '''), encoding="utf-8")
     output = tmp_path / "expanded"
