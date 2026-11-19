@@ -28,6 +28,8 @@
 #include <set>
 #include <algorithm>
 #include <cstdlib>
+#include <climits>
+#include <fstream>
 
 namespace npu::tile_fwk {
 
@@ -111,6 +113,20 @@ uint64_t TimeStamp::CurrentTime()
     struct timeval tv;
     gettimeofday(&tv, nullptr);
     return tv.tv_sec * 1000000 + tv.tv_usec; // 1000000 is us per sec
+}
+
+size_t GetHostMemAvailableKB()
+{
+    std::ifstream meminfo("/proc/meminfo");
+    std::string key;
+    size_t valueKB = 0;
+    std::string unit;
+    while (meminfo >> key >> valueKB >> unit) {
+        if (key == "MemAvailable:") {
+            return valueKB;
+        }
+    }
+    return SIZE_MAX;
 }
 
 std::string SafeExecCommandWithOutput(const std::vector<std::string>& args)

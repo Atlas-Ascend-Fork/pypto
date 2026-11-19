@@ -19,9 +19,12 @@
 #include <algorithm>
 #include <chrono>
 #include <condition_variable>
+#include <cstdint>
+#include <fstream>
 #include <mutex>
 #include <queue>
 #include <functional>
+#include <string>
 #include <thread>
 #include <unordered_map>
 #include <unordered_set>
@@ -37,6 +40,7 @@
 #include "tilefwk/comm_group_recorder.h"
 #include "interface/operation/distributed/distributed_common.h"
 #include "ir/kind_traits.h"
+#include "interface/utils/common.h"
 
 namespace npu::tile_fwk {
 
@@ -67,6 +71,8 @@ struct FunctionIODataPair {
 
     // One tensor might occur in both incast and outcast simultaneously for multiple times, so we must copy
     // simultaneously
+    static constexpr size_t kMemReserveKB = 8UL * 1024 * 1024;
+
     static void CopyWithLinkRelationship(FunctionIODataPair& dst, const FunctionIODataPair& src)
     {
         std::unordered_map<std::shared_ptr<StorageData>, std::shared_ptr<StorageData>> storageDeepCopyDict;
@@ -75,9 +81,25 @@ struct FunctionIODataPair {
 
         for (size_t k = 0; k < src.incastDataViewList.size(); k++) {
             auto& srcDataView = src.incastDataViewList[k];
+            ASSERT(ControlFlowScene::FUNC_IO_DATAVIEW_NULL, srcDataView != nullptr)
+                << "Src incast dataView is null: incastIndex=" << k
+                << ", incastCount=" << src.incastDataViewList.size();
             auto srcRaw = srcDataView->GetData();
+            ASSERT(ControlFlowScene::FUNC_IO_DATAVIEW_NULL, srcRaw != nullptr)
+                << "Src incast dataView rawData is null: incastIndex=" << k
+                << ", incastCount=" << src.incastDataViewList.size();
             auto storage = srcRaw->GetRawData();
+            ASSERT(ControlFlowScene::FUNC_IO_DATAVIEW_NULL, storage != nullptr)
+                << "Src incast dataView storage is null: incastIndex=" << k
+                << ", incastCount=" << src.incastDataViewList.size();
             if (storageDeepCopyDict.count(storage) == 0) {
+                size_t availKB = GetHostMemAvailableKB();
+                ASSERT(ControlFlowScene::FUNC_CAPTURE_ALLOC_FAILED, availKB >= storage->size() / 1024 + kMemReserveKB)
+                    << "Insufficient host memory before capture deep copy: castList=incast"
+                    << ", tensorIndex=" << k << ", copyingBytes=" << storage->size() << ", memAvailableKB=" << availKB
+                    << ", memReserveKB=" << kMemReserveKB << ", incastCount=" << src.incastDataViewList.size()
+                    << ", outcastCount=" << src.outcastDataViewList.size()
+                    << ". Host memory may be exhausted by accumulated capture copies";
                 storageDeepCopyDict[storage] = std::make_shared<StorageData>(*storage);
             }
             auto dstRaw = std::make_shared<RawTensorData>(storageDeepCopyDict[storage], srcRaw->GetDataType(),
@@ -92,9 +114,25 @@ struct FunctionIODataPair {
         }
         for (size_t k = 0; k < src.outcastDataViewList.size(); k++) {
             auto& srcDataView = src.outcastDataViewList[k];
+            ASSERT(ControlFlowScene::FUNC_IO_DATAVIEW_NULL, srcDataView != nullptr)
+                << "Src outcast dataView is null: outcastIndex=" << k
+                << ", outcastCount=" << src.outcastDataViewList.size();
             auto srcRaw = srcDataView->GetData();
+            ASSERT(ControlFlowScene::FUNC_IO_DATAVIEW_NULL, srcRaw != nullptr)
+                << "Src outcast dataView rawData is null: outcastIndex=" << k
+                << ", outcastCount=" << src.outcastDataViewList.size();
             auto storage = srcRaw->GetRawData();
+            ASSERT(ControlFlowScene::FUNC_IO_DATAVIEW_NULL, storage != nullptr)
+                << "Src outcast dataView storage is null: outcastIndex=" << k
+                << ", outcastCount=" << src.outcastDataViewList.size();
             if (storageDeepCopyDict.count(storage) == 0) {
+                size_t availKB = GetHostMemAvailableKB();
+                ASSERT(ControlFlowScene::FUNC_CAPTURE_ALLOC_FAILED, availKB >= storage->size() / 1024 + kMemReserveKB)
+                    << "Insufficient host memory before capture deep copy: castList=outcast"
+                    << ", tensorIndex=" << k << ", copyingBytes=" << storage->size() << ", memAvailableKB=" << availKB
+                    << ", memReserveKB=" << kMemReserveKB << ", incastCount=" << src.incastDataViewList.size()
+                    << ", outcastCount=" << src.outcastDataViewList.size()
+                    << ". Host memory may be exhausted by accumulated capture copies";
                 storageDeepCopyDict[storage] = std::make_shared<StorageData>(*storage);
             }
             auto dstRaw = std::make_shared<RawTensorData>(storageDeepCopyDict[storage], srcRaw->GetDataType(),

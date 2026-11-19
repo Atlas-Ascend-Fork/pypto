@@ -462,6 +462,9 @@ std::string Trim(const std::string& str);
 // 通用环境变量获取函数
 std::string GetEnvVar(const std::string& varName, bool trim = true, bool toLower = false);
 
+// 获取宿主机可用内存（KB），读取 /proc/meminfo 的 MemAvailable；读取失败时返回 SIZE_MAX
+size_t GetHostMemAvailableKB();
+
 // 辅助函数：把字符串变成数组
 std::vector<std::string> SplitString(const std::string& str);
 

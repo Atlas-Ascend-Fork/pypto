@@ -434,6 +434,7 @@ enum class ControlFlowScene : uint32_t {
     FUNC_RAW_TENSOR_NULL = 0xB1013U,
     FUNC_RAW_TENSOR_SIZE_MISMATCH = 0xB1014U,
     INVALID_TENSOR_SHAPE = 0xB1015U,
+    FUNC_CAPTURE_ALLOC_FAILED = 0xB1016U,
 };
 
 enum class ExecuteOperationScene : uint32_t {
