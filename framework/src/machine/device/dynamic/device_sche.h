@@ -15,6 +15,7 @@
 
 #pragma once
 
+#include <dlfcn.h>
 #include <signal.h>
 #include <sys/ucontext.h>
 #include "device_sche_context.h"
@@ -155,6 +156,59 @@ struct DynMachineManager {
         return ret;
     }
 
+    // Soft-call driver AicpuSetReservedCpuCnt(type=0, reservedCnt).
+    // Init Set(4); live ctrl/sche WithDelta(±1); all sche exit Absolute Set(4) to resync.
+    static constexpr uint32_t kAicpuReservedCpuCntInit = 4U;
+    static constexpr uint8_t kAicpuReservedPyptoType = 0;
+
+    // Once per process (same call site pattern as SignalReg): dlsym + init Set(4).
+    void LoadAicpuReservedSymbols()
+    {
+        if constexpr (!IsDeviceMode()) {
+            return;
+        }
+        if (reservedSymbolsLoaded_) {
+            return;
+        }
+        reservedSymbolsLoaded_ = true;
+        aicpuSetReservedCpuCnt_ = reinterpret_cast<void (*)(uint8_t, uint32_t)>(
+            dlsym(RTLD_DEFAULT, "AicpuSetReservedCpuCnt"));
+        DEV_VERBOSE_DEBUG("AicpuSetReservedCpuCnt %s", aicpuSetReservedCpuCnt_ != nullptr ? "loaded" : "not found");
+        if (aicpuSetReservedCpuCnt_ == nullptr) {
+            return;
+        }
+        SetAicpuReservedCpuCntAbsolute(kAicpuReservedCpuCntInit);
+    }
+
+    void SetAicpuReservedCpuCntAbsolute(uint32_t cnt)
+    {
+        if constexpr (!IsDeviceMode()) {
+            return;
+        }
+        if (aicpuSetReservedCpuCnt_ == nullptr) {
+            return;
+        }
+        reservedCnt_.store(cnt, std::memory_order_release);
+        aicpuSetReservedCpuCnt_(kAicpuReservedPyptoType, cnt);
+        DEV_VERBOSE_DEBUG("AicpuSetReservedCpuCnt(type=%u, %u)", static_cast<unsigned>(kAicpuReservedPyptoType), cnt);
+    }
+
+    void SetAicpuReservedCpuCntWithDelta(int32_t delta)
+    {
+        if constexpr (!IsDeviceMode()) {
+            return;
+        }
+        if (aicpuSetReservedCpuCnt_ == nullptr) {
+            return;
+        }
+        // Publish latest count after atomic update (not a stale local snapshot).
+        reservedCnt_.fetch_add(static_cast<uint32_t>(delta), std::memory_order_acq_rel);
+        const uint32_t newCnt = reservedCnt_.load(std::memory_order_acquire);
+        aicpuSetReservedCpuCnt_(kAicpuReservedPyptoType, newCnt);
+        DEV_VERBOSE_DEBUG("AicpuSetReservedCpuCnt(type=%u, %u)", static_cast<unsigned>(kAicpuReservedPyptoType),
+                          newCnt);
+    }
+
     void SignalReg(const sig_act_f sigAct)
     {
         DEV_INFO("Signal register completed.");
@@ -253,6 +307,8 @@ struct DynMachineManager {
             RunSchPost(devProg);
             RunSchDeInit();
             PerfEvtMgr::Instance().AddScheduleTurn();
+            // Ctrl leaves before all sche exit; resync to 4 after sche ±1 (heals concurrent Set drift).
+            SetAicpuReservedCpuCntAbsolute(kAicpuReservedCpuCntInit);
             DEV_INFO("All sche cpu exited.");
             return ret;
         }
@@ -337,9 +393,11 @@ struct DynMachineManager {
         DEV_VERBOSE_DEBUG("#trace.round.start: round=%lu", kargs->parameter.globalRound);
         ctrlStartRound_.fetch_add(1, std::memory_order_acq_rel);
         initCtrl_.store(true);
+        SetAicpuReservedCpuCntWithDelta(-1);
         // Round topology (nrValidAic/scheCpuNum) is bound in InitDyn -> DevStartArgs ring slot.
         int ret = RunCtrlInitNoLock(kargs, entry);
         if (ret != 0) {
+            SetAicpuReservedCpuCntWithDelta(1);
             initCtrl_.store(false);
             DeviceTrace::GetInstance().ReportTraceMsg();
             return ret;
@@ -353,6 +411,7 @@ struct DynMachineManager {
         if (ret != DEVICE_MACHINE_OK) {
             DeviceTrace::GetInstance().ReportTraceMsg();
         }
+        SetAicpuReservedCpuCntWithDelta(1);
         initCtrl_.store(false);
         PerfEvtMgr::Instance().AddCtrlTurn();
         return ret;
@@ -464,7 +523,9 @@ struct DynMachineManager {
                      (int)kargs->parameter.globalRound, roundArgs.nrValidAic, roundArgs.scheCpuNum);
             UpdateScheNumForCtrl(runtimeDataCurrent, arbitratedScheNum);
             ResetDroppedThreadTaskQueues(runtimeDataCurrent, capacityScheCpuNum, arbitratedScheNum);
+            SetAicpuReservedCpuCntWithDelta(-1);
             ret = RunSche(kargs, entry, threadIdx, arbitratedScheNum, &roundArgs);
+            SetAicpuReservedCpuCntWithDelta(1);
             DEV_INFO("SchedThreadLeave idx=%d ret=%d", threadIdx, ret);
             if (ret != DEVICE_MACHINE_OK) {
                 DeviceTrace::GetInstance().ReportTraceMsg();
@@ -517,6 +578,9 @@ struct DynMachineManager {
     std::atomic<int> globalThreadIdx_{0};
     std::atomic<uint64_t> ctrlStartRound_{0};
     std::atomic<uint64_t> scheFinishRound_{0};
+    std::atomic<uint32_t> reservedCnt_{kAicpuReservedCpuCntInit};
+    bool reservedSymbolsLoaded_{false};
+    void (*aicpuSetReservedCpuCnt_)(uint8_t, uint32_t) = nullptr;
 
     struct SplittedInfo {
         static int ScheWait(DevAscendProgram* devProg)

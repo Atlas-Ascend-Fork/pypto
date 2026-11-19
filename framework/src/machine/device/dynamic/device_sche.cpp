@@ -78,6 +78,7 @@ extern "C" __attribute__((visibility("default"))) int DynTileFwkBackendKernelSer
 #endif
     DEV_ATRACE("Start to Reg signal");
     g_machine_mgr.SignalReg(SigAct);
+    g_machine_mgr.LoadAicpuReservedSymbols();
     return 0;
 }
 
