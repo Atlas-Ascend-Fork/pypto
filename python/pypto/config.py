@@ -53,7 +53,7 @@ def _check_int64_range(value, option_name):
         return
     if isinstance(value, int):
         if not -(1 << 63) <= value < (1 << 63):
-            raise ValueError(f"Option '{option_name}' integer is outside int64 range")
+            raise FeError(ValueError(f"Option '{option_name}' integer is outside int64 range"))
     elif isinstance(value, (list, tuple)):
         for index, item in enumerate(value):
             _check_int64_range(item, f"{option_name}[{index}]")

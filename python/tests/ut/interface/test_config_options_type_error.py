@@ -15,6 +15,7 @@ import re
 import pytest
 
 import pypto
+from pypto.error import FeError
 
 
 def assert_option_type_error(setter, pattern):
@@ -176,11 +177,17 @@ def test_pass_option_range_error():
 )
 @pytest.mark.parametrize("value", [-(1 << 63) - 1, 1 << 63])
 def test_config_integer_outside_int64_reports_python_error(setter, option_name, value):
-    with pytest.raises(ValueError, match=f"Option '{re.escape(option_name)}'.*outside int64 range"):
+    with pytest.raises(
+        FeError,
+        match=rf"ErrCode: F00002, ValueError: Option '{re.escape(option_name)}' integer is outside int64 range",
+    ):
         setter(value)
 
 
 def test_options_context_integer_outside_int64_reports_python_error():
-    with pytest.raises(ValueError, match="Option 'host.compile_timeout'.*outside int64 range"):
+    with pytest.raises(
+        FeError,
+        match=r"ErrCode: F00002, ValueError: Option 'host\.compile_timeout' integer is outside int64 range",
+    ):
         with pypto.options(host_options={"compile_timeout": 1 << 63}):
             pass
