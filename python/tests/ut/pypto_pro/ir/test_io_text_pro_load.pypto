@@ -1,0 +1,5 @@
+function pro_load incast(tensor<4 x 8, float, tensor_view<-2, ND, %a_ptr>> %a_0) outcast() #entry(false) #type(pro) {
+    mutex_tile<tile<4 x 8, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %m_0 = block.make_mutex_tile(tuple(4, 8), tuple(), tuple(0), dtype=float, target_memory=Vec, compact=1, memref_addr=0, memref_size=128, memref_id=0);
+    debug.dump_tile(%m_0, show_location=false);
+    return;
+}

@@ -13,6 +13,7 @@
 #include <any>
 #include <cstdint>
 #include <memory>
+#include <optional>
 #include <string>
 #include <tuple>
 #include <utility>
@@ -116,10 +117,9 @@ inline std::string FunctionTypeToString(FunctionType type)
 /**
  * \brief Convert string to FunctionType
  * \param str String representation
- * \return FunctionType enum value
- * \throws std::invalid_argument if string is not recognized
+ * \return FunctionType value, std::nullopt when the string is not recognized
  */
-inline FunctionType StringToFunctionType(const std::string& str)
+inline std::optional<FunctionType> StringToFunctionType(const std::string& str)
 {
     if (str == "Opaque") {
         return FunctionType::OPAQUE;
@@ -145,9 +145,8 @@ inline FunctionType StringToFunctionType(const std::string& str)
         return FunctionType::SIMD_TILE_CALLEE;
     } else if (str == "AicpuKernel") {
         return FunctionType::AICPU_KERNEL;
-    } else {
-        throw std::invalid_argument("Unknown FunctionType: " + str);
     }
+    return std::nullopt;
 }
 
 /**

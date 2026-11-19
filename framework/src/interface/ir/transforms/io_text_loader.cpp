@@ -75,7 +75,7 @@ public:
             R{IRTextLexerTokenKind::TokV0OpMagic, std::regex(R"(!\d+)")},
             R{IRTextLexerTokenKind::TokFloat, std::regex(R"(-?\d+\.\d+(?:[eE][+-]?\d+)?|-?\d+[eE][-+]?\d+)")},
             R{IRTextLexerTokenKind::TokInt, std::regex(R"(-?\d+)")},
-            R{IRTextLexerTokenKind::TokIdent, std::regex(R"([A-Za-z_][A-Za-z0-9_]*)")},
+            R{IRTextLexerTokenKind::TokIdent, std::regex(R"([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*)")},
         };
         wsRe_ = std::regex(R"(\s+)");
     }
@@ -596,7 +596,7 @@ IRTextParserOptionalTensorViewPtr IRTextParser::ParserTensorTypeTensorView()
         MUST_VALID(layoutStr, ParseIdent());
         Layout layout = GetLayoutDict().Find(layoutStr->data, Layout::ND);
         if (CheckToken(IRTextLexerTokenKind::PunComma, true)) {
-            MUST_VALID(ptrExpr, ParseExpr());
+            MUST_VALID(ptrExpr, ParseExprOrTensorViewPtrVar());
             tensorView = TensorView(stride->data, layout, ptrExpr);
         } else {
             tensorView = TensorView(stride->data, layout);
@@ -754,6 +754,18 @@ ExprPtr IRTextParser::ParseExprVarName()
         return std::make_shared<Var>("none", GetNoneType(), Span::Unknown());
     }
     return Error("Unknown var name: " + name);
+}
+
+ExprPtr IRTextParser::ParseExprOrTensorViewPtrVar()
+{
+    if (Peek().kind == IRTextLexerTokenKind::TokVarName) {
+        const std::string& name = Peek().text;
+        if (name != IR_KW_NONE && symtab_.find(name) == symtab_.end()) {
+            ++cur_;
+            return npu::tile_fwk::SymbolicScalar(name).AsExpr();
+        }
+    }
+    return ParseExpr();
 }
 
 ExprPtr IRTextParser::ParseExprInt()
@@ -1114,6 +1126,17 @@ StmtPtr IRTextParser::ParseStmtTensorOrScalarOp(const VarDefList& defVarList)
     return stmt;
 }
 
+StmtPtr IRTextParser::ParseStmtCallOrTensorOp(const VarDefList& defVarList)
+{
+    if (!IsPro()) {
+        return ParseStmtTensorOrScalarOp(defVarList);
+    }
+    MUST_VALID(call, ParseExprCall());
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunSemi));
+
+    return std::make_shared<AssignStmt>(defVarList.valueList, call, Span::Unknown());
+}
+
 // Assignment or op statement:
 //   type %result [= expr] ;
 //   type %result, type %token = opcode(args) [tokens(...)] [#attr(val)...] ;
@@ -1183,7 +1206,7 @@ StmtPtr IRTextParser::ParseStmtVarDef()
         {IRTextLexerTokenKind::KwFor, &IRTextParser::ParseStmtFor},
         {IRTextLexerTokenKind::KwWhile, &IRTextParser::ParseStmtWhile},
         {IRTextLexerTokenKind::TokV0OpMagic, &IRTextParser::ParseStmtV0TensorOp},
-        {IRTextLexerTokenKind::TokIdent, &IRTextParser::ParseStmtTensorOrScalarOp},
+        {IRTextLexerTokenKind::TokIdent, &IRTextParser::ParseStmtCallOrTensorOp},
         {IRTextLexerTokenKind::PunLParen, &IRTextParser::ParseStmtAssign},
         {IRTextLexerTokenKind::TokInt, &IRTextParser::ParseStmtAssign},
         {IRTextLexerTokenKind::TokFloat, &IRTextParser::ParseStmtAssign},
@@ -1264,7 +1287,7 @@ StmtPtr IRTextParser::ParseStmt()
         IRTextLexerTokenKind::KwTypeBf16,    IRTextLexerTokenKind::KwTypeFp8e4m3fn,
         IRTextLexerTokenKind::KwTypeFp8e5m2, IRTextLexerTokenKind::KwTypeHf4,
         IRTextLexerTokenKind::KwTypeHf8,     IRTextLexerTokenKind::KwTypeUnknown,
-        IRTextLexerTokenKind::KwSimtGroup,
+        IRTextLexerTokenKind::KwSimtGroup,   IRTextLexerTokenKind::KwMutexTile,
     };
     if (typeKeywords.count(tok.kind)) {
         return ParseStmtVarDef();
@@ -1273,12 +1296,40 @@ StmtPtr IRTextParser::ParseStmt()
     }
 }
 
+namespace {
+
+bool IsProOnlyFunctionTypeName(const std::string& name)
+{
+    return name == "SimtKernel" || name == "SimtVF" || name == "SimtCallee" || name == "SimdVF" || name == "SimdCallee";
+}
+
+} // namespace
+
+bool IRTextParser::IsPro() const
+{
+    for (size_t i = functionStart_; i < tokens_.size(); ++i) {
+        const auto& token = tokens_[i];
+        if (token.kind == IRTextLexerTokenKind::PunLBrace) {
+            break;
+        }
+        if (token.kind == IRTextLexerTokenKind::TokAttrName && token.text == IR_KW_TYPE && i + 2 < tokens_.size() &&
+            tokens_[i + 1].kind == IRTextLexerTokenKind::PunLParen) {
+            const std::string& value = tokens_[i + 2].text;
+            if (value == "pro" || IsProOnlyFunctionTypeName(value)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 // ---- Function parsing ----
 FunctionPtr IRTextParser::ParseFunction()
 {
     npu::tile_fwk::IRContext::Get().Reset();
     // One name scope per function: a later function must not reuse an earlier name + rawmagic.
     symtab_.clear();
+    functionStart_ = cur_;
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwFunction));
     MUST_VALID(name, ParseIdent());
 

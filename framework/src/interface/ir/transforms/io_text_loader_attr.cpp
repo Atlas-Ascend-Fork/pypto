@@ -659,11 +659,16 @@ bool IRTextParser::SetFunctionAttrDict(const FunctionPtr& func, const std::map<s
     auto f = std::const_pointer_cast<Function>(func);
     for (const auto& [key, value] : attrDict) {
         if (key == IR_KW_TYPE) {
-            try {
-                f->funcType_ = StringToFunctionType(AnyCast<std::string>(value));
-            } catch (const std::invalid_argument& e) {
-                Error(std::string("unknown function type: ") + e.what());
-                return false;
+            const std::string& typeName = AnyCast<std::string>(value);
+            if (typeName == "pro") {
+                f->funcType_ = FunctionType::OPAQUE;
+            } else {
+                const auto funcType = StringToFunctionType(typeName);
+                if (!funcType.has_value()) {
+                    Error(std::string("unknown function type: ") + typeName);
+                    return false;
+                }
+                f->funcType_ = *funcType;
             }
         } else if (key == IR_KW_ENTRY) {
             f->entry_ = AnyCast<bool>(value);

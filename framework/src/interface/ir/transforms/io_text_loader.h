@@ -143,6 +143,7 @@ public:
     explicit IRTextParser(const std::string& text);
 
     // ---- Helpers ----
+    bool IsPro() const;
     const IRTextLexerToken& Peek() const { return tokens_[cur_]; }
     const IRTextLexerToken& PeekAt(size_t offset) const { return tokens_[std::min(cur_ + offset, tokens_.size() - 1)]; }
     bool CheckToken(IRTextLexerTokenKind kind, bool consumeIfPass = false);
@@ -205,6 +206,7 @@ public:
 
     // ---- Expression parsing ----
     ExprPtr ParseExprVarName();
+    ExprPtr ParseExprOrTensorViewPtrVar();
     ExprPtr ParseExprInt();
     ExprPtr ParseExprFloat();
     ExprPtr ParseExprTrue();
@@ -229,6 +231,7 @@ public:
     StmtPtr ParseStmtBreak(const VarDefList&);
     StmtPtr ParseStmtContinue(const VarDefList&);
     StmtPtr ParseStmtTensorOrScalarOp(const VarDefList& defVarList);
+    StmtPtr ParseStmtCallOrTensorOp(const VarDefList& defVarList);
     StmtPtr ParseStmtV0TensorOp(const VarDefList& defVarList);
     StmtPtr ParseStmtAssign(const VarDefList& defVarList);
     StmtPtr ParseStmtVarDef();
@@ -294,6 +297,7 @@ private:
     // ---- Member variables ----
     std::vector<IRTextLexerToken> tokens_;
     size_t cur_ = 0;
+    size_t functionStart_ = 0;
     std::unordered_map<std::string, VarPtr> symtab_;
     IRTextParserSuccessPtr success_;
     std::string errorMsg_;

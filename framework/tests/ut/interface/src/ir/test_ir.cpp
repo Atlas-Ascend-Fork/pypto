@@ -562,15 +562,15 @@ TEST_F(IRCheckTest, TestFunctionTypeToString)
 
 TEST_F(IRCheckTest, TestStringToFunctionType)
 {
-    ASSERT_EQ(StringToFunctionType("Opaque"), FunctionType::OPAQUE);
-    ASSERT_EQ(StringToFunctionType("Orchestration"), FunctionType::ORCHESTRATION);
-    ASSERT_EQ(StringToFunctionType("InCore"), FunctionType::IN_CORE);
-    ASSERT_EQ(StringToFunctionType("Helper"), FunctionType::HELPER);
-    ASSERT_EQ(StringToFunctionType("SimtVF"), FunctionType::SIMT_VF);
-    ASSERT_EQ(StringToFunctionType("SimtCallee"), FunctionType::SIMT_CALLEE);
-    ASSERT_EQ(StringToFunctionType("SimtKernel"), FunctionType::SIMT_KERNEL);
-    ASSERT_EQ(StringToFunctionType("AicpuKernel"), FunctionType::AICPU_KERNEL);
-    ASSERT_THROW(StringToFunctionType("Invalid"), std::invalid_argument);
+    ASSERT_EQ(StringToFunctionType("Opaque").value(), FunctionType::OPAQUE);
+    ASSERT_EQ(StringToFunctionType("Orchestration").value(), FunctionType::ORCHESTRATION);
+    ASSERT_EQ(StringToFunctionType("InCore").value(), FunctionType::IN_CORE);
+    ASSERT_EQ(StringToFunctionType("Helper").value(), FunctionType::HELPER);
+    ASSERT_EQ(StringToFunctionType("SimtVF").value(), FunctionType::SIMT_VF);
+    ASSERT_EQ(StringToFunctionType("SimtCallee").value(), FunctionType::SIMT_CALLEE);
+    ASSERT_EQ(StringToFunctionType("SimtKernel").value(), FunctionType::SIMT_KERNEL);
+    ASSERT_EQ(StringToFunctionType("AicpuKernel").value(), FunctionType::AICPU_KERNEL);
+    ASSERT_FALSE(StringToFunctionType("Invalid").has_value());
 }
 
 TEST_F(IRCheckTest, TestPipeTypeToString)
