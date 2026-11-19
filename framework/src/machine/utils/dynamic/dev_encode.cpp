@@ -3526,6 +3526,7 @@ static int InitSinglePartialUpdateSlot(
     std::vector<Opcode> outcastOpcodeList;
     std::vector<FastSlowStitchCheckShapeGate> allWriteOpGates;
     std::vector<FastSlowStitchCheckShapeGate> readOpGates;
+    bool sameRootHasReadWrite = false;
 
     ASSERT(DevCommonErr::PARAM_CHECK_FAILED, slotRootOutcastDict.count(slotIndex))
         << "slotIndex: " << slotIndex << " not found in slotRootOutcastDict";
@@ -3538,6 +3539,9 @@ static int InitSinglePartialUpdateSlot(
             const_cast<uint8_t*>(devEncodeListInput[funcKey].data()));
         auto& outcast = devFunc->GetOutcast(outcastIndex);
         outcastList.push_back(&outcast);
+        if (HasReadConsumerInOutcast(devFunc, outcast)) {
+            sameRootHasReadWrite = true;
+        }
         outcastOpcodeList.push_back(GetFullCoverProducerOpcodeForOutcast(*devFunc, outcast));
         FastSlowStitchCheckShapeGate allWriteOpGate;
         int outDim = outcast.dim;
@@ -3572,9 +3576,12 @@ static int InitSinglePartialUpdateSlot(
     const bool hasWaw = (stitchCtrlBitMask & STITCH_CTRL_WAW) != 0;
     uint32_t normalWriteCount = FastSlowStitchCheckInitPartialUpdate(
         outcastList, outcastOpcodeList, allWriteOpGates, readOpGates, hasWaw, &partialUpdateCellMatchTableDesc);
-    partialUpdateCellMatchTableDesc.SetCacheOpMaxCount({normalWriteCount,
-                                                        hasAtomicWrite ? CELL_MATCH_MAX_ATOMIC_WRITE_COUNT : 0U,
-                                                        outcastList.size() > 1 ? maxReadCount : 0u});
+    // size>1: multi writer roots keep maxReadCount; size==1: only when same root RMW (read+write).
+    const uint32_t readCap = (outcastList.size() > 1 || (outcastList.size() == 1 && sameRootHasReadWrite)) ?
+                                 maxReadCount :
+                                 0u;
+    partialUpdateCellMatchTableDesc.SetCacheOpMaxCount(
+        {normalWriteCount, hasAtomicWrite ? CELL_MATCH_MAX_ATOMIC_WRITE_COUNT : 0U, readCap});
 
     size_t cellNum = partialUpdateCellMatchTableDesc.GetStride(0);
     bool hasDynamicShape = HasDynamicShape(partialUpdateCellMatchTableDesc);
