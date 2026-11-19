@@ -19,7 +19,7 @@ import sys
 from typing import Dict, List, Optional, Tuple, Union
 
 from . import pypto_impl
-from .error import FeError
+from .error import FeError, PyptoRtError
 
 
 class CompStage(enum.Enum):
@@ -68,11 +68,13 @@ def _apply_dump_fifo_option(opts) -> None:
     if size is None or size == 0:
         return
     if isinstance(size, bool) or not isinstance(size, int):
-        raise TypeError(f"simd_printf_fifo_size_per_core must be an integer, but got {type(size).__name__}")
+        raise PyptoRtError(TypeError(
+            f"simd_printf_fifo_size_per_core must be an integer, but got {type(size).__name__}"
+        ))
     if not _DUMP_FIFO_MIN_SIZE <= size <= _DUMP_FIFO_MAX_SIZE or size % 8 != 0:
-        raise ValueError(
+        raise PyptoRtError(ValueError(
             "simd_printf_fifo_size_per_core must be divisible by 8 and in the range [1 KB, 64 MB]"
-        )
+        ))
 
     global _acl_runtime
     if _acl_runtime is None:
@@ -80,16 +82,16 @@ def _apply_dump_fifo_option(opts) -> None:
         runtime.aclInit.argtypes = [ctypes.c_char_p]
         ret = runtime.aclInit(None)
         if ret not in (_ACL_ERROR_NONE, _ACL_ERROR_REPEAT_INITIALIZE):
-            raise RuntimeError(f"aclInit failed with error code {ret}")
+            raise PyptoRtError(RuntimeError(f"aclInit failed with error code {ret}"))
         runtime.aclrtDeviceSetLimit.argtypes = [ctypes.c_int, ctypes.c_size_t]
         _acl_runtime = runtime
 
     ret = _acl_runtime.aclrtDeviceSetLimit(_ACL_RT_DEV_LIMIT_SIMD_PRINTF_FIFO_SIZE_PER_CORE, size)
     if ret != _ACL_ERROR_NONE:
-        raise RuntimeError(
+        raise PyptoRtError(RuntimeError(
             f"aclrtDeviceSetLimit failed with error code {ret}; "
             "simd_printf_fifo_size_per_core must be set before the first NPU operation"
-        )
+        ))
 
 # Maximum allowed scope_id (ooo_scope or atomic_scope). Combined with _ATOMIC_SCOPE_ENCODE_BASE below,
 # max user encoding = 10000 * 10000 + 9999 = 100,009,999. C++ side VF_CLUSTER_ID_START

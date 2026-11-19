@@ -17,6 +17,7 @@ yet stable enough for pypto.frontend.jit(runtime_options=...).
 from typing import Dict, List, Optional, Union
 
 from ..config import get_current_scope, set_options
+from ..error import PyptoRtError
 
 # Experimental runtime keys exposed by get_runtime_options. Stable runtime options such as
 # stitch_function_max_num stay on @jit(runtime_options=...) and are not returned here.
@@ -33,14 +34,14 @@ def _validate_stitch_function_num_per_pool(value) -> List[int]:
     (root_inner, assemble_outcast, exclusive_outcast).
     """
     if not isinstance(value, (list, tuple)) or len(value) != 3:
-        raise ValueError(
+        raise PyptoRtError(ValueError(
             f"Invalid stitch_function_num_per_pool: '{value}'. Expected a list of 3 ints in "
             f"[0, 1024], meaning [root_inner_depth, assemble_outcast_depth, exclusive_outcast_depth]."
-        )
+        ))
     if any(isinstance(x, bool) or not isinstance(x, int) or not 0 <= x <= 1024 for x in value):
-        raise ValueError(
+        raise PyptoRtError(ValueError(
             f"Invalid stitch_function_num_per_pool: '{value}'. Each element must be an int in [0, 1024]."
-        )
+        ))
     return list(value)
 
 

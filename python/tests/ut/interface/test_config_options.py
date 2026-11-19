@@ -15,6 +15,7 @@ import inspect
 import pytest
 
 import pypto
+from pypto.error import PyptoRtError
 from pypto.experimental import (
     get_operation_options,
     get_runtime_options,
@@ -179,11 +180,10 @@ def test_runtime_option_stitch_function_num_per_pool():
 
 def test_runtime_option_stitch_function_num_per_pool_invalid():
     for invalid in ([64, 1], [64, 1, 1, 1], "abc", [64, -1, 1], [64, 1025, 1], [64, 1, 1.5], [64, True, 1]):
-        try:
+        with pytest.raises(
+            PyptoRtError, match=r"^ErrCode: F00002, ValueError: Invalid stitch_function_num_per_pool"
+        ):
             set_runtime_options(stitch_function_num_per_pool=invalid)
-            assert False, f"Should raise ValueError for {invalid}"
-        except ValueError as e:
-            assert "Invalid stitch_function_num_per_pool" in str(e)
     pypto.reset_options()
 
 
