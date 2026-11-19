@@ -95,6 +95,7 @@ const std::string OpAttributeKey::localCopyLocalMode = "op_attr_local_copy_local
 const std::string OpAttributeKey::copyIsNZ = "op_attr_is_nz";
 const std::string OpAttributeKey::isGemv = "op_attr_is_gemv";
 const std::string OpAttributeKey::isBatchMatmul = "op_attr_is_batch_matmul";
+const std::string OpAttributeKey::skipSliceContractExpand = "op_attr_skip_slice_contract_expand";
 const std::string OpAttributeKey::scaleValue = "op_attr_scale_value";
 const std::string OpAttributeKey::rowPad = "op_attr_row_pad";
 const std::string OpAttributeKey::ownerRank = "owner_rank";

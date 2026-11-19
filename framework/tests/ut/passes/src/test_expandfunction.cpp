@@ -16,6 +16,7 @@
 #include <gtest/gtest.h>
 #include <set>
 #include <tuple>
+#include <unordered_map>
 #include "ir/transforms/infer_token_pass.h"
 #include "ir/transforms/base/mutator.h"
 #include "passes/tensor_graph_pass/auto_cast.h"
@@ -1116,6 +1117,54 @@ TEST_F(TestExpandFunctionPass, PreCheckForReshapeNoConflict)
 
     InplaceConflictChecker inplaceConflictChecker;
     EXPECT_EQ(inplaceConflictChecker.CheckInplaceOperationConflict(*function), SUCCESS);
+}
+
+TEST_F(TestExpandFunctionPass, SkipSliceContractExpandAttribute)
+{
+    const std::vector<int64_t> shape = {kNumExpSix, kNumExpSix};
+    const std::vector<int64_t> tileShape = {kNumExpFive, kNumExpFive};
+    for (auto opcode : {Opcode::OP_VIEW, Opcode::OP_ASSEMBLE}) {
+        for (bool marked : {false, true}) {
+            SCOPED_TRACE(::testing::Message() << "opcode=" << static_cast<int>(opcode) << " marked=" << marked);
+            auto function = std::make_shared<Function>(Program::GetInstance(), "TestSkipSliceContractExpand",
+                                                       "TestSkipSliceContractExpand", nullptr);
+            auto input = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+            auto source = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+            auto alias = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+            auto output = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+            // Keep the alias away from incast/outcast and reshape skip rules.
+            PassOperationUtils::AddOperation(*function, Opcode::OP_NOP, {input}, {source});
+            auto& aliasOp = PassOperationUtils::AddOperation(*function, opcode, {source}, {alias});
+            PassOperationUtils::AddOperation(*function, Opcode::OP_NOP, {alias}, {output});
+            if (opcode == Opcode::OP_VIEW) {
+                SetViewOpAttribute(aliasOp, {kNumZero, kNumZero}, shape);
+            } else {
+                aliasOp.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{kNumZero, kNumZero}));
+            }
+            aliasOp.tileShape_.SetVecTile(tileShape);
+            if (marked) {
+                aliasOp.SetAttribute(OpAttributeKey::skipSliceContractExpand, true);
+            }
+            function->inCasts_.push_back(input);
+            function->outCasts_.push_back(output);
+            function->SetGraphType(GraphType::TENSOR_GRAPH);
+
+            ExpandFunction expandPass;
+            ASSERT_EQ(expandPass.RunOnFunction(*function), SUCCESS);
+            EXPECT_EQ(function->GetGraphType(), GraphType::TILE_GRAPH);
+            std::unordered_map<Opcode, uint32_t> opCounts;
+            for (auto& op : function->Operations()) {
+                ++opCounts[op.GetOpcode()];
+                if (op.GetOpcode() == opcode) {
+                    EXPECT_EQ(op.GetInputOperand(0), source);
+                    EXPECT_EQ(op.GetOutputOperand(0), alias);
+                }
+            }
+            EXPECT_EQ(opCounts[opcode], marked ? kNumOne : kNumZero);
+            EXPECT_EQ(opCounts[Opcode::OP_SLICE], opCounts[Opcode::OP_CONTRACT]);
+            EXPECT_EQ(opCounts[Opcode::OP_SLICE] == kNumZero, marked);
+        }
+    }
 }
 
 /*

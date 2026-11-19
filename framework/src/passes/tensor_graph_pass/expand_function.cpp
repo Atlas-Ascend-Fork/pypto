@@ -116,14 +116,22 @@ bool TraversePathContainsOnlyReshape(std::vector<Operation*> currentLevel, bool 
 }
 
 // VIEW/ASSEMBLE 不参与 tile 展开的条件：
-// 1) 参与展开循环的 shape 含动态维 -1（VIEW 看输出，ASSEMBLE 看输入；TiledView/TiledAssemble
+// 1) 携带 skipSliceContractExpand 标签；
+// 2) 参与展开循环的 shape 含动态维 -1（VIEW 看输出，ASSEMBLE 看输入；TiledView/TiledAssemble
 //    对 -1 的 for 循环次数为 0，会断图）；
-// 2) 在 consumer/producer 方向 BFS 时，若某一层（跳过 VIEW/ASSEMBLE 穿透层后）
+// 3) 在 consumer/producer 方向 BFS 时，若某一层（跳过 VIEW/ASSEMBLE 穿透层后）
 //    首次出现的非穿透节点全部为 RESHAPE。
 bool ShouldSkipViewAssembleExpand(const Operation& op)
 {
     if (op.GetOpcode() != Opcode::OP_VIEW && op.GetOpcode() != Opcode::OP_ASSEMBLE) {
         return false;
+    }
+
+    if (op.HasAttribute(OpAttributeKey::skipSliceContractExpand)) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "ExpandFunction skips VIEW/ASSEMBLE op=%d opcode=%s rule=skip_slice_contract_expand.",
+                          op.GetOpMagic(), op.GetOpcodeStr().c_str());
+        return true;
     }
 
     // batchmatmul 的 batch VIEW/ASSEMBLE不参与 tile 展开

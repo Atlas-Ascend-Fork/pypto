@@ -110,6 +110,8 @@ public:
     static const std::string copyIsNZ;
     static const std::string isGemv;
     static const std::string isBatchMatmul;
+    // Presence keeps VIEW/ASSEMBLE as aliases instead of expanding them into SLICE/CONTRACT.
+    static const std::string skipSliceContractExpand;
     static const std::string scaleValue;
     static const std::string rowPad;
     static const std::string ownerRank;
