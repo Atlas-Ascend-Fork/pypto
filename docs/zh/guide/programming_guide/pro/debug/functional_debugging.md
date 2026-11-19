@@ -1,8 +1,8 @@
 # 功能调试
 
-PyPTO Pro Kernel出现功能问题时，先固定可复现的输入Shape、数据类型、TilingKey和`block_dim`，再根据现象选择定位路径：首次调用时编译报错，查看前端异常和错误码；Kernel正常执行但结果不正确，定位精度问题；执行时出现AI Core Error、超时或挂死，采集设备侧异常现场。内存检测是排查疑似内存访问问题的工具，可在后两类问题中按需开启。
+PyPTO Pro Kernel出现功能问题时，先固定可复现的输入Shape、数据类型、TilingKey和`block_dim`，再根据现象选择定位路径：首次调用时编译报错，查看前端异常和错误码；Kernel正常执行但结果不正确，定位精度问题；执行时出现AI Core Error、超时或挂死，采集设备侧异常现场。异常检测工具（sanitizer）用于排查内存访问、同步与互斥配对、相位使用等运行期问题，可在后两类问题中按需开启。
 
-问题修复后，应关闭内存检测并移除临时调试打印，使用生产配置重新编译，覆盖原失败用例及相关Shape、数据类型、TilingKey和`block_dim`进行回归。
+问题修复后，应关闭异常检测工具并移除临时调试打印，使用生产配置重新编译，覆盖原失败用例及相关Shape、数据类型、TilingKey和`block_dim`进行回归。
 
 ## 编译报错
 
@@ -25,7 +25,7 @@ JIT编译产物默认位于当前工作目录下的`build`目录；设置`ASCEND
 
 需要检查多核切分、循环边界、运行时参数或搬运偏移时，可使用[`pypto_pro.language.printf`](../../../../api/pro_api/Utils-API/debugging/printf.md)打印Core编号、偏移、Shape和分支标志等标量信息。多核场景建议通过`pypto_pro.language.get_block_idx()`限制打印的Core，避免日志大量交错。该接口会引入运行时开销，仅用于功能调试，不应用于性能测试。
 
-如果结果错乱、偶发错误，或怀疑GM访问越界、Tile访问越界、Tile内存区间重叠、mutex未正确配对，可在核函数装饰器上设置`@pl.jit(sanitizer=True)`，使用[内存检测工具](sanitizer.md)辅助定位。检出问题时，结果写入报告文件；工具的覆盖范围和使用约束详见该文档。内存检测会产生额外的运行时开销，完成排查后应关闭。
+如果结果错乱、偶发错误，或怀疑GM/Tile访问越界、Tile内存区间重叠、mutex或sync未正确配对、相位使用错误，可在核函数装饰器上设置`@pypto_pro.language.jit(sanitizer=True)`，使用[异常检测工具](sanitizer.md)辅助定位。检出问题时，结果写入报告文件；工具的覆盖范围和使用约束详见该文档。异常检测会产生额外的运行时开销，完成排查后应关闭。
 
 ## AI Core Error
 
@@ -82,4 +82,4 @@ python tools/scripts/debug_aicore_error_pro_repro.py \
 
 若报告提示`Error PC not found in plog`，应检查CANN是否生成了symbol locator日志及日志目录配置。若报告提示源码行无法解析，应检查`ASCEND_HOME_PATH`和BiSheng工具链是否可用。旧dump缺少`<kernel>_launch_args.json`时，工具会将`block_dim`回退为`1`，依赖多核并发的问题可能无法按原现场复现。
 
-若根据异常位置怀疑内存访问问题，可尝试开启[内存检测工具](sanitizer.md)辅助排查。工具未检出问题时，还应结合异常报告继续检查同步、地址计算和Kernel源码。
+若根据异常位置怀疑内存访问、同步与互斥配对、相位使用等问题，可尝试开启[异常检测工具](sanitizer.md)辅助排查。工具未检出问题时，还应结合异常报告继续检查同步、地址计算和Kernel源码。

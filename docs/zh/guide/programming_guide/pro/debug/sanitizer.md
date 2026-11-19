@@ -1,8 +1,8 @@
-# 内存检测
+# 异常检测工具
 
 ## 功能说明
 
-Kernel中的内存访问错误（GM越界、tile越界、片上地址重叠、mutex配对错误）、相位使用错误（AccPhase/STPhase与K链结构错误，K链指同一Acc tile上两次store之间的整段K循环写）与sync配对错误（sync_src/sync_dst）通常不会立即导致Host侧异常。其表现多为结果错乱、偶发错误或Kernel挂死，人工排查成本高。内存检测工具（sanitizer）通过在@pypto_pro.language.jit()中配置sanitizer=True开启：框架自动在GM/tile访问点、mutex调用点、相位调用点（AccPhase/STPhase）和sync调用点（sync_src/sync_dst）插桩，每次Kernel启动结束后统一检测并给出结论。
+Kernel在设备上运行期间的异常通常不会立即导致Host侧报错。异常分为三类：内存访问异常（GM/tile越界、标量访问越界、片上地址重叠、视图声明超出源）、同步与互斥配对异常（mutex加解锁、sync_src/sync_dst）、相位使用异常（AccPhase/STPhase与K链结构错误，K链指同一Acc tile上两次store之间的整段K循环写）。其表现多为结果错乱、偶发错误或Kernel挂死，人工排查成本高。异常检测工具（sanitizer）通过在@pypto_pro.language.jit()中配置sanitizer=True开启：框架自动在GM/tile访问点、mutex调用点、相位调用点（AccPhase/STPhase）和sync调用点（sync_src/sync_dst）插桩，每次Kernel启动结束后统一检测并给出结论。
 
 ## 使用约束
 
@@ -14,7 +14,7 @@ Kernel中的内存访问错误（GM越界、tile越界、片上地址重叠、mu
 
 ## 操作步骤
 
-### 开启内存检测
+### 开启异常检测工具
 
 在核函数装饰器上设置`@pypto_pro.language.jit(sanitizer=True)`：
 
@@ -50,7 +50,7 @@ PyPTO Sanitizer: 1 issue(s) detected
 | GM_OUT_OF_BOUNDS | ERROR | GM访问越界：offsets + tile的valid_shape超出tensor shape（最多5维，含getval/setval标量访问、make_tensor声明的shape超出源tensor）。 |
 | TILE_OUT_OF_BOUNDS | ERROR | tile访问越界：offset + valid_shape超出TileType声明维度（move/insert、set_validshape、tile标量访问）。 |
 | TILE_OVERLAP | WARNING | 两个tile在同一内存空间的地址区间重叠。 |
-| MUTEX_UNLOCK_BEFORE_LOCK / UNPAIRED_MUTEX_LOCK / MUTEX_DOUBLE_LOCK | ERROR | mutex_lock/mutex_unlock未按相同(region, mutex_id, pipe)严格交替配对（无锁解锁、锁后未解锁、重复加锁）。 |
+| MUTEX_UNLOCK_BEFORE_LOCK / UNPAIRED_MUTEX_LOCK | ERROR | mutex_lock/mutex_unlock未按相同(region, mutex_id, pipe)严格交替配对（无锁解锁、锁后未解锁）。 |
 | PHASE_MISMATCH | ERROR | 相位（AccPhase/STPhase，硬件unit_flag同步）使用错误：matmul_acc/matmul_mx_acc的dst与acc不是同一Tile（原地契约）；同一Acc tile上混用带phase与不带phase的读写（硬件握手与软件同步互不排序）；K链结构错误（链首误用matmul_acc累加到残留值、matmul/matmul_bias出现在链中段覆盖或清空部分和）。 |
 | PHASE_DEADLOCK | ERROR | 相位状态机死锁：Final写后无Final读消费（flag悬挂）、带STPhase的读等待从未置位的flag、写等待未清零的flag。 |
 | SYNC_UNPAIRED_SRC | ERROR | sync_src发出后无配对sync_dst等待，数据竞争。 |
@@ -58,7 +58,7 @@ PyPTO Sanitizer: 1 issue(s) detected
 | GM/TILE_OUT_OF_BOUNDS (SIMT) | ERROR | SIMT线程块内的标量访问越界（data[tid]等，按运行时线程坐标判定）。 |
 | TILE_SLICE_UNALIGNED | ERROR | Mat空间tile切片起点未对齐到32字节边界（ND/DN）或分形内块（NZ/ZN）。 |
 
-### 关闭内存检测
+### 关闭异常检测工具
 
 问题修复后，在@pypto_pro.language.jit()中移除sanitizer=True并恢复生产配置，覆盖全部目标Shape、数据类型、TilingKey和block_dim重新回归，确认问题消失且性能恢复正常。
 
@@ -275,7 +275,7 @@ PyPTO Sanitizer: 1 issue(s) detected
 
 ### mutex配对错误
 
-mutex配对错误包含三类：无锁解锁、锁后未解锁、重复加锁。同一位置同类缺陷仅当（执行核，mutex_id，pipe）均相同时聚合；任何字段不同都分别输出。
+mutex配对错误包含两类：无锁解锁、锁后未解锁。同一位置同类缺陷仅当（执行核，mutex_id，pipe）均相同时聚合；任何字段不同都分别输出。
 
 #### 无锁解锁
 
@@ -301,31 +301,9 @@ PyPTO Sanitizer: 1 issue(s) detected
 
 结论：demo.py第705行的mutex_unlock在region 1上解锁mutex_id为7、pipe为MTE2的锁，但此前没有对应的mutex_lock，可定位为解锁缺少配对的加锁，需要补齐lock或删除多余的unlock。
 
-#### 重复加锁
+#### 锁后未解锁
 
-示例说明：同一(region, mutex_id, pipe)在上一次unlock前再次mutex_lock，第二次lock无法获得已被占用的锁槽位，该pipe将永久阻塞（MUTEX_DOUBLE_LOCK）。
-
-```python
-# 同一锁连续lock两次，中间未unlock
-pypto_pro.language.system.mutex_lock(mutex_id=7, pipe=pypto_pro.language.PipeType.MTE2)
-pypto_pro.language.system.mutex_lock(mutex_id=7, pipe=pypto_pro.language.PipeType.MTE2)
-```
-
-```text
-===== kernel 'mutex_double_lock_kernel' launch 2e58c9a1 (./build/mutex_double_lock_kernel__3510__d0/tk_none) =====
-PyPTO Sanitizer: 1 issue(s) detected
-[1/1] MUTEX_DOUBLE_LOCK: mutex_lock(mutex_id=7, pipe=MTE2, region=0) executes before the previous lock was unlocked and will block this pipe permanently at demo.py:15
-      Hint: A mutex key must alternate lock and unlock; do not lock the same (region, mutex_id, pipe) twice
-```
-
-字段解读：
-
-- executes before the previous lock was unlocked：同一配对键上第二次lock出现时，前一次lock尚未unlock。
-- will block this pipe permanently：锁槽位已被占用，第二次lock等不到释放，该pipe上的后续指令无法执行。
-
-结论：demo.py第15行对mutex_id为7、pipe为MTE2的锁重复加锁，需要删除多余的lock，或在其前插入配对的unlock。
-
-此外，mutex_lock执行后直到kernel结束都没有等到配对的mutex_unlock时，报告UNPAIRED_MUTEX_LOCK，报告位置锚定在悬空的mutex_lock语句。未释放的锁槽位会使同键的后续lock无法获得，与重复加锁一样最终表现为该pipe阻塞。
+mutex_lock执行后直到kernel结束都没有等到配对的mutex_unlock时，报告UNPAIRED_MUTEX_LOCK，报告位置锚定在悬空的mutex_lock语句。
 
 ### 相位（AccPhase/STPhase）错误
 
