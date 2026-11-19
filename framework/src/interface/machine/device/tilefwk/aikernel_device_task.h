@@ -416,8 +416,10 @@ struct DrcoDeviceTaskReadyQueue {
     }
     void Reset()
     {
-        head = 0;
-        tail = 0;
+        // 原子复位：设备端不再在 launch 末尾复位 head/tail，下一次 launch 的各核直接按
+        // tail 判发布/停止，必须保证 host 的复位在 kernel 启动前已发布到 L2。
+        __atomic_store_n(&head, uint32_t(0), __ATOMIC_RELEASE);
+        __atomic_store_n(&tail, uint32_t(0), __ATOMIC_RELEASE);
         DrcoParallelWindow* win = ParallelWindow();
         win->front = 0;
         win->rear = 0;

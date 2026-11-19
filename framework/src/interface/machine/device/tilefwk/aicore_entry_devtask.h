@@ -15,11 +15,15 @@
 
 #pragma once
 
-INLINE void UpdateCacheDevTask(ExecuteContext* ctx, uint32_t parallelIdx, int64_t devTaskPtr)
+INLINE void UpdateCacheDevTask(ExecuteContext* ctx, uint32_t parallelIdx, int64_t devTaskPtr,
+                               bool invalidateCache = true)
 {
+    (void)invalidateCache;
     __gm__ DynFuncHeader* header = (__gm__ DynFuncHeader*)devTaskPtr;
 #if ENABLE_AICORE_RESOLVE
-    dcci((__gm__ void*)0, ENTIRE_DATA_CACHE, CACHELINE_OUT);
+    if (invalidateCache) {
+        dcci((__gm__ void*)0, ENTIRE_DATA_CACHE, CACHELINE_OUT);
+    }
 #endif
     ctx->cachedDevTasks[parallelIdx].header = header;
     ctx->cachedDevTasks[parallelIdx].seqNo = header->seqNo;

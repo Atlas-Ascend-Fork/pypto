@@ -386,8 +386,10 @@ struct DrcoEntryState {
     // bit63-61 空闲）以此为原点还原指针
     __gm__ void* programBase;
 
+#if ENABLE_AICORE_BN_PARALLEL
     // 并行窗口核级状态
     DrcoParallelState parallel;
+#endif
 
 #if ENABLE_AICORE_TRACE
     struct TraceEventStatistic {
@@ -568,21 +570,27 @@ INLINE __gm__ DevAscendFunctionOperationSuccInfo* DrcoGetCurrentRootFuncSuccInfo
 
 // 老路径专用（并行模式不编译，编译期宏隔离 v1）
 #if !ENABLE_AICORE_BN_PARALLEL
-INLINE __gm__ DrcoDeviceTask* GetCurrentDeviceTask(__gm__ DrcoDeviceTaskReadyQueue* queue)
+// 设备任务队列按本地游标取槽三态
+#define DRCO_DEV_TASK_ACQUIRE_OK 0u   // 已取到
+#define DRCO_DEV_TASK_ACQUIRE_WAIT 1u // 尚未发布（cursor >= tail，继续等待）
+#define DRCO_DEV_TASK_ACQUIRE_STOP 2u // 停止令牌
+// 游标与队列 devTask 序号一一对应（每 launch 归零），全部核同步推进；head 仅用于 host 侧
+// backpressure，由 block0 在每个 devTask 结束屏障之后推进。
+// tail 与元素行独立：一次 dcci 读入 tail，元素行读前再单独 dcci。
+INLINE uint32_t DrcoTryAcquireDeviceTask(__gm__ DrcoDeviceTaskReadyQueue* queue, uint32_t cursor,
+                                         __gm__ DrcoDeviceTask** deviceTask)
 {
-    // head/tail are adjacent and 8-byte aligned: read both with one dcci'd u64 load
-    // (same pattern as DrcoMiddleQueueInit's headId/size). The 8-byte access cannot
-    // cross a 64B line, so head and tail need not share a cache line.
-    uint64_t headTail = DrcoGmLoad(reinterpret_cast<__gm__ uint64_t*>(&queue->head));
-    uint32_t head = static_cast<uint32_t>(headTail);
-    uint32_t tail = static_cast<uint32_t>(headTail >> 32);
-    if (head < tail) {
-        __gm__ DrcoDeviceTask* elem = &queue->dynFuncDataListList[head % npu::tile_fwk::DEVICE_TASK_QUEUE_SIZE];
-        if (DrcoGmLoad(&elem->dynFuncDataList) != nullptr) {
-            return elem;
-        }
+    uint32_t tail = DrcoGmLoad(&queue->tail);
+    if (cursor >= tail) {
+        return DRCO_DEV_TASK_ACQUIRE_WAIT;
     }
-    return nullptr;
+    __gm__ DrcoDeviceTask* elem = &queue->dynFuncDataListList[cursor % npu::tile_fwk::DEVICE_TASK_QUEUE_SIZE];
+    DRCO_DCCI_SINGLE_CACHE_LINE(&elem->dynFuncDataList);
+    if (elem->dynFuncDataList == nullptr) {
+        return DRCO_DEV_TASK_ACQUIRE_STOP;
+    }
+    *deviceTask = elem;
+    return DRCO_DEV_TASK_ACQUIRE_OK;
 }
 #endif
 
@@ -2203,60 +2211,37 @@ INLINE void InitDrcoEntry(DrcoEntryState* state, int64_t cfgdata)
 
 // 老路径专用（并行模式不编译，编译期宏隔离 v1）
 #if !ENABLE_AICORE_BN_PARALLEL
-INLINE __gm__ DrcoDeviceTask* GetDrcoDeviceTask(DrcoEntryState* state, bool& isFirstTask, uint64_t t0,
+// 按核本地游标取 devTask：游标随 devTask 推进，所有核一致。入口不再需要 SyncAllMix：
+// 队列槽由 host 在 launch 前发布，各核独立按 tail 判发布；devTask 间的完成同步由每个
+// devTask 末尾的 SyncAllMix 承担（其后再推进 head，供 host 回收/backpressure）。
+// head/tail 由 host 在下一次 launch
+// 的 InitTaskPipeWithSched/Reset 中原子复位，设备端不再复位，因此无需停止汇合屏障。
+INLINE __gm__ DrcoDeviceTask* GetDrcoDeviceTask(DrcoEntryState* state, uint32_t& devTaskIdx, uint64_t t0,
                                                 uint64_t& loopCount, bool& warningSet)
 {
-    if (BlockDescBlockIdx(state->blockDesc) == 0) {
-        if (!isFirstTask) {
-            uint32_t oldHead = DrcoAtomicLoad(&state->deviceTaskReadyQueue->head);
-            DrcoAtomicCasToU32(&state->deviceTaskReadyQueue->head, oldHead, oldHead + 1);
-        }
-        isFirstTask = false;
-        __gm__ DrcoDeviceTask* deviceTask = nullptr;
-        while (true) {
-            DRCO_LEADER_TIMEOUT_CHECK(t0, loopCount, AICORE_LEAF_TASK_RUN_TIMEOUT, STAGE_RUN_LEAFTASK_TIMEOUT);
+    __gm__ DrcoDeviceTask* deviceTask = nullptr;
+    while (true) {
+        DRCO_LEADER_TIMEOUT_CHECK(t0, loopCount, AICORE_LEAF_TASK_RUN_TIMEOUT, STAGE_RUN_LEAFTASK_TIMEOUT);
+        if (state->deviceTaskReadyQueue == nullptr) {
+            DRCO_DCCI_SINGLE_CACHE_LINE(state->runtimeDataRingBufferHeadData);
+            state->base = npu::tile_fwk::RuntimeDataRingBufferHeadData::GetRuntimeDataCurrent(
+                state->runtimeDataRingBufferHeadData);
+            DRCO_DCCI_SINGLE_CACHE_LINE(state->base);
+            state->deviceTaskReadyQueue = DrcoGmLoad(&state->base->drcoDeviceTaskReadyQueue);
             if (state->deviceTaskReadyQueue == nullptr) {
-                DRCO_DCCI_SINGLE_CACHE_LINE(state->runtimeDataRingBufferHeadData);
-                state->base = npu::tile_fwk::RuntimeDataRingBufferHeadData::GetRuntimeDataCurrent(
-                    state->runtimeDataRingBufferHeadData);
-                DRCO_DCCI_SINGLE_CACHE_LINE(state->base);
-                state->deviceTaskReadyQueue = DrcoGmLoad(&state->base->drcoDeviceTaskReadyQueue);
-                if (state->deviceTaskReadyQueue == nullptr) {
-                    DrcoBusyBackOff();
-                    continue;
-                }
-            }
-            deviceTask = GetCurrentDeviceTask(state->deviceTaskReadyQueue);
-            if (deviceTask == nullptr) {
-                uint32_t qHead = DrcoAtomicLoad(&state->deviceTaskReadyQueue->head);
-                uint32_t qTail = DrcoGmLoad(&state->deviceTaskReadyQueue->tail);
-                if (qHead < qTail) {
-                    __gm__ DrcoDeviceTask*
-                        elem = &state->deviceTaskReadyQueue
-                                    ->dynFuncDataListList[qHead % npu::tile_fwk::DEVICE_TASK_QUEUE_SIZE];
-                    if (DrcoGmLoad(&elem->dynFuncDataList) == nullptr) {
-                        break;
-                    }
-                }
                 DrcoBusyBackOff();
                 continue;
             }
-            break;
         }
-        SyncAllMix();
-        return deviceTask;
+        uint32_t ret = DrcoTryAcquireDeviceTask(state->deviceTaskReadyQueue, devTaskIdx, &deviceTask);
+        if (ret == DRCO_DEV_TASK_ACQUIRE_OK) {
+            return deviceTask;
+        }
+        if (ret == DRCO_DEV_TASK_ACQUIRE_STOP) {
+            return nullptr;
+        }
+        DrcoBusyBackOff(); // DRCO_DEV_TASK_ACQUIRE_WAIT
     }
-
-    SyncAllMix();
-    if (state->deviceTaskReadyQueue == nullptr) {
-        DRCO_DCCI_SINGLE_CACHE_LINE(state->runtimeDataRingBufferHeadData);
-        state->base = npu::tile_fwk::RuntimeDataRingBufferHeadData::GetRuntimeDataCurrent(
-            state->runtimeDataRingBufferHeadData);
-        DRCO_DCCI_SINGLE_CACHE_LINE(state->base);
-        state->deviceTaskReadyQueue = DrcoGmLoad(&state->base->drcoDeviceTaskReadyQueue);
-    }
-    __gm__ DrcoDeviceTask* deviceTask = GetCurrentDeviceTask(state->deviceTaskReadyQueue);
-    return deviceTask;
 }
 #endif
 
@@ -2505,6 +2490,7 @@ INLINE void ExecDrcoPerCoreTasks(DrcoEntryState* state, __gm__ npu::tile_fwk::Pe
                                  __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList)
 {
     // head/tail/size 与 taskList 起始同处队列首行：一次 dcci 覆盖，随后普通读两字段
+    // （旧实现 size/head 各一次 DrcoGmLoad，对同一行重复失效）。队列内容 host 发布后只读。
     DRCO_DCCI_SINGLE_CACHE_LINE(perCoreQueue);
     uint32_t perCoreQueueSize = perCoreQueue->size;
     uint32_t perCoreQueueHead = perCoreQueue->head;
@@ -3131,15 +3117,20 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
 #if ENABLE_AICORE_BN_PARALLEL
     KernelEntryDrcoParallel(&state);
 #else
-    bool isFirstTask = true;
+    // 核本地 devTask 游标：与队列内 devTask 序号一致，每 launch 从 0 开始（block0 在上一
+    // launch 末尾复位 head/tail）。取槽不再依赖 head，入口无需 SyncAllMix。
+    uint32_t devTaskIdx = 0;
     AICORE_TIMEOUT_CHECK_BEGIN(t0, loop_count);
     while (true) {
-        __gm__ DrcoDeviceTask* deviceTask = GetDrcoDeviceTask(&state, isFirstTask, t0, loop_count, warningSet);
+        __gm__ DrcoDeviceTask* deviceTask = GetDrcoDeviceTask(&state, devTaskIdx, t0, loop_count, warningSet);
         if (deviceTask == nullptr) {
             break;
         }
 
-        UpdateCacheDevTask(&state.ctx, state.ctx.curLeafTaskParallelIdx, (int64_t)deviceTask->dynFuncDataList);
+        // 首个 devTask 紧跟 InitCtx 的整块 D-Cache 失效，入口到此处没有 devTask 镜像访问；
+        // 跳过首任务的整块失效，后续 devTask 仍按原逻辑整块失效。
+        UpdateCacheDevTask(&state.ctx, state.ctx.curLeafTaskParallelIdx, (int64_t)deviceTask->dynFuncDataList,
+                           devTaskIdx != 0);
         __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList = deviceTask->drcoRootFuncList;
         state.ctx.lastTaskFinishCycle = 0;
         state.isExectedLeafTask = false;
@@ -3148,7 +3139,8 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
         // 期望动态计数，热路径完成判定用缓存值（动态计数走分片），不再反复 dcci 该行。
         // ssbuf 协议下 V 端无判定职责，不缓存；C 端另缓存 AIV 期望动态计数并复位聚合状态
         // （快照须与随后 ssbuf 复位后的零值对齐；tick 复位保证每 devTask 首次空转聚合即判，
-        // 空类型预置 flag 及时补发镜像）
+        // 空类型预置 flag 及时补发镜像）。size/staticExecCount 同处 64B 行：每类一次 dcci，
+        // 随后普通读两字段（旧实现每字段一次 dcci，同类重复失效）。
         if (IS_AIC) {
             __gm__ npu::tile_fwk::DrcoDevTaskCountList::CoreTypeCount* coreCnt = &rootFuncList->devTaskCountList
                                                                                       .count[DRCO_CORE_TYPE];
@@ -3167,12 +3159,20 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
         // host 侧图特征门控结果（每 devTask 入口载入一次，强制点只读本地缓存）
         state.percoreEagerConsume = DrcoGmLoad(&rootFuncList->percoreEagerConsumeEnable);
 #endif // DRCO_PERCORE_EAGER_CONSUME
+       // perCore 队列指针：host 发布后只读；队列首行（head/tail/size/taskList）由
+       // ExecDrcoPerCoreTasks 入口一次 dcci 覆盖
         __gm__ npu::tile_fwk::PerCorePendingQueue* perCoreQueue = DrcoGmLoad(
             &rootFuncList->perCorePendingQueueArray[BlockDescBlockIdx(state.blockDesc)]);
-
         if (DrcoGmLoad(&rootFuncList->totalTaskCount) == 0) {
-            uint32_t oldHead = DrcoAtomicLoad(&state.deviceTaskReadyQueue->head);
-            DrcoAtomicCasToU32(&state.deviceTaskReadyQueue->head, oldHead, oldHead + 1);
+            // 空 devTask：各核本地游标一致推进；仍需一次 SyncAllMix——防止本核抢跑到下一个
+            // devTask 的 ssbuf set 早于对侧核本 devTask 的 wait（事件配对交叉）。
+            // head 在屏障之后推进：保证 host 复用该 slot 时全部核已读过它。
+            ++devTaskIdx;
+            SyncAllMix();
+            if (BlockDescBlockIdx(state.blockDesc) == 0) {
+                // head/tail 同 cacheline：必须用字粒度原子写（dcci 回写整行会抹掉 host 刚推进的 tail）
+                DrcoAtomicExchToU32(&state.deviceTaskReadyQueue->head, devTaskIdx);
+            }
             continue;
         }
 
@@ -3194,15 +3194,18 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
         state.hasStitchNode = DrcoGmLoad(&rootFuncList->hasStitchNode) != 0;
         ExecDrcoReadyQueueTasks(&state, rootFuncList, perCoreQueue);
 
+        // 结束屏障之后再推进游标/head：屏障保证全部核已完成本 devTask，slot 可被 host 复用
         SyncAllMix();
+        ++devTaskIdx;
         if (BlockDescBlockIdx(state.blockDesc) == 0) {
             DrcoGmStore(&rootFuncList->devTaskFinished, (uint32_t)1);
+            // head/tail 同 cacheline：head 用字粒度原子写，避免 dcci 整行回写抹掉 host 的 tail
+            DrcoAtomicExchToU32(&state.deviceTaskReadyQueue->head, devTaskIdx);
         }
         DfxProcWhenDevTaskStop(&state.ctx, state.args, state.metric, state.isExectedLeafTask);
     }
     if (BlockDescBlockIdx(state.blockDesc) == 0) {
-        state.deviceTaskReadyQueue->head = 0;
-        state.deviceTaskReadyQueue->tail = 0;
+        // head/tail 由 host 下一次 launch 的 Reset（原子 store）复位；设备端只发布完成信号。
         uint64_t finished = DrcoGmLoad(&state.runtimeDataRingBufferHeadData->indexFinished.value) + 1;
         DrcoGmStore(&state.runtimeDataRingBufferHeadData->indexFinished.value, finished);
     }
