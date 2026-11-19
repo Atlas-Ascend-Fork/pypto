@@ -18,6 +18,8 @@ handed to ``call_kernel``. No hardware or external tools are required.
 import ctypes
 import importlib
 import logging
+from pathlib import Path
+import runpy
 import sys
 from unittest.mock import MagicMock
 
@@ -323,6 +325,57 @@ def test_unmappable_scalar_dtype_rejected_at_bind_time(dtype, cpp_type):
     assert _jit._entry_params_from_param_specs(specs) == [(cpp_type, "h", False)]
     with pytest.raises(TypeError, match="No ctypes mapping for scalar dtype"):
         _jit._LaunchPlan(specs)
+
+
+def test_exception_repro_preserves_special_scalar_values():
+    script = Path(__file__).resolve().parents[6] / "tools" / "scripts" / "debug_aicore_error_pro_repro.py"
+    scalar_expr = runpy.run_path(str(script))["_scalar_replay_expr"]
+
+    assert scalar_expr(-0.0, True) == "-0.0"
+    assert scalar_expr(float("nan"), True) == "float('nan')"
+    assert scalar_expr(float("inf"), True) == "float('inf')"
+    assert scalar_expr(float("-inf"), False) == "ctypes.c_float(float('-inf'))"
+    assert scalar_expr(5, False) == "ctypes.c_int64(5)"
+
+
+@pytest.mark.parametrize(
+    "dump_dtype, expected_dtype, payload_size, storage_shape, dynamic_extent",
+    [
+        ("FLOAT4_E2M1", "fp4e2m1", 4, (2, 2), "4"),
+        ("FLOAT4_E1M2", "fp4e1m2", 4, (2, 2), "4"),
+        ("HIFLOAT8", "hf8", 8, (2, 4), "t_INPUT_0.shape[1]"),
+    ],
+)
+def test_exception_repro_reconstructs_fp4_and_hf8_storage(
+    tmp_path, dump_dtype, expected_dtype, payload_size, storage_shape, dynamic_extent
+):
+    script = Path(__file__).resolve().parents[6] / "tools" / "scripts" / "debug_aicore_error_pro_repro.py"
+    repro = runpy.run_path(str(script))
+    dump_file = tmp_path / "kernel.dump"
+    dump_file.write_bytes(
+        f"[Dump][Exception] type=INPUT; index=0; shape=[2,4]; format=ND; "
+        f"dtype=DT_{dump_dtype}; address=0x1000; size={payload_size} bytes\n".encode()
+        + bytes(range(payload_size))
+    )
+    kernel_name, tensors = repro["_parse_dump_file"](str(dump_file))
+    assert kernel_name == "kernel"
+    assert len(tensors) == 1
+    assert tensors[0].dtype_str == expected_dtype
+    assert repro["_replay_storage_shape"](tensors[0]) == storage_shape
+
+    (tmp_path / "call_kernel.cpp").write_text(
+        'extern "C" void call_kernel(uint32_t blockDim, void* stream, void* input, int32_t __pypto_dyn_input_1) {}',
+        encoding="utf-8",
+    )
+    output_path = tmp_path / "test_single_op.py"
+    repro["codegen_test_script"](
+        str(tmp_path / "kernel_call_kernel.so"), kernel_name, str(dump_file), tensors, 0, str(output_path),
+        launch_meta={"abi": [{"kind": "ptr", "name": "input", "addr": 0x1000}]},
+    )
+    generated = output_path.read_text(encoding="utf-8")
+    assert f"reshape({storage_shape!r})" in generated
+    assert f"_dyn_args = [{dynamic_extent}]" in generated
+    assert (tmp_path / "tensor_INPUT_0.bin").read_bytes() == bytes(range(payload_size))
 
 
 @pytest.mark.parametrize(
@@ -755,9 +808,6 @@ def test_cached_launch_passes_actual_stream_without_python_query(monkeypatch):
     _torch_mock.npu.current_stream.side_effect = streams[:2]
     target = _jit.KernelTarget("test-compiled-target", 1, 1, True)
     compiled = CompiledKernel(lib_path="<fake>", param_specs=[], target=target)
-    dump = importlib.import_module("pypto_pro.runtime.exception_dump")
-    set_dump_info = MagicMock()
-    monkeypatch.setattr(dump, "set_dump_info", set_dump_info)
     try:
         _jit._launch(compiled, (), 12, None)
         entry = compiled.entry
@@ -768,10 +818,86 @@ def test_cached_launch_passes_actual_stream_without_python_query(monkeypatch):
         assert [call[1] for call in lib.call_kernel.calls] == [s._as_parameter_ for s in streams]
         _torch_mock.npu.get_stream_limit.assert_not_called()
         config_lookup.assert_not_called()
-        assert len(set_dump_info.call_args_list) == 3
-        assert all(call.args[0] is compiled for call in set_dump_info.call_args_list)
     finally:
         _torch_mock.npu.current_stream.side_effect = None
+
+
+def test_registered_dump_schema_removes_per_launch_snapshot(monkeypatch):
+    lib = _FakeLib()
+    monkeypatch.setattr(_jit, "ctypes", _CtypesProxy(lib))
+    dump = importlib.import_module("pypto_pro.runtime.exception_dump")
+    monkeypatch.setattr(dump, "_active_dump_schemas", {})
+    compiled = CompiledKernel(lib_path="<fake>", param_specs=[])
+
+    def register_schema(kernel):
+        dump._active_dump_schemas[kernel.kernel_name] = (kernel, None)
+        return ()
+
+    prepare_dump_schema = MagicMock(side_effect=register_schema)
+    set_dump_runtime_info = MagicMock()
+    monkeypatch.setattr(dump, "prepare_dump_schema", prepare_dump_schema)
+    monkeypatch.setattr(dump, "set_dump_runtime_info", set_dump_runtime_info)
+
+    _jit._launch(compiled, (), 12, _FAKE_STREAM)
+    _jit._launch(compiled, (), 12, _FAKE_STREAM)
+
+    prepare_dump_schema.assert_called_once_with(compiled)
+    set_dump_runtime_info.assert_called_once_with(compiled, 12, ())
+    assert len(lib.call_kernel.calls) == 2
+
+
+def test_unsupported_dump_schema_does_not_add_per_launch_snapshot(monkeypatch):
+    lib = _FakeLib()
+    monkeypatch.setattr(_jit, "ctypes", _CtypesProxy(lib))
+    dump = importlib.import_module("pypto_pro.runtime.exception_dump")
+    prepare_dump_schema = MagicMock(return_value=None)
+    set_dump_runtime_info = MagicMock()
+    monkeypatch.setattr(dump, "prepare_dump_schema", prepare_dump_schema)
+    monkeypatch.setattr(dump, "set_dump_runtime_info", set_dump_runtime_info)
+    compiled = CompiledKernel(lib_path="<fake>", param_specs=[])
+
+    _jit._launch(compiled, (), 12, _FAKE_STREAM)
+
+    prepare_dump_schema.assert_called_once_with(compiled)
+    set_dump_runtime_info.assert_not_called()
+    assert len(lib.call_kernel.calls) == 1
+
+
+def test_dump_schema_registration_error_does_not_block_launch(monkeypatch):
+    lib = _FakeLib()
+    monkeypatch.setattr(_jit, "ctypes", _CtypesProxy(lib))
+    dump = importlib.import_module("pypto_pro.runtime.exception_dump")
+    prepare_dump_schema = MagicMock(side_effect=RuntimeError("registration failed"))
+    discard_dump_schema = MagicMock()
+    monkeypatch.setattr(dump, "prepare_dump_schema", prepare_dump_schema)
+    monkeypatch.setattr(dump, "discard_dump_schema", discard_dump_schema)
+    compiled = CompiledKernel(lib_path="<fake>", param_specs=[])
+
+    _jit._launch(compiled, (), 12, _FAKE_STREAM)
+
+    prepare_dump_schema.assert_called_once_with(compiled)
+    discard_dump_schema.assert_called_once_with(compiled)
+    assert len(lib.call_kernel.calls) == 1
+
+
+def test_dump_schema_update_error_does_not_block_launch(monkeypatch):
+    lib = _FakeLib()
+    monkeypatch.setattr(_jit, "ctypes", _CtypesProxy(lib))
+    dump = importlib.import_module("pypto_pro.runtime.exception_dump")
+    prepare_dump_schema = MagicMock(return_value=())
+    sync_dump_runtime_info = MagicMock(return_value=False)
+    discard_dump_schema = MagicMock()
+    monkeypatch.setattr(dump, "prepare_dump_schema", prepare_dump_schema)
+    monkeypatch.setattr(dump, "sync_dump_runtime_info", sync_dump_runtime_info)
+    monkeypatch.setattr(dump, "discard_dump_schema", discard_dump_schema)
+    compiled = CompiledKernel(lib_path="<fake>", param_specs=[])
+
+    _jit._launch(compiled, (), 12, _FAKE_STREAM)
+    _jit._launch(compiled, (), 12, _FAKE_STREAM)
+
+    sync_dump_runtime_info.assert_called_once_with(compiled, 12, ())
+    discard_dump_schema.assert_called_once_with(compiled)
+    assert len(lib.call_kernel.calls) == 2
 
 
 @pytest.mark.parametrize("requested", [1 << 32, (1 << 32) + 1, 1 << 100])

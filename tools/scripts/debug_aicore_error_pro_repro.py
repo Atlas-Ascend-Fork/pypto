@@ -27,6 +27,7 @@ import glob
 import inspect
 import json
 import logging
+import math
 import os
 import re
 import struct
@@ -43,7 +44,8 @@ _STR_TO_TORCH = {
     "int8": "torch.int8", "int16": "torch.int16", "int32": "torch.int32", "int64": "torch.int64",
     "uint8": "torch.uint8", "uint16": "torch.int16", "uint32": "torch.int32", "uint64": "torch.int64",
     "bfloat16": "torch.bfloat16", "bool": "torch.bool",
-    "fp8e4m3fn": "torch.float8_e4m3fn", "fp8e5m2": "torch.float8_e5m2",
+    "fp8e4m3fn": "torch.float8_e4m3fn", "fp8e5m2": "torch.float8_e5m2", "fp8e8m0": "torch.uint8",
+    "hf8": "torch.uint8", "fp4e2m1": "torch.uint8", "fp4e1m2": "torch.uint8",
 }
 
 _STR_TO_NP = {
@@ -51,7 +53,8 @@ _STR_TO_NP = {
     "int8": "np.int8", "int16": "np.int16", "int32": "np.int32", "int64": "np.int64",
     "uint8": "np.uint8", "uint16": "np.int16", "uint32": "np.int32", "uint64": "np.int64",
     "bfloat16": "np.int16", "bool": "np.bool_",
-    "fp8e4m3fn": "np.uint8", "fp8e5m2": "np.uint8",
+    "fp8e4m3fn": "np.uint8", "fp8e5m2": "np.uint8", "fp8e8m0": "np.uint8",
+    "hf8": "np.uint8", "fp4e2m1": "np.uint8", "fp4e1m2": "np.uint8",
 }
 
 _DTYPE_TO_SIZE = {
@@ -59,7 +62,7 @@ _DTYPE_TO_SIZE = {
     "int8": 1, "int16": 2, "int32": 4, "int64": 8,
     "uint8": 1, "uint16": 2, "uint32": 4, "uint64": 8,
     "bfloat16": 2, "bool": 1,
-    "fp8e4m3fn": 1, "fp8e5m2": 1,
+    "fp8e4m3fn": 1, "fp8e5m2": 1, "fp8e8m0": 1, "hf8": 1,
 }
 
 _DT_NAME_TO_STR = {
@@ -67,10 +70,14 @@ _DT_NAME_TO_STR = {
     "INT8": "int8", "INT16": "int16", "INT32": "int32", "INT64": "int64",
     "UINT8": "uint8", "UINT16": "uint16", "UINT32": "uint32", "UINT64": "uint64",
     "BOOL": "bool", "BFLOAT16": "bfloat16",
-    "FP8E5M2": "fp8e5m2", "FP8E4M3FN": "fp8e4m3fn",
+    "FP8E5M2": "fp8e5m2", "FP8E4M3FN": "fp8e4m3fn", "FLOAT8_E8M0": "fp8e8m0", "FP8E8M0": "fp8e8m0",
+    "HIFLOAT8": "hf8", "HF8": "hf8",
+    "FLOAT4_E2M1": "fp4e2m1", "FLOAT4_E1M2": "fp4e1m2",
+    "FP4E2M1": "fp4e2m1", "FP4E1M2": "fp4e1m2",
 }
 
 _SIZE_TO_DTYPE = {1: "uint8", 2: "float16", 4: "float32", 8: "float64"}
+_PACKED_FP4_DTYPES = frozenset(("fp4e2m1", "fp4e1m2"))
 
 
 @dataclasses.dataclass
@@ -115,7 +122,7 @@ def _parse_dump_file(dump_file: str) -> Tuple[str, List[TensorInfo]]:
         dtype_str = _DT_NAME_TO_STR.get(m.group(4))
         if dtype_str is None:
             dtype_str = _SIZE_TO_DTYPE.get(per_elem, "float16") if elems else "uint8"
-        elif elems and _DTYPE_TO_SIZE.get(dtype_str, -1) != per_elem:
+        elif elems and dtype_str not in _PACKED_FP4_DTYPES and _DTYPE_TO_SIZE.get(dtype_str, -1) != per_elem:
             fixed = _SIZE_TO_DTYPE.get(per_elem, dtype_str)
             logging.warning(f"  tensor[{index}] dtype {dtype_str} mismatch with size/shape, using {fixed}")
             dtype_str = fixed
@@ -128,6 +135,25 @@ def _parse_dump_file(dump_file: str) -> Tuple[str, List[TensorInfo]]:
     kernel_name = parts[0] if parts else "unknown"
 
     return kernel_name, tensors
+
+
+def _replay_storage_shape(tensor: TensorInfo) -> tuple:
+    """Return the dumped storage shape, which is packed along the last axis for FP4."""
+    if tensor.dtype_str not in _PACKED_FP4_DTYPES:
+        return tensor.shape if tensor.shape else (-1,)
+    if not tensor.shape or tensor.shape[-1] % 2:
+        raise ValueError(f"FP4 tensor[{tensor.index}] needs an even innermost logical dimension")
+    storage_shape = tensor.shape[:-1] + (tensor.shape[-1] // 2,)
+    if math.prod(storage_shape) != tensor.size:
+        raise ValueError(f"FP4 tensor[{tensor.index}] dump size does not match its packed shape")
+    return storage_shape
+
+
+def _replay_dynamic_dim(tensor: TensorInfo, var: str, axis: int) -> str:
+    """Use the logical FP4 extent rather than the packed storage extent in the ABI tail."""
+    if tensor.dtype_str in _PACKED_FP4_DTYPES:
+        return str(tensor.shape[axis])
+    return f"{var}.shape[{axis}]"
 
 
 # C type name in call_kernel.cpp -> ctypes expression for argtypes binding.
@@ -175,6 +201,19 @@ def _load_launch_meta(dump_dir: str, kernel_name: str) -> Optional[dict]:
     except (OSError, ValueError) as exc:
         logging.warning(f"launch-args sidecar unreadable ({exc}), ignored: {path}")
     return None
+
+
+def _scalar_replay_expr(value, have_signature: bool) -> str:
+    """Return a Python expression that preserves nonfinite launch scalars."""
+    if isinstance(value, float):
+        if math.isnan(value):
+            literal = "float('nan')"
+        elif math.isinf(value):
+            literal = "float('-inf')" if value < 0 else "float('inf')"
+        else:
+            literal = repr(value)
+        return literal if have_signature else f"ctypes.c_float({literal})"
+    return repr(value) if have_signature else f"ctypes.c_int64({value!r})"
 
 
 def _parse_call_kernel_signature(ck_cpp: str) -> Tuple[List[str], List[str]]:
@@ -844,13 +883,14 @@ def codegen_test_script(
         var = f"t_{t.io_type}_{t.index}"
         torch_dtype = _STR_TO_TORCH.get(t.dtype_str, "torch.float16")
         np_dtype = _STR_TO_NP.get(t.dtype_str, "np.float16")
-        shape_repr = repr(t.shape) if t.shape else "(-1,)"
+        shape_repr = repr(_replay_storage_shape(t))
         load_lines.append(f"{var}_bin = r'{bin_path}'")
         load_lines.append(f"{var}_np = np.fromfile({var}_bin, dtype={np_dtype})")
         load_lines.append(f"{var}_np = {var}_np.reshape({shape_repr})")
         load_lines.append(f"{var} = torch.tensor(")
         load_lines.append(f"    {var}_np, device=device).view({torch_dtype})")
         tensor_vars.append(var)
+    tensor_by_var = dict(zip(tensor_vars, tensors_sorted))
 
     # Launch ABI binding. The C entry is
     # call_kernel(blockDim, stream, <ptr/scalar/tiling args...>, int32 dyn...)
@@ -891,25 +931,27 @@ def codegen_test_script(
             if entry.get("kind") == "ptr":
                 var = var_by_name.get(str(entry.get("name", "")))
                 launch_exprs.append(f"ctypes.c_void_p({var}.data_ptr())" if var else "ctypes.c_void_p(0)")
+            elif entry.get("kind") == "window":
+                logging.warning("launch-args: distributed Window descriptor cannot be restored offline; passing null")
+                launch_exprs.append("ctypes.c_void_p(0)")
             else:
                 value = entry.get("value")
                 # Plain literal when argtypes binds the width; otherwise pin
                 # int64 so a wide scalar cannot be truncated by ctypes' default.
-                if have_signature:
-                    launch_exprs.append(repr(value))
-                else:
-                    launch_exprs.append(f"ctypes.c_int64({value!r})")
+                launch_exprs.append(_scalar_replay_expr(value, have_signature))
         for name in arg_names:
             dm = re.fullmatch(r"__pypto_dyn_(.+)_(\d+)", name)
             if dm and dm.group(1) in var_by_name:
-                dyn_vals.append(f"{var_by_name[dm.group(1)]}.shape[{dm.group(2)}]")
+                var = var_by_name[dm.group(1)]
+                dyn_vals.append(_replay_dynamic_dim(tensor_by_var[var], var, int(dm.group(2))))
     else:
         ptr_names = [n for n in arg_names if not n.startswith("__pypto_dyn_")]
         var_by_param = dict(zip(ptr_names, tensor_vars))
         for name in arg_names:
             dm = re.fullmatch(r"__pypto_dyn_(.+)_(\d+)", name)
             if dm and dm.group(1) in var_by_param:
-                dyn_vals.append(f"{var_by_param[dm.group(1)]}.shape[{dm.group(2)}]")
+                var = var_by_param[dm.group(1)]
+                dyn_vals.append(_replay_dynamic_dim(tensor_by_var[var], var, int(dm.group(2))))
         launch_exprs = [f"ctypes.c_void_p({v}.data_ptr())" for v in tensor_vars]
 
     if not dyn_vals:

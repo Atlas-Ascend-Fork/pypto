@@ -16,7 +16,7 @@ from collections import ChainMap
 from collections.abc import Callable, Mapping
 import ctypes
 import dataclasses
-from enum import Enum, IntFlag
+from enum import IntFlag
 import hashlib
 import inspect
 import json
@@ -31,6 +31,7 @@ import uuid
 
 import torch
 
+from pypto.pypto_impl import KernelParamKind as ParamKind
 from pypto.pypto_impl import ir
 from pypto.pypto_impl.codegen import CCECodegen
 from pypto.pypto_impl.ir import ConstInt, PtrType, ScalarType, TensorType, TupleType, Var
@@ -193,14 +194,6 @@ _PL_DTYPE_TO_CTYPE: dict[str, type] = {
     str(DataType.BOOL): ctypes.c_bool,
     str(DataType.INDEX): ctypes.c_int64,
 }
-
-
-class ParamKind(Enum):
-    TENSOR = "tensor"
-    PTR = "ptr"
-    SCALAR = "scalar"
-    TILING = "tiling"
-    WINDOW = "window"  # pld.Window: opaque dist::Window descriptor pointer
 
 
 @dataclasses.dataclass
@@ -805,17 +798,21 @@ def _build_launch_entry(compiled: "CompiledKernel"):
     # resource-query errors. int64_t preserves the error tag above its 32-bit detail.
     call_kernel.restype = ctypes.c_int64
     logger = logging.getLogger()
-    # Exception-dump bookkeeping. The addresses and shapes it caches are per-launch, so
-    # the call itself has to stay on the hot path -- but the import and the kernel's own
-    # identity do not, and _load_lib used to redo both on every launch.
-    from pypto_pro.runtime.exception_dump import set_dump_info as _set_dump_info
+    # Runtime retains the concrete launch argument buffer on an AICore exception, so
+    # Python does not snapshot addresses and shapes before every launch. The schema
+    # is refreshed only when switching between same-named compiled variants.
+    from pypto_pro.runtime.exception_dump import discard_dump_schema, prepare_dump_schema, sync_dump_runtime_info
+
+    try:
+        dump_size_indices = prepare_dump_schema(compiled) if not simt_kernel else None
+    except Exception:
+        logger.exception("Failed to register exception-dump schema for %s", compiled.kernel_name)
+        dump_size_indices = None
 
     def entry(args: tuple, launch_config, stream):
-        # Tensor-ize the tiling struct before anything else consumes ``args``:
-        # _set_dump_info must see the packed uint8 device tensor to record the
-        # TILING parameter as the exception-dump WORKSPACE entry (pack_launch_args
-        # rebinds only its local copy). _pack_tiling_arg is idempotent, so the
-        # pack below re-receives an already-converted tail argument.
+        nonlocal dump_size_indices
+        # Keep the packed Tiling tensor in this args tuple so exception-dump can
+        # read its byte size after the shared ABI packer validates the arguments.
         if plan.has_tiling:
             args = _tiling_pack_args(args)
         abi_args = _pack_launch_args(plan, args, window_cls)
@@ -833,7 +830,21 @@ def _build_launch_entry(compiled: "CompiledKernel"):
         # native auto sentinel) and is rejected by the native limit check instead.
         if block_dim > 0xFFFFFFFF:
             block_dim = 0xFFFFFFFF
-        _set_dump_info(compiled, args, block_dim)
+        if dump_size_indices is None:
+            discard_dump_schema(compiled)
+        else:
+            try:
+                dump_sizes = tuple(
+                    arg.numel() * arg.element_size() if isinstance(arg, torch.Tensor) else 0
+                    for index in dump_size_indices
+                    for arg in (args[index],)
+                )
+                if not sync_dump_runtime_info(compiled, block_dim, dump_sizes):
+                    dump_size_indices = None
+            except Exception:
+                logger.exception("Failed to prepare exception dump for %s", compiled.kernel_name)
+                discard_dump_schema(compiled)
+                dump_size_indices = None
         # Resolve limits and launch in one C call, avoiding two torch_npu C-extension
         # calls and Python dict/loop work. Errors return before any device launch.
         actual_block_dim = call_kernel(block_dim, stream._as_parameter_, *abi_args)
@@ -2851,9 +2862,9 @@ class _TileJitKernel:
     def _bind_runtime_args(self, args: tuple):
         """Validate tensor arguments and derive the static specialization signature."""
         bound_signature = self._shape_signature_spec.bind_runtime_args(args)
-        python_args = self._shape_signature_spec.python_signature.bind(*args)
+        # Launch arguments are already in signature order, including defaults.
         for tensor_spec in self._shape_signature_spec.tensors:
-            arg = python_args.arguments[tensor_spec.parameter_name]
+            arg = args[tensor_spec.parameter_index]
             if arg is None:
                 continue
             if not isinstance(arg, torch.Tensor):
@@ -2919,8 +2930,8 @@ class _TileJitKernel:
             spec = self._resolve_spec_identity(concrete_key, dtype_key)
         tilingkey_packed, _, _, dtype_hash = spec
 
-        # A cache hit needs only the key, so binding the full signature -- two
-        # inspect.Signature.bind calls plus a BoundDimension per declared dimension -- is
+        # A cache hit needs only the key, so binding the full signature -- an
+        # inspect.Signature.bind call plus a BoundDimension per declared dimension -- is
         # deferred to the miss path, where codegen actually consumes it.
         if not self._static_dim_slots():
             # No parameter carries a StaticDim/StaticTail, so no dimension can ever be

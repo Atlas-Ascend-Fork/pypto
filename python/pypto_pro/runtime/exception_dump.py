@@ -16,7 +16,7 @@
 The C++ shim (``exception_dump_callback.cpp``) is compiled into
 ``libtile_fwk_interface.so`` at build time.  This module loads the
 ``extern "C"`` symbols from that library and provides a Python API to
-register the callback and cache tensor info before each kernel launch.
+register the callback and the kernel's static launch schema.
 
 On AICORE error, CANN asynchronously invokes the callback which writes
 dump files (tensor data + ``_host.o``) to
@@ -28,23 +28,23 @@ build, so the device code stays bit-identical to what was launched — and place
 the resulting ``<kernel_name>_call_kernel.so`` in the dump directory. That one
 artifact serves both offline reproduction (ctypes relaunch) and Error-PC
 symbolization (fixedPCOffset -> source line). No manual intervention is
-needed — the command is pre-constructed by :func:`set_dump_info` (called before
-every kernel launch) and cached in the C++ shim for the callback to execute.
+needed — the command and Tensor/scalar ABI schema are registered when the
+launch closure is built, and re-registered if another compiled variant with
+the same kernel name becomes active. Pointer-like allocation sizes and block
+dim are only refreshed when their values change.
 """
 
 from __future__ import annotations
 
 import ctypes
 import glob
-import json
 import logging
 import os
 from pathlib import Path
 import shlex
 import shutil
+import threading
 from typing import TYPE_CHECKING
-
-import torch
 
 from pypto_pro import DataType
 
@@ -66,13 +66,19 @@ _PL_DTYPE_TO_ACL_DTYPE: dict[str, int] = {
     str(DataType.UINT64): 10, # ACL_UINT64
     str(DataType.BOOL): 12,   # ACL_BOOL
     str(DataType.BF16): 27,   # ACL_BF16
-    str(DataType.FP8E5M2): 29,    # ACL_FP8_E5M2
-    str(DataType.FP8E4M3FN): 30,  # ACL_FP8_E4M3FN
+    str(DataType.HF8): 34,    # ACL_HIFLOAT8
+    str(DataType.FP8E5M2): 35,    # ACL_FLOAT8_E5M2
+    str(DataType.FP8E4M3FN): 36,  # ACL_FLOAT8_E4M3FN
+    str(DataType.FP8E8M0): 37,    # ACL_FLOAT8_E8M0
+    str(DataType.FP4E2M1): 40,  # ACL_FLOAT4_E2M1
+    str(DataType.FP4E1M2): 41,  # ACL_FLOAT4_E1M2
 }
 
 _MAX_DIMS = 8
 _lib: ctypes.CDLL | None = None
 _registered: bool = False
+_dump_schema_lock = threading.RLock()
+_active_dump_schemas: dict[str, tuple[CompiledKernel, tuple[int, tuple[int, ...]] | None]] = {}
 
 
 def _ensure_lib() -> ctypes.CDLL:
@@ -93,27 +99,33 @@ def _ensure_lib() -> ctypes.CDLL:
     _lib.pro_register_exception_dump_callback.restype = ctypes.c_int32
     _lib.pro_register_exception_dump_callback.argtypes = []
 
-    _lib.pro_set_dump_info.restype = None
-    _lib.pro_set_dump_info.argtypes = [
+    _lib.pro_register_dump_schema.restype = ctypes.c_int32
+    _lib.pro_register_dump_schema.argtypes = [
         ctypes.c_char_p,                   # kernelName
-        ctypes.c_int32,                    # numTensors
-        ctypes.POINTER(ctypes.c_int32),    # types
-        ctypes.POINTER(ctypes.c_size_t),   # tensorSizes
+        ctypes.c_int32,                    # numParams
+        ctypes.POINTER(ctypes.c_int32),    # kinds
+        ctypes.POINTER(ctypes.c_int32),    # tensorTypes
         ctypes.POINTER(ctypes.c_int32),    # dataTypes
-        ctypes.POINTER(ctypes.c_void_p),   # tensorAddrs
-        ctypes.POINTER(ctypes.c_int64),    # flatShapes
+        ctypes.POINTER(ctypes.c_int32),    # elementBits
+        ctypes.POINTER(ctypes.c_char_p),   # names
+        ctypes.POINTER(ctypes.c_char_p),   # dtypeNames
         ctypes.POINTER(ctypes.c_int32),    # shapeCounts
-        ctypes.c_int32,                    # maxDims
+        ctypes.POINTER(ctypes.c_int64),    # flatShapes
+        ctypes.POINTER(ctypes.c_int32),    # flatDynamicSlots
+        ctypes.c_char_p,                   # debugCmd
     ]
 
-    _lib.pro_clear_dump_info.restype = None
-    _lib.pro_clear_dump_info.argtypes = []
+    _lib.pro_unregister_dump_schema.restype = ctypes.c_int32
+    _lib.pro_unregister_dump_schema.argtypes = [ctypes.c_char_p]
 
-    _lib.pro_set_debug_cmd.restype = None
-    _lib.pro_set_debug_cmd.argtypes = [ctypes.c_char_p]
+    _lib.pro_set_dump_runtime_info.restype = ctypes.c_int32
+    _lib.pro_set_dump_runtime_info.argtypes = [
+        ctypes.c_char_p,                   # kernelName
+        ctypes.c_uint32,                   # blockDim
+        ctypes.c_int32,                    # numSizes
+        ctypes.POINTER(ctypes.c_size_t),   # argSizes
+    ]
 
-    _lib.pro_set_launch_meta.restype = None
-    _lib.pro_set_launch_meta.argtypes = [ctypes.c_char_p]
     return _lib
 
 
@@ -245,131 +257,153 @@ def _build_debug_compile_cmd(compiled: "CompiledKernel") -> str:
     return cmd
 
 
-def _record_launch_meta(compiled: "CompiledKernel", args: tuple, block_dim: int | None) -> None:
-    """Cache the launch ABI (ptr/scalar/tiling args + block_dim) in the C++ shim.
+def prepare_dump_schema(compiled: "CompiledKernel") -> tuple[int, ...] | None:
+    """Register launch-invariant dump metadata once for the exception callback.
 
-    Same pattern as the tensor info (``pro_set_dump_info``): the meta is held
-    in the shim and only persisted to
-    ``<dump_dir>/<kernel>_launch_args.json`` when the exception-dump callback
-    fires (``WriteLaunchMetaFile``), so nothing touches the dump directory at
-    launch time. The CANN dump data file only carries tensor payloads;
-    standalone scalar args (e.g. int64 m/k/n) and the launch block_dim cannot
-    be recovered from the call_kernel.cpp signature (which only exposes
-    shape-derived dyn args), so the ABI is recorded here, in signature order,
-    for the offline repro tool to rebuild the exact call.
-    """
-    if not getattr(compiled, "kernel_name", ""):
-        return
-
-    abi = []
-    for spec, arg in zip(getattr(compiled, "param_specs", None) or [], args):
-        kind = spec.kind.name
-        if kind in ("TENSOR", "PTR", "TILING"):
-            if isinstance(arg, torch.Tensor):
-                abi.append({
-                    "name": spec.name,
-                    "kind": "ptr",
-                    "dtype": str(spec.dtype) if spec.dtype else "uint8",
-                    "addr": arg.data_ptr(),
-                    "size": arg.numel() * arg.element_size(),
-                    "shape": list(arg.shape),
-                })
-            else:
-                abi.append({"name": spec.name, "kind": "ptr", "dtype": "uint8", "addr": 0, "size": 0, "shape": []})
-        elif kind == "SCALAR":
-            value = arg if isinstance(arg, (int, float, bool)) else str(arg)
-            abi.append({"name": spec.name, "kind": "scalar", "value": value})
-
-    meta = {"kernel_name": compiled.kernel_name, "block_dim": block_dim, "abi": abi}
-    _ensure_lib().pro_set_launch_meta(json.dumps(meta).encode("utf-8"))
-
-
-def set_dump_info(compiled: "CompiledKernel", args: tuple, block_dim: int | None = None) -> None:
-    """Cache tensor info from runtime args before kernel launch.
-
-    Everything the exception-dump callback needs about the kernel's identity
-    and artifacts (name, build dir, arch mix, launched .so) is read from the
-    CompiledKernel; ``args`` is the only per-launch input. ``block_dim`` and
-    the scalar members of ``args`` are cached in the C++ shim via
-    :func:`_record_launch_meta` and only persisted to ``launch_args.json``
-    when the exception-dump callback fires (``WriteLaunchMetaFile``), so
-    nothing touches the dump directory at launch time. The offline repro tool
-    reads the sidecar to rebuild the exact launch ABI.
+    The returned tuple contains pointer-like parameter indices whose allocation
+    sizes must be refreshed when the launch shape changes. ``None`` means the
+    kernel ABI cannot currently be reconstructed by the exception callback.
     """
     if not compiled.build_dir or not os.path.isdir(compiled.build_dir):
-        logging.warning("exception dump skipped: not a jit scenario (build_dir unavailable)")
-        return
-
+        logging.warning(
+            "Cannot register exception-dump schema for %s: invalid build directory %r",
+            compiled.kernel_name,
+            compiled.build_dir,
+        )
+        return None
     if not register_callback():
-        logging.warning("register_callback failed, exception dump will not be triggered")
-        return
+        return None
 
-    types: list[int] = []
-    sizes: list[int] = []
-    dtypes: list[int] = []
-    addrs: list[int] = []
-    flat_shapes: list[int] = []
+    specs = compiled.param_specs
+    if any(spec.kind.name not in ("TENSOR", "SCALAR", "PTR", "TILING", "WINDOW") for spec in specs):
+        return None
+
+    from pypto_pro.runtime.jit import _collect_dyn_vars
+
+    dynamic_vars = _collect_dyn_vars(specs)
+    dynamic_slots = {name: len(specs) + index for index, name in enumerate(dynamic_vars)}
+
+    kinds: list[int] = []
+    tensor_types: list[int] = []
+    data_types: list[int] = []
+    element_bits: list[int] = []
+    names: list[bytes] = []
+    dtype_names: list[bytes] = []
     shape_counts: list[int] = []
+    flat_shapes: list[int] = []
+    flat_dynamic_slots: list[int] = []
 
-    for arg, spec in zip(args, compiled.param_specs):
+    size_indices: list[int] = []
+    for index, spec in enumerate(specs):
         kind_name = spec.kind.name
-        if kind_name in ("TENSOR", "PTR"):
-            if arg is None:
-                continue
-            if not isinstance(arg, torch.Tensor):
-                continue
-            types.append(0)  # INPUT
-            sizes.append(arg.numel() * arg.element_size())
-            acl_dtype = _PL_DTYPE_TO_ACL_DTYPE.get(str(spec.dtype), 0)
-            dtypes.append(acl_dtype)
-            addrs.append(arg.data_ptr())
-            shape = list(arg.shape)
-            shape_counts.append(len(shape))
-            padded = shape + [0] * (_MAX_DIMS - len(shape))
-            flat_shapes.extend(padded[:_MAX_DIMS])
-        elif kind_name == "TILING":
-            if arg is None or not isinstance(arg, torch.Tensor):
-                continue
-            types.append(2)  # WORKSPACE
-            sizes.append(arg.numel() * arg.element_size())
-            dtypes.append(4)  # ACL_UINT8
-            addrs.append(arg.data_ptr())
-            shape_counts.append(0)
-            flat_shapes.extend([0] * _MAX_DIMS)
+        is_tiling = kind_name == "TILING"
+        dtype = DataType.UINT8 if kind_name in ("TILING", "WINDOW") else spec.dtype
+        acl_dtype = _PL_DTYPE_TO_ACL_DTYPE.get(str(dtype))
+        if acl_dtype is None:
+            return None
+        is_tensor = kind_name == "TENSOR"
+        shape = list(spec.shape or [])
+        if len(shape) > _MAX_DIMS:
+            return None
+        static_shape: list[int] = []
+        dim_slots: list[int] = []
+        for extent in shape:
+            if isinstance(extent, str):
+                static_shape.append(0)
+                dim_slots.append(dynamic_slots[extent])
+            elif isinstance(extent, int) and extent > 0:
+                static_shape.append(extent)
+                dim_slots.append(-1)
+            else:
+                return None
 
-    num_tensors = len(types)
+        kinds.append(int(spec.kind.value))
+        direction = 2 if is_tiling else (getattr(spec.direction, "value", 0) if is_tensor else 0)
+        tensor_types.append(direction)
+        data_types.append(acl_dtype)
+        element_bits.append(int(dtype.get_bit()))
+        names.append(spec.name.encode("utf-8"))
+        dtype_names.append(str(dtype).encode("utf-8"))
+        shape_counts.append(len(shape))
+        flat_shapes.extend((static_shape + [0] * _MAX_DIMS)[:_MAX_DIMS])
+        flat_dynamic_slots.extend((dim_slots + [-1] * _MAX_DIMS)[:_MAX_DIMS])
+        if kind_name in ("PTR", "TILING"):
+            size_indices.append(index)
 
-    lib = _ensure_lib()
+    num_params = len(specs)
+    c_kinds = (ctypes.c_int32 * num_params)(*kinds)
+    c_tensor_types = (ctypes.c_int32 * num_params)(*tensor_types)
+    c_data_types = (ctypes.c_int32 * num_params)(*data_types)
+    c_element_bits = (ctypes.c_int32 * num_params)(*element_bits)
+    c_names = (ctypes.c_char_p * num_params)(*names)
+    c_dtype_names = (ctypes.c_char_p * num_params)(*dtype_names)
+    c_shape_counts = (ctypes.c_int32 * num_params)(*shape_counts)
+    c_shapes = (ctypes.c_int64 * (num_params * _MAX_DIMS))(*flat_shapes)
+    c_dynamic_slots = (ctypes.c_int32 * (num_params * _MAX_DIMS))(*flat_dynamic_slots)
+    debug_cmd = _build_debug_compile_cmd(compiled).encode("utf-8")
 
-    _record_launch_meta(compiled, args, block_dim)
-
-    lib.pro_set_debug_cmd(_build_debug_compile_cmd(compiled).encode("utf-8"))
-
-    if num_tensors == 0:
-        return
-
-    c_types = (ctypes.c_int32 * num_tensors)(*types)
-    c_sizes = (ctypes.c_size_t * num_tensors)(*sizes)
-    c_dtypes = (ctypes.c_int32 * num_tensors)(*dtypes)
-    c_addrs = (ctypes.c_void_p * num_tensors)(*addrs)
-    c_shapes = (ctypes.c_int64 * (num_tensors * _MAX_DIMS))(*flat_shapes)
-    c_counts = (ctypes.c_int32 * num_tensors)(*shape_counts)
-
-    lib.pro_set_dump_info(
-        compiled.kernel_name.encode("utf-8"),
-        num_tensors,
-        c_types,
-        c_sizes,
-        c_dtypes,
-        c_addrs,
-        c_shapes,
-        c_counts,
-        _MAX_DIMS,
-    )
+    with _dump_schema_lock:
+        result = _ensure_lib().pro_register_dump_schema(
+            compiled.kernel_name.encode("utf-8"),
+            num_params,
+            c_kinds,
+            c_tensor_types,
+            c_data_types,
+            c_element_bits,
+            c_names,
+            c_dtype_names,
+            c_shape_counts,
+            c_shapes,
+            c_dynamic_slots,
+            debug_cmd,
+        )
+        if result == 0:
+            _active_dump_schemas[compiled.kernel_name] = (compiled, None)
+    return tuple(size_indices) if result == 0 else None
 
 
-def clear_dump_info() -> None:
-    """Clear cached tensor info."""
-    global _lib
-    if _lib is not None:
-        _lib.pro_clear_dump_info()
+def set_dump_runtime_info(compiled: "CompiledKernel", block_dim: int, sizes: tuple[int, ...]) -> None:
+    """Update block dim and pointer-like allocation sizes after they change."""
+    count = len(sizes)
+    c_sizes = (ctypes.c_size_t * count)(*sizes)
+    result = _ensure_lib().pro_set_dump_runtime_info(compiled.kernel_name.encode("utf-8"), block_dim, count, c_sizes)
+    if result != 0:
+        raise RuntimeError(f"Failed to update exception-dump runtime info for {compiled.kernel_name}")
+
+
+def discard_dump_schema(compiled: "CompiledKernel") -> None:
+    """Remove a stale schema before launching a variant that cannot use it."""
+    with _dump_schema_lock:
+        if compiled.kernel_name not in _active_dump_schemas:
+            return
+        try:
+            result = _ensure_lib().pro_unregister_dump_schema(compiled.kernel_name.encode("utf-8"))
+        except Exception:
+            logging.exception("Failed to unregister exception-dump schema for %s", compiled.kernel_name)
+            return
+        if result != 0:
+            logging.warning("Failed to unregister exception-dump schema for %s (ret=%d)", compiled.kernel_name, result)
+            return
+        _active_dump_schemas.pop(compiled.kernel_name, None)
+
+
+def sync_dump_runtime_info(compiled: "CompiledKernel", block_dim: int, sizes: tuple[int, ...]) -> bool:
+    """Keep the process-wide schema and dynamic state in sync with this launch."""
+    with _dump_schema_lock:
+        try:
+            active = _active_dump_schemas.get(compiled.kernel_name)
+            if active is None or active[0] is not compiled:
+                if prepare_dump_schema(compiled) is None:
+                    logging.warning("Failed to register exception-dump schema for %s", compiled.kernel_name)
+                    discard_dump_schema(compiled)
+                    return False
+                active = _active_dump_schemas[compiled.kernel_name]
+            state = (block_dim, sizes)
+            if active[1] != state:
+                set_dump_runtime_info(compiled, block_dim, sizes)
+                _active_dump_schemas[compiled.kernel_name] = (compiled, state)
+            return True
+        except Exception:
+            logging.exception("Failed to prepare exception dump for %s", compiled.kernel_name)
+            discard_dump_schema(compiled)
+            return False

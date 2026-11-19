@@ -134,7 +134,7 @@ def _check_dump_files(work_dir: str) -> tuple[bool, list[str]]:
     if not os.path.isdir(dump_dir):
         return False, []
     files = os.listdir(dump_dir)
-    has_dump = any(not f.endswith(("_host.o", "_debug.o", ".so", ".cpp")) for f in files)
+    has_dump = any(not f.endswith(("_host.o", "_debug.o", ".so", ".cpp", ".h", ".json")) for f in files)
     has_so_copy = any(f.endswith("_call_kernel.so") for f in files)
     has_sources = any(f.endswith(".cpp") for f in files)
     has_jit_so = any(re.fullmatch(r"call_kernel_[0-9a-f]+\.so", f) for f in files)

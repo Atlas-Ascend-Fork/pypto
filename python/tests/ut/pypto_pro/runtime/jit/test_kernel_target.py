@@ -410,3 +410,158 @@ def test_debug_command_reuses_compiled_target_without_resolving(monkeypatch, tmp
     assert "-D__PYPTO_SK_BLOCK__" in command
     assert "-D__ASCENDC_SUPERKERNEL_EARLY_START_V3" in command
     assert "-I/toolkit/compiler/asc" in command
+
+
+@pytest.mark.parametrize(
+    "dtype, acl_dtype, element_bits",
+    [(pl.DT_FP16, 1, 16), (pl.DT_HF8, 34, 8), (pl.DT_FP4E2M1, 40, 4), (pl.DT_FP4E1M2, 41, 4)],
+)
+def test_dump_schema_records_dynamic_slots_and_pointer_sizes(monkeypatch, tmp_path, dtype, acl_dtype, element_bits):
+    dump = importlib.import_module("pypto_pro.runtime.exception_dump")
+    lib = MagicMock()
+    lib.pro_register_dump_schema.return_value = 0
+    monkeypatch.setattr(dump, "register_callback", lambda: True)
+    monkeypatch.setattr(dump, "_ensure_lib", lambda: lib)
+    monkeypatch.setattr(dump, "_build_debug_compile_cmd", lambda _compiled: "debug-cmd")
+    specs = [
+        jit.ParamSpec("input", jit.ParamKind.TENSOR, dtype, ["M", 16], pl.Input),
+        jit.ParamSpec("scale", jit.ParamKind.SCALAR, pl.DT_INT64, None),
+        jit.ParamSpec("workspace", jit.ParamKind.PTR, pl.DT_UINT8, None),
+        jit.ParamSpec("tiling", jit.ParamKind.TILING, None, None),
+    ]
+    compiled = jit.CompiledKernel(
+        lib_path="/tmp/kernel.so", param_specs=specs, kernel_name="schema_kernel", build_dir=str(tmp_path)
+    )
+
+    assert dump.prepare_dump_schema(compiled) == (2, 3)
+    call = lib.pro_register_dump_schema.call_args.args
+    assert call[0] == b"schema_kernel"
+    assert call[1] == 4
+    assert list(call[2]) == [
+        jit.ParamKind.TENSOR.value, jit.ParamKind.SCALAR.value, jit.ParamKind.PTR.value, jit.ParamKind.TILING.value
+    ]
+    assert list(call[4]) == [acl_dtype, 9, 4, 4]
+    assert list(call[5]) == [element_bits, 64, 8, 8]
+    assert list(call[8]) == [2, 0, 0, 0]
+    assert list(call[10])[:2] == [len(specs), -1]
+    assert call[11] == b"debug-cmd"
+
+    lib.pro_set_dump_runtime_info.return_value = 0
+    dump.set_dump_runtime_info(compiled, 8, (64, 128))
+    runtime_call = lib.pro_set_dump_runtime_info.call_args.args
+    assert runtime_call[:3] == (b"schema_kernel", 8, 2)
+    assert list(runtime_call[3]) == [64, 128]
+
+
+@pytest.mark.parametrize("shape", [[0], [-1], [1] * 9])
+def test_dump_schema_rejects_invalid_tensor_shape(monkeypatch, tmp_path, shape):
+    dump = importlib.import_module("pypto_pro.runtime.exception_dump")
+    lib = MagicMock()
+    monkeypatch.setattr(dump, "register_callback", lambda: True)
+    monkeypatch.setattr(dump, "_ensure_lib", lambda: lib)
+    compiled = jit.CompiledKernel(
+        lib_path="/tmp/kernel.so",
+        param_specs=[jit.ParamSpec("input", jit.ParamKind.TENSOR, pl.DT_FP16, shape)],
+        kernel_name="invalid_shape_kernel",
+        build_dir=str(tmp_path),
+    )
+
+    assert dump.prepare_dump_schema(compiled) is None
+    lib.pro_register_dump_schema.assert_not_called()
+
+
+def test_dump_schema_rejects_unmappable_dtype(monkeypatch, tmp_path):
+    dump = importlib.import_module("pypto_pro.runtime.exception_dump")
+    lib = MagicMock()
+    monkeypatch.setattr(dump, "register_callback", lambda: True)
+    monkeypatch.setattr(dump, "_ensure_lib", lambda: lib)
+    monkeypatch.setattr(dump, "_PL_DTYPE_TO_ACL_DTYPE", {})
+    compiled = jit.CompiledKernel(
+        lib_path="/tmp/kernel.so",
+        param_specs=[jit.ParamSpec("input", jit.ParamKind.TENSOR, pl.DT_FP16, [16])],
+        kernel_name="unmappable_dtype_kernel",
+        build_dir=str(tmp_path),
+    )
+
+    assert dump.prepare_dump_schema(compiled) is None
+    lib.pro_register_dump_schema.assert_not_called()
+
+
+def test_dump_schema_unavailable_or_native_registration_fails(monkeypatch, tmp_path):
+    dump = importlib.import_module("pypto_pro.runtime.exception_dump")
+    lib = MagicMock()
+    monkeypatch.setattr(dump, "_active_dump_schemas", {})
+    monkeypatch.setattr(dump, "_ensure_lib", lambda: lib)
+    monkeypatch.setattr(dump, "_build_debug_compile_cmd", lambda _compiled: "")
+    compiled = jit.CompiledKernel(
+        lib_path="/tmp/kernel.so", param_specs=[], kernel_name="unavailable_kernel", build_dir=str(tmp_path)
+    )
+
+    compiled.build_dir = str(tmp_path / "missing")
+    assert dump.prepare_dump_schema(compiled) is None
+    compiled.build_dir = str(tmp_path)
+    monkeypatch.setattr(dump, "register_callback", lambda: False)
+    assert dump.prepare_dump_schema(compiled) is None
+    monkeypatch.setattr(dump, "register_callback", lambda: True)
+    lib.pro_register_dump_schema.return_value = 1
+    assert dump.prepare_dump_schema(compiled) is None
+    assert "unavailable_kernel" not in dump._active_dump_schemas
+
+
+def test_dump_schema_switches_between_same_named_compiled_kernels(monkeypatch, tmp_path):
+    dump = importlib.import_module("pypto_pro.runtime.exception_dump")
+    lib = MagicMock()
+    lib.pro_register_dump_schema.return_value = 0
+    lib.pro_set_dump_runtime_info.return_value = 0
+    monkeypatch.setattr(dump, "_active_dump_schemas", {})
+    monkeypatch.setattr(dump, "register_callback", lambda: True)
+    monkeypatch.setattr(dump, "_ensure_lib", lambda: lib)
+    monkeypatch.setattr(dump, "_build_debug_compile_cmd", lambda _compiled: "debug-cmd")
+    first = jit.CompiledKernel(
+        lib_path="/tmp/first.so", param_specs=[jit.ParamSpec("input", jit.ParamKind.TENSOR, pl.DT_FP16, [16])],
+        kernel_name="shared_kernel", build_dir=str(tmp_path),
+    )
+    second = jit.CompiledKernel(
+        lib_path="/tmp/second.so", param_specs=[jit.ParamSpec("input", jit.ParamKind.TENSOR, pl.DT_FP16, [32])],
+        kernel_name="shared_kernel", build_dir=str(tmp_path),
+    )
+
+    assert dump.prepare_dump_schema(first) == ()
+    dump.sync_dump_runtime_info(first, 8, ())
+    assert dump.prepare_dump_schema(second) == ()
+    dump.sync_dump_runtime_info(second, 16, ())
+    dump.sync_dump_runtime_info(first, 8, ())
+    dump.sync_dump_runtime_info(first, 8, ())
+
+    assert lib.pro_register_dump_schema.call_count == 3
+    assert [list(call.args[9])[0] for call in lib.pro_register_dump_schema.call_args_list] == [16, 32, 16]
+    assert [call.args[1] for call in lib.pro_set_dump_runtime_info.call_args_list] == [8, 16, 8]
+
+
+@pytest.mark.parametrize("failure", ["registration", "runtime_update"])
+def test_dump_schema_failure_discards_stale_variant(monkeypatch, tmp_path, failure):
+    dump = importlib.import_module("pypto_pro.runtime.exception_dump")
+    lib = MagicMock()
+    lib.pro_register_dump_schema.return_value = 0
+    lib.pro_set_dump_runtime_info.return_value = 0
+    lib.pro_unregister_dump_schema.return_value = 0
+    monkeypatch.setattr(dump, "_active_dump_schemas", {})
+    monkeypatch.setattr(dump, "register_callback", lambda: True)
+    monkeypatch.setattr(dump, "_ensure_lib", lambda: lib)
+    monkeypatch.setattr(dump, "_build_debug_compile_cmd", lambda _compiled: "debug-cmd")
+    first = jit.CompiledKernel(
+        lib_path="/tmp/first.so", param_specs=[], kernel_name="shared_kernel", build_dir=str(tmp_path)
+    )
+    second = jit.CompiledKernel(
+        lib_path="/tmp/second.so", param_specs=[], kernel_name="shared_kernel", build_dir=str(tmp_path)
+    )
+    assert dump.prepare_dump_schema(first) == ()
+
+    if failure == "registration":
+        lib.pro_register_dump_schema.return_value = 1
+    else:
+        lib.pro_set_dump_runtime_info.return_value = 1
+    assert dump.sync_dump_runtime_info(second, 8, ()) is False
+
+    lib.pro_unregister_dump_schema.assert_called_once_with(b"shared_kernel")
+    assert "shared_kernel" not in dump._active_dump_schemas

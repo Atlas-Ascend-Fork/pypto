@@ -17,6 +17,9 @@
 namespace pypto {
 namespace backend {
 
+// Values are shared by the Python JIT and the exception-dump schema C ABI.
+enum class KernelParamKind : int32_t { TENSOR = 0, SCALAR = 1, PTR = 2, TILING = 3, WINDOW = 4 };
+
 /**
  * \brief Thin wrapper around CANN's rtGetSocSpec, loaded at runtime via dlopen.
  *

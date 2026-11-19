@@ -23,6 +23,7 @@
 #include "backend/common/soc.h"
 #include "ir/memref.h"
 #include "ir/pipe.h"
+#include "pypto_pro/backend/common/cann_runtime.h"
 
 namespace py = pybind11;
 
@@ -41,6 +42,13 @@ using pypto::ir::MemorySpace;
 
 void BindBackend(py::module_& m)
 {
+    py::enum_<pypto::backend::KernelParamKind>(m, "KernelParamKind")
+        .value("TENSOR", pypto::backend::KernelParamKind::TENSOR)
+        .value("SCALAR", pypto::backend::KernelParamKind::SCALAR)
+        .value("PTR", pypto::backend::KernelParamKind::PTR)
+        .value("TILING", pypto::backend::KernelParamKind::TILING)
+        .value("WINDOW", pypto::backend::KernelParamKind::WINDOW);
+
     py::module_ backendMod = m.def_submodule("backend", "PyPTO Backend module");
 
     // ========== Mem class ==========
