@@ -9,7 +9,8 @@
 """Bound OPC frontend parallelism and run codegen in isolated Python processes."""
 
 from contextlib import contextmanager
-import json
+from multiprocessing import Pipe
+from multiprocessing.connection import wait
 import os
 from pathlib import Path
 import re
@@ -17,14 +18,15 @@ import signal
 import stat
 import subprocess
 import sys
-import tempfile
 import threading
+import time
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 from pypto_pro._errors import RuntimeFailure
 
 _CANCELLATION = threading.local()
-_MAX_CODEGEN_JOBS = 8
+_MAX_CODEGEN_JOBS = 32
 
 
 class _CodegenCancellation:
@@ -66,6 +68,37 @@ def _defer_cancellation():
 def _requested_jobs(task_count):
     cpus = len(os.sched_getaffinity(0)) if hasattr(os, "sched_getaffinity") else os.cpu_count() or 1
     return max(1, min(_MAX_CODEGEN_JOBS, cpus, task_count))
+
+
+class _CodegenBudget:
+    """Keep Make tokens in the OPC process while the codegen pool changes size."""
+
+    def __init__(self, limit, reader=None, writer=None):
+        self.limit = limit
+        self.reader = reader
+        self.writer = writer
+        self.tokens = bytearray()
+
+    def acquire(self, remaining):
+        target = min(self.limit, remaining)
+        if self.reader is None:
+            return target
+        with _defer_cancellation():
+            while len(self.tokens) < target - 1:
+                try:
+                    token = os.read(self.reader, 1)
+                except BlockingIOError:
+                    break
+                if not token:
+                    break
+                self.tokens.extend(token)
+        return min(target, 1 + len(self.tokens))
+
+    def release_unused(self, remaining):
+        with _defer_cancellation():
+            while len(self.tokens) > max(0, remaining - 1):
+                os.write(self.writer, bytes([self.tokens[0]]))
+                del self.tokens[0]
 
 
 def _open_jobserver(auth):
@@ -126,89 +159,126 @@ def codegen_budget(task_count):
 
 @contextmanager
 def _jobserver_budget(task_count):
-    """Use one implicit Make slot plus currently available tokens; never wait for tokens."""
+    """Open the shared budget; the caller borrows and returns tokens while codegen runs."""
     jobs = _requested_jobs(task_count)
     flags = os.environ.get("MAKEFLAGS", "")
     if jobs == 1 or (not flags and not os.environ.get("MAKELEVEL")):
-        yield jobs
+        yield _CodegenBudget(jobs)
         return
     matches = re.findall(r"--jobserver-(?:auth|fds)=([^\s]+)", flags)
     if not matches:
         # A serial Make invocation owns only its implicit slot.
-        yield 1
+        yield _CodegenBudget(1)
         return
     try:
         reader, writer = _open_jobserver(matches[-1])
     except (OSError, ValueError):
         # E.g. a non-recursive recipe did not inherit the pipe descriptors.
-        yield 1
+        yield _CodegenBudget(1)
         return
-    tokens = bytearray()
+    budget = _CodegenBudget(jobs, reader, writer)
     try:
-        with _defer_cancellation():
-            for _ in range(jobs - 1):
-                try:
-                    token = os.read(reader, 1)
-                except BlockingIOError:
-                    break
-                if not token:
-                    break
-                tokens.extend(token)
-        yield 1 + len(tokens)
+        yield budget
     finally:
         with _defer_cancellation():
             try:
-                for token in tokens:
-                    os.write(writer, bytes([token]))
+                budget.release_unused(0)
             finally:
                 os.close(reader)
                 os.close(writer)
 
 
-def parallel_codegen(source, arch, dtype_consts, tasks, output_dir, workers):
+def _start_worker(workers, index, request, task, log):
+    worker = Path(__file__).with_name("_codegen_worker.py")
+    control, child = Pipe()
+    try:
+        with child, _defer_cancellation():
+            process = subprocess.Popen(
+                [sys.executable, str(worker), str(child.fileno())],
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                start_new_session=True,
+                pass_fds=(child.fileno(),),
+            )
+            workers[control] = (process, index)
+        control.send((request, task))
+    except BaseException:
+        control.close()
+        raise
+
+
+def _run_workers(tasks, request, budget, log):
+    # Each live process owns one slot, including during initialization and shutdown.
+    workers = {}
+    results = [None] * len(tasks)
+    submitted = 0
+    try:
+        while submitted < len(tasks) or workers:
+            if submitted < len(tasks):
+                allowed = budget.acquire(len(workers) + len(tasks) - submitted)
+                if submitted == 0:
+                    print(f"PyPTO codegen: {len(tasks)} tilingkeys, {allowed} initial workers, "
+                          f"up to {budget.limit}", file=log, flush=True)
+                while len(workers) < allowed:
+                    _start_worker(workers, submitted, request, tasks[submitted], log)
+                    submitted += 1
+            # A worker with no assigned index has received its stop message.
+            active = [control for control, (_, index) in workers.items() if index is not None]
+            for control in wait(active, timeout=0.05):
+                process, index = workers[control]
+                try:
+                    results[index] = SimpleNamespace(**control.recv())
+                except EOFError as exc:
+                    raise ChildProcessError(f"worker exited while generating tilingkey {tasks[index][0]}") from exc
+                if submitted < len(tasks):
+                    control.send(tasks[submitted])
+                    workers[control] = (process, submitted)
+                    submitted += 1
+                else:
+                    control.send(None)
+                    workers[control] = (process, None)
+            for control, (process, index) in list(workers.items()):
+                if process.poll() is not None:
+                    if index is not None or process.returncode:
+                        raise ChildProcessError(f"codegen worker exited with {process.returncode}")
+                    control.close()
+                    del workers[control]
+                    budget.release_unused(len(workers))
+    finally:
+        with _defer_cancellation():
+            for control, (process, _) in workers.items():
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                control.close()
+            for process, _ in workers.values():
+                process.wait()
+    return results
+
+
+def parallel_codegen(source, arch, dtype_consts, tasks, output_dir, budget):
     """Return results in input order; keep OPC globals and packaging in the caller."""
-    output_dir = str(Path(output_dir).resolve())
     request = {
         "source": str(Path(source).resolve()),
         "arch": str(arch),
         "dtype_consts": (
             {name: str(dtype) for name, dtype in dtype_consts.items()} if dtype_consts is not None else None
         ),
-        "tasks": tasks,
-        "output_dir": output_dir,
-        "workers": workers,
+        "output_dir": str(Path(output_dir).resolve()),
         "python_path": [os.path.abspath(path) for path in sys.path],
+        # Offline OPC wrappers stub these imports; embedded callers can use the real packages.
+        "mock_modules": [name for name in ("torch", "torch_npu") if isinstance(sys.modules.get(name), Mock)],
     }
-    worker = Path(__file__).with_name("_codegen_worker.py")
     log_path = Path(output_dir, "pypto_codegen.log")
-    with tempfile.TemporaryDirectory(prefix="_codegen_", dir=output_dir) as temporary:
-        request_path, result_path = Path(temporary, "request.json"), Path(temporary, "result.json")
-        request_path.write_text(json.dumps(request), encoding="utf-8")
-        with log_path.open("w", encoding="utf-8") as log:
-            process = None
-            try:
-                with _defer_cancellation():
-                    process = subprocess.Popen(
-                        [sys.executable, str(worker), str(request_path), str(result_path)],
-                        stdout=log,
-                        stderr=subprocess.STDOUT,
-                        start_new_session=True,
-                    )
-                returncode = process.wait()
-            except BaseException:
-                # Include spawned workers when the calling build is interrupted.
-                with _defer_cancellation():
-                    if process is not None:
-                        try:
-                            os.killpg(process.pid, signal.SIGKILL)
-                        except ProcessLookupError:
-                            pass
-                        process.wait()
-                raise
-        if returncode:
+    started = time.perf_counter()
+    with log_path.open("w", encoding="utf-8") as log:
+        try:
+            results = _run_workers(tasks, request, budget, log)
+        except (EOFError, BrokenPipeError, ConnectionResetError, ChildProcessError) as exc:
             detail = log_path.read_text(encoding="utf-8", errors="replace")
-            raise RuntimeFailure(f"PyPTO parallel codegen failed (exit {returncode}); see {log_path}\n{detail}")
-        results = json.loads(result_path.read_text(encoding="utf-8"))
+            raise RuntimeFailure(f"PyPTO parallel codegen failed ({exc}); see {log_path}\n{detail}") from exc
+        print(f"PyPTO codegen completed in {time.perf_counter() - started:.3f}s", file=log)
     for result in results:
-        result["entry_params"] = [tuple(param) for param in result["entry_params"]]
-    return [SimpleNamespace(**result) for result in results]
+        result.entry_params = [tuple(param) for param in result.entry_params]
+    return results

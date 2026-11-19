@@ -239,14 +239,17 @@ bash build.sh --pkg --soc=${soc_version} \
 未指定`--vendor_name`时，自定义算子包名称默认为`custom`。
 
 普通动态二进制编译会按TilingKey并行执行AST解析、IR Pass和CCE代码生成。
-每个OPC编译进程默认最多使用8个代码生成单元，并受CPU亲和性、Key数量和Make jobserver可用槽位限制。
+每个OPC编译进程默认最多使用32个代码生成单元，并受CPU亲和性、Key数量和Make jobserver可用槽位限制。
 各代码生成单元独立生成源码，OPC进程按原Key顺序汇总，再调用后端编译和链接。
 静态编译及SuperKernel编译路径不使用此并行策略。
 
-在Make构建中，新增代码生成单元仅使用当前可取得的jobserver令牌，不等待额外令牌；
+在Make构建中，代码生成从当前可用的jobserver令牌开始执行，并在运行期间持续尝试获取新释放的令牌，
+逐步增加并发数。每个代码生成进程从初始化到退出都占用一个槽位。进程完成当前Key后继续处理待编译的Key，
+没有待编译的Key时退出。OPC确认进程退出后归还相应的额外令牌。
 jobserver不可用时使用串行代码生成。独立运行OPC时，上限分别应用于每个OPC进程，
 同时编译多个算子或dtype时需要据此分配总CPU和内存预算。
-并行代码生成失败会终止本次编译，错误信息和代码生成单元日志保存在该编译实例的`kernel_meta/pypto_codegen.log`中。
+任一Key生成失败时，OPC停止获取令牌，终止其余代码生成进程并归还已借令牌。
+错误信息和代码生成单元日志保存在该编译实例的`kernel_meta/pypto_codegen.log`中。
 标准OPC进程在代码生成阶段收到`SIGTERM`或`Ctrl+C`时，会清理代码生成单元并归还Make jobserver令牌。
 `SIGKILL`（包括OOM强制终止）无法触发Python清理逻辑；若嵌入程序自定义了`SIGTERM`处理器，则保留其处理行为。
 

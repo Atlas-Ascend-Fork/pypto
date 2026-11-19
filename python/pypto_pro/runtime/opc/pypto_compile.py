@@ -692,10 +692,10 @@ def _codegen_variants(kernel, cce_file, arch, dtype_consts, tiling_keys, kernel_
 
     tasks = [(int(key), _decode_tiling_key(kernel.tilingkey_schema, int(key))) for key in tiling_keys]
     started = time.perf_counter()
-    with codegen_budget(len(tasks)) as workers:
-        logger.info("pypto codegen: %d tilingkeys, %d workers", len(tasks), workers)
-        if workers > 1:
-            results = parallel_codegen(cce_file, arch, dtype_consts, tasks, kernel_meta_dir, workers)
+    with codegen_budget(len(tasks)) as budget:
+        logger.info("pypto codegen: %d tilingkeys, up to %d workers", len(tasks), budget.limit)
+        if budget.limit > 1:
+            results = parallel_codegen(cce_file, arch, dtype_consts, tasks, kernel_meta_dir, budget)
         else:
             results = []
             for packed, concrete in tasks:

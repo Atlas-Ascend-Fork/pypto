@@ -9,6 +9,7 @@
 """Exercise real spawned codegen and GNU Make token ownership without an NPU."""
 
 import fcntl
+import json
 import os
 from pathlib import Path
 import signal
@@ -111,19 +112,81 @@ def test_worker_error_keeps_key_dtype_and_source(kernel_file, tmp_path):
     assert not list(output.glob("_codegen_*"))
 
 
-@pytest.mark.parametrize("cpus,tasks,expected", [(32, 20, 8), (3, 20, 3), (8, 2, 2), (1, 20, 1)])
+def test_one_make_slot_reuses_worker_with_real_torch(kernel_file, tmp_path, monkeypatch):
+    pytest.importorskip("torch.nn.functional")
+    kernel_file.write_text(textwrap.dedent('''\
+        import os
+        from pathlib import Path
+        import torch.nn.functional
+        Path(__file__).with_name(f"{os.getpid()}.loaded").touch()
+    ''') + kernel_file.read_text(), encoding="utf-8")
+    reader, writer = os.pipe()
+    try:
+        monkeypatch.setenv("MAKEFLAGS", f"-j2 --jobserver-auth={reader},{writer}")
+        with codegen_budget(2) as budget:
+            results = parallel.parallel_codegen(
+                kernel_file, "3510", {"input_dtype": DataType.FP16},
+                [(0, {"operation": 0}), (1, {"operation": 1})], tmp_path, budget,
+            )
+        assert len(list(tmp_path.glob("*.loaded"))) == 1
+        assert [Path(result.build_dir).name for result in results] == ["_cg_tk_0", "_cg_tk_1"]
+    finally:
+        os.close(reader)
+        os.close(writer)
+
+
+def test_failed_key_reaps_blocked_sibling(kernel_file, tmp_path, monkeypatch):
+    kernel_file.write_text(textwrap.dedent('''\
+        import importlib
+        from pathlib import Path
+        import time
+
+        def fail_codegen(prog, arch, **kwargs):
+            root = Path(__file__).parent
+            if kwargs["tilingkey_packed"] == 0:
+                deadline = time.monotonic() + 15
+                while not (root / "sibling_started").exists() and time.monotonic() < deadline:
+                    time.sleep(0.01)
+                raise RuntimeError("failed first key")
+            (root / "sibling_started").touch()
+            time.sleep(10)
+            (root / "sibling_finished").touch()
+
+        importlib.import_module("pypto_pro.runtime.jit")._codegen = fail_codegen
+    ''') + kernel_file.read_text(), encoding="utf-8")
+    reader, writer = os.pipe()
+    try:
+        os.set_blocking(reader, False)
+        os.write(writer, b"x")
+        monkeypatch.setenv("MAKEFLAGS", f"-j4 --jobserver-auth={reader},{writer}")
+        with pytest.raises(RuntimeFailure, match="failed first key"):
+            with codegen_budget(4) as budget:
+                parallel.parallel_codegen(
+                    kernel_file, "3510", {"input_dtype": DataType.FP16},
+                    [(key, {"operation": key % 2}) for key in range(4)], tmp_path, budget,
+                )
+        assert (tmp_path / "sibling_started").exists()
+        assert not (tmp_path / "sibling_finished").exists()
+        assert os.read(reader, 2) == b"x"
+    finally:
+        os.close(reader)
+        os.close(writer)
+
+
+@pytest.mark.parametrize("cpus,tasks,expected", [(64, 64, 32), (3, 20, 3), (8, 2, 2), (1, 20, 1)])
 def test_worker_count_respects_fixed_cpu_and_task_limits(monkeypatch, cpus, tasks, expected):
     monkeypatch.setattr(os, "sched_getaffinity", lambda _: set(range(cpus)))
-    with codegen_budget(tasks) as jobs:
-        assert jobs == expected
+    with codegen_budget(tasks) as budget:
+        assert budget.acquire(tasks) == expected
 
 
 @pytest.mark.parametrize("flags", ["", "w", "-j4 --jobserver-auth=-1,-1"])
 def test_make_without_accessible_jobserver_stays_serial(monkeypatch, flags):
     monkeypatch.setenv("MAKELEVEL", "1")
     monkeypatch.setenv("MAKEFLAGS", flags)
-    with codegen_budget(10) as jobs:
-        assert jobs == 1
+    with codegen_budget(10) as budget:
+        assert budget.limit == 1
+        assert budget.acquire(10) == 1
 
 
 @pytest.mark.parametrize("fifo", [False, True])
@@ -144,18 +207,144 @@ def test_jobserver_returns_exact_tokens_even_after_failure(monkeypatch, tmp_path
         monkeypatch.setenv("MAKEFLAGS", f"-j3 --jobserver-auth={auth}")
         monkeypatch.setattr(os, "sched_getaffinity", lambda _: set(range(8)))
         try:
-            with codegen_budget(20) as jobs:
-                assert jobs == 3
+            with codegen_budget(20) as budget:
+                assert budget.acquire(20) == 3
                 assert fcntl.fcntl(reader, fcntl.F_GETFL) == original_flags
                 # A second compiler can always use its implicit slot, without blocking.
-                with codegen_budget(20) as second_jobs:
-                    assert second_jobs == 1
+                with codegen_budget(20) as second_budget:
+                    assert second_budget.acquire(20) == 1
                 if fail:
                     raise RuntimeError("worker failed")
         except RuntimeError as error:
             assert fail and str(error) == "worker failed"
         assert os.read(reader, 2) == b"xy"
     finally:
+        os.close(reader)
+        os.close(writer)
+
+
+@pytest.mark.parametrize("fifo", [False, True])
+def test_budget_expands_and_returns_unused_tokens(monkeypatch, tmp_path, fifo):
+    if fifo:
+        path = tmp_path / "jobserver"
+        os.mkfifo(path)
+        reader = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+        writer = os.open(path, os.O_WRONLY)
+        auth = f"fifo:{path}"
+    else:
+        reader, writer = os.pipe()
+        os.set_blocking(reader, False)
+        auth = f"{reader},{writer}"
+    try:
+        monkeypatch.setenv("MAKEFLAGS", f"-j4 --jobserver-auth={auth}")
+        with codegen_budget(20) as budget:
+            assert budget.acquire(20) == 1
+            os.write(writer, b"xyz")
+            assert budget.acquire(20) == 4
+            budget.release_unused(2)
+            assert os.read(reader, 2) == b"xy"
+            assert budget.acquire(2) == 2
+        assert os.read(reader, 1) == b"z"
+    finally:
+        os.close(reader)
+        os.close(writer)
+
+
+def test_running_codegen_uses_late_jobserver_tokens(kernel_file, tmp_path):
+    # Keep every task running until all four start. New tokens must let the pool
+    # expand before its first task finishes, rather than between fixed batches.
+    kernel_file.write_text(textwrap.dedent('''\
+        import importlib
+        import os
+        from pathlib import Path
+        import time
+        from types import SimpleNamespace
+
+        def controlled_codegen(prog, arch, **kwargs):
+            root = Path(__file__).parent
+            key = kwargs["tilingkey_packed"]
+            (root / f"started_{key}_{os.getpid()}").touch()
+            deadline = time.monotonic() + 30
+            gate = "release_last" if key == 0 else "release"
+            while not (root / gate).exists():
+                if time.monotonic() > deadline:
+                    raise RuntimeError("late workers did not start")
+                time.sleep(0.01)
+            return SimpleNamespace(
+                build_dir=kwargs["out_dir"], kernel_name="probe", entry_params=[],
+                has_cube=True, has_vector=True,
+            )
+
+        importlib.import_module("pypto_pro.runtime.jit")._codegen = controlled_codegen
+    ''') + kernel_file.read_text().replace("bits=1, values=[0, 1]", "bits=2, values=[0, 1, 2, 3]"), encoding="utf-8")
+    driver = tmp_path / "expand.py"
+    driver.write_text(textwrap.dedent(f'''\
+        import json
+        import os
+        from pathlib import Path
+        import sys
+        from unittest.mock import MagicMock
+        sys.modules["torch"] = MagicMock(name="torch")
+        sys.modules["torch_npu"] = MagicMock(name="torch_npu")
+        sys.path[:] = {sys.path!r}
+        os.sched_getaffinity = lambda _: set(range(4))
+        from pypto_pro.runtime.opc.pypto_compile import _codegen_variants, _load_kernel
+        kernel = _load_kernel(sys.argv[1])
+        results = _codegen_variants(kernel, sys.argv[1], "3510", None, ["3", "2", "1", "0"], sys.argv[2])
+        Path(sys.argv[2], "order.json").write_text(json.dumps([result.build_dir for result in results]))
+    '''), encoding="utf-8")
+    output = tmp_path / "expanded"
+    output.mkdir()
+    reader, writer = os.pipe()
+    os.set_blocking(reader, False)
+    env = dict(os.environ, MAKEFLAGS=f"-j4 --jobserver-auth={reader},{writer}")
+    process = None
+    try:
+        with (tmp_path / "expand.log").open("w") as log:
+            process = subprocess.Popen(
+                [sys.executable, str(driver), str(kernel_file), str(output)],
+                env=env, stdout=log, stderr=subprocess.STDOUT, pass_fds=(reader, writer),
+            )
+            deadline = time.monotonic() + 30
+            while not list(tmp_path.glob("started_*")):
+                assert process.poll() is None, (tmp_path / "expand.log").read_text()
+                assert time.monotonic() < deadline, "first codegen task did not start"
+                time.sleep(0.05)
+            assert len(list(tmp_path.glob("started_*"))) == 1
+            os.write(writer, b"xyz")
+            while len(list(tmp_path.glob("started_*"))) < 4:
+                assert process.poll() is None, (tmp_path / "expand.log").read_text()
+                assert time.monotonic() < deadline, "codegen did not acquire late tokens"
+                time.sleep(0.05)
+            pids = {int(path.name.rsplit("_", 1)[1]) for path in tmp_path.glob("started_*")}
+            assert len(pids) == 4
+            (tmp_path / "release").touch()
+            # Three finished tasks must return all extra slots while the last
+            # task still owns the OPC's implicit slot.
+            returned = bytearray()
+            while len(returned) < 3:
+                assert process.poll() is None, (tmp_path / "expand.log").read_text()
+                assert time.monotonic() < deadline, "finished tasks retained Make slots"
+                try:
+                    returned.extend(os.read(reader, 3 - len(returned)))
+                except BlockingIOError:
+                    time.sleep(0.05)
+            assert sorted(returned) == sorted(b"xyz")
+            last_pid = int(next(tmp_path.glob("started_0_*")).name.rsplit("_", 1)[1])
+            assert all(not Path(f"/proc/{pid}").exists() for pid in pids - {last_pid})
+            (tmp_path / "release_last").touch()
+            assert process.wait(timeout=10) == 0, (tmp_path / "expand.log").read_text()
+        assert [Path(path).name for path in json.loads((output / "order.json").read_text())] == [
+            "_cg_tk_3", "_cg_tk_2", "_cg_tk_1", "_cg_tk_0",
+        ]
+        with pytest.raises(BlockingIOError):
+            os.read(reader, 1)
+    finally:
+        (tmp_path / "release").touch()
+        (tmp_path / "release_last").touch()
+        if process is not None and process.poll() is None:
+            process.terminate()
+            process.wait(timeout=10)
         os.close(reader)
         os.close(writer)
 
@@ -180,9 +369,9 @@ def test_cancellation_stops_workers_and_returns_tokens(kernel_file, tmp_path, si
         sys.path[:] = {sys.path!r}
         from pypto_pro import DataType
         from pypto_pro.runtime.opc._parallel_codegen import codegen_budget, parallel_codegen
-        with codegen_budget(2) as jobs:
+        with codegen_budget(2) as budget:
             parallel_codegen(sys.argv[1], "3510", {{"input_dtype": DataType.FP16}},
-                             [(0, {{"operation": 0}}), (1, {{"operation": 1}})], sys.argv[2], jobs)
+                             [(0, {{"operation": 0}}), (1, {{"operation": 1}})], sys.argv[2], budget)
     '''), encoding="utf-8")
     output = tmp_path / "cancelled"
     output.mkdir()
@@ -278,7 +467,8 @@ def test_cancellation_during_token_acquisition_returns_consumed_token(monkeypatc
     monkeypatch.setattr(os, "read", interrupted_read)
     try:
         with pytest.raises(SystemExit, match="143"):
-            with codegen_budget(2):
+            with codegen_budget(2) as budget:
+                budget.acquire(2)
                 pytest.fail("pending cancellation was not delivered")
         assert sorted(original_read(reader, 10)) == sorted(b"xy")
     finally:
@@ -300,10 +490,10 @@ def test_cancellation_during_process_creation_reaps_child(kernel_file, tmp_path,
 
     monkeypatch.setattr(subprocess, "Popen", interrupted_popen)
     with pytest.raises(SystemExit, match="143"):
-        with codegen_budget(2) as jobs:
+        with codegen_budget(2) as budget:
             parallel.parallel_codegen(
                 kernel_file, "3510", {"input_dtype": DataType.FP16},
-                [(0, {"operation": 0}), (1, {"operation": 1})], tmp_path, jobs,
+                [(0, {"operation": 0}), (1, {"operation": 1})], tmp_path, budget,
             )
     assert len(started) == 1 and started[0].poll() is not None
     assert not list(tmp_path.glob("_codegen_*"))
