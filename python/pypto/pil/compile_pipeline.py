@@ -40,6 +40,7 @@ def _build_default_pipeline():
 
     return [
         ("litenpu_dynamic_to_static", litenpu_dynamic_to_static),
+        ("pre_token_canonicalize_dce", lambda p:dce(canonicalize(p))),
         ("infer_token_pass", infer_token_pass),
         ("first_canonicalize_dce", lambda p:dce(canonicalize(p))),
         ("second_canonicalize_dce", lambda p:dce(canonicalize(p))),

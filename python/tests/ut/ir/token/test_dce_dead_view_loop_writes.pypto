@@ -1,0 +1,11 @@
+function foo incast(v0_logical_tensor %out@0 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16])) outcast() #entry(false) #type(Opaque) {
+    OP_CONFIG() token() #vec_tile_shapes([16, 16]);
+    v0_logical_tensor %out_7@0 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]) = for %loop_idx_10 inrange 0, 2, 1 iter { v0_logical_tensor %out_1@0 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]) = %out@0; } #_config_scope(Unsupported) #_loop_conds([v0ge(loop_idx_10, 0), v0lt(loop_idx_10, 2)]) #parallel(false) #submit_before_loop(false) #unroll_times(1) {
+        v0_logical_tensor %0@1 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), token %0_w = !10000 VEC_DUP() token() #SCALAR(v0elem(float, 0)) #op_attr_shape([16, 16]) #op_attr_validShape([16, 16]);
+        v0_logical_tensor %out_3@0 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), token %out_3_w, token %0_r = !10001 ASSEMBLE(%0@1) token(%0_w) #toOffset([0, 0]) #dassemble(true) #parallel(false);
+        v0_logical_tensor %1@3 #dtype(float) #dynvalidshape([16, 16]) #offset([0, 0]) #shape([16, 16]), token %1_w = !10003 VEC_DUP() token() #SCALAR(v0elem(float, 1)) #op_attr_shape([16, 16]) #op_attr_validShape([16, 16]);
+        v0_logical_tensor %out_5@0 #dtype(float) #dynvalidshape([32, 16]) #offset([0, 0]) #shape([32, 16]), token %out_5_w, token %1_r = !10004 ASSEMBLE(%1@3) token(%1_w, %out_3_w) #toOffset([0, 0]) #dassemble(true) #parallel(false);
+        continue %out_5@0;
+    }
+    return %out_7@0;
+}
