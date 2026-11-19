@@ -4842,10 +4842,12 @@ def _ir_gather(
 ) -> Expr:
     # An omitted cmp_mode selects the index form, even though the public default is 0.
     kwargs = {}
+    cmp_mode_value = None
     if cmp_mode is not None:
-        kwargs["cmp_mode"] = require_const_int(
-            cmp_mode, subject="'cmp_mode'",
-        )
+        cmp_mode_value = require_const_int(cmp_mode, subject="'cmp_mode'")
+        if cmp_mode_value not in (0, 4):
+            raise InvalidVal(f"'cmp_mode' must be 0 (EQ) or 4 (GT), got {cmp_mode_value}")
+        kwargs["cmp_mode"] = cmp_mode_value
     if offset is not None:
         kwargs["offset"] = require_const_int(
             offset, subject="'offset'",
@@ -4853,11 +4855,15 @@ def _ir_gather(
     if cmp_mode is not None:
         # Compare form (TGATHER with CmpMode): 32-bit counter destination.
         # IR args: [out, src, k_value, cdst, tmp]
+        if tmp_or_cdst is None or tmp is None:
+            raise InvalidVal("gather: compare form requires cdst and tmp tiles")
         require_dtype_in(getattr(out.type, "dtype", None), _ARG_IDX32_DTYPES, subject="gather")
     else:
         # Index form (TGATHER CheckValid): dst/src share one dtype; index tiles
         # are 16/32-bit integers and 64-bit data requires a 32-bit index.
         # IR args: [out, src, indices] or [out, src, indices, tmp]
+        if tmp is not None:
+            raise InvalidVal("gather: index form does not accept the fifth tmp tile")
         require_dtypes_match([getattr(out.type, "dtype", None)], getattr(src.type, "dtype", None), subject="gather")
         idx_dt = getattr(indices_or_k_value.type, "dtype", None)
         require_dtype_in(idx_dt, _GATHER_IDX_DTYPES, subject="gather")

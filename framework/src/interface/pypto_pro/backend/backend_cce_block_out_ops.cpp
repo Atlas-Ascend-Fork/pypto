@@ -1469,7 +1469,7 @@ static std::string MakeBlockOutFusedMulAddReluCodegenCCE(const ir::CallPtr& op, 
 
 // ============================================================================
 // block.gather  - args = [out, src, indices] or [out, src, indices, tmp]
-// Emits: TGATHER(out, src, indices) or TGATHER(out, src, indices, tmp);
+// Emits: TGATHER(out, src, indices, tmp); the index tile is reused as tmp when omitted.
 // ============================================================================
 // block.gather: Two forms:
 //   Index form: args = [out, src, indices] or [out, src, indices, tmp]
@@ -1486,7 +1486,9 @@ static std::string MakeBlockOutGatherCodegenCCE(const ir::CallPtr& op, codegen::
             std::string out = cce::GetOperandAsCode(codegen, op->args_[0]);
             std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
             std::string indices = cce::GetOperandAsCode(codegen, op->args_[2]);
-            codegen.Emit("TGATHER(" + out + ", " + src + ", " + indices + ");");
+            // PTO has no 3-tile index overload. The 4-tile form's tmp operand is
+            // unused on 950PR/950DT, so reuse the index tile to satisfy it.
+            codegen.Emit("TGATHER(" + out + ", " + src + ", " + indices + ", " + indices + ");");
         } else {
             PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
                 << "block.gather: expected 3 or 4 args, got " << op->args_.size();

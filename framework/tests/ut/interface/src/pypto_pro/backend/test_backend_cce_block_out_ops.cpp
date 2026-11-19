@@ -1951,7 +1951,7 @@ TEST(BackendCCEBlockOutOps, Gather3Args)
 {
     auto tile = MakeTileType();
     auto call = MakeCall("block.gather", {MakeVar("out", tile), MakeVar("src", tile), MakeVar("idx", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.gather", call), "TGATHER(out.tile, src.tile, idx.tile);");
+    EXPECT_CONTAINS(RunCodegen("block.gather", call), "TGATHER(out.tile, src.tile, idx.tile, idx.tile);");
 }
 
 TEST(BackendCCEBlockOutOps, Gather4Args)
