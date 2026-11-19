@@ -33,7 +33,7 @@ enum class SanitizerDetection : uint32_t {
     MutexAccess = 3, // mutex lock/unlock: mutex_id, pipe, is_lock
     ViewShape = 4,   // runtime view shape: dim[5], src_dim[5], fp/src bytes
     TileScalar = 5,  // tile scalar access: dims, linear offset
-    TileDecl = 6,    // make_tile declaration: addr, size, space, numel
+    TileDecl = 6,    // make_tile declaration: addr, size, space, numel, decl_idx
     PhaseAccess = 7, // unit_flag phase and accumulator address/valid_shape identity
     SyncAccess = 8,  // sync_src/sync_dst: event_id, set_pipe, wait_pipe, is_src
     ScalarAxis = 9,  // scalar coordinate: space, axis, signedness, 64-bit index/bound
@@ -101,7 +101,7 @@ constexpr SanitizerFieldLayout kTileScalarWire[] = {
 };
 
 constexpr SanitizerFieldLayout kTileDeclWire[] = {
-    {"addr", 's'}, {"size", 's'}, {"space", 'u'}, {"numel", 'u'}, {"line", 'u'},
+    {"addr", 's'}, {"size", 's'}, {"space", 'u'}, {"numel", 'u'}, {"decl_idx", 'u'}, {"line", 'u'},
 };
 
 constexpr SanitizerFieldLayout kPhaseAccessWire[] = {

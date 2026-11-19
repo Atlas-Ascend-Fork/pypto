@@ -190,8 +190,8 @@ ScalarAxisRecord = RECORD_TYPES[9]
 #     sum((dim-1)*stride)+1 scaled by the view dtype width, and the source
 #     capacity (-1 = raw pointer: no known bound). All runtime values.
 #   5 TileScalar RecordScalarAccess: linear element index vs dim_row*dim_col.
-#   6 TileDecl   CollectMakeTile: numel is written by the device but only
-#     addr/size/space matter here; it stays in the wire for compatibility.
+#   6 TileDecl   CollectMakeTile: the overlap scan dedups re-registrations by
+#     (addr, size, space, decl_idx, line); numel rides the wire unused here.
 #   7 PhaseAccess RecordPhase: op_kind 1-5 write side (matmul family,
 #     dst Acc tile), 6-10 read side (store/move/insert, src Acc tile; 7/9
 #     reserved and never emitted); phase 0/1/2 = Unspecified/Partial/Final
@@ -219,12 +219,14 @@ def check_scalar_axis_bounds(records: list[ScalarAxisRecord], ctx: ReplayContext
             continue
         kind = "TILE_OUT_OF_BOUNDS" if rec.is_tile else "GM_OUT_OF_BOUNDS"
         region = "Tile runtime valid_shape" if rec.is_tile else "Tensor logical shape"
+        # Values stay out of the key so per-lane noise folds within one region.
         findings.append(Finding(
             kind,
             f"scalar access dim{rec.axis}: index {index} is outside [0, {bound}) "
             f"of {region}; this is a logical bound, not the backing allocation size",
             ctx.location(rec.line),
             hint=f"Keep scalar index for dim{rec.axis} within the {region}",
+            group_key=(rec.region,),
         ))
     return findings
 
@@ -250,6 +252,7 @@ def check_gm_bounds(records: list[GmAccessRecord], ctx: ReplayContext) -> list[F
                     f"{acc_row} elements",
                     ctx.location(rec.line),
                     hint="getval/setval offsets must stay inside the tensor element count",
+                    group_key=(rec.region,),
                 ))
             continue
         off = (rec.off0, rec.off1, rec.off2, rec.off3, rec.off4)
@@ -283,12 +286,14 @@ def check_gm_bounds(records: list[GmAccessRecord], ctx: ReplayContext) -> list[F
         access = f"offsets {list(off[:ndim])} + valid_shape [{acc_row}, {acc_col}]"
         msg = (f"{access} exceed tensor shape "
                f"{tuple(shape[:ndim])} — {'; '.join(details)}")
+        # GM storage is global: region stays out so one access on every core folds.
         findings.append(Finding(
             "GM_OUT_OF_BOUNDS",
             msg,
             ctx.location(rec.line),
             hint="The tile valid_shape plus the loop offsets must stay inside "
                  "the tensor logical shape on every dimension",
+            group_key=(off[:ndim], acc_row, acc_col, shape[:ndim], rec.win_ax0, rec.win_ax1),
         ))
     return findings
 
@@ -311,6 +316,7 @@ def _slice_unaligned_issue(rec: TileAccessRecord, ctx: ReplayContext) -> Finding
             return None
         detail = f"bit address {start_bits} is not 32-byte (256-bit) aligned"
         hint = "Align the slice start address to 32 bytes, including sub-byte element offsets"
+        identity = (rec.off_row, rec.off_col, start_bits)
     elif rec.layout_kind in (int(Layout.NZ), int(Layout.ZN)):
         # Preserve the frontend's slice contract, with transposed axes for ZN.
         if rec.inner_rows <= 0 or rec.inner_cols <= 0:
@@ -319,6 +325,7 @@ def _slice_unaligned_issue(rec: TileAccessRecord, ctx: ReplayContext) -> Finding
             return None
         detail = f"is unaligned to the [{rec.inner_rows}, {rec.inner_cols}] fractal inner block"
         hint = "Start fractal slices at multiples of the inner block, as the static slice contract requires"
+        identity = (rec.off_row, rec.off_col, rec.inner_rows, rec.inner_cols)
     else:
         return None
     return Finding(
@@ -326,7 +333,7 @@ def _slice_unaligned_issue(rec: TileAccessRecord, ctx: ReplayContext) -> Finding
         f"L1 {Layout(rec.layout_kind).name} slice start [{rec.off_row}, {rec.off_col}] {detail}",
         ctx.location(rec.line),
         hint=hint,
-        group_key=(rec.region,),
+        group_key=(rec.region, rec.layout_kind) + identity,
     )
 
 
@@ -369,7 +376,8 @@ def check_tile_bounds(records: list[TileAccessRecord], ctx: ReplayContext) -> li
             message + " — " + "; ".join(violations),
             ctx.location(rec.line),
             hint=hint,
-            group_key=(rec.region,),
+            group_key=(rec.region, rec.off_row, rec.off_col, rec.acc_row, rec.acc_col,
+                       rec.dim_row, rec.dim_col),
         ))
     return findings
 
@@ -466,6 +474,7 @@ def check_view_over_source(records: list[ViewShapeRecord], ctx: ReplayContext) -
             f"{view_desc} covers {rec.fp_bytes} bytes, {src_desc} holds {rec.src_bytes} bytes",
             ctx.location(rec.line),
             hint="A view shares its source's storage; keep its shape/stride size within the source",
+            group_key=(tuple(dims), rec.fp_bytes, tuple(src_dims), rec.src_bytes),
         ))
     return findings
 
@@ -480,12 +489,14 @@ def check_tile_scalar_bounds(records: list[TileScalarRecord], ctx: ReplayContext
     for rec in records:
         numel = rec.dim_row * rec.dim_col
         if rec.offset < 0 or rec.offset + 1 > numel:
+            # Dims ride in the key; offsets stay out so element-loop noise folds within one region.
             findings.append(Finding(
                 "TILE_OUT_OF_BOUNDS",
                 f"scalar tile access at linear offset {rec.offset} "
                 f"exceeds {numel} elements (dims [{rec.dim_row},{rec.dim_col}])",
                 ctx.location(rec.line),
                 hint="getval/setval offsets must stay inside the tile element count",
+                group_key=(rec.region, rec.dim_row, rec.dim_col),
             ))
     return findings
 
@@ -497,22 +508,28 @@ def check_tile_scalar_bounds(records: list[TileScalarRecord], ctx: ReplayContext
 
 def check_tile_overlap(records: list[TileDeclRecord], ctx: ReplayContext) -> list[Finding]:
     """Two make_tile declarations with intersecting address ranges in the
-    same memory space. Identical re-registrations (the same statement
-    copied into both programs of one kernel, or the same declaration seen
-    from every region) share (addr, size, space, line) and collapse, while
-    distinct statements with the same range keep both records -- exactly
-    what the scan must report."""
+    same memory space on some common region. Identical re-registrations share
+    (addr, size, space, decl_idx, line) and collapse into one declaration
+    carrying the region set, so forked kernels keep every region's existence;
+    distinct statements keep both records and are exactly what the scan
+    must report."""
     findings: list[Finding] = []
-    decls = {}
+    decls: dict[tuple, tuple[TileDeclRecord, set]] = {}
     for rec in records:
         if rec.addr < 0 or rec.size <= 0:
             continue
-        decls.setdefault((rec.addr, rec.size, rec.space, rec.line), rec)
+        key = (rec.addr, rec.size, rec.space, rec.decl_idx, rec.line)
+        entry = decls.get(key)
+        if entry is None:
+            decls[key] = (rec, {rec.region})
+        else:
+            entry[1].add(rec.region)
     items = list(decls.values())
     for i in range(len(items)):
         for j in range(i + 1, len(items)):
-            ta, tb = items[i], items[j]
-            if ta.space != tb.space:
+            ta, ta_regions = items[i]
+            tb, tb_regions = items[j]
+            if ta.space != tb.space or not ta_regions & tb_regions:
                 continue
             a0, sz_a = ta.addr, ta.size
             b0, sz_b = tb.addr, tb.size
@@ -524,6 +541,7 @@ def check_tile_overlap(records: list[TileDeclRecord], ctx: ReplayContext) -> lis
                     f"another tile [{sp} 0x{b0:x}, 0x{b0 + sz_b:x})",
                     ctx.location(ta.line),
                     hint="Two tiles must not share on-chip address space",
+                    group_key=(ta.space, a0, sz_a, b0, sz_b),
                 ))
     return findings
 
@@ -595,9 +613,10 @@ class _PhaseRegionState:
     acc_states: dict[int, _PhaseAccState] = field(default_factory=dict)
 
 
-def _phase_issue(record_index: int, finding: Finding, rec: PhaseAccessRecord) -> _PhaseIssue:
+def _phase_issue(record_index: int, finding: Finding, rec: PhaseAccessRecord,
+                identity: tuple = ()) -> _PhaseIssue:
     # Every phase finding is identified by its (region, acc_addr) timeline.
-    finding.group_key = (rec.region, rec.acc_addr)
+    finding.group_key = (rec.region, rec.acc_addr) + identity
     return _PhaseIssue(finding, record_index)
 
 
@@ -696,10 +715,12 @@ def _check_in_place_acc_contract(token: _PhaseToken, ctx: ReplayContext) -> _Pha
         message = f"{tile_desc}: dst_tile and acc_tile differ in address: {addr_detail}"
     else:
         message = f"{tile_desc}: dst_tile and acc_tile differ in valid_shape: {shape_detail}"
+    # Per-record mismatch values ride in the key so distinct violations stay visible.
     return _phase_issue(token.record_index, rec=token.record, finding=Finding(
         "PHASE_MISMATCH", message, ctx.location(rec.line),
         hint="dst_tile and acc_tile must be the same Tile",
-    ))
+    ), identity=(rec.acc_src_addr, rec.acc_valid_rows, rec.acc_valid_cols,
+                 rec.acc_src_valid_rows, rec.acc_src_valid_cols))
 
 
 def _mode_mix_write_issue(token: _PhaseToken, tile_desc: str,

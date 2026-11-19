@@ -17,13 +17,19 @@ import pypto_pro.runtime.sanitizer_replay as replay_module
 from pypto_pro.runtime.sanitizer_replay import (
     Detection,
     Finding,
+    GmAccessRecord,
     MutexAccessRecord,
     PhaseAccessRecord,
     ReplayContext,
+    ScalarAxisRecord,
     SyncAccessRecord,
     TileAccessRecord,
+    TileDeclRecord,
+    TileScalarRecord,
+    ViewShapeRecord,
     check_phase_state_machine,
     check_tile_bounds,
+    check_tile_overlap,
     pipe_name,
     run_replay,
 )
@@ -279,7 +285,176 @@ def test_tile_bounds_aggregation_preserves_region_identity():
     records = [base, base._replace(region=1)]
     findings = run_replay(records, _CTX)
     assert len(findings) == 2
-    assert [f.group_key for f in findings] == [(0,), (1,)]
+    assert [f.group_key for f in findings] == [
+        (0, 100, 0, 1, 1, 64, 64), (1, 100, 0, 1, 1, 64, 64),
+    ]
+
+
+def test_tile_bounds_aggregation_keeps_distinct_offsets():
+    base = TileAccessRecord(dim_row=64, dim_col=64, off_row=32, off_col=0,
+                            acc_row=64, acc_col=64, line=20, region=0)
+    findings = run_replay([base, base._replace(off_row=40)], _CTX)
+    assert len(findings) == 2 and [f.hits for f in findings] == [1, 1]
+    assert "offsets [32, 0]" in findings[0].message
+    assert "offsets [40, 0]" in findings[1].message
+    repeated = run_replay([base, base._replace()], _CTX)
+    assert len(repeated) == 1 and repeated[0].hits == 2
+
+
+def _gm_rec(off0, line=10, region=0, ndim=2):
+    return GmAccessRecord(
+        ndim=ndim, off0=off0, off1=0, off2=0, off3=0, off4=0,
+        dim0=64, dim1=64, dim2=0, dim3=0, dim4=0,
+        acc_row=64, acc_col=64, win_ax0=0, win_ax1=1,
+        line=line, region=region,
+    )
+
+
+def test_gm_bounds_aggregation_folds_one_access_across_regions():
+    findings = run_replay([_gm_rec(64), _gm_rec(64, region=1)], _CTX)
+    assert len(findings) == 1 and findings[0].hits == 2
+
+
+def test_gm_bounds_aggregation_keeps_distinct_offsets():
+    findings = run_replay([_gm_rec(64), _gm_rec(65)], _CTX)
+    assert len(findings) == 2 and [f.hits for f in findings] == [1, 1]
+    assert "offsets [64, 0]" in findings[0].message
+    assert "offsets [65, 0]" in findings[1].message
+    cross = run_replay([_gm_rec(64), _gm_rec(65, region=1)], _CTX)
+    assert len(cross) == 2 and [f.hits for f in cross] == [1, 1]
+
+
+def test_gm_linear_aggregation_separates_regions_and_folds_offsets():
+    base = _gm_rec(4096, ndim=0)._replace(acc_row=4096)
+    cross = run_replay([base, base._replace(off0=4097, region=1)], _CTX)
+    assert len(cross) == 2 and all(f.hits == 1 for f in cross)
+    assert "linear offset 4096" in cross[0].message
+    assert "linear offset 4097" in cross[1].message
+    loop = run_replay([base, base._replace(off0=4097)], _CTX)
+    assert len(loop) == 1 and loop[0].hits == 2
+
+
+def test_scalar_axis_aggregation_separates_regions_and_folds_lane_values():
+    base = ScalarAxisRecord(is_tile=1, axis=1, is_unsigned=0,
+                            index_lo=64, index_hi=0, bound_lo=64, bound_hi=0,
+                            line=20, region=0)
+    cross = run_replay([base, base._replace(index_lo=65, region=1)], _CTX)
+    assert len(cross) == 2 and [f.hits for f in cross] == [1, 1]
+    assert "index 64" in cross[0].message and "index 65" in cross[1].message
+    lanes = run_replay([base, base._replace(index_lo=65)], _CTX)
+    assert len(lanes) == 1 and lanes[0].hits == 2
+
+
+def test_tile_scalar_aggregation_separates_regions_and_folds_offsets():
+    base = TileScalarRecord(dim_row=64, dim_col=64, offset=4096, line=10, region=0)
+    cross = run_replay([base, base._replace(offset=4097, region=1)], _CTX)
+    assert len(cross) == 2 and [f.hits for f in cross] == [1, 1]
+    assert "offset 4096" in cross[0].message and "offset 4097" in cross[1].message
+    loop = run_replay([base, base._replace(offset=4097)], _CTX)
+    assert len(loop) == 1 and loop[0].hits == 2
+
+
+def test_slice_unaligned_aggregation_keeps_distinct_starts():
+    first = _slice_rec(8, 0, 32, 32)
+    second = _slice_rec(24, 0, 32, 32)
+    findings = run_replay([first, second], _CTX)
+    assert len(findings) == 2 and [f.hits for f in findings] == [1, 1]
+    assert "start [8, 0]" in findings[0].message
+    assert "start [24, 0]" in findings[1].message
+    repeated = run_replay([first, first._replace()], _CTX)
+    assert len(repeated) == 1 and repeated[0].hits == 2
+
+
+def test_view_over_source_aggregation_keeps_distinct_views():
+    base = ViewShapeRecord(dim0=1, dim1=100, dim2=0, dim3=0, dim4=0,
+                           src_dim0=1, src_dim1=64, src_dim2=0, src_dim3=0, src_dim4=0,
+                           fp_bytes=200, src_bytes=128, line=10)
+    distinct = run_replay([base, base._replace(dim1=101, fp_bytes=202)], _CTX)
+    assert len(distinct) == 2 and [f.hits for f in distinct] == [1, 1]
+    assert "view [1, 100]" in distinct[0].message
+    assert "view [1, 101]" in distinct[1].message
+    cross = run_replay([base, base._replace(region=1)], _CTX)
+    assert len(cross) == 1 and cross[0].hits == 2
+
+
+def test_tile_overlap_reports_forked_region_overlap():
+    shared = dict(addr=0x1000, size=256, space=1, numel=256, decl_idx=1, line=10)
+    forked = dict(addr=0x1080, size=256, space=1, numel=256, decl_idx=2, line=12)
+    records = [
+        TileDeclRecord(**shared, region=1),
+        TileDeclRecord(**shared, region=2),
+        TileDeclRecord(**forked, region=2),
+    ]
+    findings = check_tile_overlap(records, _CTX)
+    assert len(findings) == 1
+    assert findings[0].group_key == (1, 0x1000, 256, 0x1080, 256)
+
+
+def test_tile_overlap_skips_declarations_never_sharing_a_region():
+    same_addr = dict(addr=0x1000, size=256, space=1, numel=256)
+    records = [
+        TileDeclRecord(**same_addr, decl_idx=1, line=10, region=0),
+        TileDeclRecord(**same_addr, decl_idx=2, line=12, region=1),
+    ]
+    assert check_tile_overlap(records, _CTX) == []
+
+
+def test_tile_overlap_reports_same_line_distinct_call_sites():
+    same_line = dict(size=256, space=1, numel=256, line=10, region=0)
+    records = [
+        TileDeclRecord(**same_line, addr=0x1000, decl_idx=1),
+        TileDeclRecord(**same_line, addr=0x1080, decl_idx=2),
+    ]
+    assert len(check_tile_overlap(records, _CTX)) == 1
+
+
+def test_tile_overlap_decl_idx_distinguishes_same_range_call_sites():
+    # Only decl_idx separates these declarations: without it the dedup key
+    # would collapse them and the scan would miss a real same-range overlap.
+    base = dict(addr=0x1000, size=256, space=1, numel=256, line=10, region=0)
+    records = [TileDeclRecord(**base, decl_idx=1), TileDeclRecord(**base, decl_idx=2)]
+    assert len(check_tile_overlap(records, _CTX)) == 1
+    identical = [TileDeclRecord(**base, decl_idx=1), TileDeclRecord(**base, decl_idx=1)]
+    assert check_tile_overlap(identical, _CTX) == []
+
+
+def test_tile_overlap_collapses_re_registration_across_regions():
+    declaration = dict(addr=0x1000, size=256, space=1, numel=256, decl_idx=1, line=10)
+    records = [TileDeclRecord(**declaration, region=region) for region in range(8)]
+    assert check_tile_overlap(records, _CTX) == []
+
+
+def test_tile_overlap_aggregation_separates_memory_spaces():
+    base = dict(size=256, numel=256, line=10, region=0)
+    records = [
+        TileDeclRecord(**base, addr=0x1000, space=1, decl_idx=1),
+        TileDeclRecord(**base, addr=0x1080, space=1, decl_idx=2),
+        TileDeclRecord(**base, addr=0x1000, space=2, decl_idx=3),
+        TileDeclRecord(**base, addr=0x1080, space=2, decl_idx=4),
+    ]
+    findings = run_replay(records, _CTX)
+    assert len(findings) == 2 and [f.hits for f in findings] == [1, 1]
+    assert "[Vec 0x1000" in findings[0].message
+    assert "[Mat 0x1000" in findings[1].message
+
+
+def test_acc_contract_aggregation_keeps_distinct_mismatch_values():
+    head = PhaseAccessRecord(op_kind=1, phase=0, acc_addr=0, line=10, region=0)
+    tail = PhaseAccessRecord(op_kind=6, phase=0, acc_addr=0, line=30, region=0)
+    mismatch = PhaseAccessRecord(op_kind=2, phase=0, acc_addr=0, acc_src_addr=0,
+                                 acc_valid_rows=64, acc_valid_cols=64,
+                                 acc_src_valid_rows=32, acc_src_valid_cols=32, line=20, region=0)
+    records = [head, mismatch, mismatch._replace(acc_src_valid_rows=16, acc_src_valid_cols=16), tail]
+    findings = run_replay(records, _CTX)
+    assert len(findings) == 2 and [f.hits for f in findings] == [1, 1]
+    assert "acc=(32, 32)" in findings[0].message
+    assert "acc=(16, 16)" in findings[1].message
+    repeated = run_replay([head, mismatch, mismatch._replace(), tail], _CTX)
+    assert len(repeated) == 1 and repeated[0].hits == 2
+    addresses = run_replay([head, mismatch._replace(acc_src_addr=0x4000),
+                            mismatch._replace(acc_src_addr=0x8000), tail], _CTX)
+    assert len(addresses) == 2 and all(f.hits == 1 for f in addresses)
+    assert "acc=0x4000" in addresses[0].message and "acc=0x8000" in addresses[1].message
 
 
 def test_sync_aggregation_keeps_different_locations_and_diagnoses():

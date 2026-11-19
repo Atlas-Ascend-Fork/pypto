@@ -138,19 +138,20 @@ __aicore__ inline void _simt_tile_codegen_kernel_impl_vector(__gm__ float* x_0_p
     if (sanitizer_log_region != 0) {
       __gm__ uint32_t* __log_base = reinterpret_cast<__gm__ uint32_t*>(sanitizer_log_region);
       uint32_t __log_off = atomicCAS(__log_base, 0u, 0u);
-      while (__log_off <= static_cast<uint32_t>(sanitizer_log_capacity) && 6u <= static_cast<uint32_t>(sanitizer_log_capacity) - __log_off) {
-        uint32_t __log_seen = atomicCAS(__log_base, __log_off, __log_off + 6u);
+      while (__log_off <= static_cast<uint32_t>(sanitizer_log_capacity) && 7u <= static_cast<uint32_t>(sanitizer_log_capacity) - __log_off) {
+        uint32_t __log_seen = atomicCAS(__log_base, __log_off, __log_off + 7u);
         if (__log_seen == __log_off) break;
         __log_off = __log_seen;
       }
-      if (__log_off <= static_cast<uint32_t>(sanitizer_log_capacity) && 6u <= static_cast<uint32_t>(sanitizer_log_capacity) - __log_off) {
+      if (__log_off <= static_cast<uint32_t>(sanitizer_log_capacity) && 7u <= static_cast<uint32_t>(sanitizer_log_capacity) - __log_off) {
         __gm__ uint32_t* __log_rec = __log_base + 1u + __log_off;
         atomicExch(__log_rec + 0, static_cast<uint32_t>(1515847686));  // det_id
         atomicExch(__log_rec + 1, static_cast<uint32_t>(0));
         atomicExch(__log_rec + 2, static_cast<uint32_t>(1024));
         atomicExch(__log_rec + 3, static_cast<uint32_t>(1));
         atomicExch(__log_rec + 4, static_cast<uint32_t>(256));
-        atomicExch(__log_rec + 5, static_cast<uint32_t>(219));
+        atomicExch(__log_rec + 5, static_cast<uint32_t>(1));
+        atomicExch(__log_rec + 6, static_cast<uint32_t>(219));
         dsb(DSB_DDR);
       }
     }
@@ -160,19 +161,20 @@ __aicore__ inline void _simt_tile_codegen_kernel_impl_vector(__gm__ float* x_0_p
     if (sanitizer_log_region != 0) {
       __gm__ uint32_t* __log_base = reinterpret_cast<__gm__ uint32_t*>(sanitizer_log_region);
       uint32_t __log_off = atomicCAS(__log_base, 0u, 0u);
-      while (__log_off <= static_cast<uint32_t>(sanitizer_log_capacity) && 6u <= static_cast<uint32_t>(sanitizer_log_capacity) - __log_off) {
-        uint32_t __log_seen = atomicCAS(__log_base, __log_off, __log_off + 6u);
+      while (__log_off <= static_cast<uint32_t>(sanitizer_log_capacity) && 7u <= static_cast<uint32_t>(sanitizer_log_capacity) - __log_off) {
+        uint32_t __log_seen = atomicCAS(__log_base, __log_off, __log_off + 7u);
         if (__log_seen == __log_off) break;
         __log_off = __log_seen;
       }
-      if (__log_off <= static_cast<uint32_t>(sanitizer_log_capacity) && 6u <= static_cast<uint32_t>(sanitizer_log_capacity) - __log_off) {
+      if (__log_off <= static_cast<uint32_t>(sanitizer_log_capacity) && 7u <= static_cast<uint32_t>(sanitizer_log_capacity) - __log_off) {
         __gm__ uint32_t* __log_rec = __log_base + 1u + __log_off;
         atomicExch(__log_rec + 0, static_cast<uint32_t>(1515847686));  // det_id
         atomicExch(__log_rec + 1, static_cast<uint32_t>(1024));
         atomicExch(__log_rec + 2, static_cast<uint32_t>(1024));
         atomicExch(__log_rec + 3, static_cast<uint32_t>(1));
         atomicExch(__log_rec + 4, static_cast<uint32_t>(256));
-        atomicExch(__log_rec + 5, static_cast<uint32_t>(220));
+        atomicExch(__log_rec + 5, static_cast<uint32_t>(2));
+        atomicExch(__log_rec + 6, static_cast<uint32_t>(220));
         dsb(DSB_DDR);
       }
     }

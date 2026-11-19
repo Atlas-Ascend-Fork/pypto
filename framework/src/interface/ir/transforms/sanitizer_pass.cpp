@@ -301,6 +301,8 @@ private:
     TypePtr targetType_;
     // Frontend let/SSA bindings needed to resolve TileGroup tuple fields while
     // building sanitizer-only address expressions.
+    // Per-program make_tile call-site discriminator for the overlap dedup.
+    uint32_t tileDeclCounter_ = 0;
 };
 
 ExprPtr SanitizerInstrumenter::VisitExpr_(const CallPtr& op)
@@ -757,9 +759,9 @@ StmtPtr SanitizerInstrumenter::CollectMakeTile(const CallPtr& call)
     // spans and layout padding. Emits a
     // declaration record for the overlap scan; the replay dedups identical
     // re-registrations (the top-level statements are copied into both
-    // programs of one kernel) by (addr, size, space, span) -- same-statement
-    // copies share the span, distinct same-range tiles keep both records and
-    // are exactly what the scan must report.
+    // programs of one kernel) by (addr, size, space, decl_idx, line) --
+    // same-statement copies share the decl_idx, distinct same-range tiles
+    // keep both records and are exactly what the scan must report.
     auto tileType = As<TileType>(targetType_);
     PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR,
                             tileType != nullptr && tileType->shape_.size() >= 0x2)
@@ -786,7 +788,8 @@ StmtPtr SanitizerInstrumenter::CollectMakeTile(const CallPtr& call)
     fields.push_back(Int64Const(addrConst->value_));
     fields.push_back(Int64Const(static_cast<int64_t>(memref->size_)));
     fields.push_back(Int64Const(static_cast<int64_t>(memref->memorySpace_)));
-    fields.push_back(Int64Const(sz)); // element count (report display)
+    fields.push_back(Int64Const(sz));                 // element count (report display)
+    fields.push_back(Int64Const(++tileDeclCounter_)); // call-site discriminator
     return MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::TileDecl), std::move(fields), call->span_);
 }
 
