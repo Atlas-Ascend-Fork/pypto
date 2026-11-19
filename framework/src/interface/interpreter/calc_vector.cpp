@@ -21,15 +21,29 @@ namespace npu::tile_fwk {
 
 constexpr int GATHER_IGNORE_AXIS = -2;
 
+static TensorData NanValidData(const LogicalTensorDataPtr& data)
+{
+    auto view = calc::Trans(data);
+    view.shape = data->GetValidShape();
+    return view;
+}
+
+static bool IgnoreNan(const Operation& op, DataType dtype)
+{
+    return op.GetBoolAttribute(OP_ATTR_PREFIX + "nan_tile") ||
+           (IsFloat(dtype) && op.HasAttr(OP_ATTR_PREFIX + "propagate_nan") &&
+            !op.GetBoolAttribute(OP_ATTR_PREFIX + "propagate_nan"));
+}
+
 template <Opcode opcode>
 void ExecuteOpBinary(ExecuteOperationContext* ctx)
 {
     if (opcode == Opcode::OP_ADD_BRC || opcode == Opcode::OP_SUB_BRC || opcode == Opcode::OP_MUL_BRC ||
         opcode == Opcode::OP_DIV_BRC) {
         ASSERT(ExecuteOperationScene::CTX_OUTPUT_COUNT_MISMATCH, ctx->ooperandInplaceDataViewList->size() == SIZE_TWO);
-    } else if (opcode == Opcode::OP_BITWISEXOR || opcode == Opcode::OP_COPYSIGN || opcode == Opcode::OP_POW ||
-               opcode == Opcode::OP_FLOORDIV || opcode == Opcode::OP_REM || opcode == Opcode::OP_GCD ||
-               opcode == Opcode::OP_GCD_BRC) {
+    } else if (ctx->op->GetBoolAttribute(OP_ATTR_PREFIX + "nan_tile") || opcode == Opcode::OP_BITWISEXOR ||
+               opcode == Opcode::OP_COPYSIGN || opcode == Opcode::OP_POW || opcode == Opcode::OP_FLOORDIV ||
+               opcode == Opcode::OP_REM || opcode == Opcode::OP_GCD || opcode == Opcode::OP_GCD_BRC) {
         ASSERT(ExecuteOperationScene::CTX_OUTPUT_COUNT_MISMATCH, ctx->ooperandInplaceDataViewList->size() <= SIZE_TWO);
     } else {
         ASSERT(ExecuteOperationScene::CTX_OUTPUT_COUNT_MISMATCH, ctx->ooperandInplaceDataViewList->size() == 1);
@@ -76,6 +90,15 @@ void ExecuteOpBinary(ExecuteOperationContext* ctx)
         bool axisCombine = ctx->op->GetBoolAttribute("input_combine_axis_done");
         lhs->SetAxisCombine(axisCombine);
         rhs->SetAxisCombine(axisCombine);
+    }
+
+    const auto actualOpcode = ctx->op->GetOpcode();
+    const bool pair = actualOpcode == Opcode::OP_PAIRMAX || actualOpcode == Opcode::OP_PAIRMIN;
+    if ((pair || actualOpcode == Opcode::OP_MAXIMUM || actualOpcode == Opcode::OP_MINIMUM) &&
+        IgnoreNan(*ctx->op, lhs->GetDataType())) {
+        const bool maximum = actualOpcode == Opcode::OP_MAXIMUM || actualOpcode == Opcode::OP_PAIRMAX;
+        calc::GetCalcOps()->NanBinary(NanValidData(ret), NanValidData(lhs), NanValidData(rhs), maximum, pair);
+        return;
     }
 
     switch (opcode) {
@@ -275,6 +298,14 @@ void ExecuteOpReduce(ExecuteOperationContext* ctx)
     auto oop = ctx->ooperandInplaceDataViewList->at(0);
     auto iop = ctx->ioperandDataViewList->at(0);
     int axis = ctx->op->GetIntAttribute(OP_ATTR_PREFIX + "AXIS");
+    if constexpr (opcode == Opcode::OP_ROWMAX_SINGLE || opcode == Opcode::OP_ROWMAXLINE ||
+                  opcode == Opcode::OP_ROWMIN_SINGLE || opcode == Opcode::OP_ROWMINLINE) {
+        const bool maximum = opcode == Opcode::OP_ROWMAX_SINGLE || opcode == Opcode::OP_ROWMAXLINE;
+        if (IgnoreNan(*ctx->op, iop->GetDataType())) {
+            calc::GetCalcOps()->NanReduce(NanValidData(oop), {}, NanValidData(iop), axis, maximum, 0, true);
+            return;
+        }
+    }
     if (oop->GetShape()[axis] != 1) {
         std::vector<int64_t> oopShape = oop->GetShape();
         oopShape[axis] = 1;
@@ -326,6 +357,11 @@ void ExecuteOpArgReduceSingle(ExecuteOperationContext* ctx)
     auto oop = ctx->ooperandInplaceDataViewList->at(0);
     auto iop = ctx->ioperandDataViewList->at(0);
     int axis = ctx->op->GetIntAttribute(OP_ATTR_PREFIX + "AXIS");
+    if (IgnoreNan(*ctx->op, iop->GetDataType())) {
+        calc::GetCalcOps()->NanReduce({}, NanValidData(oop), NanValidData(iop), axis,
+                                      opcode == Opcode::OP_ROWARGMAX_SINGLE, 0, true);
+        return;
+    }
     if (oop->GetShape()[axis] != 1) {
         std::vector<int64_t> oopShape = oop->GetShape();
         oopShape[axis] = 1;
@@ -343,8 +379,10 @@ void ExecuteOpArgReduceSingle(ExecuteOperationContext* ctx)
             ASSERT(ExecuteOperationScene::UNSUPPORTED_OPCODE, false) << "opcode not support" << ctx->op->GetOpcodeStr();
     }
 }
-REGISTER_CALC_OP(OP_ROWARGMAX_SINGLE, Opcode::OP_ROWARGMAX_SINGLE, ExecuteOpReduce<Opcode::OP_ROWARGMAX_SINGLE>);
-REGISTER_CALC_OP(OP_ROWARGMIN_SINGLE, Opcode::OP_ROWARGMIN_SINGLE, ExecuteOpReduce<Opcode::OP_ROWARGMIN_SINGLE>);
+REGISTER_CALC_OP(OP_ROWARGMAX_SINGLE, Opcode::OP_ROWARGMAX_SINGLE,
+                 ExecuteOpArgReduceSingle<Opcode::OP_ROWARGMAX_SINGLE>);
+REGISTER_CALC_OP(OP_ROWARGMIN_SINGLE, Opcode::OP_ROWARGMIN_SINGLE,
+                 ExecuteOpArgReduceSingle<Opcode::OP_ROWARGMIN_SINGLE>);
 
 template <Opcode opcode>
 void ExecuteOpArgReduceWithValue(ExecuteOperationContext* ctx)
@@ -355,6 +393,14 @@ void ExecuteOpArgReduceWithValue(ExecuteOperationContext* ctx)
     auto outTemp = ctx->ooperandInplaceDataViewList->at(2);
     auto iop = ctx->ioperandDataViewList->at(0);
     int axis = ctx->op->GetIntAttribute(OP_ATTR_PREFIX + "AXIS");
+    if (ctx->op->GetBoolAttribute(OP_ATTR_PREFIX + "nan_tile")) {
+        const bool maximum = opcode == Opcode::OP_ROWARGMAXWITHVALUE_SINGLE ||
+                             opcode == Opcode::OP_ROWARGMAXWITHVALUE_LINE;
+        calc::GetCalcOps()->NanReduce(NanValidData(outValue), NanValidData(outIndex), NanValidData(iop), axis, maximum,
+                                      ctx->op->GetIntAttribute(OP_ATTR_PREFIX + "nan_index_offset"),
+                                      ctx->op->GetBoolAttribute(OP_ATTR_PREFIX + "nan_finalize"));
+        return;
+    }
     switch (opcode) {
         case Opcode::OP_ROWARGMAXWITHVALUE_SINGLE:
             calc::RowArgMaxWithValueSingle(outValue, outIndex, outTemp, iop, axis);
@@ -373,16 +419,16 @@ void ExecuteOpArgReduceWithValue(ExecuteOperationContext* ctx)
     }
 }
 REGISTER_CALC_OP(OP_ROWARGMAXWITHVALUE_SINGLE, Opcode::OP_ROWARGMAXWITHVALUE_SINGLE,
-                 ExecuteOpReduce<Opcode::OP_ROWARGMAXWITHVALUE_SINGLE>);
+                 ExecuteOpArgReduceWithValue<Opcode::OP_ROWARGMAXWITHVALUE_SINGLE>);
 REGISTER_CALC_OP(OP_ROWARGMAXWITHVALUE_LINE, Opcode::OP_ROWARGMAXWITHVALUE_LINE,
-                 ExecuteOpReduce<Opcode::OP_ROWARGMAXWITHVALUE_LINE>);
+                 ExecuteOpArgReduceWithValue<Opcode::OP_ROWARGMAXWITHVALUE_LINE>);
 REGISTER_CALC_OP(OP_ROWARGMINWITHVALUE_SINGLE, Opcode::OP_ROWARGMINWITHVALUE_SINGLE,
-                 ExecuteOpReduce<Opcode::OP_ROWARGMINWITHVALUE_SINGLE>);
+                 ExecuteOpArgReduceWithValue<Opcode::OP_ROWARGMINWITHVALUE_SINGLE>);
 REGISTER_CALC_OP(OP_ROWARGMINWITHVALUE_LINE, Opcode::OP_ROWARGMINWITHVALUE_LINE,
-                 ExecuteOpReduce<Opcode::OP_ROWARGMINWITHVALUE_LINE>);
+                 ExecuteOpArgReduceWithValue<Opcode::OP_ROWARGMINWITHVALUE_LINE>);
 
 template <Opcode opcode>
-void ExecuteOpPairArgRedyce(ExecuteOperationContext* ctx)
+void ExecuteOpPairArgReduce(ExecuteOperationContext* ctx)
 {
     auto outValue = ctx->ooperandInplaceDataViewList->at(0);
     auto outIndex = ctx->ooperandInplaceDataViewList->at(1);
@@ -390,7 +436,13 @@ void ExecuteOpPairArgRedyce(ExecuteOperationContext* ctx)
     auto index1 = ctx->ioperandDataViewList->at(1);
     auto value2 = ctx->ioperandDataViewList->at(2);
     auto index2 = ctx->ioperandDataViewList->at(3);
-    int axis = ctx->op->GetIntAttribute(OP_ATTR_PREFIX + "AXIS");
+    if (ctx->op->GetBoolAttribute(OP_ATTR_PREFIX + "nan_tile")) {
+        calc::GetCalcOps()->NanPairArg(NanValidData(outValue), NanValidData(outIndex), NanValidData(value1),
+                                       NanValidData(index1), NanValidData(value2), NanValidData(index2),
+                                       opcode == Opcode::OP_PAIRARGMAX,
+                                       ctx->op->GetBoolAttribute(OP_ATTR_PREFIX + "nan_finalize"));
+        return;
+    }
     switch (opcode) {
         case Opcode::OP_PAIRARGMAX:
             calc::PairArgMax(outValue, outIndex, value1, index1, value2, index2);
@@ -402,8 +454,8 @@ void ExecuteOpPairArgRedyce(ExecuteOperationContext* ctx)
             ASSERT(ExecuteOperationScene::UNSUPPORTED_OPCODE, false) << "opcode not support" << ctx->op->GetOpcodeStr();
     }
 }
-REGISTER_CALC_OP(OP_PAIRARGMAX, Opcode::OP_PAIRARGMAX, ExecuteOpReduce<Opcode::OP_PAIRARGMAX>);
-REGISTER_CALC_OP(OP_PAIRARGMIN, Opcode::OP_PAIRARGMIN, ExecuteOpReduce<Opcode::OP_PAIRARGMIN>);
+REGISTER_CALC_OP(OP_PAIRARGMAX, Opcode::OP_PAIRARGMAX, ExecuteOpPairArgReduce<Opcode::OP_PAIRARGMAX>);
+REGISTER_CALC_OP(OP_PAIRARGMIN, Opcode::OP_PAIRARGMIN, ExecuteOpPairArgReduce<Opcode::OP_PAIRARGMIN>);
 
 void ExecuteOpCast(ExecuteOperationContext* ctx)
 {
@@ -1315,8 +1367,9 @@ REGISTER_CALC_OP(OP_REDUCE_ACC, Opcode::OP_REDUCE_ACC, ExecuteOpReduceAcc);
 template <Opcode opcode>
 void ExecuteOpBinaryScalar(ExecuteOperationContext* ctx)
 {
-    if (opcode == Opcode::OP_BITWISEXOR || opcode == Opcode::OP_REMRS || opcode == Opcode::OP_FLOORDIVS ||
-        opcode == Opcode::OP_REMS || opcode == Opcode::OP_POWS || opcode == Opcode::OP_GCDS) {
+    if (ctx->op->GetBoolAttribute(OP_ATTR_PREFIX + "nan_tile") || opcode == Opcode::OP_BITWISEXOR ||
+        opcode == Opcode::OP_REMRS || opcode == Opcode::OP_FLOORDIVS || opcode == Opcode::OP_REMS ||
+        opcode == Opcode::OP_POWS || opcode == Opcode::OP_GCDS) {
         ASSERT(ExecuteOperationScene::CTX_OUTPUT_COUNT_MISMATCH, ctx->ooperandInplaceDataViewList->size() <= SIZE_TWO);
     } else {
         ASSERT(ExecuteOperationScene::CTX_OUTPUT_COUNT_MISMATCH, ctx->ooperandInplaceDataViewList->size() == 1);
@@ -1327,6 +1380,13 @@ void ExecuteOpBinaryScalar(ExecuteOperationContext* ctx)
     auto element = Element(DT_FP32, 0.0f);
     ctx->op->GetAttr(OpAttributeKey::scalar, element);
     bool reverse = ctx->op->GetBoolAttribute(OP_ATTR_PREFIX + "reverseOperand");
+
+    if constexpr (opcode == Opcode::OP_MAXS || opcode == Opcode::OP_MINS) {
+        if (IgnoreNan(*ctx->op, lhs->GetDataType())) {
+            calc::GetCalcOps()->NanScalar(NanValidData(ret), NanValidData(lhs), element, opcode == Opcode::OP_MAXS);
+            return;
+        }
+    }
 
     switch (opcode) {
         case Opcode::OP_ADDS:

@@ -30,7 +30,7 @@
 ## 函数原型
 
 ```python
-argmax(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
+argmax(input: Tensor, dim: int = -1, keepdim: bool = False, propagate_nan: bool = True) -> Tensor
 ```
 
 ## 参数说明
@@ -38,8 +38,9 @@ argmax(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
 | 参数名  | 输入/输出 | 说明                                                                 |
 |---------|-----------|----------------------------------------------------------------------|
 | input   | 输入      | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_FP16，DT_BF16，DT_FP32。<br>不支持空Tensor；Shape仅支持1-4维；Shape Size不大于2147483647（即INT32_MAX）。 |
-| dim     | 输入      | 指定进行归约的维度。<br>支持任意单轴。                                       |
+| dim     | 输入      | 指定进行归约的维度。<br>支持任意单轴。<br>默认值为-1。                            |
 | keepdim | 输入      | 归约后是否保留被归约的维度。<br>默认值为False。 |
+| propagate_nan | 输入 | 编译期bool常量。<br>为True时沿用原有设备规约及其NaN索引行为。为False时排除NaN并返回首个极值索引，全NaN时返回0。输出索引类型为DT_INT32。<br>默认值为True。 |
 
 ## 返回值说明
 
@@ -53,13 +54,19 @@ argmax(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
 
 - TileShape大小不超过64KB；
 
-- 尾轴要32bytes对齐；
+- propagate_nan为True时沿用原有尾轴32字节对齐要求。propagate_nan为False时支持非对齐逻辑长度，编译器对UB中的物理布局执行32字节对齐。
 
 - Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记calcType为运算时数据类型（输入为DT_FP16时为DT_FP32，否则与输入一致），记K为TileShape归约轴上的大小，记输入Tensor的Shape倒数第二维大小为H，则使用临时空间大小为：
-   - 输入为一维时：`K * sizeof(calcType)`字节；
-   - axis为-1或输入最后一维时：`H * K * sizeof(calcType)`字节；
-   - axis为其余取值时：固定为384字节。
+- 输入Tile、输出Tile和临时空间的总占用须小于可用UB。
+   - propagate_nan=True沿用原生路径。记计算元素字节数为E（FP16输入先转FP32，其余输入沿用原类型），当前Tile的归约轴长度为K，尾轴归约时倒数第二维长度为H。专用临时空间在一维输入时为 `K * E` 字节，尾轴归约时为 `H * K * E` 字节，非尾轴归约时为768字节，物理布局按32字节对齐。
+   - propagate_nan=False使用FP32计算，索引为INT32。以padding和轴组合后的二维布局计算H/W，尾轴时H为行数，非尾轴时H为归约轴长度。W按当前Tile的逻辑形状计算，非尾轴时为归约轴之后各维长度的乘积（先将输入尾维按32字节对齐）。源输入的额外padding通过算子内部的紧凑副本处理，不扩大工作区行步长。令 `A(x)=ceil(x/32)*32`、`B(x)=ceil(x/256)*256`，将W对齐为 `A(4*W)/4`，再计算：
+     - 紧凑输入副本和工作数据各为 `D=4*H*W`，比较保护区 `C=B(4*W)-4*W`，位掩码 `M=H*A(ceil(W/8))`。
+     - 单个结果区P在尾轴时为 `H*32`，非尾轴时为 `4*W`；结果行字节数F分别为32和 `4*W`。尾轴的数值、候选标记和索引共占3P；非尾轴的数值和索引直接写输出，scratch仅保留候选标记P。
+     - 尾轴指令区G按 `4*W<=256`、`256<4*W<=512`、`4*W>512` 三档分别为 `H*32`、`H*256`、`H*floor(4*W/512)*256` 字节；非尾轴G=768。
+     - 尾轴归约TileOp申请 `max(2*D+C+M+3*P+G+32, 2*D+C+M+2*P+B(F)-F)` 字节；非尾轴申请 `max(2*D+C+M+P+G+32, 2*D+C+M+P+B(F)-F)` 字节。
+     - 归约轴切分时，按每个输出二维切片计算。令 `R=4*Ws`、`S=Hs*A(ceil(Ws/8))+32`、`J=Hs*A(R)`。当 `R>256` 且 `B(R)!=R` 时，比较工作区T为 `2*(Hs*R+B(R)-R)`，其余情况T=0。该切片申请 `S+J+T` 字节。外层切片顺序复用此空间。
+     FP16/BF16转FP32的中间张量，以及输入、输出和各中间结果各自计入UB，最终峰值按生命周期取最大，而非各项求和。
+   - 总占用超出UB时，编译器报告容量错误。
 
 ## 调用示例
 

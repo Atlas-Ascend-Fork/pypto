@@ -222,7 +222,7 @@ Tensor Remainder(const Tensor& self, const Tensor& other, PrecisionType precisio
     return Tensor(result);
 }
 
-Tensor Maximum(const Tensor& operand1, const Tensor& operand2)
+Tensor Maximum(const Tensor& operand1, const Tensor& operand2, bool propagateNan)
 {
     DECLARE_TRACER();
     CheckVectorOperand(operand1.GetStorage(), "Maximum");
@@ -230,11 +230,21 @@ Tensor Maximum(const Tensor& operand1, const Tensor& operand2)
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MAXIMUM);
     CheckTensorDataTypeCombination({operand1.GetDataType(), operand2.GetDataType()}, combinations, "MAXIMUM");
-    RETURN_CALL(BinaryOperation<BinaryOpType::MAXIMUM>, *Program::GetInstance().GetCurrentFunction(), operand1,
-                operand2);
+    if (propagateNan || !IsFloat(operand1.GetDataType())) {
+        RETURN_CALL(BinaryOperation<BinaryOpType::MAXIMUM>, *Program::GetInstance().GetCurrentFunction(), operand1,
+                    operand2);
+    }
+    if (operand1.GetDataType() == DT_BF16) {
+        auto result = Maximum(Cast(operand1, DT_FP32), Cast(operand2, DT_FP32), false);
+        return Cast(result, DT_BF16, CastMode::CAST_RINT);
+    }
+    auto [result, op] = TensorBinaryOperationWithOp<BinaryOpType::MAXIMUM, true>(
+        *Program::GetInstance().GetCurrentFunction(), operand1, operand2);
+    op->SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+    return result;
 }
 
-Tensor Minimum(const Tensor& operand1, const Tensor& operand2)
+Tensor Minimum(const Tensor& operand1, const Tensor& operand2, bool propagateNan)
 {
     DECLARE_TRACER();
     CheckVectorOperand(operand1.GetStorage(), "Minimum");
@@ -242,8 +252,18 @@ Tensor Minimum(const Tensor& operand1, const Tensor& operand2)
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MINIMUM);
     CheckTensorDataTypeCombination({operand1.GetDataType(), operand2.GetDataType()}, combinations, "MINIMUM");
-    RETURN_CALL(BinaryOperation<BinaryOpType::MINIMUM>, *Program::GetInstance().GetCurrentFunction(), operand1,
-                operand2);
+    if (propagateNan || !IsFloat(operand1.GetDataType())) {
+        RETURN_CALL(BinaryOperation<BinaryOpType::MINIMUM>, *Program::GetInstance().GetCurrentFunction(), operand1,
+                    operand2);
+    }
+    if (operand1.GetDataType() == DT_BF16) {
+        auto result = Minimum(Cast(operand1, DT_FP32), Cast(operand2, DT_FP32), false);
+        return Cast(result, DT_BF16, CastMode::CAST_RINT);
+    }
+    auto [result, op] = TensorBinaryOperationWithOp<BinaryOpType::MINIMUM, true>(
+        *Program::GetInstance().GetCurrentFunction(), operand1, operand2);
+    op->SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+    return result;
 }
 
 static const std::unordered_set<DataType>& GetClipSupportedDtypes()

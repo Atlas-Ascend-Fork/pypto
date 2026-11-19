@@ -817,8 +817,12 @@ class Tensor:
         return pypto.softmax(self, dim)
 
     @source_location
-    def maximum(self, other: 'Tensor') -> 'Tensor':
-        return pypto.maximum(self, other)
+    def maximum(self, other: 'Tensor', propagate_nan: bool = True) -> 'Tensor':
+        return pypto.maximum(self, other, propagate_nan)
+
+    @source_location
+    def minimum(self, other: 'Tensor', propagate_nan: bool = True) -> 'Tensor':
+        return pypto.minimum(self, other, propagate_nan)
 
     @source_location
     def where(
@@ -909,20 +913,20 @@ class Tensor:
         return pypto.logical_not(self)
 
     @source_location
-    def amax(self, dim: int, keepdim: bool = False) -> 'Tensor':
-        return pypto.amax(self, dim, keepdim)
+    def amax(self, dim: int, keepdim: bool = False, propagate_nan: bool = True) -> 'Tensor':
+        return pypto.amax(self, dim, keepdim, propagate_nan)
 
     @source_location
-    def amin(self, dim: int, keepdim: bool = False) -> 'Tensor':
-        return pypto.amin(self, dim, keepdim)
+    def amin(self, dim: int, keepdim: bool = False, propagate_nan: bool = True) -> 'Tensor':
+        return pypto.amin(self, dim, keepdim, propagate_nan)
 
     @source_location
-    def argmax(self, dim: int, keepdim: bool = False) -> 'Tensor':
-        return pypto.argmax(self, dim, keepdim)
+    def argmax(self, dim: int, keepdim: bool = False, propagate_nan: bool = True) -> 'Tensor':
+        return pypto.argmax(self, dim, keepdim, propagate_nan)
 
     @source_location
-    def argmin(self, dim: int, keepdim: bool = False) -> 'Tensor':
-        return pypto.argmin(self, dim, keepdim)
+    def argmin(self, dim: int, keepdim: bool = False, propagate_nan: bool = True) -> 'Tensor':
+        return pypto.argmin(self, dim, keepdim, propagate_nan)
 
     @source_location
     def sum(self, dim: int, keepdim: bool = False) -> 'Tensor':

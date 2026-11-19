@@ -174,6 +174,9 @@ std::string CodeGenOpNPU::PrintRowMaxlineDynamicUnaligned(const PrintUnaryParam&
 
 std::string CodeGenOpNPU::PrintRowMaxlineTileTensor() const
 {
+    bool nan = false;
+    if (GetOpAttr(OP_ATTR_PREFIX + "nan_tile", nan) && nan)
+        return PrintNanReduce();
     std::vector<std::string> tileOpParamList = GetTileOpParamsByOrder();
     int reduceAxis{-1};
     auto axis = opAttrs.at(OP_ATTR_PREFIX + "AXIS");

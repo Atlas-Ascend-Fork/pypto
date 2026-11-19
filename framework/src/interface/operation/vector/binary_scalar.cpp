@@ -13,6 +13,7 @@
  * \brief Binary scalar operation implementations.
  */
 
+#include <cmath>
 #include <limits>
 #include "tilefwk/data_type.h"
 #include "unary.h"
@@ -219,7 +220,9 @@ void TiledBinaryOperationScalar(Function& function, const TileShape& tileShape, 
             return;
         }
         // 确认接口
-        auto& op = function.AddOperation(opNameCode, {inputTile1}, {resultTile});
+        auto& op = T == BinaryOpType::MAX || T == BinaryOpType::MIN ?
+                       AddNanSmallOperation(function, opNameCode, {inputTile1}, {resultTile}) :
+                       function.AddOperation(opNameCode, {inputTile1}, {resultTile});
         op.SetAttribute(OpAttributeKey::scalar, value);
         op.SetAttribute(OP_ATTR_PREFIX + "reverseOperand", reverseOperand);
         if (useGcdSimt) {
@@ -474,26 +477,54 @@ Tensor BitwiseXor(const Tensor& self, const Element& other)
                 self.GetStorage(), other);
 }
 
-Tensor Maximum(const Tensor& operand1, const Element& operand2)
+Tensor Maximum(const Tensor& operand1, const Element& operand2, bool propagateNan)
 {
     DECLARE_TRACER();
     CheckVectorOperand(operand1.GetStorage(), "Maximum");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MAXS);
     CheckTensorDataTypeCombination({operand1.GetDataType()}, combinations, "MAX");
-    RETURN_CALL(BinaryOperationScalar<BinaryOpType::MAX>, *Program::GetInstance().GetCurrentFunction(),
-                operand1.GetStorage(), operand2);
+    if (propagateNan || !IsFloat(operand1.GetDataType())) {
+        RETURN_CALL(BinaryOperationScalar<BinaryOpType::MAX>, *Program::GetInstance().GetCurrentFunction(),
+                    operand1.GetStorage(), operand2);
+    }
+    if (operand2.IsFloat() && std::isnan(operand2.GetFloatData())) {
+        CheckTensorDimRange(operand1.GetStorage(), 1, NUM_VALUE_4, "MinMax");
+        return operand1;
+    }
+    if (operand1.GetDataType() == DT_BF16) {
+        return Cast(Maximum(Cast(operand1, DT_FP32), Element(DT_FP32, operand2.Cast<float>()), false), DT_BF16,
+                    CastMode::CAST_RINT);
+    }
+    auto [result, op] = TensorBinaryOperationScalarWithOp<BinaryOpType::MAX>(
+        *Program::GetInstance().GetCurrentFunction(), operand1.GetStorage(), operand2);
+    op->SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+    return result;
 }
 
-Tensor Minimum(const Tensor& operand1, const Element& operand2)
+Tensor Minimum(const Tensor& operand1, const Element& operand2, bool propagateNan)
 {
     DECLARE_TRACER();
     CheckVectorOperand(operand1.GetStorage(), "Minimum");
 
     const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_MINS);
     CheckTensorDataTypeCombination({operand1.GetDataType()}, combinations, "MIN");
-    RETURN_CALL(BinaryOperationScalar<BinaryOpType::MIN>, *Program::GetInstance().GetCurrentFunction(),
-                operand1.GetStorage(), operand2);
+    if (propagateNan || !IsFloat(operand1.GetDataType())) {
+        RETURN_CALL(BinaryOperationScalar<BinaryOpType::MIN>, *Program::GetInstance().GetCurrentFunction(),
+                    operand1.GetStorage(), operand2);
+    }
+    if (operand2.IsFloat() && std::isnan(operand2.GetFloatData())) {
+        CheckTensorDimRange(operand1.GetStorage(), 1, NUM_VALUE_4, "MinMax");
+        return operand1;
+    }
+    if (operand1.GetDataType() == DT_BF16) {
+        return Cast(Minimum(Cast(operand1, DT_FP32), Element(DT_FP32, operand2.Cast<float>()), false), DT_BF16,
+                    CastMode::CAST_RINT);
+    }
+    auto [result, op] = TensorBinaryOperationScalarWithOp<BinaryOpType::MIN>(
+        *Program::GetInstance().GetCurrentFunction(), operand1.GetStorage(), operand2);
+    op->SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+    return result;
 }
 
 Tensor LReLU(const Tensor& self, const Element& other)

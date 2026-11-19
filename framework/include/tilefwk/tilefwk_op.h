@@ -245,10 +245,10 @@ Tensor RowSumExpand(const Tensor& operand);
 Tensor RowMaxExpand(const Tensor& operand);
 
 Tensor Sum(const Tensor& self, int axis = -1, bool keepDim = false);
-Tensor Amax(const Tensor& self, int axis = -1, bool keepDim = false);
-Tensor ArgMax(const Tensor& self, int axis = -1, bool keepDim = false);
-Tensor ArgMin(const Tensor& self, int axis = -1, bool keepDim = false);
-Tensor Amin(const Tensor& self, int axis = -1, bool keepDim = false);
+Tensor Amax(const Tensor& self, int axis = -1, bool keepDim = false, bool propagateNan = true);
+Tensor ArgMax(const Tensor& self, int axis = -1, bool keepDim = false, bool propagateNan = true);
+Tensor ArgMin(const Tensor& self, int axis = -1, bool keepDim = false, bool propagateNan = true);
+Tensor Amin(const Tensor& self, int axis = -1, bool keepDim = false, bool propagateNan = true);
 Tensor Prod(const Tensor& self, int axis = -1, bool keepDim = false);
 std::tuple<Tensor, Tensor, Tensor> OnlineSoftmax(const Tensor& scores, float scale);
 std::tuple<Tensor, Tensor, Tensor> OnlineSoftmaxUpdate(const Tensor& previousMax, const Tensor& previousSum,
@@ -263,8 +263,8 @@ Tensor Div(const Tensor& self, const Tensor& other, PrecisionType precisionType 
 Tensor Mul(const Tensor& self, const Tensor& other);
 Tensor Hypot(const Tensor& self, const Tensor& other);
 Tensor Fmod(const Tensor& self, const Tensor& other, PrecisionType precisionType = PrecisionType::INTRINSIC);
-Tensor Maximum(const Tensor& operand1, const Tensor& operand2);
-Tensor Minimum(const Tensor& operand1, const Tensor& operand2);
+Tensor Maximum(const Tensor& operand1, const Tensor& operand2, bool propagateNan = true);
+Tensor Minimum(const Tensor& operand1, const Tensor& operand2, bool propagateNan = true);
 Tensor BitwiseAnd(const Tensor& self, const Tensor& other);
 Tensor BitwiseOr(const Tensor& self, const Tensor& other);
 Tensor BitwiseXor(const Tensor& self, const Tensor& other);
@@ -277,8 +277,8 @@ Tensor Fmod(const Tensor& self, const Element& other, PrecisionType precisionTyp
 Tensor BitwiseAnd(const Tensor& self, const Element& other);
 Tensor BitwiseOr(const Tensor& self, const Element& other);
 Tensor BitwiseXor(const Tensor& self, const Element& other);
-Tensor Minimum(const Tensor& operand1, const Element& operand2);
-Tensor Maximum(const Tensor& operand1, const Element& operand2);
+Tensor Minimum(const Tensor& operand1, const Element& operand2, bool propagateNan = true);
+Tensor Maximum(const Tensor& operand1, const Element& operand2, bool propagateNan = true);
 Tensor Compare(const Tensor& self, const Tensor& other, OpType op, OutType mode);
 Tensor Compare(const Tensor& self, const Element& other, OpType op, OutType mode);
 Tensor Compare(const Element& self, const Tensor& other, OpType op, OutType mode);

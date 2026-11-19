@@ -19,8 +19,13 @@ from ..error import PyptoError
 from ..tensor import Tensor
 
 
+def _check_propagate_nan(propagate_nan):
+    if not isinstance(propagate_nan, bool):
+        raise PyptoError(0xF00001, TypeError("`propagate_nan` must be a bool"))
+
+
 @op_wrapper
-def amin(input: Tensor, dim: int, keepdim: bool = False) -> Tensor:
+def amin(input: Tensor, dim: int, keepdim: bool = False, propagate_nan: bool = True) -> Tensor:
     """Returns the minimum value of each slice of the input tensor in the given dimension dim.
 
     Parameters
@@ -31,6 +36,10 @@ def amin(input: Tensor, dim: int, keepdim: bool = False) -> Tensor:
         The dimension to reduce.
     keepdim : bool, optional
         whether the output tensor has dim retained or not. Default: False.
+
+    propagate_nan : bool, optional
+        Compile-time constant, default True. If True, NaNs propagate.
+        If False, NaNs are ignored; an all-NaN slice returns NaN.
 
     Returns
     -------
@@ -50,11 +59,12 @@ def amin(input: Tensor, dim: int, keepdim: bool = False) -> Tensor:
               [1.0]]
 
     """
-    return pypto_impl.Amin(input, dim, keepdim)
+    _check_propagate_nan(propagate_nan)
+    return pypto_impl.Amin(input, dim, keepdim, propagate_nan)
 
 
 @op_wrapper
-def amax(input: Tensor, dim: int, keepdim: bool = False) -> Tensor:
+def amax(input: Tensor, dim: int, keepdim: bool = False, propagate_nan: bool = True) -> Tensor:
     """Returns the maximum value of each slice of the input tensor in the given dimension dim.
 
     Parameters
@@ -65,6 +75,10 @@ def amax(input: Tensor, dim: int, keepdim: bool = False) -> Tensor:
         The dimension to reduce.
     keepdim : bool
         whether the output tensor has dim retained or not. Default: False.
+
+    propagate_nan : bool, optional
+        Compile-time constant, default True. If True, NaNs propagate.
+        If False, NaNs are ignored; an all-NaN slice returns NaN.
 
     Returns
     -------
@@ -84,11 +98,15 @@ def amax(input: Tensor, dim: int, keepdim: bool = False) -> Tensor:
               [3.0]]
 
     """
-    return pypto_impl.Amax(input, dim, keepdim)
+    _check_propagate_nan(propagate_nan)
+    return pypto_impl.Amax(input, dim, keepdim, propagate_nan)
 
 
 @op_wrapper
-def maximum(input: Union[Tensor, Element, int, float], other: Union[Tensor, Element, int, float]) -> Tensor:
+def maximum(
+    input: Union[Tensor, Element, int, float], other: Union[Tensor, Element, int, float],
+    propagate_nan: bool = True,
+) -> Tensor:
     """
     Computes the element-wise maximum of input and other.
 
@@ -98,6 +116,10 @@ def maximum(input: Union[Tensor, Element, int, float], other: Union[Tensor, Elem
         The first input tensor.
     other : Tensor or Element
         The second input tensor.
+
+    propagate_nan : bool, optional
+        Compile-time constant, default True. If True, either NaN input produces NaN.
+        If False, a single NaN is ignored; two NaNs produce NaN.
 
     Returns
     -------
@@ -114,6 +136,7 @@ def maximum(input: Union[Tensor, Element, int, float], other: Union[Tensor, Elem
     Input b:    [3 1 3]
     Output out: [3 2 4]
     """
+    _check_propagate_nan(propagate_nan)
     if not isinstance(input, pypto_impl.Tensor) and not isinstance(other, pypto_impl.Tensor):
         raise PyptoError(0xF00001, TypeError("one of `input` and `other` should be `Tensor`"))
 
@@ -121,11 +144,14 @@ def maximum(input: Union[Tensor, Element, int, float], other: Union[Tensor, Elem
         input, other = other, input
     if isinstance(other, (int, float)):
         other = pypto_impl.Element(input.dtype, other)
-    return pypto_impl.Maximum(input, other)
+    return pypto_impl.Maximum(input, other, propagate_nan)
 
 
 @op_wrapper
-def minimum(input: Union[Tensor, Element, int, float], other: Union[Tensor, Element, int, float]) -> Tensor:
+def minimum(
+    input: Union[Tensor, Element, int, float], other: Union[Tensor, Element, int, float],
+    propagate_nan: bool = True,
+) -> Tensor:
     """
     Computes the element-wise minimum of input and other.
 
@@ -135,6 +161,10 @@ def minimum(input: Union[Tensor, Element, int, float], other: Union[Tensor, Elem
         The first input tensor.
     other : Tensor or Element
         The second input tensor.
+
+    propagate_nan : bool, optional
+        Compile-time constant, default True. If True, either NaN input produces NaN.
+        If False, a single NaN is ignored; two NaNs produce NaN.
 
     Returns
     -------
@@ -151,6 +181,7 @@ def minimum(input: Union[Tensor, Element, int, float], other: Union[Tensor, Elem
     Input b:    [3 1 3]
     Output out: [0 1 3]
     """
+    _check_propagate_nan(propagate_nan)
     if not isinstance(input, pypto_impl.Tensor) and not isinstance(other, pypto_impl.Tensor):
         raise PyptoError(0xF00001, TypeError("one of `input` and `other` should be `Tensor`"))
 
@@ -158,7 +189,7 @@ def minimum(input: Union[Tensor, Element, int, float], other: Union[Tensor, Elem
         input, other = other, input
     if isinstance(other, (int, float)):
         other = pypto_impl.Element(input.dtype, other)
-    return pypto_impl.Minimum(input, other)
+    return pypto_impl.Minimum(input, other, propagate_nan)
 
 
 @op_wrapper
@@ -230,7 +261,7 @@ def prod(self: Tensor, dim: int, keepdim: bool = False) -> Tensor:
 
 
 @op_wrapper
-def argmax(input: Tensor, dim: int = -1, keepdim: bool = False) -> Tensor:
+def argmax(input: Tensor, dim: int = -1, keepdim: bool = False, propagate_nan: bool = True) -> Tensor:
     """
     Returns the index of the maximum value in a tensor along a given dimension.
 
@@ -242,6 +273,11 @@ def argmax(input: Tensor, dim: int = -1, keepdim: bool = False) -> Tensor:
         The dimension along which to find the maximum value. Default is -1 (last dimension).
     keepdim : bool, optional
         Whether the output tensor has dim retained. Default is False.
+
+    propagate_nan : bool, optional
+        Compile-time constant, default True. If True, use the existing backend reduction,
+        including its NaN index behavior.
+        If False, NaNs are ignored; an all-NaN slice returns index 0.
 
     Returns
     -------
@@ -257,11 +293,12 @@ def argmax(input: Tensor, dim: int = -1, keepdim: bool = False) -> Tensor:
               [4.0, 1.0, 5.0]]
     Output y: [1, 2]
     """
-    return pypto_impl.ArgMax(input, dim, keepdim)
+    _check_propagate_nan(propagate_nan)
+    return pypto_impl.ArgMax(input, dim, keepdim, propagate_nan)
 
 
 @op_wrapper
-def argmin(input: Tensor, dim: int = -1, keepdim: bool = False) -> Tensor:
+def argmin(input: Tensor, dim: int = -1, keepdim: bool = False, propagate_nan: bool = True) -> Tensor:
     """
     Returns the index of the minimum value in a tensor along a given dimension.
 
@@ -273,6 +310,11 @@ def argmin(input: Tensor, dim: int = -1, keepdim: bool = False) -> Tensor:
         The dimension along which to find the minimum value. Default is -1 (last dimension).
     keepdim : bool, optional
         Whether the output tensor has dim retained. Default is False.
+
+    propagate_nan : bool, optional
+        Compile-time constant, default True. If True, use the existing backend reduction,
+        including its NaN index behavior.
+        If False, NaNs are ignored; an all-NaN slice returns index 0.
 
     Returns
     -------
@@ -288,4 +330,5 @@ def argmin(input: Tensor, dim: int = -1, keepdim: bool = False) -> Tensor:
               [4.0, 1.0, 5.0]]
     Output y: [0, 1]
     """
-    return pypto_impl.ArgMin(input, dim, keepdim)
+    _check_propagate_nan(propagate_nan)
+    return pypto_impl.ArgMin(input, dim, keepdim, propagate_nan)

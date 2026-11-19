@@ -35,6 +35,7 @@ pypto-Tensor-log2
 pypto-Tensor-logical_not
 pypto-Tensor-matmul
 pypto-Tensor-maximum
+pypto-Tensor-minimum
 pypto-Tensor-move
 pypto-Tensor-mul
 pypto-Tensor-name

@@ -303,16 +303,22 @@ void BindOperation(py::module_& m)
         py::arg("dtype") = DT_FP32, "Uniform random number generator.");
     m.def(
         "Amax",
-        [](const Tensor& operand, int axis, bool keepDim) { return npu::tile_fwk::Amax(operand, axis, keepDim); },
-        py::arg("operand"), py::arg("axis") = -1, py::arg("keepDim") = false, "Tensor row max single.");
+        [](const Tensor& operand, int axis, bool keepDim, bool propagateNan) {
+            return npu::tile_fwk::Amax(operand, axis, keepDim, propagateNan);
+        },
+        py::arg("operand"), py::arg("axis") = -1, py::arg("keepDim") = false, py::arg("propagate_nan") = true,
+        "Tensor row max single.");
 
     m.def(
         "Sum", [](const Tensor& operand, int axis, bool keepDim) { return npu::tile_fwk::Sum(operand, axis, keepDim); },
         py::arg("operand"), py::arg("axis") = -1, py::arg("keepDim") = false, "Tensor row sum single.");
     m.def(
         "Amin",
-        [](const Tensor& operand, int axis, bool keepDim) { return npu::tile_fwk::Amin(operand, axis, keepDim); },
-        py::arg("operand"), py::arg("axis") = -1, py::arg("keepDim") = false, "Tensor row min single.");
+        [](const Tensor& operand, int axis, bool keepDim, bool propagateNan) {
+            return npu::tile_fwk::Amin(operand, axis, keepDim, propagateNan);
+        },
+        py::arg("operand"), py::arg("axis") = -1, py::arg("keepDim") = false, py::arg("propagate_nan") = true,
+        "Tensor row min single.");
     m.def(
         "Prod",
         [](const Tensor& operand, int axis, bool keepDim) { return npu::tile_fwk::Prod(operand, axis, keepDim); },
@@ -426,11 +432,17 @@ void BindOperation(py::module_& m)
         py::arg("aggregation"), py::arg("reduce_mode"), "Tensor reduce.");
 
     m.def(
-        "Maximum", [](const Tensor& left, const Tensor& right) { return npu::tile_fwk::Maximum(left, right); },
-        py::arg("left"), py::arg("right"), "Tensor maximum.");
+        "Maximum",
+        [](const Tensor& left, const Tensor& right, bool propagateNan) {
+            return npu::tile_fwk::Maximum(left, right, propagateNan);
+        },
+        py::arg("left"), py::arg("right"), py::arg("propagate_nan") = true, "Tensor maximum.");
     m.def(
-        "Minimum", [](const Tensor& left, const Tensor& right) { return npu::tile_fwk::Minimum(left, right); },
-        py::arg("left"), py::arg("right"), "Tensor minimum.");
+        "Minimum",
+        [](const Tensor& left, const Tensor& right, bool propagateNan) {
+            return npu::tile_fwk::Minimum(left, right, propagateNan);
+        },
+        py::arg("left"), py::arg("right"), py::arg("propagate_nan") = true, "Tensor minimum.");
     m.def(
         "Unsqueeze",
         [](const Tensor& old, int unsqueezeDimNum) { return npu::tile_fwk::Unsqueeze(old, unsqueezeDimNum); },
@@ -553,12 +565,18 @@ void BindOperation(py::module_& m)
         py::arg("operand"), py::arg("axis"), py::arg("descending") = false, "Tensor argsort.");
     m.def(
         "ArgMax",
-        [](const Tensor& operand, int axis, bool keepDim) { return npu::tile_fwk::ArgMax(operand, axis, keepDim); },
-        py::arg("operand"), py::arg("axis") = -1, py::arg("keepDim") = false, "Tensor argmax.");
+        [](const Tensor& operand, int axis, bool keepDim, bool propagateNan) {
+            return npu::tile_fwk::ArgMax(operand, axis, keepDim, propagateNan);
+        },
+        py::arg("operand"), py::arg("axis") = -1, py::arg("keepDim") = false, py::arg("propagate_nan") = true,
+        "Tensor argmax.");
     m.def(
         "ArgMin",
-        [](const Tensor& operand, int axis, bool keepDim) { return npu::tile_fwk::ArgMin(operand, axis, keepDim); },
-        py::arg("operand"), py::arg("axis") = -1, py::arg("keepDim") = false, "Tensor argmin.");
+        [](const Tensor& operand, int axis, bool keepDim, bool propagateNan) {
+            return npu::tile_fwk::ArgMin(operand, axis, keepDim, propagateNan);
+        },
+        py::arg("operand"), py::arg("axis") = -1, py::arg("keepDim") = false, py::arg("propagate_nan") = true,
+        "Tensor argmin.");
     m.def(
         "Matmul",
         [](DataType out_type, const Tensor& tensor_a, const Tensor& tensor_b, bool a_trans, bool b_trans,
@@ -797,8 +815,12 @@ void BindOperation(py::module_& m)
             npu::tile_fwk::AtomicRMW(src, offsets, dst, mode);
         },
         py::arg("src"), py::arg("offsets"), py::arg("dst"), py::arg("mode"), "Tensor atomic rmw");
-    m.def("Maximum",
-          [](const Tensor& operand1, const Element& operand2) { return npu::tile_fwk::Maximum(operand1, operand2); });
+    m.def(
+        "Maximum",
+        [](const Tensor& operand1, const Element& operand2, bool propagateNan) {
+            return npu::tile_fwk::Maximum(operand1, operand2, propagateNan);
+        },
+        py::arg("operand1"), py::arg("operand2"), py::arg("propagate_nan") = true);
     m.def(
         "OnlineSoftmax",
         [](const Tensor& scores, float scale) {
@@ -821,8 +843,12 @@ void BindOperation(py::module_& m)
         py::arg("current_sum"), py::arg("current_output"),
         "OnlineSoftmaxUpdate(previous_max, previous_sum, previous_output, current_max, current_sum, current_output) "
         "-> (updated_max, updated_sum, updated_output).");
-    m.def("Minimum",
-          [](const Tensor& operand1, const Element& operand2) { return npu::tile_fwk::Minimum(operand1, operand2); });
+    m.def(
+        "Minimum",
+        [](const Tensor& operand1, const Element& operand2, bool propagateNan) {
+            return npu::tile_fwk::Minimum(operand1, operand2, propagateNan);
+        },
+        py::arg("operand1"), py::arg("operand2"), py::arg("propagate_nan") = true);
     m.def("Clip",
           [](const Tensor& self, const Tensor& min, const Tensor& max) { return npu::tile_fwk::Clip(self, min, max); });
     m.def("Clip", [](const Tensor& self, const Element& min, const Element& max) {

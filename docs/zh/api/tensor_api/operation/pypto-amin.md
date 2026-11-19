@@ -36,7 +36,7 @@
 ## 函数原型
 
 ```python
-amin(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
+amin(input: Tensor, dim: int, keepdim: bool = False, propagate_nan: bool = True) -> Tensor
 ```
 
 ## 参数说明
@@ -46,6 +46,7 @@ amin(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
 | input   | 输入      | 源操作数。<br>支持的类型为：Tensor。不同型号支持的数据类型有所差异，详细请参见[约束说明](#约束说明)。<br>不支持空Tensor；Shape仅支持1-4维；Shape Size不大于2147483647（即INT32_MAX）。 |
 | dim     | 输入      | 指定进行归约的维度。<br>支持任意单轴。                                       |
 | keepdim | 输入      | 归约后是否保留被归约的维度。<br>默认值为False。 |
+| propagate_nan | 输入 | 编译期bool常量。<br>为True时在存在NaN时返回NaN；为False时忽略NaN，全NaN时返回NaN。整数输入不受影响。<br>默认值为True。 |
 
 ## 返回值说明
 
@@ -54,6 +55,8 @@ amin(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
 若keepdim参数为True，则在执行归约操作后保留被归约的维度。输出Tensor在除dim指定的维度外，其他维度的Shape与输入Tensor的Shape一致，而在dim指定的维度上的大小为1。
 
 若keepdim参数为False（默认），则被归约的维度会从输出Tensor中移除，而TileShape中对应的维度不变，所以建议在调其他operation前重设TileShape。
+
+若propagate_nan参数为False，浮点输入混合正负零时选择-0，同号零保留原符号。
 
 ## 约束说明
 
@@ -79,12 +82,19 @@ amin(input: Tensor, dim: int, keepdim: bool = False) -> Tensor
    - Kirin9050处理器系列产品：DT_FP16，DT_FP32
    <!-- end id12 -->
 - Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。当axis为-1或输入最后一维时，记TileShape倒数第二维为H（一维TileShape取H为1），记K为TileShape归约轴上的大小，记srcType为输入数据类型，则使用临时空间大小为：
-   - K <= 128 / sizeof\(srcType\)：固定为32字节；
-   - K <= 2 \* \(128 / sizeof\(srcType\)\)：`H * 128`字节；
-   - 其余情况：记F为`K * sizeof(srcType) / 128`，使用临时空间大小为`H * (F / 2) * 128`字节。
-
-   axis为其余取值时不使用临时空间。
+- 输入Tile、输出Tile和临时空间的总占用须小于可用UB。
+   - propagate_nan=True沿用原生路径。非尾轴原生数值归约无专用临时空间，尾轴归约记当前Tile倒数第二维长度为H（一维时H=1），归约轴长度为K，元素字节数为E。专用临时空间按以下分档申请，除法取整，物理布局再按32字节对齐：
+     - `K * E <= 256` 时为32字节；
+     - `256 < K * E <= 512` 时为 `H * 256` 字节；
+     - `K * E > 512` 时为 `H * floor(K * E / 512) * 256` 字节。
+   - propagate_nan=False的专用临时空间按二维计算布局定容。尾轴归约取H为倒数第二维长度、W为归约轴长度；非尾轴归约取H为归约轴长度、W为归约轴后各维长度的乘积。BF16使用FP32计算，E=4；其他类型E为计算元素字节数。令 `A(x)=ceil(x/32)*32`、`B(x)=ceil(x/256)*256`，先将W对齐为 `A(W*E)/E`，再计算：
+     - 工作数据 `D=H*W*E`，比较读取保护区 `C=B(W*E)-W*E`，位掩码 `M=H*A(ceil(W/8))`。
+     - 单个结果区P在尾轴时为 `H*32`，非尾轴时为 `W*E`；结果行字节数F分别为32和 `W*E`。
+     - 尾轴指令区Q按 `W*E<=256`、`256<W*E<=512`、`W*E>512` 三档分别为32、`H*256`、`H*floor(W*E/512)*256` 字节；非尾轴Q=0。
+     - 尾轴归约TileOp申请 `max(D+C+M+2*P+Q+32, D+C+M+2*P+B(F)-F)` 字节。非尾轴结果直接写输出，不申请数值结果区，申请 `max(D+C+M+P+32, D+C+M+P+B(F)-F)` 字节。
+     - 归约轴切分时，另按输出二维切片申请 `Hs*A(ceil(Ws/8))+32+Hs*B(Ws*E)` 字节，其中Hs/Ws为该切片的行数及对齐后的列数。外层切片及左右输入顺序复用此空间。
+     BF16转FP32的中间张量，以及输入、输出和各中间结果各自计入UB，最终峰值按生命周期取最大，而非各项求和。
+   - 总占用超出UB时，编译器报告容量错误。
 
 ## 调用示例
 

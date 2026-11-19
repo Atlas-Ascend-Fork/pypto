@@ -54,6 +54,7 @@ void TileReduceNew(Function& function, const TileShape& tileShape, const std::st
     if (opNew == "SUM_COMBINE_AXIS") {
         opNew = "SUM";
     }
+    const bool extrema = op == "MAX" || op == "MIN";
 
     auto source = in;
 
@@ -97,7 +98,11 @@ void TileReduceNew(Function& function, const TileShape& tileShape, const std::st
             auto regA = tileA->View(function, regAshape, regOffset);
             auto regB = tileB->View(function, regBshape, regOffset);
             auto regResult = resultA->View(function, regAshape, regOffset);
-            function.AddOperation("TILE_PAIR" + opNew, {regA, regB}, {regResult});
+            if (extrema) {
+                AddNanSmallOperation(function, FindOpcode("TILE_PAIR" + opNew), {regA, regB}, {regResult});
+            } else {
+                function.AddOperation("TILE_PAIR" + opNew, {regA, regB}, {regResult});
+            }
         }
 
         if (remainder < width) {
@@ -120,7 +125,11 @@ void TileReduceNew(Function& function, const TileShape& tileShape, const std::st
             auto regA = resultA->View(function, regAshape, regOffset);
             auto regB = tileRemainder->View(function, regBshape, regOffset);
             auto regResult = resultAnext->View(function, regAshape, regOffset);
-            function.AddOperation("TILE_PAIR" + opNew, {regA, regB}, {regResult});
+            if (extrema) {
+                AddNanSmallOperation(function, FindOpcode("TILE_PAIR" + opNew), {regA, regB}, {regResult});
+            } else {
+                function.AddOperation("TILE_PAIR" + opNew, {regA, regB}, {regResult});
+            }
         }
         remainder -= width;
         remainderOffset[axis] += width;
@@ -185,9 +194,17 @@ void TileReduceNew(Function& function, const TileShape& tileShape, const std::st
                     if (in->shape.size() == 1) {
                         tmpShape = {tmpShape[1]};
                     }
-                    auto tempTensor = std::make_shared<LogicalTensor>(function, in->Datatype(), tmpShape);
-                    tempTensor->dynValidShape_ = SymbolicScalar::FromConcrete(tmpShape);
-                    auto& newOp = function.AddOperation("TILE_ROW" + op + "_SINGLE", {sourceReg}, {result, tempTensor});
+                    const auto name = "TILE_ROW" + op + "_SINGLE";
+                    // In NaN-ignore mode, AddNanReduceOperation allocates its own scratch to replace the native one.
+                    const bool ignoreNan = extrema && IgnoreNanForCurrentTileOp() && IsFloat(in->Datatype());
+                    LogicalTensors outputs{result};
+                    if (!ignoreNan) {
+                        auto tempTensor = std::make_shared<LogicalTensor>(function, in->Datatype(), tmpShape);
+                        tempTensor->dynValidShape_ = SymbolicScalar::FromConcrete(tmpShape);
+                        outputs.push_back(tempTensor);
+                    }
+                    auto& newOp = extrema ? AddNanReduceOperation(function, name, {sourceReg}, outputs, axis) :
+                                            function.AddOperation(name, {sourceReg}, outputs);
                     newOp.SetAttribute(OP_ATTR_PREFIX + "AXIS", axis);
                 } else {
                     tmpShape[0] = (sourceReg->shape[axis] + 1) / NUM2;
@@ -198,7 +215,9 @@ void TileReduceNew(Function& function, const TileShape& tileShape, const std::st
                     newOp.SetAttribute(OP_ATTR_PREFIX + "AXIS", axis);
                 }
             } else {
-                auto& newOp = function.AddOperation("TILE_ROW" + op + "LINE", {sourceReg}, {result});
+                const auto name = "TILE_ROW" + op + "LINE";
+                auto& newOp = extrema ? AddNanReduceOperation(function, name, {sourceReg}, {result}, axis) :
+                                        function.AddOperation(name, {sourceReg}, {result});
                 newOp.SetAttribute(OP_ATTR_PREFIX + "AXIS", axis);
             }
             break;
@@ -214,6 +233,9 @@ void TileArgReduce(Function& function, const TileShape& tileShape, const std::st
     auto indexDtype = in->Datatype() == DataType::DT_FP32 ? DataType::DT_INT32 : DataType::DT_INT16;
     axis = axis < 0 ? in->shape.size() + axis : axis;
     auto& vecTile = tileShape.GetVecTile();
+    const bool ignoreNan = IgnoreNanForCurrentTileOp() && IsFloat(in->Datatype());
+    const auto axisTileNum = (in->shape[axis] + vecTile[axis] - 1) / vecTile[axis];
+    const bool lastAxis = static_cast<size_t>(axis) == in->shape.size() - 1;
 
     std::vector<int64_t> tileValueShape = result->shape;
     std::vector<int64_t> tileSourceShape = in->shape;
@@ -232,34 +254,35 @@ void TileArgReduce(Function& function, const TileShape& tileShape, const std::st
         auto inputTile = in->View(function, tileSourceShape, tileSourceOffset);
         auto valueTile = std::make_shared<LogicalTensor>(function, in->Datatype(), tileValueShape, argReudceValidShape);
         auto indexTile = std::make_shared<LogicalTensor>(function, indexDtype, tileValueShape, argReudceValidShape);
-        std::vector<int64_t> tmpShape;
-        if (inputTile->shape.size() == 1) {
-            tmpShape = {tileSourceShape[axis]};
-        } else {
-            tmpShape = (static_cast<size_t>(axis) == (inputTile->shape.size() - 1)) ?
-                           std::vector<int64_t>{tileSourceShape[axis - 1], tileSourceShape[axis]} :
-                           std::vector<int64_t>{1, static_cast<int64_t>(REPEAT_BYTE / BytesOf(in->Datatype()) * NUM3)};
+        LogicalTensors outputs{valueTile, indexTile};
+        if (!ignoreNan) {
+            std::vector<int64_t> tmpShape;
+            if (inputTile->shape.size() == 1) {
+                tmpShape = {tileSourceShape[axis]};
+            } else {
+                tmpShape = lastAxis ? std::vector<int64_t>{tileSourceShape[axis - 1], tileSourceShape[axis]} :
+                                      std::vector<int64_t>{
+                                          1, static_cast<int64_t>(REPEAT_BYTE / BytesOf(in->Datatype()) * NUM3)};
+            }
+            outputs.push_back(std::make_shared<LogicalTensor>(function, in->Datatype(), tmpShape, argReudceValidShape));
         }
-        auto argreduceTempTensor = std::make_shared<LogicalTensor>(function, in->Datatype(), tmpShape,
-                                                                   argReudceValidShape);
-        if (static_cast<size_t>(axis) == (inputTile->shape.size() - 1)) {
-            auto& argreduceOp = function.AddOperation("TILE_ROW" + op + "WITHVALUE_SINGLE", {inputTile},
-                                                      {valueTile, indexTile, argreduceTempTensor});
-            argreduceOp.SetAttribute(OP_ATTR_PREFIX + "AXIS", axis);
+        auto& argreduceOp = AddNanReduceOperation(
+            function, "TILE_ROW" + op + (lastAxis ? "WITHVALUE_SINGLE" : "WITHVALUE_LINE"), {inputTile}, outputs, axis);
+        argreduceOp.SetAttribute(OP_ATTR_PREFIX + "AXIS", axis);
+        if (ignoreNan) {
+            argreduceOp.SetAttribute(OP_ATTR_PREFIX + "nan_index_offset", static_cast<int64_t>(i));
+            argreduceOp.SetAttribute(OP_ATTR_PREFIX + "nan_finalize", axisTileNum == 1);
         } else {
-            auto& argreduceOp = function.AddOperation("TILE_ROW" + op + "WITHVALUE_LINE", {inputTile},
-                                                      {valueTile, indexTile, argreduceTempTensor});
-            argreduceOp.SetAttribute(OP_ATTR_PREFIX + "AXIS", axis);
+            auto addsTile = std::make_shared<LogicalTensor>(function, indexDtype, tileValueShape, argReudceValidShape);
+            auto& indexUpdateOp = function.AddOperation(Opcode::OP_ADDS, {indexTile}, {addsTile});
+            indexUpdateOp.SetAttribute(OpAttributeKey::scalar, Element(indexDtype, i));
+            indexUpdateOp.SetAttribute(OP_ATTR_PREFIX + "reverseOperand", false);
+            indexTile = addsTile;
         }
-        auto addsTile = std::make_shared<LogicalTensor>(function, indexDtype, tileValueShape, argReudceValidShape);
-        auto& indexUpdateOp = function.AddOperation(Opcode::OP_ADDS, {indexTile}, {addsTile});
-        indexUpdateOp.SetAttribute(OpAttributeKey::scalar, Element(indexDtype, i));
-        indexUpdateOp.SetAttribute(OP_ATTR_PREFIX + "reverseOperand", false);
         valueList.push_back(valueTile);
-        indexList.push_back(addsTile);
+        indexList.push_back(indexTile);
     }
 
-    auto axisTileNum = (in->shape[axis] + vecTile[axis] - 1) / vecTile[axis];
     std::vector<LogicalTensorPtr> workValueList = valueList;
     std::vector<LogicalTensorPtr> workIndexList = indexList;
     int currentSize = axisTileNum;
@@ -277,9 +300,9 @@ void TileArgReduce(Function& function, const TileShape& tileShape, const std::st
                 auto pairIndex = std::make_shared<LogicalTensor>(function, indexDtype, workIndexList[0]->shape,
                                                                  workIndexList[0]->GetDynValidShape());
                 auto pairOpcode = op == "ARGMAX" ? Opcode::OP_PAIRARGMAX : Opcode::OP_PAIRARGMIN;
-                function.AddOperation(pairOpcode,
-                                      {workValueList[i], workIndexList[i], workValueList[i + 1], workIndexList[i + 1]},
-                                      {pairValue, pairIndex});
+                AddNanSmallOperation(function, pairOpcode,
+                                     {workValueList[i], workIndexList[i], workValueList[i + 1], workIndexList[i + 1]},
+                                     {pairValue, pairIndex}, currentSize == 2);
                 nextValueList.push_back(pairValue);
                 nextIndexList.push_back(pairIndex);
             }
@@ -288,7 +311,9 @@ void TileArgReduce(Function& function, const TileShape& tileShape, const std::st
         workIndexList = std::move(nextIndexList);
         currentSize = halfSize;
     }
-    if (indexDtype == DataType::DT_INT16 && result->Datatype() == DataType::DT_INT32) {
+    if (ignoreNan) {
+        function.AddOperation(Opcode::OP_REGISTER_COPY, {workIndexList[0]}, {result});
+    } else if (indexDtype == DataType::DT_INT16 && result->Datatype() == DataType::DT_INT32) {
         auto fp32Index = std::make_shared<LogicalTensor>(function, DataType::DT_FP32, result->shape,
                                                          workIndexList[0]->GetDynValidShape());
         auto& castToFp32 = function.AddOperation(Opcode::OP_CAST, {workIndexList[0]}, {fp32Index});
@@ -360,7 +385,7 @@ void TiledReduceSingle(Function& function, const TileShape& tileShape, const std
 }
 
 [[maybe_unused]] void TensorReduceSingle(Function& function, const std::string& op, const Tensor& operand,
-                                         Tensor& result, int axis)
+                                         Tensor& result, int axis, bool propagateNan = true)
 {
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, op == "MAX" || op == "MIN" || op == "SUM" || op == "PROD" ||
                                                   op == "ARGMAX" || op == "ARGMIN" || op == "MAX_COMBINE_AXIS" ||
@@ -394,6 +419,9 @@ void TiledReduceSingle(Function& function, const TileShape& tileShape, const std
 
     auto& newOp = function.AddOperation(opCode, {operand.GetStorage()}, {result.GetStorage()});
     newOp.SetAttribute(OP_ATTR_PREFIX + "AXIS", static_cast<int>(axis));
+    if (!propagateNan && IsFloat(operand.GetDataType())) {
+        newOp.SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+    }
     return;
 }
 
@@ -431,7 +459,7 @@ static Tensor ProcessResultShape(const Tensor& result, const Tensor& self, int a
     }
 }
 
-Tensor Amax(const Tensor& self, int axis, bool keepDim)
+Tensor Amax(const Tensor& self, int axis, bool keepDim, bool propagateNan)
 {
     DECLARE_TRACER();
     CheckVectorOperand(self.GetStorage(), "Amax");
@@ -441,16 +469,20 @@ Tensor Amax(const Tensor& self, int axis, bool keepDim)
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "AMAX");
     axis = NormalizeAndValidateReductionAxis(self, axis);
 
+    if (!propagateNan && self.GetDataType() == DT_BF16) {
+        return Cast(Amax(Cast(self, DT_FP32), axis, keepDim, false), DT_BF16, CastMode::CAST_RINT);
+    }
+
     auto resultShape = self.GetShape();
     resultShape[axis] = 1;
 
     Tensor result(self.GetStorage()->Datatype(), resultShape);
-    CALL(ReduceSingle, *Program::GetInstance().GetCurrentFunction(), "MAX", self, result, axis);
+    CALL(ReduceSingle, *Program::GetInstance().GetCurrentFunction(), "MAX", self, result, axis, propagateNan);
 
     return ProcessResultShape(result, self, axis, keepDim);
 }
 
-Tensor ArgMax(const Tensor& self, int axis, bool keepDim)
+Tensor ArgMax(const Tensor& self, int axis, bool keepDim, bool propagateNan)
 {
     DECLARE_TRACER();
     CheckVectorOperand(self.GetStorage(), "ArgMax");
@@ -464,18 +496,19 @@ Tensor ArgMax(const Tensor& self, int axis, bool keepDim)
     resultShape[axis] = 1;
 
     Tensor result(DataType::DT_INT32, resultShape);
-    if (self.GetDataType() == DT_FP16) {
+    if (self.GetDataType() == DT_FP16 || (!propagateNan && self.GetDataType() == DT_BF16)) {
         auto castSelf = CALL(CastOperation<CastOpType::CAST>, *Program::GetInstance().GetCurrentFunction(),
                              self.GetStorage(), DataType::DT_FP32, CastMode::CAST_NONE);
-        CALL(ReduceSingle, *Program::GetInstance().GetCurrentFunction(), "ARGMAX", castSelf, result, axis);
+        CALL(ReduceSingle, *Program::GetInstance().GetCurrentFunction(), "ARGMAX", castSelf, result, axis,
+             propagateNan);
     } else {
-        CALL(ReduceSingle, *Program::GetInstance().GetCurrentFunction(), "ARGMAX", self, result, axis);
+        CALL(ReduceSingle, *Program::GetInstance().GetCurrentFunction(), "ARGMAX", self, result, axis, propagateNan);
     }
 
     return ProcessResultShape(result, self, axis, keepDim);
 }
 
-Tensor ArgMin(const Tensor& self, int axis, bool keepDim)
+Tensor ArgMin(const Tensor& self, int axis, bool keepDim, bool propagateNan)
 {
     DECLARE_TRACER();
     CheckVectorOperand(self.GetStorage(), "ArgMin");
@@ -489,18 +522,19 @@ Tensor ArgMin(const Tensor& self, int axis, bool keepDim)
     resultShape[axis] = 1;
 
     Tensor result(DataType::DT_INT32, resultShape);
-    if (self.GetDataType() == DT_FP16) {
+    if (self.GetDataType() == DT_FP16 || (!propagateNan && self.GetDataType() == DT_BF16)) {
         auto castSelf = CALL(CastOperation<CastOpType::CAST>, *Program::GetInstance().GetCurrentFunction(),
                              self.GetStorage(), DataType::DT_FP32, CastMode::CAST_NONE);
-        CALL(ReduceSingle, *Program::GetInstance().GetCurrentFunction(), "ARGMIN", castSelf, result, axis);
+        CALL(ReduceSingle, *Program::GetInstance().GetCurrentFunction(), "ARGMIN", castSelf, result, axis,
+             propagateNan);
     } else {
-        CALL(ReduceSingle, *Program::GetInstance().GetCurrentFunction(), "ARGMIN", self, result, axis);
+        CALL(ReduceSingle, *Program::GetInstance().GetCurrentFunction(), "ARGMIN", self, result, axis, propagateNan);
     }
 
     return ProcessResultShape(result, self, axis, keepDim);
 }
 
-Tensor Amin(const Tensor& self, int axis, bool keepDim)
+Tensor Amin(const Tensor& self, int axis, bool keepDim, bool propagateNan)
 {
     DECLARE_TRACER();
     CheckVectorOperand(self.GetStorage(), "Amin");
@@ -510,11 +544,15 @@ Tensor Amin(const Tensor& self, int axis, bool keepDim)
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "AMIN");
     axis = NormalizeAndValidateReductionAxis(self, axis);
 
+    if (!propagateNan && self.GetDataType() == DT_BF16) {
+        return Cast(Amin(Cast(self, DT_FP32), axis, keepDim, false), DT_BF16, CastMode::CAST_RINT);
+    }
+
     auto resultShape = self.GetShape();
     resultShape[axis] = 1;
 
     Tensor result(self.GetStorage()->Datatype(), resultShape);
-    CALL(ReduceSingle, *Program::GetInstance().GetCurrentFunction(), "MIN", self, result, axis);
+    CALL(ReduceSingle, *Program::GetInstance().GetCurrentFunction(), "MIN", self, result, axis, propagateNan);
 
     return ProcessResultShape(result, self, axis, keepDim);
 }

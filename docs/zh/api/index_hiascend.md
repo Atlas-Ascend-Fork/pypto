@@ -34,6 +34,7 @@
     - [pypto.Tensor.logical\_not](tensor_api/tensor/pypto-Tensor-logical_not.md)
     - [pypto.Tensor.matmul](tensor_api/tensor/pypto-Tensor-matmul.md)
     - [pypto.Tensor.maximum](tensor_api/tensor/pypto-Tensor-maximum.md)
+    - [pypto.Tensor.minimum](tensor_api/tensor/pypto-Tensor-minimum.md)
     - [pypto.Tensor.move](tensor_api/tensor/pypto-Tensor-move.md)
     - [pypto.Tensor.mul](tensor_api/tensor/pypto-Tensor-mul.md)
     - [pypto.Tensor.name](tensor_api/tensor/pypto-Tensor-name.md)

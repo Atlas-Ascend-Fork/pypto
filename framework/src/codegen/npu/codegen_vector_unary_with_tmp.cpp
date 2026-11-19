@@ -149,8 +149,52 @@ std::string CodeGenOpNPU::PrintReduceLastAxis(const PrintUnaryTmpBuffParam& para
     return buffer;
 }
 
+std::string CodeGenOpNPU::PrintNanReduce() const
+{
+    const bool arg = opCode == Opcode::OP_ROWARGMAXWITHVALUE_SINGLE || opCode == Opcode::OP_ROWARGMINWITHVALUE_SINGLE ||
+                     opCode == Opcode::OP_ROWARGMAXWITHVALUE_LINE || opCode == Opcode::OP_ROWARGMINWITHVALUE_LINE;
+    const bool max = opCode == Opcode::OP_ROWMAX_SINGLE || opCode == Opcode::OP_ROWMAXLINE ||
+                     opCode == Opcode::OP_ROWARGMAXWITHVALUE_SINGLE || opCode == Opcode::OP_ROWARGMAXWITHVALUE_LINE;
+    int64_t axis = 0;
+    GetOpAttr(OP_ATTR_PREFIX + "AXIS", axis);
+    std::vector<bool> inputCombineAxis;
+    if (GetOpAttr(OpAttributeKey::inputCombineAxis, inputCombineAxis) && !inputCombineAxis.empty() &&
+        inputCombineAxis[0] && axis == static_cast<int64_t>(rawShape[0].size()) - 2) {
+        ++axis;
+    }
+    const size_t srcIdx = arg ? 3U : 2U;
+    const auto& tile = shape[srcIdx];
+    const bool column = static_cast<size_t>(axis) + 1 < tile.size();
+    const int64_t h = column ? tile[axis] : (tile.size() > 1 ? tile[tile.size() - 2] : 1);
+    int64_t w = AlignUp(tile.back(), BLOCK_SIZE / BytesOf(operandDtype[srcIdx]));
+    if (column) {
+        for (size_t i = axis + 1; i + 1 < tile.size(); ++i) {
+            w *= tile[i];
+        }
+    }
+    axis += SHAPE_DIM5 - tile.size();
+    auto params = GetTileOpParamsWithTmpBuf({arg ? 2U : 1U});
+    std::vector<std::string> templateParams{std::to_string(axis), max ? "true" : "false", arg ? "true" : "false",
+                                            std::to_string(h), std::to_string(w)};
+    if (!arg) {
+        // Non-arg TNanReduce(dst, dstIndex, src, tmp) has no index: pass dst in the dstIndex slot.
+        params.insert(params.begin() + 1, params[0]);
+    } else {
+        int64_t indexOffset = 0;
+        bool finalize = false;
+        GetOpAttr(OP_ATTR_PREFIX + "nan_index_offset", indexOffset);
+        GetOpAttr(OP_ATTR_PREFIX + "nan_finalize", finalize);
+        templateParams.emplace_back(std::to_string(indexOffset));
+        templateParams.emplace_back(finalize ? "true" : "false");
+    }
+    return "TNanReduce" + WrapParamByAngleBrackets(templateParams) + WrapParamByParentheses(params) + STMT_END;
+}
+
 std::string CodeGenOpNPU::PrintReduceLastAxisTileTensor() const
 {
+    bool nan = false;
+    if (GetOpAttr(OP_ATTR_PREFIX + "nan_tile", nan) && nan)
+        return PrintNanReduce();
     std::vector<std::string> tileOpParamList = GetTileOpParamsWithTmpBuf({ToUnderlying(MIMOIdx::TMP_IDX)});
     std::ostringstream oss;
     std::vector<std::string> templateParamList;
@@ -166,6 +210,9 @@ std::string CodeGenOpNPU::PrintReduceLastAxisTileTensor() const
 
 std::string CodeGenOpNPU::PrintArgReduceTileTensor() const
 {
+    bool nan = false;
+    if (GetOpAttr(OP_ATTR_PREFIX + "nan_tile", nan) && nan)
+        return PrintNanReduce();
     std::vector<std::string> tileOpParamList = GetTileOpParamsWithTmpBuf({ToUnderlying(MILOIdx::TMP2_IDX)});
     int reduceAxis{-1};
     auto axis = opAttrs.at(OP_ATTR_PREFIX + "AXIS");

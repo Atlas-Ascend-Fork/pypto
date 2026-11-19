@@ -24,7 +24,7 @@
 ## 函数原型
 
 ```python
-maximum(self, other: 'Tensor') -> 'Tensor'
+maximum(self, other: 'Tensor', propagate_nan: bool = True) -> 'Tensor'
 ```
 
 ## 详细说明

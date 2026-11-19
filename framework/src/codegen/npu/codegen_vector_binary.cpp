@@ -182,6 +182,18 @@ void CodeGenOpNPU::AddBinaryPrecisionTypeParm(std::vector<std::string>& template
 
 std::string CodeGenOpNPU::PrintBinaryTileTensor() const
 {
+    bool nan = false;
+    if (GetOpAttr(OP_ATTR_PREFIX + "nan_tile", nan) && nan) {
+        const auto& tile = shape[0];
+        const auto h = tile.size() > 1 ? tile[tile.size() - 2] : 1;
+        return "TNanBinary" +
+               WrapParamByAngleBrackets(
+                   {opCode == Opcode::OP_PAIRMAX || opCode == Opcode::OP_MAXIMUM ? "true" : "false",
+                    opCode == Opcode::OP_PAIRMAX || opCode == Opcode::OP_PAIRMIN ? "true" : "false", std::to_string(h),
+                    std::to_string(tile.back())}) +
+               WrapParamByParentheses(GetTileOpParamsWithTmpBuf({1U})) + STMT_END;
+    }
+
     std::vector<std::string> tileOpCallParamList = GetTileOpParamsByOrder();
 
     std::vector<std::string> templateParamList;
@@ -257,6 +269,19 @@ std::string CodeGenOpNPU::GenBinaryOp() const
 
 std::string CodeGenOpNPU::GenPairArgReduce() const
 {
+    bool nan = false;
+    if (GetOpAttr(OP_ATTR_PREFIX + "nan_tile", nan) && nan) {
+        bool finalize = false;
+        GetOpAttr(OP_ATTR_PREFIX + "nan_finalize", finalize);
+        const auto& tile = shape[0];
+        const auto h = tile.size() > 1 ? tile[tile.size() - 2] : 1;
+        const auto w = AlignUp(tile.back(), BLOCK_SIZE / BytesOf(operandDtype[0]));
+        return "TNanPairArg" +
+               WrapParamByAngleBrackets({opCode == Opcode::OP_PAIRARGMAX ? "true" : "false",
+                                         finalize ? "true" : "false", std::to_string(h), std::to_string(w)}) +
+               WrapParamByParentheses(GetTileOpParamsWithTmpBuf({2U})) + STMT_END;
+    }
+
     std::vector<std::string> tileOpCallParamList = GetTileOpParamsByOrder();
 
     std::vector<std::string> templateParamList;
@@ -626,6 +651,19 @@ std::string CodeGenOpNPU::PrintBinaryScalarDynamicUnaligned(const PrintBinarySca
 
 std::string CodeGenOpNPU::PrintVectorScalarTileTensor(const PrintUnaryParam& param) const
 {
+    bool nan = false;
+    if ((opCode == Opcode::OP_MAXS || opCode == Opcode::OP_MINS) && GetOpAttr(OP_ATTR_PREFIX + "nan_tile", nan) &&
+        nan) {
+        const auto& tile = shape[0];
+        const auto height = std::to_string(tile.size() > 1 ? tile[tile.size() - 2] : 1);
+        const auto width = std::to_string(tile.back());
+        auto params = GetTileOpParamsWithTmpBuf({1U});
+        params.push_back(FormatScalarLiteral(extOperandVal));
+        const bool isMax = opCode == Opcode::OP_MAXS;
+        return "TNanScalar" + WrapParamByAngleBrackets({isMax ? "true" : "false", height, width}) +
+               WrapParamByParentheses(params) + STMT_END;
+    }
+
     const std::string& dstDtypeStr = param.dstDtypeStr;
     std::string scalarTmpBuffer = FormatScalarLiteral(extOperandVal);
     std::vector<std::string> tileOpParamList = GetTileOpParamsByOrder();

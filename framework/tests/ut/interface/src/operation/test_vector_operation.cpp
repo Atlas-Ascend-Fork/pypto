@@ -17,6 +17,15 @@
 #include "tilefwk/tilefwk.h"
 #include "interface/inner/tilefwk.h"
 #include "interface/operation/operation.h"
+#include "interface/operation/operation_common.h"
+#include "interface/tensor/irbuilder.h"
+#include "passes/block_graph_pass/schedule_ooo/pre_schedule/add_alloc.h"
+#include "passes/tensor_graph_pass/expand_function.h"
+#include "passes/tile_graph_pass/data_path/convert_op_inserter.h"
+#include "passes/tile_graph_pass/data_path/memory_path_utils.h"
+#include <tuple>
+#include <limits>
+#include <cmath>
 
 using namespace npu::tile_fwk;
 
@@ -1718,4 +1727,416 @@ TEST_F(VectorOperationTest, test_Erfc_fp32)
     Tensor input(DT_FP32, {8, 4608}, "input");
     Tensor result;
     FUNCTION("TestErfc") { result = Erfc(input); }
+}
+
+class TestNanWorkspaceGraph : public ::testing::Test {
+protected:
+    void SetUp() override
+    {
+        Program::GetInstance().Reset();
+        config::Reset();
+        config::SetHostOption(COMPILE_STAGE, CS_EXECUTE_GRAPH);
+        config::SetPlatformConfig(KEY_ENABLE_COST_MODEL, false);
+        function = std::make_shared<Function>(Program::GetInstance(), "NanWorkspace", "NanWorkspace", nullptr);
+        function->paramConfigs_.combineAxis = false;
+    }
+
+    LogicalTensorPtr Tensor(DataType dtype, const Shape& shape)
+    {
+        auto tensor = IRBuilder().CreateTensorVar(*function, dtype, shape, SymbolicScalar::FromConcrete(shape));
+        tensor->SetMemoryTypeBoth(MEM_UB);
+        return tensor;
+    }
+
+    std::shared_ptr<Function> function;
+};
+
+TEST_F(TestNanWorkspaceGraph, OptionalScratchRegistrationAllocatesOnlyActualOutputs)
+{
+    EXPECT_EQ(OpcodeManager::Inst().GetOutputsMemType(Opcode::OP_ADDS).size(), 1U);
+    for (auto opcode : {Opcode::OP_MAXIMUM, Opcode::OP_MINIMUM, Opcode::OP_MAXS, Opcode::OP_MINS, Opcode::OP_PAIRMAX,
+                        Opcode::OP_PAIRMIN, Opcode::OP_PAIRARGMAX, Opcode::OP_PAIRARGMIN, Opcode::OP_ROWMAXLINE,
+                        Opcode::OP_ROWMINLINE}) {
+        const bool pairArg = opcode == Opcode::OP_PAIRARGMAX || opcode == Opcode::OP_PAIRARGMIN;
+        const bool binary = opcode == Opcode::OP_MAXIMUM || opcode == Opcode::OP_MINIMUM ||
+                            opcode == Opcode::OP_PAIRMAX || opcode == Opcode::OP_PAIRMIN;
+        const size_t nativeOutputs = pairArg ? 2 : 1;
+        ASSERT_EQ(OpcodeManager::Inst().GetOutputsMemType(opcode).size(), nativeOutputs + 1);
+        for (bool scratch : {false, true}) {
+            LogicalTensors inputs;
+            const size_t inputCount = pairArg ? 4 : binary ? 2 : 1;
+            for (size_t i = 0; i < inputCount; ++i)
+                inputs.push_back(Tensor(pairArg && i % 2 == 1 ? DT_INT32 : DT_FP32, {4, 32}));
+            LogicalTensors outputs{Tensor(DT_FP32, {4, 32})};
+            if (pairArg)
+                outputs.push_back(Tensor(DT_INT32, {4, 32}));
+            if (scratch)
+                outputs.push_back(Tensor(DT_UINT8, {1, 32}));
+            auto& op = IRBuilder().CreateTensorOpStmt(*function, opcode, inputs, outputs);
+            ConvertInserter inserter(AssignMemoryTypeMode::VIEW_ASSEMBLE);
+            ASSERT_EQ(MemoryPathUtils::AssignOpcodeDefinedMemoryTypes(inserter, op), SUCCESS);
+            ASSERT_EQ(op.GetOOperands().size(), nativeOutputs + scratch);
+            for (size_t i = 0; i < outputs.size(); ++i)
+                outputs[i]->memoryrange.memId = static_cast<int>(i);
+            std::unordered_map<int, TensorAllocMsg> allocations;
+            ASSERT_EQ(AddAlloc().SetTensorAllocMsg(op, allocations), SUCCESS);
+            EXPECT_EQ(allocations.size(), nativeOutputs + scratch);
+        }
+    }
+}
+
+TEST_F(TestNanWorkspaceGraph, OnlyNanPathsAppendScratch)
+{
+    for (auto dtype : {DT_FP32, DT_INT32}) {
+        for (bool propagate : {false, true}) {
+            auto x = Tensor(dtype, {4, 32});
+            auto& root = function->AddOperation(Opcode::OP_MAXIMUM, {x, x}, {Tensor(dtype, {4, 32})});
+            root.SetAttribute(OP_ATTR_PREFIX + "propagate_nan", propagate);
+            ExpandFunction::CurrentTileOpGuard guard(root);
+            for (auto opcode : {Opcode::OP_MAXIMUM, Opcode::OP_MINIMUM, Opcode::OP_MAXS, Opcode::OP_MINS}) {
+                const bool binary = opcode == Opcode::OP_MAXIMUM || opcode == Opcode::OP_MINIMUM;
+                auto& op = AddNanSmallOperation(*function, opcode, binary ? LogicalTensors{x, x} : LogicalTensors{x},
+                                                {Tensor(dtype, {4, 32})});
+                EXPECT_EQ(op.GetOOperands().size(), dtype == DT_FP32 && !propagate ? 2U : 1U);
+            }
+        }
+    }
+    auto x = Tensor(DT_FP32, {4, 32});
+    auto& max = AddNanSmallOperation(*function, Opcode::OP_MAXS, {x}, {Tensor(DT_FP32, {4, 32})});
+    EXPECT_EQ(max.GetOOperands().size(), 1U);
+}
+
+TEST_F(TestNanWorkspaceGraph, NativeArgReductionKeepsOriginalOperands)
+{
+    auto x = Tensor(DT_FP32, {4, 32});
+    auto value = Tensor(DT_FP32, {4, 1});
+    auto index = Tensor(DT_INT32, {4, 1});
+    auto nativeScratch = Tensor(DT_FP32, {4, 32});
+    auto& root = function->AddOperation(Opcode::OP_ROWARGMAX_SINGLE, {x}, {index});
+    ExpandFunction::CurrentTileOpGuard guard(root);
+    auto& local = AddNanReduceOperation(*function, "TILE_ROWARGMAXWITHVALUE_SINGLE", {x}, {value, index, nativeScratch},
+                                        1);
+    EXPECT_FALSE(local.GetBoolAttribute(OP_ATTR_PREFIX + "nan_tile"));
+    EXPECT_EQ(local.GetOutputOperand(2), nativeScratch);
+    auto& merge = AddNanSmallOperation(*function, Opcode::OP_PAIRARGMAX, {value, index, value, index}, {value, index});
+    EXPECT_EQ(merge.GetOOperands().size(), 2U);
+    auto& finalize = function->AddOperation(Opcode::OP_ADDS, {index}, {Tensor(DT_INT32, {4, 1})});
+    EXPECT_EQ(finalize.GetOOperands().size(), 1U);
+}
+
+TEST_F(TestNanWorkspaceGraph, IgnoreNanArgAppliesOffsetsAndFinalizesOnlyAtRoot)
+{
+    for (const bool split : {false, true}) {
+        function->ResetOperations();
+        auto input = Tensor(DT_FP32, {4, 65});
+        auto result = Tensor(DT_INT32, {4, 1});
+        const auto opcode = Opcode::OP_ROWARGMAX_SINGLE;
+        auto& root = function->AddOperation(opcode, {input}, {result});
+        root.SetAttribute(OP_ATTR_PREFIX + "AXIS", int64_t{1});
+        root.SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+        ExpandFunction::CurrentTileOpGuard guard(root);
+        TileShape tile;
+        tile.SetVecTile(4, split ? 32 : 65);
+        auto expand = TiledFuncRegistry::GetInstance().GetTiledFunc(opcode);
+        ASSERT_TRUE(expand);
+        expand(*function, tile, {input}, {result}, root);
+
+        std::vector<int64_t> offsets;
+        std::vector<bool> mergeFinalize;
+        for (auto& op : function->Operations(false)) {
+            EXPECT_NE(op.GetOpcode(), Opcode::OP_ADDS);
+            if (op.GetOpcode() == Opcode::OP_ROWARGMAXWITHVALUE_SINGLE) {
+                offsets.push_back(op.GetIntAttribute(OP_ATTR_PREFIX + "nan_index_offset"));
+                EXPECT_EQ(op.GetBoolAttribute(OP_ATTR_PREFIX + "nan_finalize"), !split);
+                EXPECT_EQ(op.GetOOperands().size(), 3U);
+            } else if (op.GetOpcode() == Opcode::OP_PAIRARGMAX) {
+                mergeFinalize.push_back(op.GetBoolAttribute(OP_ATTR_PREFIX + "nan_finalize"));
+                EXPECT_EQ(op.GetOOperands().size(), 3U);
+            }
+        }
+        EXPECT_EQ(offsets, (split ? std::vector<int64_t>{0, 32, 64} : std::vector<int64_t>{0}));
+        EXPECT_EQ(mergeFinalize, (split ? std::vector<bool>{false, true} : std::vector<bool>{}));
+    }
+}
+
+TEST_F(TestNanWorkspaceGraph, RowScratchUsesPaddedWidth)
+{
+    for (const auto& [width, dtype, bytes] :
+         {std::make_tuple(255, DT_FP32, 6560), std::make_tuple(511, DT_FP16, 6688)}) {
+        auto x = Tensor(dtype, {4, width});
+        auto result = Tensor(dtype, {4, 1});
+        auto& root = function->AddOperation(Opcode::OP_ROWMAX_SINGLE, {x}, {result});
+        root.SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+        ExpandFunction::CurrentTileOpGuard guard(root);
+        auto& op = AddNanReduceOperation(*function, "TILE_ROWMAX_SINGLE", {x}, {result}, 1);
+        EXPECT_EQ(op.GetOutputOperand(1)->shape, (Shape{1, bytes}));
+    }
+}
+
+TEST_F(TestNanWorkspaceGraph, PairScratchRemainsExplicitWhenNativeOperandsFillUb)
+{
+    const auto ub = Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB);
+    constexpr int64_t width = 32;
+    const Shape shape{static_cast<int64_t>(ub / (3 * width * sizeof(float))), width};
+    auto x = Tensor(DT_FP32, shape);
+    auto y = Tensor(DT_FP32, shape);
+    auto result = Tensor(DT_FP32, shape);
+    auto& root = function->AddOperation(Opcode::OP_MAXIMUM, {x, y}, {result});
+    root.SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+    ExpandFunction::CurrentTileOpGuard guard(root);
+    auto& op = AddNanSmallOperation(*function, Opcode::OP_PAIRMAX, {x, y}, {result});
+    ASSERT_EQ(op.GetOutputOperandSize(), 2U);
+    EXPECT_EQ(op.GetOutputOperand(1)->shape.back(), (32 + 256) * shape.front() + 32);
+}
+
+TEST_F(TestNanWorkspaceGraph, NanCompareScratchCoversFullRepeats)
+{
+    for (auto dtype : {DT_FP16, DT_FP32}) {
+        const int64_t elementsPerRepeat = 256 / BytesOf(dtype);
+        for (int64_t width : {elementsPerRepeat / 8, elementsPerRepeat, elementsPerRepeat + elementsPerRepeat / 8}) {
+            const Shape shape{3, width};
+            auto x = Tensor(dtype, shape);
+            auto& root = function->AddOperation(Opcode::OP_MAXIMUM, {x, x}, {Tensor(dtype, shape)});
+            root.SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+            ExpandFunction::CurrentTileOpGuard guard(root);
+            for (auto code : {Opcode::OP_MAXIMUM, Opcode::OP_MINIMUM, Opcode::OP_MAXS, Opcode::OP_MINS,
+                              Opcode::OP_PAIRMAX, Opcode::OP_PAIRMIN}) {
+                const bool scalar = code == Opcode::OP_MAXS || code == Opcode::OP_MINS;
+                auto& op = AddNanSmallOperation(*function, code, scalar ? LogicalTensors{x} : LogicalTensors{x, x},
+                                                {Tensor(dtype, shape)});
+                const int64_t copyBytes = width > elementsPerRepeat ? 3 * 512 : 3 * 256;
+                EXPECT_EQ(op.GetOutputOperand(1)->shape, (Shape{1, 3 * 32 + 32 + copyBytes}));
+            }
+        }
+    }
+}
+
+TEST_F(TestNanWorkspaceGraph, CastColumnScratchIncludesCompactInput)
+{
+    auto x = Tensor(DT_FP16, {3, 4, 1});
+    auto converted = Tensor(DT_FP32, {3, 4, 1});
+    IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_CAST, {x}, {converted});
+    auto value = Tensor(DT_FP32, {1, 4, 1});
+    auto index = Tensor(DT_INT32, {1, 4, 1});
+    auto& root = function->AddOperation(Opcode::OP_ROWARGMIN_SINGLE, {converted}, {index});
+    root.SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+    ExpandFunction::CurrentTileOpGuard guard(root);
+    auto& op = AddNanReduceOperation(*function, "TILE_ROWARGMINWITHVALUE_LINE", {converted}, {value, index}, 0);
+    EXPECT_EQ(op.GetOutputOperand(2)->shape, (Shape{1, 1, 1920}));
+}
+
+TEST_F(TestNanWorkspaceGraph, PairArgScratchUsesLogicalSliceAndGuardsWideTail)
+{
+    for (const auto& [shape, scratch] :
+         {std::make_pair(Shape{16, 50, 1}, Shape{1, 1, 3232}), std::make_pair(Shape{4, 96}, Shape{1, 5024})}) {
+        auto value = Tensor(DT_FP32, shape);
+        auto index = Tensor(DT_INT32, shape);
+        auto& root = function->AddOperation(Opcode::OP_ROWARGMAX_SINGLE, {value}, {index});
+        root.SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+        ExpandFunction::CurrentTileOpGuard guard(root);
+        auto& op = AddNanSmallOperation(*function, Opcode::OP_PAIRARGMAX, {value, index, value, index}, {value, index});
+        EXPECT_EQ(op.GetOutputOperand(2)->shape, scratch);
+        std::vector<bool> rowPad;
+        op.GetAttr(OpAttributeKey::rowPad, rowPad);
+        EXPECT_EQ(rowPad, (std::vector<bool>{true, true, true, true}));
+    }
+}
+
+TEST_F(TestNanWorkspaceGraph, NanModeChangesOperationHash)
+{
+    for (const auto code : {Opcode::OP_MAXIMUM, Opcode::OP_MINIMUM, Opcode::OP_MAXS, Opcode::OP_MINS,
+                            Opcode::OP_ROWMAX_SINGLE, Opcode::OP_ROWMIN_SINGLE}) {
+        auto input = Tensor(DT_FP32, {4, 32});
+        LogicalTensors inputs{input};
+        const bool binary = code == Opcode::OP_MAXIMUM || code == Opcode::OP_MINIMUM || code == Opcode::OP_PAIRMAX ||
+                            code == Opcode::OP_PAIRMIN;
+        if (binary) {
+            inputs.push_back(input);
+        }
+        auto& op = function->AddOperation(code, inputs, {Tensor(DT_FP32, {4, 32})});
+        op.SetAttribute(OP_ATTR_PREFIX + "propagate_nan", true);
+        const auto nativeHash = op.ComputeHashOrderless();
+        op.SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+        EXPECT_NE(op.ComputeHashOrderless(), nativeHash) << static_cast<int>(code);
+    }
+    for (const auto code : {Opcode::OP_MAXIMUM, Opcode::OP_MINIMUM, Opcode::OP_MAXS, Opcode::OP_MINS,
+                            Opcode::OP_PAIRMAX, Opcode::OP_PAIRMIN, Opcode::OP_ROWMAX_SINGLE, Opcode::OP_ROWMIN_SINGLE,
+                            Opcode::OP_ROWMAXLINE, Opcode::OP_ROWMINLINE}) {
+        auto input = Tensor(DT_FP32, {4, 32});
+        LogicalTensors inputs{input};
+        const bool binary = code == Opcode::OP_MAXIMUM || code == Opcode::OP_MINIMUM || code == Opcode::OP_PAIRMAX ||
+                            code == Opcode::OP_PAIRMIN;
+        if (binary) {
+            inputs.push_back(input);
+        }
+        auto& op = function->AddOperation(code, inputs, {Tensor(DT_FP32, {4, 32})});
+        const auto nativeHash = op.ComputeHashOrderless();
+        op.SetAttribute(OP_ATTR_PREFIX + "nan_tile", true);
+        EXPECT_NE(op.ComputeHashOrderless(), nativeHash) << static_cast<int>(code);
+    }
+}
+
+TEST_F(VectorOperationTest, NanBroadcastCreatesOnlyConsumedExtrema)
+{
+    TileShape::Current().SetVecTile(4, 32);
+    for (bool maximum : {false, true}) {
+        for (const auto& shape : {Shape{1, 8}, Shape{8}}) {
+            Tensor x(DT_FP32, {3, 8}, "input");
+            Tensor y(DT_FP32, shape, "broadcast");
+            FUNCTION("NanBroadcast")
+            {
+                auto result = maximum ? Maximum(x, y, false) : Minimum(x, y, false);
+                size_t extremaCount = 0;
+                size_t expandCount = 0;
+                for (const auto& op : Program::GetInstance().GetCurrentFunction()->Operations()) {
+                    extremaCount += op.GetOpcode() == Opcode::OP_MAXIMUM || op.GetOpcode() == Opcode::OP_MINIMUM;
+                    expandCount += op.GetOpcode() == Opcode::OP_EXPAND;
+                }
+                EXPECT_EQ(extremaCount, 1U);
+                EXPECT_EQ(expandCount, 1U);
+                EXPECT_EQ(result.GetShape(), (Shape{3, 8}));
+            }
+        }
+    }
+}
+
+TEST_F(TestNanWorkspaceGraph, ArgScratchIncludesCompactInputAndCompareGuard)
+{
+    for (const bool maximum : {false, true}) {
+        for (const auto& [shape, axis, bytes] :
+             {std::make_tuple(Shape{2, 2, 8}, 0, 1376), std::make_tuple(Shape{2, 4, 16}, 0, 2144),
+              std::make_tuple(Shape{2, 17}, 1, 960), std::make_tuple(Shape{2, 64}, 1, 1440)}) {
+            auto x = Tensor(DT_FP32, shape);
+            auto resultShape = shape;
+            resultShape[axis] = 1;
+            auto value = Tensor(DT_FP32, resultShape);
+            auto index = Tensor(DT_INT32, resultShape);
+            auto& root = function->AddOperation(Opcode::OP_ROWARGMAX_SINGLE, {x}, {index});
+            root.SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+            ExpandFunction::CurrentTileOpGuard guard(root);
+            const auto name = maximum ? "TILE_ROWARGMAXWITHVALUE_" : "TILE_ROWARGMINWITHVALUE_";
+            auto& op = AddNanReduceOperation(
+                *function, std::string(name) + (static_cast<size_t>(axis) + 1 == shape.size() ? "SINGLE" : "LINE"), {x},
+                {value, index}, axis);
+            EXPECT_EQ(op.GetOutputOperand(2)->shape.back(), bytes);
+        }
+    }
+}
+
+TEST_F(TestNanWorkspaceGraph, ColumnScratchExcludesOutputValueAndIndex)
+{
+    for (const bool arg : {false, true}) {
+        for (const bool maximum : {false, true}) {
+            for (const auto& [width, bytes] :
+                 {std::make_pair(17, arg ? 1728 : 800), std::make_pair(64, arg ? 2688 : 1152),
+                  std::make_pair(65, arg ? 3136 : 1696)}) {
+                auto input = Tensor(DT_FP32, {3, width});
+                auto value = Tensor(DT_FP32, {1, width});
+                auto index = Tensor(DT_INT32, {1, width});
+                auto& root = function->AddOperation(Opcode::OP_ROWMAX_SINGLE, {input}, {value});
+                root.SetAttribute(OP_ATTR_PREFIX + "propagate_nan", false);
+                ExpandFunction::CurrentTileOpGuard guard(root);
+                const std::string name = arg ? (maximum ? "TILE_ROWARGMAXWITHVALUE_LINE" :
+                                                          "TILE_ROWARGMINWITHVALUE_LINE") :
+                                               (maximum ? "TILE_ROWMAXLINE" : "TILE_ROWMINLINE");
+                auto& op = AddNanReduceOperation(*function, name, {input},
+                                                 arg ? LogicalTensors{value, index} : LogicalTensors{value}, 0);
+                EXPECT_EQ(op.GetOOperands().back()->shape, (Shape{1, bytes}));
+            }
+        }
+    }
+}
+
+TEST_F(VectorOperationTest, NanExtremaApiModesPreserveShapeAndDtype)
+{
+    for (const auto dtype : {DT_FP16, DT_FP32, DT_BF16}) {
+        for (int mode = 0; mode < 3; ++mode) {
+            for (const auto& [axis, keepDim] : {std::make_pair(0, false), std::make_pair(0, true),
+                                                std::make_pair(1, false), std::make_pair(1, true)}) {
+                SCOPED_TRACE(std::to_string(dtype) + ":" + std::to_string(mode) + ":" + std::to_string(axis) + ":" +
+                             std::to_string(keepDim));
+                TileShape::Current().SetVecTile(4, 32);
+                Tensor input(dtype, {3, 64}, "input");
+                const bool propagate = mode != 2;
+                FUNCTION("NanExtremaApiModes")
+                {
+                    const std::vector<Tensor> values = {
+                        mode == 0 ? Amin(input, axis, keepDim) : Amin(input, axis, keepDim, propagate),
+                        mode == 0 ? Amax(input, axis, keepDim) : Amax(input, axis, keepDim, propagate)};
+                    const std::vector<Tensor> indices = {
+                        mode == 0 ? ArgMin(input, axis, keepDim) : ArgMin(input, axis, keepDim, propagate),
+                        mode == 0 ? ArgMax(input, axis, keepDim) : ArgMax(input, axis, keepDim, propagate)};
+                    const std::vector<Tensor> binaries = {
+                        mode == 0 ? Minimum(input, input) : Minimum(input, input, propagate),
+                        mode == 0 ? Maximum(input, input) : Maximum(input, input, propagate)};
+                    const Shape resultShape = keepDim ? (axis == 0 ? Shape{1, 64} : Shape{3, 1}) :
+                                                        (axis == 0 ? Shape{64} : Shape{3});
+                    for (const auto& value : values) {
+                        EXPECT_EQ(value.GetShape(), resultShape);
+                        EXPECT_EQ(value.GetDataType(), dtype);
+                    }
+                    for (const auto& index : indices) {
+                        EXPECT_EQ(index.GetShape(), resultShape);
+                        EXPECT_EQ(index.GetDataType(), DT_INT32);
+                    }
+                    for (const auto& binary : binaries) {
+                        EXPECT_EQ(binary.GetShape(), input.GetShape());
+                        EXPECT_EQ(binary.GetDataType(), dtype);
+                    }
+                    size_t extrema = 0;
+                    for (const auto& op : Program::GetInstance().GetCurrentFunction()->Operations()) {
+                        const auto code = op.GetOpcode();
+                        if (code == Opcode::OP_ROWMAX_SINGLE || code == Opcode::OP_ROWMIN_SINGLE ||
+                            code == Opcode::OP_ROWARGMAX_SINGLE || code == Opcode::OP_ROWARGMIN_SINGLE ||
+                            code == Opcode::OP_MAXIMUM || code == Opcode::OP_MINIMUM) {
+                            ++extrema;
+                            const auto attribute = OP_ATTR_PREFIX + "propagate_nan";
+                            EXPECT_EQ(!op.HasAttr(attribute) || op.GetBoolAttribute(attribute), propagate);
+                        }
+                    }
+                    EXPECT_EQ(extrema, 6U);
+                }
+            }
+        }
+    }
+}
+
+TEST_F(VectorOperationTest, NanScalarModesAndConstants)
+{
+    for (const auto dtype : {DT_FP16, DT_FP32, DT_BF16, DT_INT32}) {
+        for (const bool propagate : {false, true}) {
+            for (const float scalar : {2.0f, std::numeric_limits<float>::quiet_NaN()}) {
+                if (dtype == DT_INT32 && std::isnan(scalar)) {
+                    continue;
+                }
+                TileShape::Current().SetVecTile(4, 32);
+                Tensor input(dtype, {3, 64}, "input");
+                FUNCTION("NanScalarModes")
+                {
+                    Element value = dtype == DT_INT32 ? Element(DT_INT32, 2) : Element(DT_FP32, scalar);
+                    auto lo = Minimum(input, value, propagate);
+                    auto hi = Maximum(input, value, propagate);
+                    EXPECT_EQ(lo.GetShape(), input.GetShape());
+                    EXPECT_EQ(hi.GetShape(), input.GetShape());
+                    EXPECT_EQ(lo.GetDataType(), dtype);
+                    EXPECT_EQ(hi.GetDataType(), dtype);
+                    if (!propagate && std::isnan(scalar)) {
+                        EXPECT_EQ(lo.GetStorage(), input.GetStorage());
+                        EXPECT_EQ(hi.GetStorage(), input.GetStorage());
+                    } else {
+                        size_t extrema = 0;
+                        for (const auto& op : Program::GetInstance().GetCurrentFunction()->Operations()) {
+                            if (op.GetOpcode() == Opcode::OP_MAXS || op.GetOpcode() == Opcode::OP_MINS) {
+                                ++extrema;
+                                if (dtype != DT_INT32 && !propagate) {
+                                    EXPECT_FALSE(op.GetBoolAttribute(OP_ATTR_PREFIX + "propagate_nan"));
+                                }
+                            }
+                        }
+                        EXPECT_EQ(extrema, 2U);
+                    }
+                }
+            }
+        }
+    }
 }

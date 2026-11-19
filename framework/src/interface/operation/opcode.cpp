@@ -87,11 +87,15 @@ void OpcodeManager::RegisterVectorBinary()
                  OpCalcType::BROADCAST, {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse},
                  TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_MAXIMUM, OpCoreType::AIV, "MAXIMUM", {MemoryType::MEM_UB, MemoryType::MEM_UB},
-                 {MemoryType::MEM_UB}, {"TileOp::Tmax", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::BROADCAST,
-                 {OpAttributeKey::inputCombineAxis}, TileShapeVerifier::Verify);
+                 {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Tmax", PIPE_V, PIPE_V, CoreType::AIV},
+                 OpCalcType::BROADCAST,
+                 {OpAttributeKey::inputCombineAxis, OP_ATTR_PREFIX + "propagate_nan", OP_ATTR_PREFIX + "nan_tile"},
+                 TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_MINIMUM, OpCoreType::AIV, "MINIMUM", {MemoryType::MEM_UB, MemoryType::MEM_UB},
-                 {MemoryType::MEM_UB}, {"TileOp::Tmin", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::BROADCAST,
-                 {OpAttributeKey::inputCombineAxis}, TileShapeVerifier::Verify);
+                 {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Tmin", PIPE_V, PIPE_V, CoreType::AIV},
+                 OpCalcType::BROADCAST,
+                 {OpAttributeKey::inputCombineAxis, OP_ATTR_PREFIX + "propagate_nan", OP_ATTR_PREFIX + "nan_tile"},
+                 TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_BITWISERIGHTSHIFT, OpCoreType::AIV, "BITWISERIGHTSHIFT",
                  {MemoryType::MEM_UB, MemoryType::MEM_UB}, {MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {"TileOp::Tbitwiserightshift", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::BROADCAST,
@@ -159,15 +163,19 @@ void OpcodeManager::RegisterVectorBinary()
         {OpAttributeKey::scalar, OP_ATTR_PREFIX + "reverseOperand", OP_ATTR_PREFIX + "reverseOperand",
          OpAttributeKey::inputCombineAxis, OpAttributeKey::outputCombineAxis, OpAttributeKey::excludeBufferReuse},
         TileShapeVerifier::Verify);
-    RegisterInfo(Opcode::OP_MAXS, OpCoreType::AIV, "MAXS", {MemoryType::MEM_UB}, {MemoryType::MEM_UB},
-                 {"TileOp::Tmaxs", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::ELMWISE,
+    RegisterInfo(Opcode::OP_MAXS, OpCoreType::AIV, "MAXS", {MemoryType::MEM_UB},
+                 {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Tmaxs", PIPE_V, PIPE_V, CoreType::AIV},
+                 OpCalcType::ELMWISE,
                  {OpAttributeKey::scalar, OP_ATTR_PREFIX + "reverseOperand", OP_ATTR_PREFIX + "reverseOperand",
-                  OpAttributeKey::inputCombineAxis, OpAttributeKey::outputCombineAxis},
+                  OpAttributeKey::inputCombineAxis, OpAttributeKey::outputCombineAxis, OP_ATTR_PREFIX + "propagate_nan",
+                  OP_ATTR_PREFIX + "nan_tile"},
                  TileShapeVerifier::Verify);
-    RegisterInfo(Opcode::OP_MINS, OpCoreType::AIV, "MINS", {MemoryType::MEM_UB}, {MemoryType::MEM_UB},
-                 {"TileOp::Tmins", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::ELMWISE,
+    RegisterInfo(Opcode::OP_MINS, OpCoreType::AIV, "MINS", {MemoryType::MEM_UB},
+                 {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Tmins", PIPE_V, PIPE_V, CoreType::AIV},
+                 OpCalcType::ELMWISE,
                  {OpAttributeKey::scalar, OP_ATTR_PREFIX + "reverseOperand", OP_ATTR_PREFIX + "reverseOperand",
-                  OpAttributeKey::inputCombineAxis, OpAttributeKey::outputCombineAxis},
+                  OpAttributeKey::inputCombineAxis, OpAttributeKey::outputCombineAxis, OP_ATTR_PREFIX + "propagate_nan",
+                  OP_ATTR_PREFIX + "nan_tile"},
                  TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_LRELU, OpCoreType::AIV, "LReLU", {MemoryType::MEM_UB}, {MemoryType::MEM_UB},
                  {"TileOp::TLReLU", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::ELMWISE, {OpAttributeKey::scalar},
@@ -536,32 +544,42 @@ void OpcodeManager::RegisterVectorSort()
 void OpcodeManager::RegisterVectorReduction()
 {
     RegisterInfo(Opcode::OP_PAIRMAX, OpCoreType::AIV, "PAIRMAX", {MemoryType::MEM_UB, MemoryType::MEM_UB},
-                 {MemoryType::MEM_UB}, {"TileOp::Tmaxpair", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::BROADCAST,
-                 {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse});
+                 {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Tmaxpair", PIPE_V, PIPE_V, CoreType::AIV},
+                 OpCalcType::BROADCAST,
+                 {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse, OP_ATTR_PREFIX + "nan_tile"});
     RegisterInfo(Opcode::OP_PAIRMIN, OpCoreType::AIV, "PAIRMIN", {MemoryType::MEM_UB, MemoryType::MEM_UB},
-                 {MemoryType::MEM_UB}, {"TileOp::Tminpair", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::BROADCAST,
-                 {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse});
+                 {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Tminpair", PIPE_V, PIPE_V, CoreType::AIV},
+                 OpCalcType::BROADCAST,
+                 {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse, OP_ATTR_PREFIX + "nan_tile"});
     RegisterInfo(Opcode::OP_PAIRSUM, OpCoreType::AIV, "PAIRSUM", {MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {MemoryType::MEM_UB}, {"TileOp::Taddpair", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::BROADCAST,
                  {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse});
     RegisterInfo(Opcode::OP_PAIRARGMAX, OpCoreType::AIV, "PAIRARGMAX",
                  {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
-                 {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Tpairargmax", PIPE_V, PIPE_V, CoreType::AIV},
-                 OpCalcType::BROADCAST, {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse});
+                 {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
+                 {"TileOp::Tpairargmax", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::BROADCAST,
+                 {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse, OP_ATTR_PREFIX + "nan_tile",
+                  OP_ATTR_PREFIX + "nan_finalize", OpAttributeKey::rowPad});
     RegisterInfo(Opcode::OP_PAIRARGMIN, OpCoreType::AIV, "PAIRARGMIN",
                  {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
-                 {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Tpairargmin", PIPE_V, PIPE_V, CoreType::AIV},
-                 OpCalcType::BROADCAST, {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse});
+                 {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
+                 {"TileOp::Tpairargmin", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::BROADCAST,
+                 {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse, OP_ATTR_PREFIX + "nan_tile",
+                  OP_ATTR_PREFIX + "nan_finalize", OpAttributeKey::rowPad});
     RegisterInfo(Opcode::OP_PAIRPROD, OpCoreType::AIV, "PAIRPROD", {MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {MemoryType::MEM_UB}, {"TileOp::Tmulpair", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::BROADCAST,
                  {OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse});
     RegisterInfo(Opcode::OP_ROWMAX_SINGLE, OpCoreType::AIV, "ROWMAX_SINGLE", {MemoryType::MEM_UB},
                  {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Trowmaxsingle", PIPE_V, PIPE_V, CoreType::AIV},
-                 OpCalcType::REDUCE, {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse},
+                 OpCalcType::REDUCE,
+                 {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse, OP_ATTR_PREFIX + "propagate_nan",
+                  OP_ATTR_PREFIX + "nan_tile"},
                  TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_ROWMIN_SINGLE, OpCoreType::AIV, "ROWMIN_SINGLE", {MemoryType::MEM_UB},
                  {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Trowminsingle", PIPE_V, PIPE_V, CoreType::AIV},
-                 OpCalcType::REDUCE, {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse},
+                 OpCalcType::REDUCE,
+                 {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse, OP_ATTR_PREFIX + "propagate_nan",
+                  OP_ATTR_PREFIX + "nan_tile"},
                  TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_ROWSUM_SINGLE, OpCoreType::AIV, "ROWSUM_SINGLE", {MemoryType::MEM_UB},
                  {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Trowsumsingle", PIPE_V, PIPE_V, CoreType::AIV},
@@ -573,28 +591,38 @@ void OpcodeManager::RegisterVectorReduction()
                  TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_ROWARGMAX_SINGLE, OpCoreType::AIV, "ROWARGMAX_SINGLE", {MemoryType::MEM_UB},
                  {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Trowargmaxsingle", PIPE_V, PIPE_V, CoreType::AIV},
-                 OpCalcType::REDUCE, {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse},
+                 OpCalcType::REDUCE,
+                 {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse, OP_ATTR_PREFIX + "propagate_nan"},
                  TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_ROWARGMIN_SINGLE, OpCoreType::AIV, "ROWARGMIN_SINGLE", {MemoryType::MEM_UB},
                  {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Trowargminsingle", PIPE_V, PIPE_V, CoreType::AIV},
-                 OpCalcType::REDUCE, {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse},
+                 OpCalcType::REDUCE,
+                 {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse, OP_ATTR_PREFIX + "propagate_nan"},
                  TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_ROWARGMAXWITHVALUE_SINGLE, OpCoreType::AIV, "ROWARGMAXWITHVALUE_SINGLE",
                  {MemoryType::MEM_UB}, {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {"TileOp::Trowargmaxwithvaluesingle", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::REDUCE,
-                 {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse}, TileShapeVerifier::Verify);
+                 {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse, OP_ATTR_PREFIX + "nan_tile",
+                  OP_ATTR_PREFIX + "nan_index_offset", OP_ATTR_PREFIX + "nan_finalize"},
+                 TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_ROWARGMINWITHVALUE_SINGLE, OpCoreType::AIV, "ROWARGMINWITHVALUE_SINGLE",
                  {MemoryType::MEM_UB}, {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {"TileOp::Trowargminwithvaluesingle", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::REDUCE,
-                 {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse}, TileShapeVerifier::Verify);
+                 {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse, OP_ATTR_PREFIX + "nan_tile",
+                  OP_ATTR_PREFIX + "nan_index_offset", OP_ATTR_PREFIX + "nan_finalize"},
+                 TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_ROWARGMAXWITHVALUE_LINE, OpCoreType::AIV, "ROWARGMAXWITHVALUE_LINE", {MemoryType::MEM_UB},
                  {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {"TileOp::Trowargmaxwithvalueline", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::REDUCE,
-                 {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse}, TileShapeVerifier::Verify);
+                 {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse, OP_ATTR_PREFIX + "nan_tile",
+                  OP_ATTR_PREFIX + "nan_index_offset", OP_ATTR_PREFIX + "nan_finalize"},
+                 TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_ROWARGMINWITHVALUE_LINE, OpCoreType::AIV, "ROWARGMINWITHVALUE_LINE", {MemoryType::MEM_UB},
                  {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {"TileOp::Trowargminwithvalueline", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::REDUCE,
-                 {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse}, TileShapeVerifier::Verify);
+                 {OP_ATTR_PREFIX + "AXIS", OpAttributeKey::excludeBufferReuse, OP_ATTR_PREFIX + "nan_tile",
+                  OP_ATTR_PREFIX + "nan_index_offset", OP_ATTR_PREFIX + "nan_finalize"},
+                 TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_ONLINE_SOFTMAX, OpCoreType::AIV, "ONLINE_SOFTMAX", {MemoryType::MEM_UB},
                  {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {"TileOp::TOnlineSoftmax", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::BROADCAST,
@@ -610,11 +638,11 @@ void OpcodeManager::RegisterVectorReduction()
                  {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Trowsumline", PIPE_V, PIPE_V, CoreType::AIV},
                  OpCalcType::REDUCE, {}, TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_ROWMAXLINE, OpCoreType::AIV, "ROWMAXLINE", {MemoryType::MEM_UB, MemoryType::MEM_UB},
-                 {MemoryType::MEM_UB}, {"TileOp::Trowmaxline", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::REDUCE, {},
-                 TileShapeVerifier::Verify);
+                 {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Trowmaxline", PIPE_V, PIPE_V, CoreType::AIV},
+                 OpCalcType::REDUCE, {OP_ATTR_PREFIX + "AXIS", OP_ATTR_PREFIX + "nan_tile"}, TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_ROWMINLINE, OpCoreType::AIV, "ROWMINLINE", {MemoryType::MEM_UB, MemoryType::MEM_UB},
-                 {MemoryType::MEM_UB}, {"TileOp::Trowminline", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::REDUCE, {},
-                 TileShapeVerifier::Verify);
+                 {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Trowminline", PIPE_V, PIPE_V, CoreType::AIV},
+                 OpCalcType::REDUCE, {OP_ATTR_PREFIX + "AXIS", OP_ATTR_PREFIX + "nan_tile"}, TileShapeVerifier::Verify);
     RegisterInfo(Opcode::OP_ROWPRODLINE, OpCoreType::AIV, "ROWPRODLINE", {MemoryType::MEM_UB},
                  {MemoryType::MEM_UB, MemoryType::MEM_UB}, {"TileOp::Trowprodline", PIPE_V, PIPE_V, CoreType::AIV},
                  OpCalcType::REDUCE, {}, TileShapeVerifier::Verify);

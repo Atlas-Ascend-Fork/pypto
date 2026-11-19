@@ -34,7 +34,8 @@
 
 ```python
 minimum(
-    input: Union[Tensor, Element, int, float], other: Union[Tensor, Element, int, float]
+    input: Union[Tensor, Element, int, float], other: Union[Tensor, Element, int, float],
+    propagate_nan: bool = True,
 ) -> Tensor
 ```
 
@@ -44,6 +45,7 @@ minimum(
 |---------|-----------|----------------------------------------------------------------------|
 | input   | 输入      | 源操作数。<br>支持的类型为int，float，Element以及Tensor类型。<br>当为int或者float类型时会自动转换为Element的类型DT_INT32/DT_FP32。当需要使用其他数据类型时，可以通过Element构建。<br>不同型号支持的Tensor和Element数据类型有所差异，详细请参见[约束说明](#约束说明)。<br>不支持空Tensor；Shape仅支持1-4维；Shape Size不大于2147483647（即INT32_MAX）。 |
 | other   | 输入      | 源操作数。<br>支持的类型为int，float，Element以及Tensor类型。<br>当为int或者float类型时会自动转换为Element的类型DT_INT32/DT_FP32。当需要使用其他数据类型时，可以通过Element构建。<br>不同型号支持的Tensor和Element数据类型有所差异，详细请参见[约束说明](#约束说明)。<br>不支持空Tensor；Shape仅支持1-4维；Shape Size不大于2147483647（即INT32_MAX）。<br>类型和数据类型必须与源操作数一保持一致。 |
+| propagate_nan | 输入 | 编译期bool常量。<br>若浮点输入中任一操作数为NaN，此参数为True时返回NaN；为False时忽略单边NaN并返回另一操作数，双边NaN仍返回NaN。整数输入不受影响。<br>默认值为True。 |
 
 源操作数一与源操作数二之间至少一者为Tensor。
 
@@ -52,6 +54,8 @@ minimum(
 当两个源操作数均为Tensor时，两个Tensor必须满足广播关系。该接口返回一个与源操作数一和源操作数二广播后Shape相同的Tensor，数据类型与源操作数相同，其元素为源操作数一和源操作数二的逐元素最小值。且源操作数为Tensor时，源操作数一和源操作数二均支持多轴广播。
 
 当两个源操作数之中存在一个Tensor时，返回与输入Tensor相同Shape的Tensor，其元素为源操作数一和源操作数二的逐元素最小值。
+
+propagate_nan为False时，浮点输入混合正负零时选择-0，同号零保留原符号。
 
 ## 约束说明
 

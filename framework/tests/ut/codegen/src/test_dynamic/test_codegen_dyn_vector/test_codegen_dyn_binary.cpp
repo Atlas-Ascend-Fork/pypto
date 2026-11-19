@@ -506,4 +506,94 @@ TEST_F(TestCodegenDynBinary, TestAxpyTileTensor)
     EXPECT_EQ(res, expect);
 }
 
+TEST_F(TestCodegenDynBinary, NanBinaryAndScalarScratchOperands)
+{
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    auto* function = GenMockFuncDyn("NanBinaryAndScalarScratchOperands");
+    const Shape shape{3, 16};
+    auto x = CreateLogicalTensor({*function, DT_FP32, MEM_UB, shape});
+    auto y = CreateLogicalTensor({*function, DT_FP32, MEM_UB, shape});
+    auto result = CreateLogicalTensor({*function, DT_FP32, MEM_UB, shape});
+    const Shape scratchShape{1, 8192};
+    auto scratch = CreateLogicalTensor({*function, DT_UINT8, MEM_UB, scratchShape});
+    for (auto code : {Opcode::OP_MAXIMUM, Opcode::OP_MINIMUM, Opcode::OP_PAIRMAX, Opcode::OP_PAIRMIN, Opcode::OP_MAXS,
+                      Opcode::OP_MINS}) {
+        const bool scalar = code == Opcode::OP_MAXS || code == Opcode::OP_MINS;
+        const bool maximum = code == Opcode::OP_MAXIMUM || code == Opcode::OP_PAIRMAX || code == Opcode::OP_MAXS;
+        const bool pair = code == Opcode::OP_PAIRMAX || code == Opcode::OP_PAIRMIN;
+        auto& op = function->AddOperation(code, scalar ? LogicalTensors{x} : LogicalTensors{x, y}, {result, scratch});
+        op.SetAttribute(OP_ATTR_PREFIX + "nan_tile", true);
+        if (scalar) {
+            op.SetAttribute(OpAttributeKey::scalar, Element(DT_FP32, 2.0f));
+            op.SetAttribute(OP_ATTR_PREFIX + "reverseOperand", false);
+        }
+        const auto generated = GenOpCodeFromOp(*function, op);
+        const std::string mode = maximum ? "true" : "false";
+        const auto expected = scalar ? "TNanScalar<" + mode + ", 3, 16>" :
+                                       "TNanBinary<" + mode + ", " + (pair ? "true" : "false") + ", 3, 16>";
+        EXPECT_NE(generated.find(expected), std::string::npos) << generated;
+    }
+}
+
+TEST_F(TestCodegenDynBinary, NanPairArgFinalization)
+{
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    auto* function = GenMockFuncDyn("NanPairArgFinalization");
+    const Shape shape{3, 17};
+    auto value = CreateLogicalTensor({*function, DT_FP32, MEM_UB, shape});
+    auto index = CreateLogicalTensor({*function, DT_INT32, MEM_UB, shape});
+    const Shape scratchShape{1, 8192};
+    auto scratch = CreateLogicalTensor({*function, DT_UINT8, MEM_UB, scratchShape});
+    for (const bool maximum : {false, true}) {
+        for (const bool finalize : {false, true}) {
+            auto& op = function->AddOperation(maximum ? Opcode::OP_PAIRARGMAX : Opcode::OP_PAIRARGMIN,
+                                              {value, index, value, index}, {value, index, scratch});
+            op.SetAttribute(OP_ATTR_PREFIX + "nan_tile", true);
+            op.SetAttribute(OP_ATTR_PREFIX + "nan_finalize", finalize);
+            const auto generated = GenOpCodeFromOp(*function, op);
+            const std::string expected = std::string("TNanPairArg<") + (maximum ? "true" : "false") + ", " +
+                                         (finalize ? "true" : "false") + ", 3, 24>";
+            EXPECT_NE(generated.find(expected), std::string::npos) << generated;
+        }
+    }
+}
+
+TEST_F(TestCodegenDynBinary, NanReductionAxisAndIndexOffset)
+{
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    auto* function = GenMockFuncDyn("NanReductionAxisAndIndexOffset");
+    const Shape shape{4, 32};
+    auto input = CreateLogicalTensor({*function, DT_FP32, MEM_UB, shape});
+    const Shape scratchShape{1, 8192};
+    auto scratch = CreateLogicalTensor({*function, DT_UINT8, MEM_UB, scratchShape});
+    for (const bool arg : {false, true}) {
+        for (const bool column : {false, true}) {
+            for (const bool maximum : {false, true}) {
+                const auto code = arg ? (column ? (maximum ? Opcode::OP_ROWARGMAXWITHVALUE_LINE :
+                                                             Opcode::OP_ROWARGMINWITHVALUE_LINE) :
+                                                  (maximum ? Opcode::OP_ROWARGMAXWITHVALUE_SINGLE :
+                                                             Opcode::OP_ROWARGMINWITHVALUE_SINGLE)) :
+                                        (column ? (maximum ? Opcode::OP_ROWMAXLINE : Opcode::OP_ROWMINLINE) :
+                                                  (maximum ? Opcode::OP_ROWMAX_SINGLE : Opcode::OP_ROWMIN_SINGLE));
+                const Shape resultShape = column ? Shape{1, 32} : Shape{4, 1};
+                auto value = CreateLogicalTensor({*function, DT_FP32, MEM_UB, resultShape});
+                auto index = CreateLogicalTensor({*function, DT_INT32, MEM_UB, resultShape});
+                auto& op = function->AddOperation(
+                    code, {input}, arg ? LogicalTensors{value, index, scratch} : LogicalTensors{value, scratch});
+                op.SetAttribute(OP_ATTR_PREFIX + "nan_tile", true);
+                op.SetAttribute(OP_ATTR_PREFIX + "AXIS", int64_t{column ? 0 : 1});
+                if (arg) {
+                    op.SetAttribute(OP_ATTR_PREFIX + "nan_index_offset", int64_t{32});
+                    op.SetAttribute(OP_ATTR_PREFIX + "nan_finalize", true);
+                }
+                const auto generated = GenOpCodeFromOp(*function, op);
+                const std::string expected = std::string("TNanReduce<") + (column ? "3" : "4") + ", " +
+                                             (maximum ? "true" : "false") + ", " + (arg ? "true" : "false") +
+                                             ", 4, 32" + (arg ? ", 32, true>" : ">");
+                EXPECT_NE(generated.find(expected), std::string::npos) << generated;
+            }
+        }
+    }
+}
+
 } // namespace npu::tile_fwk

@@ -78,6 +78,13 @@ __aicore__ inline __gm__ DType* GetPackedGmAddr(__gm__ DType* addr, Offset offse
         return addr + offset;
     }
 }
+
+template <typename T>
+__aicore__ inline constexpr size_t GetTileSizeBytes()
+{
+    using Shape = typename T::TileShape;
+    return GetPackedByteOffset<typename T::Type>(GetAllAxisProduct<Std::tuple_size<Shape>::value, Shape>());
+}
 } // namespace TileOp
 
 template <typename T, typename Shape, typename Stride, bool need_mask = false>

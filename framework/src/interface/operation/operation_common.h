@@ -219,6 +219,12 @@ public:
         return oss.str();
     }
 };
+
+bool IgnoreNanForCurrentTileOp();
+Operation& AddNanReduceOperation(Function& function, const std::string& name, LogicalTensors inputs,
+                                 LogicalTensors outputs, size_t axis);
+Operation& AddNanSmallOperation(Function& function, Opcode code, LogicalTensors inputs, LogicalTensors outputs,
+                                bool finalize = false);
 } // namespace npu::tile_fwk
 
 #endif // INTERFACE_MAIN_OPERATION_COMMON_H

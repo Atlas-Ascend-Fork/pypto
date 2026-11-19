@@ -15,7 +15,9 @@
 #ifndef TILEOP_TILE_OPERATOR_VEC_BINARY_SCALAR_BASIC_H
 #define TILEOP_TILE_OPERATOR_VEC_BINARY_SCALAR_BASIC_H
 
+#include "utils/sync.h"
 #include "../pto_tile.h"
+#include "../nan_compare.h"
 #include "utils/layout.h"
 #include "utils/tile_tensor.h"
 
@@ -167,4 +169,41 @@ TILEOP void TModS(T0 dst, T1 src0, Scalar src1)
     BinaryScalarCompute<BinaryScalarOp::MOD, PrecisionType, LastUse>(dst, src0, src1);
 }
 
+template <bool Max, int H, int W, typename D, typename X, typename T, typename Scalar>
+TILEOP void TNanScalar(D dst, X src, T tmp, Scalar scalar)
+{
+    constexpr size_t maskBytes = H * ((W + 255) / 256 * 32);
+    constexpr size_t compareBytes = H * ((W * sizeof(typename X::Type) + 255) / 256 * 256);
+    static_assert(maskBytes + 32 + compareBytes <= TileOp::GetTileSizeBytes<T>(),
+                  "NaN scalar scratch exceeds its planned capacity");
+    using Mask = pto::Tile<pto::TileType::Vec, uint8_t, H, ((W + 7) / 8 + 31) / 32 * 32, pto::BLayout::RowMajor, -1,
+                           -1>;
+    using Selector = pto::Tile<pto::TileType::Vec, uint8_t, 1, 32>;
+    auto dl = dst.GetLayout();
+    if (dl.template GetShapeDim<3, 5>() == 0 || dl.template GetShapeDim<4, 5>() == 0)
+        return;
+    Mask mask(dl.template GetShapeDim<3, 5>(), (W + 7) / 8);
+    Selector selector;
+    pto::TASSIGN(mask, tmp.GetAddr());
+    pto::TASSIGN(selector, tmp.GetAddr() + maskBytes);
+    auto d = PtoTile<D>(dst);
+    auto x = PtoTile<X>(src);
+    for (LoopVar n0 = 0; n0 < dl.template GetShapeDim<0, 5>(); ++n0)
+        for (LoopVar n1 = 0; n1 < dl.template GetShapeDim<1, 5>(); ++n1)
+            for (LoopVar n2 = 0; n2 < dl.template GetShapeDim<2, 5>(); ++n2) {
+                auto off = TileOffset(n0, n1, n2);
+                d.Assign(dst, off);
+                x.Assign(src, off);
+                auto out = d.Data();
+                auto in = x.Data();
+                NanCompareMask<H, W>(mask, in, tmp.GetAddr() + maskBytes + 32);
+                if constexpr (Max)
+                    pto::TMAXS(out, in, static_cast<typename X::Type>(scalar));
+                else
+                    pto::TMINS(out, in, static_cast<typename X::Type>(scalar));
+                SyncV();
+                pto::TSELS(out, mask, out, selector, static_cast<typename X::Type>(scalar));
+                SyncV();
+            }
+}
 #endif // TILEOP_TILE_OPERATOR_VEC_BINARY_SCALAR_BASIC_H

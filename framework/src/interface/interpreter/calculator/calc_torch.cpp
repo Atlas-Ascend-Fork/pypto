@@ -1640,6 +1640,100 @@ DEFINE_BINARY_PAIR_OPS(Max, max_out)
 DEFINE_BINARY_PAIR_OPS(Min, min_out)
 DEFINE_BINARY_PAIR_OPS(Prod, mul_out)
 
+static void NanBinary(const TensorData& out, const TensorData& lhs, const TensorData& rhs, bool maximum, bool pair)
+{
+    auto dst = From(out);
+    if (!pair) {
+        auto a = From(lhs).second;
+        auto b = From(rhs).second;
+        ToOperand(maximum ? torch::fmax(a, b) : torch::fmin(a, b), dst.first, out.dtype);
+        return;
+    }
+    const auto& big = lhs.shape < rhs.shape ? rhs : lhs;
+    const auto& small = lhs.shape < rhs.shape ? lhs : rhs;
+    std::vector<int64_t> offsets(out.shape.size(), 0);
+    View(dst.second, big.shape, offsets).copy_(From(big).second);
+    auto common = View(dst.second, small.shape, offsets);
+    auto other = From(small).second;
+    common.copy_(maximum ? torch::fmax(common, other) : torch::fmin(common, other));
+    ToOperand(dst.second, dst.first, out.dtype);
+}
+
+static void NanScalar(const TensorData& out, const TensorData& self, const Element& scalar, bool maximum)
+{
+    auto src = From(self).second;
+    auto dst = From(out);
+    const auto value = scalar.GetDataType() == DT_FP32 ? at::Scalar(static_cast<float>(scalar.GetFloatData())) :
+                                                         From(scalar);
+    auto other = torch::scalar_tensor(value, src.options());
+    ToOperand(maximum ? torch::fmax(src, other) : torch::fmin(src, other), dst.first, out.dtype);
+}
+
+static void NanReduce(const TensorData& out, const TensorData& index, const TensorData& self, int axis, bool maximum,
+                      int64_t indexOffset, bool finalize)
+{
+    auto src = From(self).second;
+    const auto identity = maximum ? -std::numeric_limits<float>::infinity() : std::numeric_limits<float>::infinity();
+    const auto nan = std::numeric_limits<float>::quiet_NaN();
+    const auto invalid = finalize ? 0 : std::numeric_limits<int32_t>::max();
+    const bool arg = index.dataPtr != nullptr;
+    torch::Tensor value;
+    torch::Tensor indices;
+    if (src.size(axis) == 0) {
+        const auto& shape = arg ? index.shape : out.shape;
+        value = torch::full(shape, !arg ? nan : identity, src.options());
+        if (arg) {
+            indices = torch::full(shape, invalid, src.options().dtype(torch::kInt32));
+        }
+    } else {
+        const auto valid = ~torch::isnan(src);
+        const auto clean = torch::where(valid, src, identity);
+        value = maximum ? torch::amax(clean, {axis}, true) : torch::amin(clean, {axis}, true);
+        const auto any = valid.any(axis, true);
+        if (arg) {
+            // Compare with the original input so a real infinity beats replaced NaNs.
+            auto candidate = (valid & src.eq(value)).to(torch::kInt32);
+            indices = torch::where(any, torch::argmax(candidate, axis, true) + indexOffset, invalid);
+        } else {
+            // Torch reductions keep an input zero's sign on ties. Match extrema's
+            // mixed-zero rule without letting NaNs or nonzero values choose the sign.
+            const auto negative = torch::signbit(src);
+            const auto preferredZero = src.eq(0) & (maximum ? ~negative : negative);
+            const auto hasPreferredZero = preferredZero.any(axis, true);
+            const auto negativeZero = maximum ? ~hasPreferredZero : hasPreferredZero;
+            const auto zero = torch::zeros_like(value);
+            value = torch::where(value.eq(0), torch::where(negativeZero, -zero, zero), value);
+            value = torch::where(any, value, nan);
+        }
+    }
+    if (out.dataPtr != nullptr) {
+        ToOperand(value, From(out).first, out.dtype);
+    }
+    if (arg) {
+        ToOperand(indices.to(torch::kInt32), From(index).first, index.dtype);
+    }
+}
+
+static void NanPairArg(const TensorData& out, const TensorData& index, const TensorData& lhs,
+                       const TensorData& lhsIndex, const TensorData& rhs, const TensorData& rhsIndex, bool maximum,
+                       bool finalize)
+{
+    auto a = From(lhs).second;
+    auto b = From(rhs).second;
+    auto ai = From(lhsIndex).second;
+    auto bi = From(rhsIndex).second;
+    auto earlier = ai.le(bi);
+    auto takeA = (maximum ? a.gt(b) : a.lt(b)) | (a.eq(b) & earlier);
+    const auto invalid = std::numeric_limits<int32_t>::max();
+    takeA = bi.eq(invalid) | (ai.ne(invalid) & takeA);
+    ToOperand(torch::where(takeA, a, b), From(out).first, out.dtype);
+    auto selected = torch::where(takeA, ai, bi);
+    if (finalize) {
+        selected = torch::where(selected.eq(invalid), 0, selected);
+    }
+    ToOperand(selected, From(index).first, index.dtype);
+}
+
 std::vector<int64_t> GenAxesForTranspose(const int64_t offset, const std::vector<int64_t>& base)
 {
     std::vector<int64_t> axes;
@@ -4457,6 +4551,10 @@ static struct CalcOps calcOps = {
     .BitwiseLeftShiftS = BitwiseLeftShiftS,
     .SBitwiseRightShift = SBitwiseRightShift,
     .SBitwiseLeftShift = SBitwiseLeftShift,
+    .NanBinary = NanBinary,
+    .NanScalar = NanScalar,
+    .NanReduce = NanReduce,
+    .NanPairArg = NanPairArg,
 };
 
 extern "C" struct CalcOps* GetCalcOps() { return &calcOps; }

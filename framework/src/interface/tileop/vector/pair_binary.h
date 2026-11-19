@@ -16,7 +16,121 @@
 #define TILEOP_TILE_OPERATOR_PAIR_BINARY_H
 
 #include "utils/layout.h"
+#include "utils/sync.h"
+#include "pto_tile.h"
 #include "utils/tile_tensor.h"
+
+template <int W, typename D, typename S>
+TILEOP void CopyPairArgCompareInput(D& dst, S& src, uint64_t addr)
+{
+    using E = typename D::DType;
+    constexpr int repeat = 256 / sizeof(E);
+    constexpr int tailStart = W / repeat * repeat;
+    pto::TEXTRACT(dst, src, 0, 0);
+    SyncV();
+    const auto h = dst.GetValidRow();
+    const auto w = dst.GetValidCol();
+    if (w > tailStart) {
+        using Tail = pto::Tile<pto::TileType::Vec, E, 1, repeat, pto::BLayout::RowMajor, 1, -1>;
+        using Padded = pto::Tile<pto::TileType::Vec, E, 1, repeat, pto::BLayout::RowMajor, 1, repeat,
+                                 pto::SLayout::NoneBox, 512, pto::PadValue::Zero>;
+        const auto tailAddr = addr + ((h - 1) * W + tailStart) * sizeof(E);
+        Tail tail(w - tailStart);
+        Padded padded;
+        pto::TASSIGN(tail, tailAddr);
+        pto::TASSIGN(padded, tailAddr);
+        pto::TFILLPAD_INPLACE(padded, tail);
+        SyncV();
+    }
+}
+
+template <bool Max, bool Finalize, int H, int W, typename V, typename I, typename A, typename AI, typename B,
+          typename BI, typename T>
+TILEOP void NanPairArgTile(V& value, I& index, A& a, AI& ai, B& b, BI& bi, T& tmp)
+{
+    constexpr size_t maskBytes = H * ((W + 255) / 256 * 32);
+    constexpr size_t rowBytes = W * sizeof(int32_t);
+    constexpr size_t indexBytes = H * rowBytes;
+    constexpr size_t compareOffset = maskBytes + indexBytes + 32;
+    // rowPad covers short rows. A wide partial repeat needs a guarded copy.
+    constexpr bool GuardTail = rowBytes > 256 && rowBytes % 256 != 0;
+    constexpr size_t compareBytes = GuardTail ? indexBytes + 256 - rowBytes % 256 : 0;
+    static_assert(compareOffset + 2 * compareBytes <= TileOp::GetTileSizeBytes<T>(),
+                  "NaN pair arg scratch exceeds its planned capacity");
+    using Mask = pto::Tile<pto::TileType::Vec, uint8_t, H, ((W + 7) / 8 + 31) / 32 * 32, pto::BLayout::RowMajor, -1,
+                           -1>;
+    using Tie = pto::Tile<pto::TileType::Vec, int32_t, H, W, pto::BLayout::RowMajor, -1, -1>;
+    using CompareValue = pto::Tile<pto::TileType::Vec, typename V::DType, H, W, pto::BLayout::RowMajor, -1, -1>;
+    using Selector = pto::Tile<pto::TileType::Vec, uint8_t, 1, 32>;
+    const auto h = value.GetValidRow();
+    const auto w = value.GetValidCol();
+    if (h == 0 || w == 0) {
+        return;
+    }
+    Mask mask(h, (w + 7) / 8);
+    Tie tie(h, w);
+    Selector selector;
+    const auto scratch = tmp.GetAddr();
+    pto::TASSIGN(mask, scratch);
+    pto::TASSIGN(tie, scratch + maskBytes);
+    pto::TASSIGN(selector, scratch + maskBytes + indexBytes);
+    CompareValue cmpA(h, w), cmpB(h, w);
+    const auto compareAddr = scratch + compareOffset;
+    if constexpr (GuardTail) {
+        pto::TASSIGN(cmpA, compareAddr);
+        pto::TASSIGN(cmpB, compareAddr + compareBytes);
+        CopyPairArgCompareInput<W>(cmpA, a, compareAddr);
+        CopyPairArgCompareInput<W>(cmpB, b, compareAddr + compareBytes);
+        pto::TCMP(mask, cmpA, cmpB, Max ? pto::CmpMode::GE : pto::CmpMode::LE);
+    } else {
+        pto::TCMP(mask, a, b, Max ? pto::CmpMode::GE : pto::CmpMode::LE);
+    }
+    SyncV();
+    pto::TPARTSEL(index, mask, ai, bi, selector);
+    SyncV();
+    if constexpr (Max)
+        pto::TMAX(value, a, b);
+    else
+        pto::TMIN(value, a, b);
+    SyncV();
+    pto::TMIN(tie, ai, bi);
+    SyncV();
+    if constexpr (GuardTail)
+        pto::TCMP(mask, cmpA, cmpB, pto::CmpMode::EQ);
+    else
+        pto::TCMP(mask, a, b, pto::CmpMode::EQ);
+    SyncV();
+    pto::TPARTSEL(index, mask, tie, index, selector);
+    SyncV();
+    // Invalid partials already lose through the identity value and minimum-index tie break.
+    if constexpr (Finalize) {
+        // Only the final pair converts an all-invalid result to index zero.
+        Tie compareIndex(h, w);
+        if constexpr (GuardTail) {
+            pto::TASSIGN(compareIndex, compareAddr);
+            CopyPairArgCompareInput<W>(compareIndex, ai, compareAddr);
+            pto::TCMPS(mask, compareIndex, INT32_MAX, pto::CmpMode::EQ);
+        } else {
+            pto::TCMPS(mask, ai, INT32_MAX, pto::CmpMode::EQ);
+        }
+        SyncV();
+        pto::TNOT(mask, mask);
+        SyncV();
+        pto::TSELS(tie, mask, ai, selector, 0);
+        SyncV();
+        if constexpr (GuardTail) {
+            CopyPairArgCompareInput<W>(compareIndex, bi, compareAddr);
+            pto::TCMPS(mask, compareIndex, INT32_MAX, pto::CmpMode::EQ);
+        } else {
+            pto::TCMPS(mask, bi, INT32_MAX, pto::CmpMode::EQ);
+        }
+        SyncV();
+        pto::TNOT(mask, mask);
+        SyncV();
+        pto::TPARTSEL(index, mask, index, tie, selector);
+        SyncV();
+    }
+}
 
 template <typename T0, typename T1, size_t index = 0, size_t shapeSize = 0>
 TILEOP int GetReduceAxisIndex(T0 src0, T1 src1)
@@ -400,4 +514,29 @@ TILEOP void TPairArgMin(T0 dstValue, T1 dstIndex, T2 src0Value, T3 src0Index, T4
     PairArgBinaryCompute<PairBinaryOp::ARGMIN>(dstValue, dstIndex, src0Value, src0Index, src1Value, src1Index);
 }
 
+template <bool Max, bool Finalize, int H, int W, typename V, typename I, typename A, typename AI, typename B,
+          typename BI, typename T>
+TILEOP void TNanPairArg(V value, I index, A a, AI ai, B b, BI bi, T tmp)
+{
+    const auto layout = value.GetLayout();
+    PtoTile<V> dstValue(value);
+    PtoTile<I> dstIndex(index);
+    PtoTile<A> leftValue(a);
+    PtoTile<AI> leftIndex(ai);
+    PtoTile<B> rightValue(b);
+    PtoTile<BI> rightIndex(bi);
+    for (LoopVar n1 = 0; n1 < layout.template GetShapeDim<1, 5>(); ++n1) {
+        for (LoopVar n2 = 0; n2 < layout.template GetShapeDim<2, 5>(); ++n2) {
+            const auto offset = TileOffset(0, n1, n2);
+            dstValue.Assign(value, offset);
+            dstIndex.Assign(index, offset);
+            leftValue.Assign(a, offset);
+            leftIndex.Assign(ai, offset);
+            rightValue.Assign(b, offset);
+            rightIndex.Assign(bi, offset);
+            NanPairArgTile<Max, Finalize, H, W>(dstValue.Data(), dstIndex.Data(), leftValue.Data(), leftIndex.Data(),
+                                                rightValue.Data(), rightIndex.Data(), tmp);
+        }
+    }
+}
 #endif

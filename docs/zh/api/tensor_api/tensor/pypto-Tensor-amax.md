@@ -24,7 +24,7 @@
 ## 函数原型
 
 ```python
-amax(self, dim: int, keepdim: bool = False) -> 'Tensor'
+amax(self, dim: int, keepdim: bool = False, propagate_nan: bool = True) -> 'Tensor'
 ```
 
 ## 详细说明

@@ -236,7 +236,7 @@ void BroadcastOperandTensor(LogicalTensorPtr& operand, LogicalTensorPtr& other, 
                             Function& function, const TileShape& tileShape, std::vector<int64_t> dstShape = {});
 
 // OP_ADD OP_SUB OP_MUL OP_DIV OP_MAX OP_BITWISEAND OP_BITWISEOR OP_BITWISEXOR
-template <BinaryOpType T>
+template <BinaryOpType T, bool ExpandBroadcast = false>
 std::pair<LogicalTensorPtr, Operation*> TensorBinaryOperationWithOp(Function& function, const Tensor& operand1,
                                                                     const Tensor& operand2)
 {
@@ -264,6 +264,14 @@ std::pair<LogicalTensorPtr, Operation*> TensorBinaryOperationWithOp(Function& fu
     }
     auto result = std::make_shared<LogicalTensor>(function, oprandT1->Datatype(), resultShape, resultValidShape,
                                                   oprandT1->Format());
+    if constexpr (ExpandBroadcast) {
+        if (oprandT1->shape != resultShape) {
+            oprandT1 = Expand(oprandT1, resultShape, resultValidShape).GetStorage();
+        }
+        if (oprandT2->shape != resultShape) {
+            oprandT2 = Expand(oprandT2, resultShape, resultValidShape).GetStorage();
+        }
+    }
     auto& op = function.AddOperation(GetBinaryOpNameCode<T>(), {oprandT1, oprandT2}, {result});
     return {result, &op};
 }

@@ -90,6 +90,9 @@ void AddTiledBinaryOperation(Function& function, const TileShape& tileShape, Log
         auto tempTensor = std::make_shared<LogicalTensor>(function, DT_UINT8, tempShape);
         op = &function.AddOperation(GetBinaryOpNameCode<T, false, false>(), {inputTile1, inputTile2},
                                     {resultTile, tempTensor});
+    } else if constexpr (T == BinaryOpType::MAXIMUM || T == BinaryOpType::MINIMUM) {
+        op = &AddNanSmallOperation(function, GetBinaryOpNameCode<T, false, false>(), {inputTile1, inputTile2},
+                                   {resultTile});
     } else {
         op = &function.AddOperation(GetBinaryOpNameCode<T, false, false>(), {inputTile1, inputTile2}, {resultTile});
     }

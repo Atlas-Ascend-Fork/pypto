@@ -24,7 +24,7 @@
 ## 函数原型
 
 ```python
-amin(self, dim: int, keepdim: bool = False) -> 'Tensor'
+amin(self, dim: int, keepdim: bool = False, propagate_nan: bool = True) -> 'Tensor'
 ```
 
 ## 详细说明

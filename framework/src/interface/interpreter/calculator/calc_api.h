@@ -294,6 +294,11 @@ struct CalcOps {
     void (*BitwiseLeftShiftS)(const TensorData&, const TensorData&, const Element&);
     void (*SBitwiseRightShift)(const TensorData&, const Element&, const TensorData&);
     void (*SBitwiseLeftShift)(const TensorData&, const Element&, const TensorData&);
+    void (*NanBinary)(const TensorData&, const TensorData&, const TensorData&, bool, bool);
+    void (*NanScalar)(const TensorData&, const TensorData&, const Element&, bool);
+    void (*NanReduce)(const TensorData&, const TensorData&, const TensorData&, int, bool, int64_t, bool);
+    void (*NanPairArg)(const TensorData&, const TensorData&, const TensorData&, const TensorData&, const TensorData&,
+                       const TensorData&, bool, bool);
 };
 
 extern "C" struct CalcOps* GetCalcOps();

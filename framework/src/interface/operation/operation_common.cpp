@@ -14,6 +14,8 @@
  */
 
 #include "operation_common.h"
+#include "interface/function/function.h"
+#include "passes/tensor_graph_pass/expand_function.h"
 #include "tilefwk/error_code.h"
 #include "interface/utils/string_utils.h"
 #include "tilefwk/element.h"
@@ -410,5 +412,116 @@ void CheckBinaryInputTensors(const LogicalTensorPtr& tensor1, const LogicalTenso
     CheckTensorsDimConsistency({tensor1, tensor2}, opName);
     CheckTensorsShapeConsistencyOrBroadcast({tensor1, tensor2}, opName);
     CheckTensorsFormatConsistency(tensor1, tensor2, opName);
+}
+
+static LogicalTensorPtr MakeNanScratch(Function& function, size_t rank, size_t bytes)
+{
+    Shape shape(rank, 1);
+    shape.back() = bytes;
+    return std::make_shared<LogicalTensor>(function, DT_UINT8, shape, SymbolicScalar::FromConcrete(shape));
+}
+
+static size_t NanReduceScratchBytes(const Shape& tile, DataType dtype, size_t axis, bool arg)
+{
+    const bool column = axis + 1 != tile.size();
+    const size_t e = BytesOf(dtype);
+    const size_t h = column ? tile[axis] : (tile.size() > 1 ? tile[tile.size() - 2] : 1);
+    size_t w = tile.back();
+    if (column) {
+        for (size_t i = axis + 1; i + 1 < tile.size(); ++i) {
+            w *= tile[i];
+        }
+    }
+    const size_t rowBytes = AlignUp(w * e, size_t{BLOCK_SIZE});
+    const size_t dataBytes = h * rowBytes;
+    // The final vector compare can read beyond the last physical row.
+    const size_t compareGuard = AlignUp(rowBytes, REPEAT_BYTE) - rowBytes;
+    const size_t maskBytes = h * AlignUp((rowBytes / e + 7) / 8, size_t{BLOCK_SIZE});
+    const size_t flagRowBytes = column ? rowBytes : BLOCK_SIZE;
+    const size_t resultBytes = column ? rowBytes : h * BLOCK_SIZE;
+    // Arg candidates retain a compact input copy, including FP32 inputs.
+    const size_t castBytes = arg ? dataBytes : 0;
+    const size_t rowReduceBytes = rowBytes <= REPEAT_BYTE ?
+                                      (arg ? h * BLOCK_SIZE : BLOCK_SIZE) :
+                                      h * (rowBytes <= 2 * REPEAT_BYTE ? REPEAT_BYTE :
+                                                                         rowBytes / (2 * REPEAT_BYTE) * REPEAT_BYTE);
+    const size_t reduceBytes = column ? (arg ? 3 * REPEAT_BYTE : 0) : rowReduceBytes;
+    const size_t flagEnd = castBytes + dataBytes + compareGuard + maskBytes + (column ? resultBytes : 2 * resultBytes);
+    const size_t flagReadEnd = flagEnd + AlignUp(flagRowBytes, size_t{REPEAT_BYTE}) - flagRowBytes;
+    const size_t selectorEnd = flagEnd + (arg && !column ? resultBytes : 0) + reduceBytes + BLOCK_SIZE;
+    return std::max(flagReadEnd, selectorEnd);
+}
+
+static size_t NanSmallScratchBytes(const LogicalTensorPtr& tile, bool pairArg)
+{
+    const auto& shape = tile->shape;
+    const size_t w = AlignUp(shape.back(), static_cast<int64_t>(BLOCK_SIZE / BytesOf(tile->Datatype())));
+    const size_t h = shape.size() > 1 ? shape[shape.size() - 2] : 1;
+    const size_t maskBytes = h * AlignUp((w + 7) / 8, size_t{BLOCK_SIZE});
+    if (!pairArg) {
+        // A private, initialized full-repeat copy also protects runtime partial tails.
+        const size_t compareBytes = h * AlignUp(w * BytesOf(tile->Datatype()), size_t{REPEAT_BYTE});
+        return maskBytes + BLOCK_SIZE + compareBytes;
+    }
+    const size_t indexBytes = h * AlignUp(w * sizeof(int32_t), size_t{BLOCK_SIZE});
+    const size_t rowBytes = w * sizeof(int32_t);
+    const size_t guard = AlignUp(rowBytes, size_t{REPEAT_BYTE}) - rowBytes;
+    const size_t compareBytes = rowBytes > REPEAT_BYTE && guard != 0 ? 2 * (h * rowBytes + guard) : 0;
+    return maskBytes + indexBytes + BLOCK_SIZE + compareBytes;
+}
+
+bool IgnoreNanForCurrentTileOp()
+{
+    auto* root = ExpandFunction::GetCurrentTileOp();
+    return root != nullptr && root->HasAttr(OP_ATTR_PREFIX + "propagate_nan") &&
+           !root->GetBoolAttribute(OP_ATTR_PREFIX + "propagate_nan");
+}
+
+Operation& AddNanReduceOperation(Function& function, const std::string& name, LogicalTensors inputs,
+                                 LogicalTensors outputs, size_t axis)
+{
+    const auto code = FindOpcode(name);
+    const bool arg = code == Opcode::OP_ROWARGMAXWITHVALUE_SINGLE || code == Opcode::OP_ROWARGMINWITHVALUE_SINGLE ||
+                     code == Opcode::OP_ROWARGMAXWITHVALUE_LINE || code == Opcode::OP_ROWARGMINWITHVALUE_LINE;
+    if (!IgnoreNanForCurrentTileOp() || !IsFloat(inputs[0]->Datatype())) {
+        return function.AddOperation(code, inputs, outputs);
+    }
+    const auto dtype = inputs[0]->Datatype();
+    auto shape = inputs[0]->shape;
+    const auto align = static_cast<int64_t>(BLOCK_SIZE / BytesOf(dtype));
+    shape.back() = AlignUp(shape.back(), align);
+    // Standard tail padding also covers the workspace of a combined singleton tail.
+    const auto bytes = NanReduceScratchBytes(shape, dtype, axis, arg);
+    auto scratch = MakeNanScratch(function, shape.size(), bytes);
+    // Replace the original native scratch, rather than allocating both.
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, outputs.size() == (arg ? 2U : 1U))
+        << "NaN reduction expects " << (arg ? 2 : 1) << " outputs, but got " << outputs.size();
+    outputs.push_back(scratch);
+    auto& result = function.AddOperation(code, inputs, outputs);
+    result.SetAttribute(OP_ATTR_PREFIX + "nan_tile", true);
+    result.SetAttribute(OpAttributeKey::excludeBufferReuse, true);
+    return result;
+}
+
+Operation& AddNanSmallOperation(Function& function, Opcode code, LogicalTensors inputs, LogicalTensors outputs,
+                                bool finalize)
+{
+    const bool pairArg = code == Opcode::OP_PAIRARGMAX || code == Opcode::OP_PAIRARGMIN;
+    if (!IgnoreNanForCurrentTileOp() || (!pairArg && !IsFloat(inputs[0]->Datatype())))
+        return function.AddOperation(code, inputs, outputs);
+    auto tmp = MakeNanScratch(function, outputs[0]->shape.size(), NanSmallScratchBytes(outputs[0], pairArg));
+    outputs.push_back(tmp);
+    auto& result = function.AddOperation(code, inputs, outputs);
+    result.SetAttribute(OP_ATTR_PREFIX + "nan_tile", true);
+    if (pairArg) {
+        // One flag per input operand: the PAIR ops keep their non-overlapping tail.
+        // SetAttr (not SetAttribute) because std::vector<bool> cannot be iterated by reference.
+        result.SetAttr(OpAttributeKey::rowPad, std::vector<bool>(inputs.size(), true));
+        if (finalize) {
+            result.SetAttribute(OP_ATTR_PREFIX + "nan_finalize", true);
+        }
+    }
+    result.SetAttribute(OpAttributeKey::excludeBufferReuse, true);
+    return result;
 }
 } // namespace npu::tile_fwk
