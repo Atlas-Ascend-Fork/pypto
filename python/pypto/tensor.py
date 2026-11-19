@@ -575,6 +575,17 @@ class Tensor:
                 normalized.append(k)
                 continue
             start, stop, step = k.start, k.stop, k.step
+            resolved_start = size + start if isinstance(start, int) and start < 0 else start
+            resolved_stop = size + stop if isinstance(stop, int) and stop < 0 else stop
+            if resolved_start is not None and resolved_stop is not None:
+                extent = resolved_start - resolved_stop
+                if isinstance(extent, SymbolicScalar):
+                    extent = extent.simplify()
+                    extent = extent.concrete() if extent.is_concrete() else 0
+                if extent > 0:
+                    raise FeError(ValueError(
+                        f"reversed slice is not supported: start {start} is greater than stop {stop}"
+                    ))
             if (
                 isinstance(size, int)
                 and size >= 0
@@ -583,10 +594,7 @@ class Tensor:
             ):
                 start, stop, _ = slice(start, stop, step).indices(size)
             else:
-                if isinstance(start, int) and start < 0:
-                    start = size + start
-                if isinstance(stop, int) and stop < 0:
-                    stop = size + stop
+                start, stop = resolved_start, resolved_stop
             normalized.append(slice(start, stop, step))
         return tuple(normalized)
 

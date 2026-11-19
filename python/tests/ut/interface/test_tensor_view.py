@@ -69,6 +69,21 @@ def test_slice_out_of_bounds_is_clamped():
         assert res.shape == [4, 7]
 
 
+def test_slice_reversed_bounds_is_rejected():
+    """Test that reversed slice bounds are rejected regardless of clamping or symbolic size."""
+    x = pypto.tensor([4], pypto.DT_FP32)
+
+    for index, key in enumerate((slice(3, 1), slice(10, 8), slice(-1, -3), slice(-100, -200))):
+        with pytest.raises(pypto.error.FeError, match="reversed slice is not supported"):
+            with pypto.function(f"SLICE_REVERSED_BOUNDS_{index}", [x]):
+                pypto.set_vec_tile_shapes(4)
+                _ = x[key]
+
+    symbolic_size = pypto.SymbolicScalar("n")
+    with pytest.raises(pypto.error.FeError, match="reversed slice is not supported"):
+        pypto.Tensor._negative_index_to_positive((slice(-100, -200),), [symbolic_size])
+
+
 def test_slice_neg_index_symbolic_shape():
     """Test negative slice normalization with a symbolic dimension."""
     symbolic_size = pypto.SymbolicScalar("n")
