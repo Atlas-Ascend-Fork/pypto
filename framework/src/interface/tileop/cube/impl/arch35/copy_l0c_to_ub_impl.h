@@ -139,11 +139,16 @@ INLINE void TCopyL0C2UBImpl(DstTileTensor& dst, SrcTileTensor& src, FbTileTensor
                   "[TCopyL0C2UB Error]: Current CopyMode is UNKNOWN. CopyMode only support EXTRACT, INSERT and MOVE");
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileTensor::Shape>::value;
     constexpr int64_t c0Size = BLOCK_ALIGN_BYTE / sizeof(typename SrcTileTensor::Type);
-    // batch 前导维由构图层保证 shape=1、offset=0，矩阵语义只读尾两维（expect=2 时 GetTupleElement 自动取尾维）
     int64_t dstOffset0 = TileOp::GetTupleElement<Coord, 0, SHAPE_DIM2, 0>(dstCoord);
     int64_t dstOffset1 = TileOp::GetTupleElement<Coord, 1, SHAPE_DIM2, 0>(dstCoord);
     int64_t srcOffset0 = TileOp::GetTupleElement<Coord, 0, SHAPE_DIM2, 0>(srcCoord);
     int64_t srcOffset1 = TileOp::GetTupleElement<Coord, 1, SHAPE_DIM2, 0>(srcCoord);
+    // dst (UB) 侧 batch 偏移按 TileShape 块大小计算
+    // src（L1）侧 batch 维由构图层保证 shape=1、offset=0
+    int64_t dstBatchOffset = GetUBBatchDimsOffset(dst, dstCoord);
+    if constexpr (CheckIsB4<DstTileTensor>()) {
+        dstBatchOffset = dstBatchOffset >> 1;
+    }
     constexpr auto
         staticUBH = Std::tuple_element<shapeSize - SHAPE_DIM2, typename DstTileTensor::TileShape>::type::value;
     constexpr auto staticUBW = Std::tuple_element<shapeSize - 1, typename DstTileTensor::TileShape>::type::value;
@@ -163,7 +168,7 @@ INLINE void TCopyL0C2UBImpl(DstTileTensor& dst, SrcTileTensor& src, FbTileTensor
                                   pto::PadValue::Null, pto::CompactMode::Normal>;
     ubTileData ubTile(dstShape0, dstShape1);
     l0cTileData l0cTile(srcShape0, srcShape1);
-    pto::TASSIGN(ubTile, (uint64_t)dst.GetAddr());
+    pto::TASSIGN(ubTile, (uint64_t)dst.GetAddr() + dstBatchOffset);
     pto::TASSIGN(l0cTile, (uint64_t)src.GetAddr());
     if constexpr (dualDstMode == DualDstMode::DUAL_DST_DISABLE) {
         if constexpr (mode == CopyMode::EXTRACT || mode == CopyMode::MOVE) {

@@ -171,19 +171,23 @@ INLINE void TStoreL1SpillImpl(GlobalData& dst, TileData& src, const Coord& coord
 }
 
 // Copy data from L0C to DDR with NZ -> ND format before reshape
+// src 支持 2D/3D/4D，矩阵部分取 Shape 尾部两维；gShape0/gShape1 为 GM 内层矩阵（最后两维）的形状，
+// batchOffset 为外维（batch 维）线性元素偏移
 template <typename config, typename GlobalTensor, typename TileTensor, typename FpTileTensor>
 INLINE void TReshapeStoreNZ2ND(GlobalTensor& dst, TileTensor& src, FpTileTensor& fixbuf, const int64_t& offset0,
                                const int64_t& offset1, const int64_t& gShape0, const int64_t& gShape1,
-                               uint64_t scaleValue = 0)
+                               uint64_t scaleValue = 0, const int64_t& batchOffset = 0)
 {
     constexpr auto shapeSize = Std::tuple_size<typename TileTensor::TileShape>::value;
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
+    static_assert(shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
+    int64_t srcShape0 = GetTailShape<1>(src);
+    int64_t srcShape1 = GetTailShape<0>(src);
     constexpr auto staticL0CH = Std::tuple_element<shapeSize - SHAPE_DIM2, typename TileTensor::TileShape>::type::value;
     constexpr auto staticL0CW = Std::tuple_element<shapeSize - 1, typename TileTensor::TileShape>::type::value;
     using shapeDim2 = pto::Shape<1, 1, 1, -1, -1>;
     using strideDim2 = pto::Stride<1, 1, 1, -1, -1>;
-    int64_t gmOffset = offset1 + offset0 * gShape1;
+    int64_t gmOffset = batchOffset + offset1 + offset0 * gShape1;
     using globalData = pto::GlobalTensor<typename GlobalTensor::Type, shapeDim2, strideDim2, pto::Layout::ND>;
     using tileData = pto::Tile<pto::TileType::Acc, typename TileTensor::Type, staticL0CH, staticL0CW,
                                pto::BLayout::ColMajor, -1, -1, pto::SLayout::RowMajor, pto::TileConfig::fractalCSize,

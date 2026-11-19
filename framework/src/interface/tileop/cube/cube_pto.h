@@ -277,29 +277,42 @@ TILEOP void TLoad(TileData& dst, GlobalData& src, const Coord& dstCoord, const C
 }
 
 // Copy data from DDR to L1
+// gShape0~gShape3 为 4D GM 布局 [d0, d1, d2, d3]，右对齐：矩阵维为最后两维（gShape2 * gShape3），
+// 前导为 batch 维，低维场景前导补 0 占位；srcCoord 维度与 TileTensor Shape 一致（2D/3D/4D），
+// 尾部两维为矩阵内偏移，前导分量按 gShape 折叠为 batch 偏移
 template <CopyInMode copyMode, PaddingMode padMode, int64_t kIndex, typename Coord, typename TileTensor,
           typename GlobalTensor>
 TILEOP void TReshapeLoad(TileTensor& dst, GlobalTensor& src, const Coord& srcCoord, const int64_t& gShape0,
-                         const int64_t& gShape1)
+                         const int64_t& gShape1, const int64_t& gShape2, const int64_t& gShape3)
 {
     constexpr auto shapeSize = Std::tuple_size<typename TileTensor::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2, "Shape Size should be 2 Dim");
+    static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "[TReshapeLoad Error]: shape size should be 2, 3 or 4 Dim and match Coord size");
     if (HandleZeroKScenario<copyMode, kIndex>(dst)) {
         return;
     }
     if (!CheckShapeValid(dst, src)) {
         return;
     }
-    if (gShape0 == 0 || gShape1 == 0) {
+    if (gShape2 == 0 || gShape3 == 0) {
         return;
     }
-    int64_t srcOffset0 = TileOp::GetTupleElement<Coord, DIM_1ST, shapeSize, 0>(srcCoord);
-    int64_t srcOffset1 = TileOp::GetTupleElement<Coord, DIM_2ND, shapeSize, 0>(srcCoord);
+    int64_t srcOffset0 = TileOp::GetTupleElement<Coord, shapeSize - SHAPE_DIM2, shapeSize, 0>(srcCoord);
+    int64_t srcOffset1 = TileOp::GetTupleElement<Coord, shapeSize - 1, shapeSize, 0>(srcCoord);
+    // batch 维按 reshape 目标布局（gShape）折叠偏移，而非 GM 原 Stride
+    int64_t batchOffset = 0;
+    if constexpr (shapeSize == SHAPE_DIM3) {
+        batchOffset = TileOp::GetTupleElement<Coord, 0, SHAPE_DIM3, 0>(srcCoord) * gShape2 * gShape3;
+    } else if constexpr (shapeSize == SHAPE_DIM4) {
+        batchOffset = TileOp::GetTupleElement<Coord, 0, SHAPE_DIM4, 0>(srcCoord) * gShape1 * gShape2 * gShape3 +
+                      TileOp::GetTupleElement<Coord, 1, SHAPE_DIM4, 0>(srcCoord) * gShape2 * gShape3;
+    }
     static_assert(TileTensor::FORMAT == Hardware::L1 && GlobalTensor::FORMAT == Hardware::GM,
                   "[TReshapeLoad Error]: Dst format shoulde be L1 and Src format shoulde be GM");
     static_assert(copyMode == CopyInMode::ND2NZ, "[TReshapeLoad Error]: Reshape CopyIn L1 just support ND2NZ");
     if constexpr (copyMode == CopyInMode::ND2NZ) {
-        TReshapeLoadND2NZ<padMode>(dst, src, srcOffset0, srcOffset1, gShape0, gShape1);
+        TReshapeLoadND2NZ<padMode>(dst, src, srcOffset0, srcOffset1, gShape2, gShape3, batchOffset);
     }
     return;
 }
@@ -475,21 +488,35 @@ TILEOP void TGatherInL1(TileData dst, GlobalData src, BlockT block, OffsetT offs
 }
 
 // Copy data from L0C to DDR with quantization ability
+// gShape0~gShape3 为 4D GM 布局 [d0, d1, d2, d3]，右对齐：矩阵维为最后两维（gShape2 * gShape3），
+// 前导为 batch 维，低维场景前导补 0 占位；coord 维度与 GlobalTensor Shape 一致（2D/3D/4D），
+// 尾部两维为矩阵内偏移，前导分量按 gShape 折叠为 batch 偏移
 template <typename config, typename Coord, typename GlobalTensor, typename TileTensor, typename FpTileTensor>
 TILEOP void TReshapeStore(GlobalTensor& dst, TileTensor& src, FpTileTensor& fixbuf, const Coord& coord,
-                          const int64_t& gShape0, const int64_t& gShape1, uint64_t scaleValue = 0)
+                          const int64_t& gShape0, const int64_t& gShape1, const int64_t& gShape2,
+                          const int64_t& gShape3, uint64_t scaleValue = 0)
 {
     if (!CheckShapeValid(dst, src)) {
         return;
     }
     constexpr uint64_t shapeSize = Std::tuple_size<typename GlobalTensor::Shape>::value;
-    static_assert(shapeSize == SHAPE_DIM2 && Std::tuple_size<Coord>::value == SHAPE_DIM2, "Shape Size should be 2 Dim");
+    static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                      Std::tuple_size<Coord>::value == shapeSize,
+                  "[TReshapeStore Error]: shape size should be 2, 3 or 4 Dim and match Coord size");
     static_assert(config::kMode == CopyOutMode::NZ2ND, "OutPut format only support NZ2ND when using ReshapeCopyout.");
-    int64_t offset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(coord);
-    int64_t offset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(coord);
+    int64_t offset0 = TileOp::GetTupleElement<Coord, shapeSize - SHAPE_DIM2, shapeSize, 0>(coord);
+    int64_t offset1 = TileOp::GetTupleElement<Coord, shapeSize - 1, shapeSize, 0>(coord);
+    // batch 维按 reshape 目标布局（gShape）折叠偏移，而非 GM 原 Stride
+    int64_t batchOffset = 0;
+    if constexpr (shapeSize == SHAPE_DIM3) {
+        batchOffset = TileOp::GetTupleElement<Coord, 0, SHAPE_DIM3, 0>(coord) * gShape2 * gShape3;
+    } else if constexpr (shapeSize == SHAPE_DIM4) {
+        batchOffset = TileOp::GetTupleElement<Coord, 0, SHAPE_DIM4, 0>(coord) * gShape1 * gShape2 * gShape3 +
+                      TileOp::GetTupleElement<Coord, 1, SHAPE_DIM4, 0>(coord) * gShape2 * gShape3;
+    }
     if constexpr (TileTensor::FORMAT == Hardware::L0C && GlobalTensor::FORMAT == Hardware::GM) {
         if constexpr (config::kMode == CopyOutMode::NZ2ND) {
-            TReshapeStoreNZ2ND<config>(dst, src, fixbuf, offset0, offset1, gShape0, gShape1, scaleValue);
+            TReshapeStoreNZ2ND<config>(dst, src, fixbuf, offset0, offset1, gShape2, gShape3, scaleValue, batchOffset);
         }
     }
 }

@@ -1626,6 +1626,23 @@ static Tensor GetGmDeterministicAccumulationTensor(std::vector<Tensor> gmPartial
     return gmPartialSums[0];
 }
 
+// batchmatmul 插入的 batch view/assemble、GmAccumulation 插入的 K view 打上 isBatchMatmul标签，
+// ExpandFunction 识别该标签不将其展开为 slice/contract
+void MarkBatchMatmulOp(Operation* op)
+{
+    if (op != nullptr) {
+        op->SetAttribute(OpAttributeKey::isBatchMatmul, true);
+    }
+}
+
+void MarkBatchMatmulView(const Tensor& viewTensor)
+{
+    const auto& producers = viewTensor.GetStorage()->GetProducers();
+    if (!producers.empty()) {
+        MarkBatchMatmulOp(*producers.begin());
+    }
+}
+
 static Tensor ConstructGmAccumulationTensorGraph(DataType outType, const Tensor& aMatrix, const Tensor& bMatrix,
                                                  const MatmulAttrParam& attrParam,
                                                  const MatmulExtendParam& extendParam = {})
@@ -1662,12 +1679,14 @@ static Tensor ConstructGmAccumulationTensorGraph(DataType outType, const Tensor&
         } else {
             tensorA = View(aMatrix, {mSize, kViewShape}, {mValidShape, partialKValidShape}, {0, kL1Size * kIdx});
         }
+        MarkBatchMatmulView(tensorA);
         Tensor tensorB;
         if (attrParam.transB) {
             tensorB = View(bMatrix, {nSize, kViewShape}, {nValidShape, partialKValidShape}, {0, kL1Size * kIdx});
         } else {
             tensorB = View(bMatrix, {kViewShape, nSize}, {partialKValidShape, nValidShape}, {kL1Size * kIdx, 0});
         }
+        MarkBatchMatmulView(tensorB);
         MatmulGraphNodes tensorGraphNodes(tensorA.GetStorage(), tensorB.GetStorage(),
                                           gmAccumulationTensor.GetStorage());
         Tensor gmPartialSum = ConstructTensorGraph(outType, tensorGraphNodes, attrParam, extendParam);
@@ -1784,6 +1803,7 @@ static Tensor ConstructMXGmAccumulationTensorGraph(DataType outType, const Tenso
         } else {
             tensorA = View(aMatrix, {mSize, kViewShape}, {mValidShape, partialKValidShape}, {0, kL1Size * kIdx});
         }
+        MarkBatchMatmulView(tensorA);
         Tensor scaleA;
         if (attrParam.transAScale) {
             scaleA = View(aScale, {kScaleViewShape, mSize, SHAPE_DIM2},
@@ -1792,12 +1812,14 @@ static Tensor ConstructMXGmAccumulationTensorGraph(DataType outType, const Tenso
             scaleA = View(aScale, {mSize, kScaleViewShape, SHAPE_DIM2},
                           {mValidShape, partialkScaleValidShape, SHAPE_DIM2}, {0, kScaleL1Size * kIdx, 0});
         }
+        MarkBatchMatmulView(scaleA);
         Tensor tensorB;
         if (attrParam.transB) {
             tensorB = View(bMatrix, {nSize, kViewShape}, {nValidShape, partialKValidShape}, {0, kL1Size * kIdx});
         } else {
             tensorB = View(bMatrix, {kViewShape, nSize}, {partialKValidShape, nValidShape}, {kL1Size * kIdx, 0});
         }
+        MarkBatchMatmulView(tensorB);
         Tensor scaleB;
         if (attrParam.transBScale) {
             scaleB = View(bScale, {nSize, kScaleViewShape, SHAPE_DIM2},
@@ -1806,6 +1828,7 @@ static Tensor ConstructMXGmAccumulationTensorGraph(DataType outType, const Tenso
             scaleB = View(bScale, {kScaleViewShape, nSize, SHAPE_DIM2},
                           {partialkScaleValidShape, nValidShape, SHAPE_DIM2}, {kScaleL1Size * kIdx, 0, 0});
         }
+        MarkBatchMatmulView(scaleB);
         MatmulGraphNodes tensorGraphNodes(tensorA.GetStorage(), scaleA.GetStorage(), tensorB.GetStorage(),
                                           scaleB.GetStorage());
         Tensor gmPartialSum = ConstructTensorGraph(outType, tensorGraphNodes, attrParam);
@@ -1900,23 +1923,6 @@ void CheckABatchMulB(const Tensor& operand1, const Tensor& operand2, const Matmu
                 << "scale batch size invalid: out" << bIdx << " = scale" << bIdx << " or 1 allowed. out" << bIdx << ": "
                 << batchSize << ", scale" << bIdx << ": " << scaleBatchSize;
         }
-    }
-}
-
-// batchmatmul 插入的 view/assemble 打上 isBatchMatmul标签，
-// ExpandFunction 识别该标签不将其展开为 slice/contract
-void MarkBatchMatmulOp(Operation* op)
-{
-    if (op != nullptr) {
-        op->SetAttribute(OpAttributeKey::isBatchMatmul, true);
-    }
-}
-
-void MarkBatchMatmulView(const Tensor& viewTensor)
-{
-    const auto& producers = viewTensor.GetStorage()->GetProducers();
-    if (!producers.empty()) {
-        MarkBatchMatmulOp(*producers.begin());
     }
 }
 
@@ -2143,6 +2149,14 @@ static Tensor ComputeGmAccumulationKernel(DataType outType, const Tensor& aTenso
     ASSERT(MatmulErrorCode::ERR_PARAM_MISMATCH, static_cast<int64_t>(batchValid.size()) == batchDims)
         << "batchValid size should match batch dims";
     const std::vector<SymbolicScalar> batchOffset(batchDims, SymbolicScalar(0));
+    const auto& aSrcValidShape = aTensor.GetStorage()->GetDynValidShape();
+    const auto& bSrcValidShape = bTensor.GetStorage()->GetDynValidShape();
+    ASSERT(MatmulErrorCode::ERR_PARAM_MISMATCH,
+           static_cast<int64_t>(aSrcValidShape.size()) == batchDims + SHAPE_DIM2 &&
+               static_cast<int64_t>(bSrcValidShape.size()) == batchDims + SHAPE_DIM2)
+        << "a/b tensor single-batch valid shape size mismatch";
+    std::vector<SymbolicScalar> aBatchValid(aSrcValidShape.begin(), aSrcValidShape.begin() + batchDims);
+    std::vector<SymbolicScalar> bBatchValid(bSrcValidShape.begin(), bSrcValidShape.begin() + batchDims);
     Tensor gmAccumulationTensor;
     if (outType == DT_INT32) {
         std::vector<int64_t> fullShape = {mSize2D, nSize2D};
@@ -2169,9 +2183,10 @@ static Tensor ComputeGmAccumulationKernel(DataType outType, const Tensor& aTenso
                                                   std::vector<SymbolicScalar>{SymbolicScalar(0),
                                                                               SymbolicScalar(kL1Size * kIdx)};
         shapeA.insert(shapeA.begin(), batchShape.begin(), batchShape.end());
-        validA.insert(validA.begin(), batchValid.begin(), batchValid.end());
+        validA.insert(validA.begin(), aBatchValid.begin(), aBatchValid.end());
         offsetA.insert(offsetA.begin(), batchOffset.begin(), batchOffset.end());
         Tensor tensorA = View(aTensor, shapeA, validA, offsetA);
+        MarkBatchMatmulView(tensorA);
         std::vector<int64_t> shapeB = attrParam.transB ? std::vector<int64_t>{nSize2D, kViewShape} :
                                                          std::vector<int64_t>{kViewShape, nSize2D};
         std::vector<SymbolicScalar> validB = attrParam.transB ?
@@ -2183,9 +2198,10 @@ static Tensor ComputeGmAccumulationKernel(DataType outType, const Tensor& aTenso
                                                   std::vector<SymbolicScalar>{SymbolicScalar(kL1Size * kIdx),
                                                                               SymbolicScalar(0)};
         shapeB.insert(shapeB.begin(), batchShape.begin(), batchShape.end());
-        validB.insert(validB.begin(), batchValid.begin(), batchValid.end());
+        validB.insert(validB.begin(), bBatchValid.begin(), bBatchValid.end());
         offsetB.insert(offsetB.begin(), batchOffset.begin(), batchOffset.end());
         Tensor tensorB = View(bTensor, shapeB, validB, offsetB);
+        MarkBatchMatmulView(tensorB);
         MatmulGraphNodes tensorGraphNodes(tensorA.GetStorage(), tensorB.GetStorage(),
                                           gmAccumulationTensor.GetStorage());
         Tensor gmPartialSum = ConstructTensorGraph(outType, tensorGraphNodes, attrParam, extendParam);

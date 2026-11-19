@@ -24,12 +24,16 @@ INLINE void TCopyUB2L1Impl(DstTileData& dst, SrcTileData& src, const Coord& dstC
     static_assert(mode != CopyMode::UNKNOWN,
                   "[TCopyUB2L1 Error]: Current CopyMode is UNKNOWN. CopyMode only support EXTRACT, INSERT and MOVE");
     constexpr uint64_t shapeSize = Std::tuple_size<typename DstTileData::Shape>::value;
-    constexpr bool isB4 = CheckIsB4<DstTileData>();
-    constexpr int64_t c0Size = isB4 ? FP4_BLOCK_ALIGN_BYTE : BLOCK_ALIGN_BYTE / sizeof(typename SrcTileData::Type);
     int64_t srcOffset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(srcCoord);
     int64_t srcOffset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(srcCoord);
     int64_t dstOffset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(dstCoord);
     int64_t dstOffset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(dstCoord);
+    // src (UB) 侧 batch 偏移按 TileShape 块大小计算
+    // dst（L1）侧 batch 维由构图层保证 shape=1、offset=0
+    int64_t srcBatchOffset = GetUBBatchDimsOffset(src, srcCoord);
+    if constexpr (CheckIsB4<SrcTileData>()) {
+        srcBatchOffset = srcBatchOffset >> 1;
+    }
     int64_t dstShape0 = GetTailShape<1>(dst);
     int64_t dstShape1 = GetTailShape<0>(dst);
     int64_t srcShape0 = GetTailShape<1>(src);
@@ -53,14 +57,14 @@ INLINE void TCopyUB2L1Impl(DstTileData& dst, SrcTileData& src, const Coord& dstC
         using tileUBTensor = pto::Tile<pto::TileType::Vec, typename SrcTileData::Type, staticUBH, staticUBW, ubBLayout,
                                        staticUBH, staticUBW, ubSLayout>;
         tileUBTensor UBTile;
-        pto::TASSIGN(UBTile, (uint64_t)src.GetAddr());
+        pto::TASSIGN(UBTile, (uint64_t)src.GetAddr() + srcBatchOffset);
         pto::TEXTRACT(l1Tile, UBTile, srcOffset0, srcOffset1);
     } else if (mode == CopyMode::INSERT) {
         // GEMV A 保持 ND 布局（与 EXTRACT 分支一致），避免 ND 源按 ColMajor 解释导致精度错误
         using tileUBTensor = pto::Tile<pto::TileType::Vec, typename SrcTileData::Type, staticUBH, staticUBW, ubBLayout,
                                        -1, -1, ubSLayout>;
         tileUBTensor UBTile(srcShape0, srcShape1);
-        pto::TASSIGN(UBTile, (uint64_t)src.GetAddr());
+        pto::TASSIGN(UBTile, (uint64_t)src.GetAddr() + srcBatchOffset);
         pto::TINSERT(l1Tile, UBTile, dstOffset0, dstOffset1);
     }
 }

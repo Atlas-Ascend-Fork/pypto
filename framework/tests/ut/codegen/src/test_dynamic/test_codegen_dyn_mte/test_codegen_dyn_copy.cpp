@@ -331,7 +331,7 @@ TEST_F(TestCodegenDynCopy, L1ReshapeCopyInTensor)
     std::string res = TestMatmulMteBody("L1ReshapeCopyInTensor", Opcode::OP_L1_RESHAPE_COPY_IN,
                                         MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_L1);
     std::string expect =
-        R"!!!(TReshapeLoad<CopyInMode::ND2NZ, PaddingMode::NORMAL_PADDING_MODE, -1>(l1Tensor_0, gmTensor_1, Coord2Dim(0, 0), 0, 0);
+        R"!!!(TReshapeLoad<CopyInMode::ND2NZ, PaddingMode::NORMAL_PADDING_MODE, -1>(l1Tensor_0, gmTensor_1, Coord2Dim(0, 0), 0, 0, 0, 0);
 )!!!";
     EXPECT_EQ(res, expect);
 }
@@ -387,7 +387,7 @@ TEST_F(TestCodegenDynCopy, L0CReshapeCopyOut)
     std::string res = TestMatmulMteBody("L0CReshapeCopyOut", Opcode::OP_L0C_RESHAPE_COPY_OUT, MemoryType::MEM_L0C,
                                         MemoryType::MEM_DEVICE_DDR);
     std::string expect =
-        R"!!!(TReshapeStore<TStoreConfig<CopyOutMode::NZ2ND, 0, 0>>(gmTensor_0, l0cTensor_1, l0cTensor_1, Coord2Dim(0, 0), 0, 0, 0);
+        R"!!!(TReshapeStore<TStoreConfig<CopyOutMode::NZ2ND, 0, 0>>(gmTensor_0, l0cTensor_1, l0cTensor_1, Coord2Dim(0, 0), 0, 0, 0, 0, 0);
 )!!!";
     EXPECT_EQ(res, expect);
 }

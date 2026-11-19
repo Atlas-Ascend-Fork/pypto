@@ -601,6 +601,12 @@ void CodeGenOpNPU::AppendGmValidShapeForReshapeCopy(std::vector<std::string>& ti
     ASSERT(OperErr::ATTRIBUTE_INVALID, !dynValidShape.empty()) << "dynValidShape is invalid from attr";
     if (opCode == Opcode::OP_RESHAPE_COPY_IN || opCode == Opcode::OP_RESHAPE_COPY_OUT) {
         FillVecWithDummyInHead<SymbolicScalar>(dynValidShape, MAX_DIM - dynValidShape.size(), 1);
+    } else {
+        // cube 侧 TReshapeLoad/TReshapeStore 平铺接收 4 个 gShape（4D GM 布局），
+        // 2D/3D 场景前导 batch 维不足时补 0 占位
+        ASSERT(OperErr::ATTRIBUTE_INVALID, dynValidShape.size() <= SHAPE_DIM4)
+            << "cube reshape copy gShape dim should be 2~4";
+        FillVecWithDummyInHead<SymbolicScalar>(dynValidShape, SHAPE_DIM4 - dynValidShape.size(), 0);
     }
     FillParamWithFullInput(tileOpParamList, dynValidShape);
 }

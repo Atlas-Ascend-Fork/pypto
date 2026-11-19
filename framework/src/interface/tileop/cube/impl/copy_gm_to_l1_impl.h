@@ -160,13 +160,17 @@ INLINE void TLoadND2ND(TileData& dst, GlobalData& src, const int64_t& offset0, c
 }
 
 // Copy data from DDR to L1 with ND -> NZ format after reshape
+// dst 支持 2D/3D/4D，矩阵部分取 Shape 尾部两维；gShape0/gShape1 为 GM 内层矩阵（最后两维）的形状，
+// batchOffset 为外维（batch 维）线性元素偏移
 template <PaddingMode padMode, typename TileTensor, typename GlobalTensor>
 INLINE void TReshapeLoadND2NZ(TileTensor& dst, GlobalTensor& src, const int64_t srcOffset0, const int64_t srcOffset1,
-                              const int64_t gShape0, const int64_t gShape1)
+                              const int64_t gShape0, const int64_t gShape1, const int64_t batchOffset = 0)
 {
     constexpr uint64_t shapeSize = Std::tuple_size<typename TileTensor::Shape>::value;
-    int64_t dstShape0 = GetShape<0>(dst);
-    int64_t dstShape1 = GetShape<1>(dst);
+    static_assert(shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
+    int64_t dstShape0 = GetTailShape<1>(dst);
+    int64_t dstShape1 = GetTailShape<0>(dst);
     constexpr auto staticL1H = Std::tuple_element<shapeSize - SHAPE_DIM2, typename TileTensor::TileShape>::type::value;
     constexpr auto staticL1W = Std::tuple_element<shapeSize - 1, typename TileTensor::TileShape>::type::value;
     using shapeDim2 = pto::Shape<1, 1, 1, -1, -1>;
@@ -175,7 +179,7 @@ INLINE void TReshapeLoadND2NZ(TileTensor& dst, GlobalTensor& src, const int64_t 
     using tileData = pto::Tile<pto::TileType::Mat, typename TileTensor::Type, staticL1H, staticL1W,
                                pto::BLayout::ColMajor, -1, -1, pto::SLayout::RowMajor, pto::TileConfig::fractalABSize,
                                pto::PadValue::Null, pto::CompactMode::RowAlignedPadding>;
-    int64_t gmOffset = srcOffset1 + srcOffset0 * gShape1;
+    int64_t gmOffset = batchOffset + srcOffset1 + srcOffset0 * gShape1;
     // FP4数据类型数据宽度减半，地址偏移需要右移1位
     if constexpr (CheckIsB4<TileTensor>()) {
         gmOffset = gmOffset >> 1;

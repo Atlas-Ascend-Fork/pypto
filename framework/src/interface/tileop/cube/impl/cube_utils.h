@@ -104,6 +104,29 @@ INLINE int64_t GetBatchDimsOffset(const U& tileTensor, const Coord& coord)
     return batchOffset;
 }
 
+// 计算 ubtiletensor 的 batch 轴 offset:
+//   3D：coord[0] * tileH * tileW
+//   4D：coord[0] * shape1 * tileH * tileW + coord[1] * tileH * tileW（shape1 为运行时 shape）
+template <typename Coord, typename U>
+INLINE int64_t GetUBBatchDimsOffset(const U& tileTensor, const Coord& coord)
+{
+    constexpr auto shapeSize = Std::tuple_size<typename U::Shape>::value;
+    static_assert(shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4,
+                  "Shape dim size should be 2, 3 or 4");
+    constexpr int64_t tileH = Std::tuple_element<shapeSize - SHAPE_DIM2, typename U::TileShape>::type::value;
+    constexpr int64_t tileW = Std::tuple_element<shapeSize - 1, typename U::TileShape>::type::value;
+    constexpr int64_t tileBlockSize = tileH * tileW * sizeof(typename U::Type);
+    int64_t batchOffset = 0;
+    if constexpr (shapeSize == SHAPE_DIM3) {
+        batchOffset = TileOp::GetTupleElement<Coord, 0, SHAPE_DIM3, 0>(coord) * tileBlockSize;
+    } else if constexpr (shapeSize == SHAPE_DIM4) {
+        batchOffset = TileOp::GetTupleElement<Coord, 0, SHAPE_DIM4, 0>(coord) * GetShape<1>(tileTensor) *
+                          tileBlockSize +
+                      TileOp::GetTupleElement<Coord, 1, SHAPE_DIM4, 0>(coord) * tileBlockSize;
+    }
+    return batchOffset;
+}
+
 INLINE int64_t CalNZOffset(const int64_t& srcShape0, const int64_t& srcShape1, const int64_t& offset0,
                            const int64_t& offset1, const int64_t& c0Size)
 {
