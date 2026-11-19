@@ -14,7 +14,7 @@
 
 ## 功能说明
 
-将lhs与rhs逐元素比较，当lhs小于rhs时生成真值，结果以bit-packed掩码输出。rhs可以是Tile或标量。输出为按位压缩的掩码，通常使用DT_UINT8类型的Tile存储，通常配合[pypto_pro.language.select](../selection/select.md)使用。
+将lhs与rhs逐元素比较，当lhs小于rhs时生成真值，结果以bit-packed掩码输出。rhs可以是Tile或标量。输出为按位压缩的掩码，通常使用DT_UINT8类型的Tile存储，并配合[pypto_pro.language.select](../selection/select.md)使用。
 
 ## 函数原型
 

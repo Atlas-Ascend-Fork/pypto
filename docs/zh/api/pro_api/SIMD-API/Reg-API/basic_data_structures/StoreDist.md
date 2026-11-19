@@ -42,7 +42,7 @@ class StoreDist(enum.Enum):
      INTLV_B32 = ...  # 按32位宽类型交错存储
      # mask_reg模式
      # NORM 同上，搬运VL/8数据
-     # PACK 同上，每间隔1bit舍弃数据，将VL/8的数据压缩为VL/16搬出
+     # PACK 同上，每隔1bit舍弃数据，将VL/8的数据压缩为VL/16搬出
 ```
 
 ## 约束说明

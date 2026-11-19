@@ -149,7 +149,7 @@ with pl.section_vector():
 
 ## 尾块处理
 
-当当前数据块的实际有效范围小于Tile的物理shape时，该Tile称为**尾块**。最常见的情况是GM Tensor的行数或列数不能被Tile尺寸整除，也可能来自对Tensor子区域或运行时有效窗口的处理。本节介绍如何使用valid_shape限定尾块的有效区域，以及何时需要填充无效区域。
+当前数据块的实际有效范围小于Tile的物理shape时，该Tile称为**尾块**。最常见的情况是GM Tensor的行数或列数不能被Tile尺寸整除，也可能来自对Tensor子区域或运行时有效窗口的处理。本节介绍如何使用valid_shape限定尾块的有效区域，以及何时需要填充无效区域。
 
 ### 识别尾块
 
@@ -208,7 +208,7 @@ tile_type = pl.TileType(
 
 **图3 尾块处理流程**
 
-![尾块的计算、有效形状设置、搬入、计算和搬出流程](../../../../figures/pro/pro_tail_processing_flow.svg)
+![尾块的有效形状设置、搬入、计算和搬出流程](../../../../figures/pro/pro_tail_processing_flow.svg)
 
 ```python
 import pypto_pro.language as pl

@@ -57,7 +57,7 @@ arange(start: Union[int, float] = 0, end: Union[int, float], step: Union[int, fl
 
 TileShape和输出output维度一致，均为一维。
 
-如输入start为m，end为n，step为p，输出shape为[q]，TileShape设置为[q1]，则q1分别用于切分q轴。
+如输入start为m，end为n，step为p，输出shape为[q]，TileShape设置为[q1]，则q1用于切分q轴。
 
 ```python
 pypto.set_vec_tile_shapes(16)

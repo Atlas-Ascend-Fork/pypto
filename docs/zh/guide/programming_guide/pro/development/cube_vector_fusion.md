@@ -57,7 +57,6 @@ workspace可以保存完整或分块的中间Tensor，允许生产端和消费�
 ```python
 import pypto_pro.language as pl
 
-
 with pl.section_cube():
     pl.store(workspace, cube_result, offsets)
     pl.system.set_cross_core(pipe=pl.PipeType.FIX, event_id=0)
@@ -245,7 +244,6 @@ def matmul_softmax_kernel(a: pl.Tensor[[pl.DYNAMIC, K_SIZE], pl.DT_FP16],
                     pl.expand_div(cur_exp, cur_exp, cur_global_sum, dim=0)
                     pl.store(out, cur_exp, [m_off, n_off])
 
-
 # Host端调用
 device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 device = f"npu:{device_id}"
@@ -312,7 +310,6 @@ def softmax_vf_init(global_max, global_sum, valid_rows: pl.DT_INT64):
     vf.store_align(global_max, max_reg, preg)
     vf.store_align(global_sum, sum_reg, preg)
 
-
 @pl.vector_function
 def softmax_vf_update_max(src_dn, global_max,
                           valid_rows: pl.DT_INT64, valid_n: pl.DT_INT64):
@@ -324,7 +321,6 @@ def softmax_vf_update_max(src_dn, global_max,
         src_reg = vf.load_align(src_dn, ni * VF_LANES)
         max_reg = vf.max(max_reg, src_reg, preg)
     vf.store_align(global_max, max_reg, preg)
-
 
 @pl.vector_function
 def softmax_vf_update_sum(src_dn, global_max, global_sum,
@@ -340,7 +336,6 @@ def softmax_vf_update_sum(src_dn, global_max, global_sum,
         sum_reg = vf.add(sum_reg, exp_reg, preg)
     vf.store_align(global_sum, sum_reg, preg)
 
-
 @pl.vector_function
 def softmax_vf_normalize(src_dn, dst_dn, global_max, global_sum,
                          valid_rows: pl.DT_INT64, valid_n: pl.DT_INT64):
@@ -355,7 +350,6 @@ def softmax_vf_normalize(src_dn, dst_dn, global_max, global_sum,
         out_reg = vf.div(exp_reg, sum_reg, preg)
         vf.store_align(dst_dn + ni * VF_LANES, out_reg, preg)
     vf.mem_bar(mode=pl.MemBarMode.VST_VLD)
-
 
 @pl.jit(auto_mutex=True)
 def matmul_softmax_vf_kernel(a: pl.Tensor[[pl.DYNAMIC, K_SIZE], pl.DT_FP16],
@@ -482,7 +476,6 @@ def matmul_softmax_vf_kernel(a: pl.Tensor[[pl.DYNAMIC, K_SIZE], pl.DT_FP16],
                                          cur_global_sum, valid_rows, valid_n)
                     pl.transpose(cur_out_nd, cur_out_dn)
                     pl.store(out, cur_out_nd, [m_off, n_off])
-
 
 # Host端调用
 device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))

@@ -47,7 +47,7 @@ var(input: Tensor, dim: Union[int, List[int], Tuple[int]] = None, *, correction:
 
 返回Tensor类型。其数据类型与输入Tensor一致。
 
-keepdim为True时，对应dim的shape规约为1，其他轴的shape不变；keepdim为False时，对应dim会被移除。
+keepdim为True时，对应dim的shape归约为1，其他轴的shape不变；keepdim为False时，对应dim会被移除。
 
 ## 约束说明
 

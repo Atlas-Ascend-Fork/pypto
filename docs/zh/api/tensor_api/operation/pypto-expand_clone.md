@@ -42,7 +42,7 @@ expand_clone(
 |-------------|-----------|----------------------------------------------------------------------|
 | input       | 输入      | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_BF16，DT_FP32，DT_FP16，DT_INT8，DT_INT16，DT_INT32，DT_UINT8，DT_UINT16，DT_UINT32，DT_BOOL。<br>不支持空Tensor；Shape仅支持1-4维，被广播的轴的Shape大小要为1；Shape Size不大于2147483647（即INT32_MAX）。 |
 | shape       | 输入      | 目标Shape。<br>支持的数据类型为：List[int]。<br>Shape Size不大于INT32_MAX；Shape的维度需要与输入的一致，除被广播的轴外其他轴大小须与input的Shape对应相等。 |
-| valid_shape | 输入      | 关键字参数。<br>源操作数，用于定义输出Tensor的动态Shape，关键字参数，用于动态图，静态图可以省略。<br>支持的类型为List[SymbolicScalar]，List[int]。 |
+| valid_shape | 输入      | 关键字参数。<br>源操作数，用于定义输出Tensor的动态Shape，用于动态图，静态图可以省略。<br>支持的类型为List[SymbolicScalar]，List[int]。 |
 
 ## 返回值说明
 
@@ -51,7 +51,7 @@ expand_clone(
 ## 约束说明
 
 - 支持多维广播，输入Tensor被广播的轴的Shape大小要为1。
-- input的viewshape与input维度相同，viewshape\[dim\]=1，input\[dim\]=1，其中dim为被拓展轴，其余维度不做限制。举例如下：
+- input的viewshape与input维度相同，viewshape\[dim\]=1，input\[dim\]=1，其中dim为被扩展轴，其余维度不做限制。举例如下：
     - \[a,1\] 拓展到\[a,5\]，其中dim=1，表示在dim 1上进行拓展。
     - len\(viewshape\)=2并且viewshape\[dim\]=1
 
@@ -61,7 +61,7 @@ expand_clone(
 
     然而，当总尺寸 \[a,5\] 无法被分块尺寸 \[a,2\] 整除时，尾块的有效形状（如 \[a,1\]）无法由框架自动推导。例如，最后一列可能仅包含1个元素，而非完整的 \[a,2\] 分块。此时必须通过valid\_shape明确指定尾块的实际有效Shape，如下：
 
-    pypto.expand\_clone\(input, \[a,2\], valid\_shape = \[a, pypto.min\(2, 5 - 2 \* b\_idx\),\)
+    pypto.expand\_clone\(input, \[a,2\], valid\_shape = \[a, pypto.min\(2, 5 - 2 \* b\_idx\)\]\)
 
     其中b\_idx表示循环索引。
 

@@ -321,7 +321,7 @@ PyPTO Sanitizer: 1 issue(s) detected
 字段解读：
 
 - executes before the previous lock was unlocked：同一配对键上第二次lock出现时，前一次lock尚未unlock。
-- will block this pipe permanently：锁槽位已被占用，第二次lock等待不到释放，该pipe上的后续指令无法执行。
+- will block this pipe permanently：锁槽位已被占用，第二次lock等不到释放，该pipe上的后续指令无法执行。
 
 结论：demo.py第15行对mutex_id为7、pipe为MTE2的锁重复加锁，需要删除多余的lock，或在其前插入配对的unlock。
 

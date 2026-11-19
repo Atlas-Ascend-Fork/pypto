@@ -52,6 +52,7 @@ ErrCode: F1FFFF! Enum: InternalError::COMMON_INNER_ERROR. aicore exception, devi
 3. 结果解读。
 
     诊断结论输出到`<out>/info_<timestamp>/info.txt`的section 6~8段：
+
     | 结论 | 含义 |
     |------|------|
     | Section 6 PASS | 单算子复现无AIC Error，大概率为输入数据导致。 |
@@ -60,7 +61,6 @@ ErrCode: F1FFFF! Enum: InternalError::COMMON_INNER_ERROR. aicore exception, devi
     | Section 6 FAIL, Section 7 FAIL, Section 8 FAIL | Machine调度框架问题。 |
 
     详细运行日志见`<out>/info_<timestamp>/debug_info.txt`，生成的可独立运行的单算子复现脚本见 `<out>/info_<timestamp>/test_single_op.py`。
-
 
 ## aicore print
 
@@ -199,6 +199,7 @@ __gm__ T* l0c_staging = (__gm__ T*)(param->funcData->workspaceAddr);
 ```
 
 **关键注意事项**：
+
 1. 首次运行或切换用例删除kernel_aic*，同一用例重复运行保留修改。
 2. capture 模式下，要看AI Core 日志的输出，必须在replay 之后，增加pypto.runtime._device_synchronize()，否则无法输出AI Core日志
 
@@ -291,7 +292,7 @@ AiCorePrintL0CTensor(param->ctx, (__cc__ int32_t*)l0cTensor.GetAddr(), 1024, 0, 
 ```
 
 AICORE_LOG：
-以下能使用的AICORE_LOGD的地方，也可以使用AICORE_LOGI/AICORE_LOGW/AICORE_LOGE，使用方式和AICORE_LOGD相同。
+以下能使用AICORE_LOGD的地方，也可以使用AICORE_LOGI/AICORE_LOGW/AICORE_LOGE，使用方式和AICORE_LOGD相同。
 
 ```cpp
 AICORE_LOGD(param->ctx, "GM address=%p", ((__gm__ float*)gmTensor.GetAddr()));

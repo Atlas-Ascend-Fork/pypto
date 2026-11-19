@@ -14,7 +14,7 @@
 
 ## 功能说明
 
-获取当前block的subblock总数（即一个block关联的从核数量，又称task ration）。
+获取当前block的subblock总数（即一个block关联的从核数量，又称task ratio）。
 
 ## 函数原型
 

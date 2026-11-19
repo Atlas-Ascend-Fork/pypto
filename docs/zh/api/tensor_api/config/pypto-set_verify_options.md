@@ -43,7 +43,7 @@ set_verify_options(*,
 |---------------------------------|-----------|----------------------------------------------------------------------|
 | enable_pass_verify              | 输入      | 含义：总开关，决定所有pass_verify_*选项、接口是否有效。 <br> 说明：True代表开启。 <br> 类型：bool <br> 取值范围：True/False <br> 默认值：False |
 | pass_verify_save_tensor         | 输入      | 含义：配置是否将模拟计算的逐算子中间数据额外存盘。 <br> 说明：True代表存盘；校验结果目录及结果文件的生成不受该开关影响。 <br> 类型：bool <br> 取值范围：True/False <br> 默认值：False |
-| pass_verify_save_tensor_dir     | 输入      | 含义：配置检测结果及数据的保存路径，结果文件生成在该路径下的verify子目录中。 <br> 说明：设定绝对路径的字符串。 <br> 类型：str <br> 默认值：<br> {RUNNING_DIR}/output/output_{TS} |
+| pass_verify_save_tensor_dir     | 输入      | 含义：配置校验结果及数据的保存路径，结果文件生成在该路径下的verify子目录中。 <br> 说明：设定绝对路径的字符串。 <br> 类型：str <br> 默认值：<br> {RUNNING_DIR}/output/output_{TS} |
 | pass_verify_pass_filter         | 输入      | 含义：配置待自检的Pass名称列表。 <br> 说明：合法的Pass名称。 <br> 不指定则默认校验pass：["ExpandFunction", "ProcessAtomic", "L1CopyInReuseMerge", "InferDynShape", "PreGraphProcess", "InferParamIndex", "CodegenPreproc"]；指定"all"则校验所有pass，指定[]不校验pass只校验tensor_graph；指定非法名称则忽略。 <br> 类型：List[str] <br> 默认值：<br> ["ExpandFunction", "ProcessAtomic", "L1CopyInReuseMerge", "InferDynShape", "PreGraphProcess", "InferParamIndex", "CodegenPreproc"] |
 | pass_verify_error_tol           | 输入      | 含义：配置精度工具对比精度需要用到的rtol和atol。 <br> 说明：List中的第一个值是rtol，第二个值为atol；List长度不等于2时，使用默认值。 <br> 类型：List[float] <br> 默认值：[1e-3, 1e-3] |
 

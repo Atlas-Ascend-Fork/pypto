@@ -47,7 +47,7 @@ sign(input: Tensor) -> Tensor
 
 ## 返回值说明
 
-返回Tensor类型。其Shape与输入Tensor一致，数据类型与输入Tensor一致，其元素为输入Tensor对应元素的符号值（-1、0或1）。
+返回Tensor类型。其Shape、数据类型均与输入Tensor一致，其元素为输入Tensor对应元素的符号值（-1、0或1）。
 
 ## 约束说明
 

@@ -37,10 +37,10 @@ conv_backward_input(grad_output, input_size, weight, out_dtype, strides, padding
 |----------------|-----------|----------------------------------------------------------------------|
 | grad_output    | 输入      | 输出梯度Tensor。<br>不支持空Tensor。<br>仅支持4D（2D conv），仅支持NCHW格式。<br>支持数据类型：DT_FP16、DT_BF16。<br>shape约束：各维度取值范围 [1, 1000000]。 |
 | input_size     | 输入      | 输入特征图的shape，也是输出梯度的shape，维度和grad_output一致。 |
-| weight         | 输入      | 卷积核Tensor。<br>维度和grad_output一致（4D），数据类型必须与grad_output一致。<br>shape约束：各维度取值范围 [1, 1000000]， Kh、Kw必须在 [1, 255] 范围内，且Kh × Kw × 32bytes/sizeof(dtype) ≤ 65535。 |
+| weight         | 输入      | 卷积核Tensor。<br>维度和grad_output一致（4D），数据类型必须与grad_output一致。<br>shape约束：各维度取值范围 [1, 1000000]， Kh、Kw必须在 [1, 255] 范围内，且`Kh × Kw × 32bytes/sizeof(dtype) ≤ 65535`。 |
 | out_dtype      | 输入      | 输出Tensor数据类型。<br>支持：DT_FP16、DT_BF16，且必须与grad_output数据类型一致。 |
 | strides        | 输入      | 卷积步长，参数示例：[1, 1]。<br>各维度取值范围：[1, 63]。 |
-| paddings       | 输入      | 卷积填充，参数示例：[1, 1, 2, 2]。<br>各维度取值范围：[0, 255]，且paddingH < (Kh-1) * dilationH + 1、paddingW < (Kw-1) * dilationW + 1。<br>当前仅支持双边相同pad，即padLeft == padRight、padTop == padBottom。 |
+| paddings       | 输入      | 卷积填充，参数示例：[1, 1, 2, 2]。<br>各维度取值范围：[0, 255]，且`paddingH < (Kh-1) * dilationH + 1、paddingW < (Kw-1) * dilationW + 1`。<br>当前仅支持双边相同pad，即padLeft == padRight、padTop == padBottom。 |
 | dilations      | 输入      | 空洞卷积膨胀率，参数示例：[1, 1]。<br>各维度取值范围：[1, 63]。 |
 | groups         | 输入      | 分组卷积组数，默认1。<br>当前仅支持groups = 1。 |
 

@@ -25,7 +25,7 @@
 
 该接口为定制接口，约束较多。不保证稳定性。
 
-该算子用于块式在线Softmax计算，对输入scores按第0维做局部统计。算子会先对scores乘以scale，再计算每一列的最大值和指数和，同时输出未归一化的指数结果。该接口通常用于FlashAttention等分块注意力场景，配合`pypto.experimental.online_softmax_update`逐块更新全局最大值、指数和与中间输出。
+该算子用于块式在线Softmax计算，对输入scores按第0维做局部统计。算子会先对scores乘以scale，再计算每一列的最大值和指数和，同时输出未归一化的指数结果。该接口通常用于Flash Attention等分块注意力场景，配合`pypto.experimental.online_softmax_update`逐块更新全局最大值、指数和与中间输出。
 
 ## 函数原型
 

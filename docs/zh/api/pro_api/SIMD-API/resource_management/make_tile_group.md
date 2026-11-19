@@ -55,7 +55,7 @@ pypto_pro.language.make_tile_group(
 
 ## 约束说明
 
-- 使用group[i]访问Tile时，i支持编译期整数或运行时整数表达式，例如g[i]、g[(i + 1) % 2]。索引值应位于[0, num_tile)范围内；mutex_ids为None或"auto"时，num_tile为depth，其余情况下，num_tile为非空序列时的列表长度。
+- 使用group[i]访问Tile时，i支持编译期整数或运行时整数表达式，例如g[i]、g[(i + 1) % 2]。索引值应位于[0, num_tile)范围内；mutex_ids为None或"auto"时，num_tile为depth，其余情况下，num_tile为非空序列的列表长度。
 
 ## 返回值说明
 

@@ -137,8 +137,10 @@ Output shape: torch.Size([32, 32, 1, 256])
 **限制说明**：
 
 Kirin处理器系列产品不支持pypto直接调用device上板推理，支持以下两个运行模式：
+
 - [CPU CAModel仿真](../../programming_guide/tensor/debug/debug.md#kirin9030kirinx90kirin9050)
 - [NPU推理，自定义算子部署](../../programming_guide/tensor/pytorch_integration.md)
+
 <!-- end id4 -->
 
 ## 查看计算图
@@ -157,7 +159,7 @@ PyPTO程序在编译过程中，会自动生成由Tensor和Operation组合而成
 
     图中不同的色块（CALL:TENSOR\_xx）分别代表一个调用节点，表示该计算图被划分成不同的Block Graph子图。
 
-3. 双击上图的调用节点，可以看到Block Graph子图信息，标识着任务的具体执行过程。
+3. 双击上图的调用节点，可以看到Block Graph子图信息，标志着任务的具体执行过程。
 
     ![](../../figures/tensor/graph_3.png)
 
@@ -196,6 +198,7 @@ PyPTO程序在编译过程中，会自动生成由Tensor和Operation组合而成
 
 <!-- npu="x90,9030,9050" id1 -->
 **限制说明**：
+
 - 产品支持情况：
   <!-- npu="9030" id2 -->
   - Kirin9030处理器系列产品：不支持

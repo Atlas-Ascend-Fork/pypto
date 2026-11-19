@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-将NZ的输入Tensor在经过reshape后，传入matmul/scaled_mm使用计算时，需要传入参与计算Tensor在reshape前的m，k，n维度值，使matmul/scaled_mm获取到原始m，k，n维度的形状值。
+将NZ的输入Tensor在经过reshape后，传入matmul/scaled_mm进行计算时，需要传入参与计算Tensor在reshape前的m，k，n维度值，使matmul/scaled_mm获取到原始m，k，n维度的形状值。
 
 ## 函数原型
 

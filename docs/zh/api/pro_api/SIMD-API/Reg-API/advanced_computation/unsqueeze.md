@@ -16,7 +16,7 @@
 
 以dst为操作对象，根据preg进行解压缩。
 
-具体算法如下图所示，dst的首位为0，后续mask[i]对应mask值为1时，dst[i]的值为dst[i-1] + 1；mask[i]对应mask值为0时，dst[i]的值为dst[i-1]。mask最高位被忽略不参与统计。
+具体算法如下图所示，dst的首位为0，后续mask[i]的值为1时，dst[i]的值为dst[i-1] + 1；mask[i]对应mask值为0时，dst[i]的值为dst[i-1]。mask最高位被忽略不参与统计。
 
 $$dstReg_i = \begin{cases} 1 & \text{if } mask_i = 1 \\ 0 & \text{if } mask_i = 0 \end{cases}$$
 

@@ -241,7 +241,7 @@ scale_value = 2.0
 scale_fp32 = torch.ones(1, 64, dtype=torch.float32, device=device) * scale_value
 fp_params = torch_npu.npu_trans_quant_param(scale_fp32)
 
-# 情况二、目的Tile数据类型为DT_INT8时，需要将Fixpipe Buffer中的Tile每个INT64元素的bit46需置1
+# 情况二、目的Tile数据类型为DT_INT8时，需要将Fixpipe Buffer中的Tile每个INT64元素的bit46置1
 def _make_scale_tensor(device: str, scale_values: list) -> torch.Tensor:
     scale_bits_list = []
     for scale_value in scale_values:

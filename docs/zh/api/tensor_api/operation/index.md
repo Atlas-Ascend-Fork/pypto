@@ -106,6 +106,7 @@ pypto-permute
 pypto-pow
 pypto-prelu
 pypto-prod
+pypto-quant_hif4
 pypto-quant_mx
 pypto-quantize
 pypto-reciprocal

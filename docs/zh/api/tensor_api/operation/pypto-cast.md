@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-根据源操作数和目的操作数Tensor的数据类型进行精度转换，如果目的操作数是整型且源操作数的数值超过整型的数据表示范围，进行精度转换结果为目的操作数的最大值或者最小值。
+根据源操作数和目的操作数Tensor的数据类型进行精度转换，如果目的操作数是整型且源操作数的数值超过整型的数据表示范围，精度转换结果为目的操作数的最大值或者最小值。
 
 ## 注意事项
 
@@ -106,13 +106,13 @@ Ascend 950PR&950DT系列产品使用不同的CastMode体系，内部实现基于
 | DT_FP32 | DT_INT16 | RINT，ROUND，FLOOR，CEIL，TRUNC | CAST_TRUNC | 支持inf/-inf等边缘情况 |
 | DT_FP32 | DT_FP8E4M3 | RINT，ROUND，FLOOR，CEIL，TRUNC | CAST_RINT | - |
 | DT_FP32 | DT_FP8E5M2 | RINT，ROUND，FLOOR，CEIL，TRUNC | CAST_RINT | - |
-| DT_FP32 | DT_HF8 | **仅支持ROUND** | CAST_ROUND | H8必须使用ROUND_A，不支持其他模式 |
+| DT_FP32 | DT_HF8 | **仅支持ROUND** | CAST_ROUND | HF8必须使用ROUND_A，不支持其他模式 |
 | DT_FP16 | DT_FP32 | 不支持舍入模式 | - | 类型扩展（PART_EVEN） |
 | DT_FP16 | DT_INT32 | RINT，ROUND，FLOOR，CEIL，TRUNC | CAST_TRUNC | ROUND_PART模式 |
 | DT_FP16 | DT_INT16 | RINT，ROUND，FLOOR，CEIL，TRUNC | CAST_TRUNC | 支持inf/-inf等边缘情况，ROUND_SAT模式 |
 | DT_FP16 | DT_INT8 | RINT，ROUND，FLOOR，CEIL，TRUNC | CAST_TRUNC | 支持inf/-inf等边缘情况，ROUND_SAT_PART模式 |
 | DT_FP16 | DT_UINT8 | RINT，ROUND，FLOOR，CEIL，TRUNC | CAST_TRUNC | ROUND_SAT_PART模式 |
-| DT_FP16 | DT_HF8 | **仅支持ROUND** | CAST_ROUND | H8必须使用ROUND_A，不支持其他模式 |
+| DT_FP16 | DT_HF8 | **仅支持ROUND** | CAST_ROUND | HF8必须使用ROUND_A，不支持其他模式 |
 | DT_BF16 | DT_FP32 | 不支持舍入模式 | - | 类型扩展（PART_EVEN） |
 | DT_BF16 | DT_INT32 | RINT，ROUND，FLOOR，CEIL，TRUNC | CAST_TRUNC | ROUND_SAT_PART模式 |
 | DT_BF16 | DT_FP16 | RINT，ROUND，FLOOR，CEIL，TRUNC | CAST_RINT | SAT_ROUND模式（先饱和后舍入） |

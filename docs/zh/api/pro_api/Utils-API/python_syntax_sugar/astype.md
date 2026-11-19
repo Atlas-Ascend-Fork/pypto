@@ -33,7 +33,7 @@ result = pypto_pro.language.astype(x, dtype, /)
 ## 约束说明
 
 - 源标量和目标标量数据类型均不支持仅用于存储的低精度类型：DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_FP4、DT_FP4E2M1、DT_FP4E1M2、DT_HF8、DT_HF4、DT_INT4、DT_UINT4。
-- 普通Scalar支持DT_BF16与BOOL、整数、DT_FP16、DT_FP32之间的转换。转换为DT_BF16时采用最近偶数舍入；
+- 普通Scalar支持DT_BF16与DT_BOOL、整数、DT_FP16、DT_FP32之间的转换。转换为DT_BF16时采用最近偶数舍入；
   DT_BF16转换为整数时向零截断，输入须位于目标整数类型的有效范围内。
 - 普通Scalar的运行期DT_BF16算术先将操作数精确扩展为DT_FP32，再将每个操作的结果舍入为DT_BF16。
 - 当前前端常量折叠使用Python浮点精度，尚未按FP16/BF16/FP32逐步舍入，因此常量表达式与运行期表达式可能不同。

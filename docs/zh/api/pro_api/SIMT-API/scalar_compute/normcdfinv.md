@@ -28,7 +28,7 @@ pypto_pro.language.simt.normcdfinv(
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| value | 输入 | 累计概率，Scalar类型，仅支持DT_FP32，实数定义域为$[0,1]$。Tensor或Tile元素需通过下标访问后传入。 |
+| value | 输入 | 累积概率，Scalar类型，仅支持DT_FP32，实数定义域为$[0,1]$。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 

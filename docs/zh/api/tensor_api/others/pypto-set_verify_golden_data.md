@@ -39,7 +39,7 @@ set_verify_golden_data(in_out_tensors=None, goldens=None)
 | 参数名          | 输入/输出 | 说明                                                                 |
 |-----------------|-----------|----------------------------------------------------------------------|
 | in_out_tensors  | 输入      | 含义：将用户执行算子时实际的输入、输出列表按照相同位置对应地设置到检测工具。 <br> 说明：JIT调用模式下，该选项不需设置 <br> 类型：List[Union(pypto.Tensor, torch.Tensor)] <br> 取值范围：NA <br> 默认值：NA |
-| goldens         | 输入      | 含义：将用户已有的计算基准数据（golden）输出设置到工具中做对比检测。 <br> 说明：该列表与算子输入、输出参数列表的长度一致、位置对应。其中元素对应算子的输出参数，输入参数位置应设为None。若相应位置设置为None，表示跳过该位置的数据对比。 <br> 类型：List[Union(pypto.Tensor, torch.Tensor)] <br> * 其中torch.Tensor的device属性需为CPU，不支持NPU。 <br> 取值范围：NA <br> 默认值：NA |
+| goldens         | 输入      | 含义：将用户已有的计算基准数据（golden）设置到工具中做对比检测。 <br> 说明：该列表与算子输入、输出参数列表的长度一致、位置对应。其中元素对应算子的输出参数，输入参数位置应设为None。若相应位置设置为None，表示跳过该位置的数据对比。 <br> 类型：List[Union(pypto.Tensor, torch.Tensor)] <br> * 其中torch.Tensor的device属性需为CPU，不支持NPU。 <br> 取值范围：NA <br> 默认值：NA |
 
 ## 返回值说明
 

@@ -44,7 +44,7 @@ pass_verify_print(*values, cond: Union[int, SymbolicScalar] = 1) -> None
 
 ## 约束说明
 
-该函数需在设置pypto.set_verify_options(enable_pass_verify=True)后生效。
+该函数需设置pypto.set_verify_options(enable_pass_verify=True)后生效。
 
 ## 调用示例
 

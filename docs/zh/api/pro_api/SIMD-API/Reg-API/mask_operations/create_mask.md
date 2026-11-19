@@ -42,11 +42,11 @@ mask_reg的总位宽为256 bit，其粒度由dtype参数决定；每个数据元
 3. **条件选择**：通过vf.eq、vf.gt等比较算子生成掩码，再用vf.select按掩码选择元素。
 4. **交替处理**：用H、Q、M3、M4等模式对寄存器中的部分元素进行筛选运算。
 
-以b8数据类型为例，不同MaskPattern模式下CreateMask接口的元素选取如下图所示：
+以b8数据类型为例，不同MaskPattern模式下create_mask接口的元素选取如下图所示：
 
-**图1**b8数据类型下CreateMask接口不同MaskPattern模式下元素选取
+**图1**b8数据类型下create_mask接口不同MaskPattern模式下元素选取
 
-![b8数据类型下CreateMask接口不同MaskPattern模式下元素选取](../../../figures/create_mask_b8_pattern_selection.svg)
+![b8数据类型下create_mask接口不同MaskPattern模式下元素选取](../../../figures/create_mask_b8_pattern_selection.svg)
 
 ### astype精度转换中的mask_reg
 

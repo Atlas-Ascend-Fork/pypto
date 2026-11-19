@@ -36,8 +36,8 @@ def chunk_gated_delta_rule():
 
 ### PyPTO Config配置调优
 
-PyPTO中提供了各种Config配置，以便用户针对其特定的融合算子实现，进行深入的自定义优化，如Pass合切图策略调整、Runtime任务调度策略等。其中，与GDN算子性能调优相关性最强的配置为runtime_options中的stitch_function_max_num，其中动态stitch是PyPTO的MPMD架构的关键技术，通过由AICPU基于运行时输入动态决定执行的控制流，并动态计算依赖，将任务stitch组合下发。stitch_function_max_num配置代表machine运行时ctrlflow aicpu里控制首个提交给schedule aicpu处理的device task的计算任务量，通过此值来控制device machine启动头开销的大小，让ctrlflow aicpu和schedule aicpu计算尽快overlap起来。
-以下展示泳道图，均为B=2，T=8192，H=4，D=128的数据场景。如图2和图3所示，分别为stitch_function_max_num设置为32的泳道图和stitch_function_max_num设置为128的泳道图，其设置大小越大，stitch设置较大后任务可以充分并行，性能更好，但workspace也会增加，需要权衡。
+PyPTO中提供了各种Config配置，以便用户针对其特定的融合算子实现，进行深入的自定义优化，如Pass合切图策略调整、Runtime任务调度策略等。其中，与GDN算子性能调优相关性最强的配置为runtime_options中的stitch_function_max_num，其中动态stitch是PyPTO的MPMD架构的关键技术，通过AI CPU基于运行时输入动态决定执行的控制流，并动态计算依赖，将任务stitch组合下发。stitch_function_max_num配置代表machine运行时ctrlflow aicpu里控制首个提交给schedule aicpu处理的device task的计算任务量，通过此值来控制device machine启动头开销的大小，让ctrlflow aicpu和schedule aicpu计算尽快overlap起来。
+以下展示泳道图，均为B=2，T=8192，H=4，D=128的数据场景。如图2和图3所示，分别为stitch_function_max_num设置为32的泳道图和stitch_function_max_num设置为128的泳道图，其设置大小越大，任务可以充分并行，性能更好，但workspace也会增加，需要权衡。
 
 图2 stitch_function_max_num设置为32的泳道图
 ![图片说明](../../../figures/tensor/gdr_3.1.png)
@@ -47,7 +47,7 @@ PyPTO中提供了各种Config配置，以便用户针对其特定的融合算子
 
 ### 昇腾亲和的TileShape大小调优
 
-在PyPTO中，所有计算都基于Tile（硬件感知的数据块）进行，充分利用硬件的并行计算能力和内存层次结构。 Tile可以存放在AI Core私有缓存（如UB、L1 Buffer）中，从而显著提升数据访问效率。对于每个OP操作，都可以灵活设置其TileShape大小，以优化计算负载均衡、内存带宽利用率，并最大化硬件资源的使用效率，以充分利用UB的容量，贴合昇腾架构特性。基于GPU开发的Triton算子通常将分块大小设置为64，此时参与计算的Tile块shape大小为[64, 128]，当dtype为FP32时，可计算出其数据量大小为32KB，而通常AI处理器的UB为192KB时，合适的Tile块大小选取为16-64KB，将chunksize大小调整为128后，则数据量可增大至64KB，更符合尽量一次搬运较大的数据块的昇腾算子开发策略，大大减少数据搬运带来的性能开销，并充分发挥硬件的并行计算能力。此外，由于GDN算子存在的chunk循环更新算法特性，一次对更大chunksize的数据进行处理，可减少其串行循环更新次数，缓解在PyPTO现有MPMD调度策略下造成的串行计算逻辑难以充分并行用满核的性能问题。
+在PyPTO中，所有计算都基于Tile（硬件感知的数据块）进行，充分利用硬件的并行计算能力和内存层次结构。 Tile可以存放在AI Core私有缓存（如UB、L1 Buffer）中，从而显著提升数据访问效率。对于每个OP操作，都可以灵活设置其TileShape大小，以优化计算负载均衡、内存带宽利用率，并最大化硬件资源的使用效率，以充分利用UB的容量，贴合昇腾架构特性。基于GPU开发的Triton算子通常将分块大小设置为64，此时参与计算的Tile块shape大小为[64, 128]，当dtype为FP32时，可计算出其数据量大小为32KB，而通常AI处理器的UB为192KB时，合适的Tile块大小选取为16-64KB，将chunk_size大小调整为128后，则数据量可增大至64KB，更符合尽量一次搬运较大的数据块的昇腾算子开发策略，大大减少数据搬运带来的性能开销，并充分发挥硬件的并行计算能力。此外，由于GDN算子存在的chunk循环更新算法特性，一次对更大chunksize的数据进行处理，可减少其串行循环更新次数，缓解在PyPTO现有MPMD调度策略下造成的串行计算逻辑难以充分并行用满核的性能问题。
 如图4所示，与图3相比，为chunk_size从64优化为128，TileShape从[64, 128]优化为[128, 128]的泳道图，Tile块数据大小更亲和AI处理器硬件存储大小，可减少Loop循环次数，减少root function个数以及task任务数量，在stitch绑定下发的任务不变的前提下（stitch_function_max_num=128），减少了stitch数量，本质上是减少搬运开销，提升计算效率。
 
 图4 chunk_size为128，TileShape为[128, 128]的泳道图
@@ -72,7 +72,7 @@ for i in range(2, row_num, 1):
 
 #### 合切图优化
 
-PyPTO的计算图由Tensor数据节点与Operation节点组成，经过逐层Pass优化，将用户前端定义的Tensor Graph计算图最终转换为Execution Graph执行图，并最终翻译为CCE可执行代码，Execute Graph整合计算子图信息，包含了各自的依赖关系和调度信息，定义了Tile在AIC/AIV的具体Operation组合，不同的合切图优化方式对性能的影响极大，通常Pass会提供泛化性的优化策略，帮助用户获取到较好的开销性能，但如果需要对Tile块的具体计算流进行控制，则需要借助计算图的DFX能力，可视化的检查其是否符合预期，如图5所示，为B=1，T=128，H=1下初始开箱的泳道图，发现其存在较多的耗时极短的碎块以及异常的耗时较长的执行图，通过对计算图计算流的检查对比后，发现PyPTO框架本身存在一定的合切图功能问题，导致如求逆模块未正确的按前端表达进行合切图，后续与框架开发人员交流讨论后，便可将问题解决，如图6所示，为B=1，T=128，H=1下合切图手动调整后的泳道图，此时的计算逻辑图前端表达高度一致，如求逆模块为8个16\*16Tile块的并行逐行更新的同构子图。PyPTO向用户提供了一定程度的可视化DFX能力，其能够帮助用户更简单直观的了解到具体的运行态计算流，进而发现问题、解决问题。
+PyPTO的计算图由Tensor数据节点与Operation节点组成，经过逐层Pass优化，将用户前端定义的Tensor Graph计算图最终转换为Execution Graph执行图，并最终翻译为CCE可执行代码，Execution Graph整合计算子图信息，包含了各自的依赖关系和调度信息，定义了Tile在AIC/AIV的具体Operation组合，不同的合切图优化方式对性能的影响极大，通常Pass会提供泛化性的优化策略，帮助用户获取到较好的开销性能，但如果需要对Tile块的具体计算流进行控制，则需要借助计算图的DFX能力，可视化的检查其是否符合预期，如图5所示，为B=1，T=128，H=1下初始开箱的泳道图，发现其存在较多的耗时极短的碎块以及异常的耗时较长的执行图，通过对计算图计算流的检查对比后，发现PyPTO框架本身存在一定的合切图功能问题，导致如求逆模块未正确的按前端表达进行合切图，后续与框架开发人员交流讨论后，便可将问题解决，如图6所示，为B=1，T=128，H=1下合切图手动调整后的泳道图，此时的计算逻辑图前端表达高度一致，如求逆模块为8个16\*16Tile块的并行逐行更新的同构子图。PyPTO向用户提供了一定程度的可视化DFX能力，其能够帮助用户更简单直观的了解到具体的运行态计算流，进而发现问题、解决问题。
 
 图5 B=1，T=128，H=1下初始开箱的泳道图
 ![图片说明](../../../figures/tensor/gdr_3.4.png)

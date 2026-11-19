@@ -49,7 +49,7 @@ from_torch(tensor: torch.Tensor, name: str="", *, dynamic_axis: Optional[List[in
 ## 约束说明
 
 - 入参tensor类型必须为torch.Tensor或其子类。
-- 入参tensor在指定内存格式的顺序下是连续的（tensor.is\_contiguous\(\) == True）。
+- 入参tensor在指定内存格式下是连续的（tensor.is\_contiguous\(\) == True）。
 - 入参tensor支持如下数据类型（dtype）：
     - torch.float16
     - torch.bfloat16

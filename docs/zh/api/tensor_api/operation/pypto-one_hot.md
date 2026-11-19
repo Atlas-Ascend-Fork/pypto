@@ -35,7 +35,7 @@ one_hot(input: Tensor, num_classes: int) -> Tensor
 
 | 参数名      | 输入/输出 | 说明                                                                 |
 |-------------|-----------|----------------------------------------------------------------------|
-| input       | 输入      | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_INT8，DT_INT16，DT_INT32，DT_INT64。<br>支持维度1-3维<br>内部元素需为非负数。<br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
+| input       | 输入      | 源操作数。<br>支持的类型为：Tensor。<br>Tensor支持的数据类型为：DT_INT8，DT_INT16，DT_INT32，DT_INT64。<br>支持1-3维<br>内部元素需为非负数。<br>不支持空Tensor；Shape Size不大于2147483647（即INT32_MAX）。 |
 | num_classes | 输入      | one-hot编码长度。<br>需大于input中最大元素。 |
 
 ## 返回值说明

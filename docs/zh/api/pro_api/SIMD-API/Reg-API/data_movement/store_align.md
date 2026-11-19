@@ -417,7 +417,7 @@ if __name__ == "__main__":
     print("PASSED")
 ```
 
-### Post-update连续存储示例
+### PostUpdate连续存储示例
 
 使用post_update=True在循环中连续存储，目标地址自动累进，无需手动计算偏移：
 

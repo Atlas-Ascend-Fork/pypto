@@ -65,7 +65,6 @@ layout不指定时，按内存空间自动取默认值：
 | L0A_MX Buffer | ZZ |
 | L0B_MX Buffer | NN |
 
-
 ### 普通紧凑模式的数据排布
 
 ```text

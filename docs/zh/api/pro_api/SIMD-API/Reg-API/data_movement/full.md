@@ -14,7 +14,7 @@
 
 ## 功能说明
 
-将标量值或源reg_tensor的src最低/最高位元素广播到目标reg_tensor的dst各个元素。支持两种模式：
+将标量值或src的最低/最高位元素广播到目标reg_tensor的dst各元素。支持两种模式：
 
 - **Scalar模式**：将标量值广播到寄存器各元素。
 - **Tensor模式**：将源reg_tensor的最低位或最高位元素广播到目标reg_tensor各元素。Tensor模式必须带掩码。

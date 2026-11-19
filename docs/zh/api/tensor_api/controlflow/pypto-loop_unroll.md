@@ -40,7 +40,7 @@ loop_unroll(start: SymInt = 0, stop: SymInt, step: SymInt = 1, *, name: str = No
 
 ## 返回值说明
 
-返回一个迭代器，每次迭代产生一个元组（idx, unroll\_factor\)，idx表示当前循环的索引值，unroll\_factor标识当前选择的展开方式。
+返回一个迭代器，每次迭代产生一个元组（idx, unroll\_factor\)，idx表示当前循环的索引值，unroll\_factor表示当前选择的展开方式。
 
 ## 约束说明
 

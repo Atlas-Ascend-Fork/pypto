@@ -14,7 +14,7 @@
 
 ## 功能说明
 
-BinType定义了[vf.histograms](../sorting_and_indexing/histograms.md)直方图统计的索引区间范围，用于指定统计的是源寄存器中哪一部分索引区间的元素分布。
+BinType定义了[vf.histograms](../sorting_and_indexing/histograms.md)直方图统计的索引区间，用于指定统计的是源寄存器中哪一部分索引区间的元素分布。
 
 ## 原型定义
 

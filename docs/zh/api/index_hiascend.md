@@ -177,6 +177,7 @@
     - [pypto.pow](tensor_api/operation/pypto-pow.md)
     - [pypto.prelu](tensor_api/operation/pypto-prelu.md)
     - [pypto.prod](tensor_api/operation/pypto-prod.md)
+    - [pypto.quant_hif4](tensor_api/operation/pypto-quant_hif4.md)
     - [pypto.quant_mx](tensor_api/operation/pypto-quant_mx.md)
     - [pypto.quantize](tensor_api/operation/pypto-quantize.md)
     - [pypto.reciprocal](tensor_api/operation/pypto-reciprocal.md)

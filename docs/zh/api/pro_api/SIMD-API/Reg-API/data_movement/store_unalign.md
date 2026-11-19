@@ -36,7 +36,7 @@
 
 如下图所示，从源reg_tensor（256B）读取数据，并将其搬运至目标Tile地址（dstAddr ~ 304）。处理流程如下：
 
-① 调用**store_unalign**，此时ureg内有有效数据，系统将ureg中Tile地址32 ~ dstAddr对应的数据与源reg_tensor中Tile地址dstAddr ~ 288对应的数据进行拼接，结果写入Tile地址dstAddr。此外，源reg_tensor中对应Tile地址288 ~ 304的数据会被写入ureg。
+① 调用**store_unalign**，此时ureg内存在有效数据，系统将ureg中Tile地址32 ~ dstAddr对应的数据与源reg_tensor中Tile地址dstAddr ~ 288对应的数据进行拼接，结果写入Tile地址dstAddr。此外，源reg_tensor中对应Tile地址288 ~ 304的数据会被写入ureg。
 
 ② 调用**store_unalign_post**进行非对齐搬出后处理。将ureg中缓存的数据写入Tile地址288 ~ 304。
 

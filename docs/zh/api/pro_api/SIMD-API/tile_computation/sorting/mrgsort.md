@@ -32,7 +32,7 @@ pypto_pro.language.mrgsort(dst: Tile, src: Tile, *, block_len: int) -> None
 |---|---|---|
 | dst | 输出 | UB、RowMajor、单行Tile；dtype、物理shape和valid_shape须与src一致。 |
 | src | 输入 | UB、RowMajor、单行Tile，dtype为DT_FP16或DT_FP32；内容须为8字节value-index记录，每个待归并块内部已按value降序排列。 |
-| block_len | 输入 | 编译期正整数，单位为Tile存储元素而不是value-index记录数。每条value-index记录固定占8字节，因此block_len * sizeof(dtype)必须是8的倍数：FP32场景block_len须为2的倍数，FP16场景须为4的倍数。每块记录数block_len * sizeof(dtype) / 8须位于[1, 4095]。例如block_len=64分别表示每块32条FP32记录或16条FP16记录。 |
+| block_len | 输入 | 编译期正整数，单位为Tile存储元素而不是value-index记录数。每条value-index记录固定占8字节，因此`block_len * sizeof(dtype)`必须是8的倍数：FP32场景block_len须为2的倍数，FP16场景须为4的倍数。每块记录数`block_len * sizeof(dtype) / 8`须位于[1, 4095]。例如block_len=64分别表示每块32条FP32记录或16条FP16记录。 |
 
 ## 返回值说明
 
@@ -41,7 +41,7 @@ pypto_pro.language.mrgsort(dst: Tile, src: Tile, *, block_len: int) -> None
 ## 约束说明
 
 - src.valid_shape[1]必须是4 * block_len的整数倍。每连续4个块构成一组四路归并，多个组彼此独立。
-- repeatTimes = src.valid_shape[1] / (4 * block_len)必须位于[1,255]。
+- `repeatTimes = src.valid_shape[1] / (4 * block_len)`必须位于[1,255]。
 - src中每个输入块必须预先按value降序排列。通常先用[sort32](sort32.md)生成有序记录，再逐级增大block_len调用mrgsort。
 - src和dst须使用互不重叠且按32字节对齐的UB区域；本接口不保证原地归并结果。
 - 结果按value降序排列；value相同时，index较小的记录排在前面。NaN的相对顺序由底层浮点比较行为决定。

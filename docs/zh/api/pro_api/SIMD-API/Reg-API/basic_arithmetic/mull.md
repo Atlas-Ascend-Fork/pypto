@@ -20,7 +20,7 @@ $$dst\_lo_i = (src0_i \times src1_i) \bmod 2^{bit}$$
 
 $$dst\_hi_i = \lfloor (src0_i \times src1_i) / 2^{bit} \rfloor$$
 
-其中，bit表示操作数的位宽bit数。
+其中，bit表示操作数的位宽。
 
 **图1** vf.mull功能说明
 
@@ -36,7 +36,7 @@ mull(src0, src1, preg, /) -> (dst_lo, dst_hi)
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| src0 | 输入 | 源操作数0，[reg_tensor](../basic_data_structures/reg_tensor.md)，源操作数src与目的操作数dst的数据类型保持一致。支持的数据类型为：DT_INT32、DT_UINT32。 |
+| src0 | 输入 | 源操作数0，[reg_tensor](../basic_data_structures/reg_tensor.md)，源操作数src0与目的操作数dst的数据类型保持一致。支持的数据类型为：DT_INT32、DT_UINT32。 |
 | src1 | 输入 | 源操作数1，[reg_tensor](../basic_data_structures/reg_tensor.md)，支持的数据类型和src0中的说明一致。 |
 | preg | 输入 | [mask_reg](../basic_data_structures/mask_reg.md)。 |
 

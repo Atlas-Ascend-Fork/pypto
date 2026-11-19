@@ -13,6 +13,7 @@ DataType
 DcciDst
 FillPadMode
 Layout
+MemDsb
 MemorySpace
 PipeType
 Ptr

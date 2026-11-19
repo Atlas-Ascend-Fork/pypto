@@ -35,7 +35,7 @@ pypto_pro.language.sort32(dst: Tile, src: Tile, idx: Tile, tmp: Optional[Tile]=N
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| dst | 输出 | UB、RowMajor Tile，dtype与src相同且只能为DT_FP16或DT_FP32。若src.valid_shape=[R,C]，则dst.valid_shape须为FP16时的[R,4C]或FP32时的[R,2C]；硬件按完整32元素组写出记录，因此dst物理列数须分别不少于4 * ceil32(C)或2 * ceil32(C)。 |
+| dst | 输出 | UB、RowMajor Tile，dtype与src相同且只能为DT_FP16或DT_FP32。若src.valid_shape=[R,C]，则dst.valid_shape须为FP16时的[R,4C]或FP32时的[R,2C]；硬件按完整32元素组写出记录，因此dst物理列数须分别不少于`4 * ceil32(C)`或`2 * ceil32(C)`。 |
 | src | 输入 | UB、RowMajor Tile，dtype为DT_FP16或DT_FP32；每行按连续32个有效值分组，组与组之间独立排序。 |
 | idx | 输入 | UB、RowMajor、DT_UINT32 Tile；有效列数须至少为C，物理列数须至少为ceil32(C)，尾块中超出C的索引值无需初始化。idx.valid_shape[0]=1时同一行索引广播给src所有数据行；否则有效行数须等于R并逐行使用。 |
 | tmp | 输出 | 可选，UB、RowMajor Tile，dtype须与src一致；仅当C % 32 != 0时必传，最小列数见下方公式。物理地址不得与src、idx或dst重叠。 |

@@ -36,7 +36,7 @@ pypto_pro.language.dynamic_input_ptr(x: Ptr, i: int, /) -> Ptr
 
 | 参数名 | 输入/输出 | 说明                                                                                                              |
 | ------ | --------- | ----------------------------------------------------------------------------------------------------------------- |
-| x      | 输入      | 输入指针，类型为[pypto_pro.language.Ptr](../basic_data_structures/Ptr.md)[dtype]，对多Tensor的打包方式见约束说明。 |
+| x      | 输入      | 输入指针，类型为[pypto_pro.language.Ptr](../basic_data_structures/Ptr.md)，对多Tensor的打包方式见约束说明。 |
 | i      | 输入      | 张量索引，整型常量或运行时整型标量，取值范围[0, N)，N为本次调用传入的Tensor个数。                                 |
 
 ## 约束说明

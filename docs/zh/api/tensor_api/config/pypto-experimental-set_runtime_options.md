@@ -23,7 +23,7 @@
 
 ## 功能说明
 
-该接口用于设置**实验性运行时配置**。它将`tile_fwk_config.json`中运行时里尚未稳定的参数，转变为可编程接口。后续新增的运行时实验特性也通过本接口扩展，不进入`pypto.frontend.jit(runtime_options=...)`的稳定参数表。
+该接口用于设置**实验性运行时配置**。它将`tile_fwk_config.json`中运行时尚未稳定的参数，转变为可编程接口。后续新增的运行时实验特性也通过本接口扩展，不进入`pypto.frontend.jit(runtime_options=...)`的稳定参数表。
 
 ## 函数原型
 
@@ -50,7 +50,7 @@ void：Set方法无返回值。设置成功即生效。
 - 作用范围：不要在`pypto.loop`内或kernel内设置。
 - 生效范围：该配置写在当前进程的全局配置中，不是某个kernel的局部配置。它只在kernel编译时读取一次，并写入该次编译得到的Workspace预算。一次设置后会一直保留，后续发生编译的kernel都会读到同一组值。多轮连跑、或按不同入参分别配置时，用完须调用[pypto.reset_options()](./pypto-reset_options.md)恢复默认值`[0, 0, 0]`，否则下一次编译仍会读到上一轮的值。`pypto.reset_options()`会把全部配置恢复为默认值，不只是本项。
 - 编译缓存：同一kernel再次调用时，若JIT入参没有变化、命中编译缓存，则不会重新编译，也不会重新读取本配置。此时无论调用前是否改了`stitch_function_num_per_pool`，也无论调用后是否执行了`pypto.reset_options()`，实际使用的都是首次编译时写入的池大小。只有入参或shape变化并触发重编译时，新的配置值才会生效。
-- 配置项相对关系：`stitch_function_max_num` 在不考虑内存占用情况下只考虑调优性能情况下使用；`max_workspace_kb`在有内存限制时按内存总量压缩内存时使用，可能降低并行度。精细化配置在上述两项之后使用，按三个子内存池分别设置。开启后`stitch_function_max_num`与`max_workspace_kb`均失效。
+- 配置项相对关系：`stitch_function_max_num` 在不考虑内存占用情况下只考虑调优性能时使用；`max_workspace_kb`在有内存限制时按内存总量压缩内存时使用，可能降低并行度。精细化配置在上述两项之后使用，按三个子内存池分别设置。开启后`stitch_function_max_num`与`max_workspace_kb`均失效。
 
 ## 调用示例
 
@@ -136,7 +136,6 @@ def k_tmp_to_d_emb(
 
 ## 调优方法 <a id="workspace_tuning_method"></a>
 
-
 ### 采集日志
 
 ```bash
@@ -169,7 +168,6 @@ grep -rE "\[Workspace Runtime (Pool|Tuning|Summary|Recommendation)\]" ./wk
 3. 读取`[Workspace Runtime Recommendation]`的`recommendedDepths`，写入本配置。例如`recommendedDepths={rootInner=64, assembleOutcast=1, exclusive=1}`对应`[64, 1, 1]`。
 4. 去掉配置`stitch_function_max_num`后复测：workspace应下降，端到端耗时相对步骤1应基本持平。若性能下降，查看`[Workspace Runtime Summary]`中实际占用已接近容量上限的内存池，将该元素加1后重试。
 5. 覆盖算子实际使用的shape与执行路径，对各样本的`recommendedDepths`逐项取最大值后固化，再关闭INFO日志验收。
-
 
 ### 场景2：优先内存，精细化控制以提升并行度
 

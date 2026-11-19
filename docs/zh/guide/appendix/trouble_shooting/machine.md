@@ -10,7 +10,7 @@ AI Core kernel编译阶段失败。
 
 - CCE源码生成失败（`GEN_AICORE_FILE_FAILED`）。
 - CCE编译命令执行失败（`COMPILE_CCEC_FAILED`）。
-- 连接失败（`LINK_FAILED`），常见于并行编译符号未处理。
+- 链接失败（`LINK_FAILED`），常见于并行编译符号未处理。
 
 **处理方式**
 
@@ -21,7 +21,7 @@ AI Core kernel编译阶段失败。
 
 **错误描述**
 
-Host侧AICore kernel下发失败。
+Host侧AI Core kernel下发失败。
 
 **可能原因**
 
@@ -69,7 +69,7 @@ Host侧映射寄存器地址失败：`Map reg addr fail, maybe others are using 
 
 1. **先原地重试（优先）**
    保持`TILE_FWK_DEVICE_ID`（或`ASCEND_DEVICE_ID`）不变，短间隔重跑同一用例（建议2–3次）。多数F71008会在重试后消失。
-2. **全量表诊断（仍失败再做）**
+2. **全量诊断（仍失败再做）**
    - 执行`npu-smi info`查看整体占用。
    - `fuser -v /dev/davinci<CHIP_ID>`定位占用进程；timeout kill后需确认残留进程已清理干净。
    - HBM占用约3–9GB往往表示仍有存活NPU上下文。
@@ -100,7 +100,7 @@ Host侧stream同步失败：`LaunchAicoreKernel`中`DynamicLaunchSynchronize`返
 
 **错误描述**
 
-Schedule AICPU与AICore握手超时，调度线程无法正常启动。
+Schedule AI CPU与AI Core握手超时，调度线程无法正常启动。
 
 **可能原因**
 

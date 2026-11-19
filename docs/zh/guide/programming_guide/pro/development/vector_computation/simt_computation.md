@@ -67,7 +67,7 @@ max_threads的约束与[SIMT kernel](#定义simt-kernel)一致，实际线程数
 | 二维 | `simt_func[16, 16](...)` | 256 |
 | 三维 | `simt_func[8, 8, 4](...)` | 256 |
 
-各维须为编译期正整数表达式，未给出的分量补1，各维度乘积不超过SIMT VF定义时的max_threads。线程数取32的整数倍可减少最后一个Warp的空闲线程通道，但不是必须条件。
+各维须为编译期正整数表达式，未给出的分量补1，各维度乘积不超过SIMT VF定义时的max_threads。线程数取32的整数倍可减少最后一个Warp的空闲线程通道，但不是必需条件。
 
 每个执行到调用点的Vector核启动一个Thread Block；Grid由实际生效的Vector核数决定，仅使用X维，Y、Z维均为1，无需在SIMT VF调用点单独配置grid。
 

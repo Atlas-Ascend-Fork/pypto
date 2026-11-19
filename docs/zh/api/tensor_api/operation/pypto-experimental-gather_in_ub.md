@@ -25,7 +25,7 @@
 
 该接口为定制接口，约束较多。不保证稳定性。
 
-该算子支撑稀疏注意力机制，能力为将选中的token的kv cache从GM（Global Memory）加载到UB（Unified Buffer）中，支持Page Attention。
+该算子支持稀疏注意力机制，能力为将选中的token的kv cache从GM（Global Memory）加载到UB（Unified Buffer）中，支持Page Attention。
 
 ## 函数原型
 

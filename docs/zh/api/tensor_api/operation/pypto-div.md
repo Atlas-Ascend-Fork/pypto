@@ -50,7 +50,7 @@ div(input: Tensor, other: Union[Tensor, float, int], precision_type: PrecisionTy
 
 ## 约束说明
 
-- input和other都为Tensor时，数据类型应该相同；input为整型类型时，other暂不支持浮点标量。
+- input和other都为Tensor时，数据类型应该相同；input为整型时，other暂不支持浮点标量。
 - Tensor数据类型说明：
    <!-- npu="950" id7 -->
    - Ascend 950PR&950DT系列产品：DT_FP16，DT_FP32，DT_BF16，DT_INT16，DT_INT32，DT_INT64。

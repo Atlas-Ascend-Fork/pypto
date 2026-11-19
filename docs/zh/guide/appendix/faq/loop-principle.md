@@ -47,9 +47,9 @@ def loop_unroll(start, end, step=1, name=None, idx_name=None,
 
    原则上如果可以一次处理多个`i`，使用`loop_unroll`会更高效；如果一次只能处理1个`i`，则需要使用`loop`。
 
-5. `submit_before_loop`：表示是否在循环开始前提交任务，默认值为`False`。如果设置为`True`，则循环前的任务会先提交到调度队列中，等待后续任务完成后再开始执行。**过多的设置`submit_before_loop`会增加调度开销**，建议仅在必要时设置为`True`。
+5. `submit_before_loop`：表示是否在循环开始前提交任务，默认值为`False`。如果设置为`True`，则循环前的任务会先提交到调度队列中，等待后续任务完成后再开始执行。**过多地设置`submit_before_loop`会增加调度开销**，建议仅在必要时设置为`True`。
 
-6. `unroll_list`对`pypto.cond`的影响：通常一个循环中有一个`pypto.cond`，会产生两个分支。当unroll次数为4次时，会产生2⁴ = 16个路径分支，通常每个分支都需要单独编译，因此会大量增加编译时间和编译出的代码量。为了支持关键算子FA的编译优化，提供了两个特殊的函数`pypto.is_loop_begin()`和`pypto.is_loop_end()`用于优化条件分支。
+6. `unroll_list`对`pypto.cond`的影响：通常一个循环中有一个`pypto.cond`，会产生两个分支。当unroll次数为4时，会产生2⁴ = 16个路径分支，通常每个分支都需要单独编译，因此会大量增加编译时间和编译出的代码量。为了支持关键算子FA的编译优化，提供了两个特殊的函数`pypto.is_loop_begin()`和`pypto.is_loop_end()`用于优化条件分支。
 
 7. 考虑到对外层loop进行`loop_unroll`不能提升loop body的大小，当前仅支持最内侧循环进行unroll。
 

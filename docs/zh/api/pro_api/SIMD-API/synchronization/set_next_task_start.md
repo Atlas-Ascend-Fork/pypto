@@ -83,6 +83,6 @@ def early_start_set_kernel(
             pl.add(tile_out, tile_x, tile_x)
             pl.store(out, tile_out, [row, 0])
 
-        # 最后一次数据搬运算完之后调用，后续指令可与后序子核并行。
+        # 最后一次数据搬运完之后调用，后续指令可与后序子核并行。
         pl.system.set_next_task_start(force=True)
 ```

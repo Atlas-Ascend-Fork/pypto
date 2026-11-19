@@ -10,6 +10,7 @@ bar_mte2
 bar_mte3
 bar_fix
 bar_all
+dsb
 mutex_lock
 mutex_unlock
 set_cross_core

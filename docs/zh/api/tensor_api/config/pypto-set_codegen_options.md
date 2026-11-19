@@ -40,6 +40,7 @@ Kirin专用函数原型：
 set_codegen_options(*,
                     soc_version: str = None) -> None
 ```
+
 <!-- end id14 -->
 
 ## 参数说明
@@ -104,7 +105,8 @@ pypto.set_codegen_options(enable_pmu_trace=True)
 <!-- npu="x90,9030,9050" id16 -->
 Kirin专用调用示例：
 
-```
+```python
 pypto.set_codegen_options(soc_version="Kirin9030")
 ```
+
 <!-- end id16 -->

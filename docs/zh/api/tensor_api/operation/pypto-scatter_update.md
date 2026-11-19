@@ -32,7 +32,7 @@ $$
 功能2：原地操作，将2维src根据2维index更新到2维input上，计算公式如下（其中s是index第二维的大小，即index.shape[1]）：
 
 $$
-input[[\text{index}[i][j]][\dots]] = src[i*s + j][\dots]
+input[\text{index}[i][j]][\dots] = src[i*s + j][\dots]
 $$
 
 ## 函数原型

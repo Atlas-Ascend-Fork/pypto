@@ -33,7 +33,6 @@
 **图2**  amax按最后一个维度计算示例
 ![](../figures/amax_2.svg)
 
-
 ## 函数原型
 
 ```python

@@ -35,7 +35,7 @@ set_vec_tile_shapes(*args: int) -> None
 
 | 参数名  | 输入/输出 | 说明                  |
 |---------|-----------|-----------------------|
-| *args   | 输入      | 每个维度的TileShape大小，最多不超过4个inputs |
+| *args   | 输入      | 每个维度的TileShape大小，不超过4个inputs |
 
 ## 返回值说明
 

@@ -2,7 +2,7 @@
 
 ## 任务与目标
 
-在DeepSeekV3.2-Exp网络中，引入了Indexer模块。该模块的前半段计算，称之为IndexerProlog计算，其量化版本的计算流如下：
+在DeepSeek-V3.2-Exp网络中，引入了Indexer模块。该模块的前半段计算，称之为IndexerProlog计算，其量化版本的计算流如下：
 
 ![](../../../figures/tensor/docs_models_deepseek-v3-2-exp_figures_IndexerPrologQuant.png)
 

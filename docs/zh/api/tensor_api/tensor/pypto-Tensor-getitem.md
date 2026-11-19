@@ -105,7 +105,7 @@ __getitem__(self, key, *, valid_shape: Optional[List[Union[int, SymbolicScalar]]
 
 3. 缺省索引
 
-   索引个数小于Tensor维度数时，自动为缺失的维度补全全切片（:）。
+   索引个数小于Tensor维度数时，自动为缺失的维度补全切片（:）。
 
    ```python
    a = pypto.tensor([4, 4], pypto.DT_FP32)

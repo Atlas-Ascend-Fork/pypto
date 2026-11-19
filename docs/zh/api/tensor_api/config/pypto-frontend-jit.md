@@ -64,7 +64,7 @@ def kernel_function(...):
 
 | 参数名                         | 说明                                                         |
 | ------------------------------ | ------------------------------------------------------------ |
-| device_sched_mode               | 含义：设置计算子图的调度模式 <br> 说明：0：代表默认调度模式，ready子图放入共享队列，各个调度线程抢占子图进行发送，子图获取发送遵循先入先出； <br> 1：代表L2cache亲和调度模式，选择最新依赖ready的子图优先下发，达到复用L2cache的效果； <br> 2：公平调度模式，aicpu上多线程调度管理多个AI Core的时候，下发子图会尽量控制在多线程间的公平性，此模式会带来额外的调度管理开销； <br> 3：代表同时开启L2cache亲和调度模式以及公平调度模式； <br> 类型：int <br> 取值范围：0或1或2或3 <br> 默认值：0 <br> 影响pass范围：NA |
+| device_sched_mode               | 含义：设置计算子图的调度模式 <br> 说明：0：代表默认调度模式，ready子图放入共享队列，各个调度线程抢占子图进行发送，子图获取发送遵循先入先出； <br> 1：代表L2 Cache亲和调度模式，选择最新依赖ready的子图优先下发，达到复用L2 Cache的效果； <br> 2：公平调度模式，aicpu上多线程调度管理多个AI Core的时候，下发子图会尽量控制在多线程间的公平性，此模式会带来额外的调度管理开销； <br> 3：代表同时开启L2cache亲和调度模式以及公平调度模式； <br> 类型：int <br> 取值范围：0或1或2或3 <br> 默认值：0 <br> 影响pass范围：NA |
 | stitch_function_max_num        | 含义：该配置用来指定运行时一次stitch构建的loop迭代数量，从而控制算子运行时一次调度执行的子图数量。数值越大，并行度越高。 <br> 说明：旨在用户不感知内存使用上限的情况下，通过扩大stitch构建的loop数量提升并行度，减少stitch构建和调度的交互次数。使用场景：单算子开发、workspace没有明确限额。并行度提高时，AI Core使用率更高，但运行时临时内存占用会随之上升；配置过大时stitch构建开销增加，可能会造成调度等待stitch构建的情况，端到端性能不一定更好。未设置内存上限（`max_workspace_kb=0`）时，并行度与内存预留均由本配置决定；一旦设置了有效的`max_workspace_kb`，并行度及内存由`max_workspace_kb`控制。<br> 并行度已满足预期、需要再降低内存时，请使用[pypto.experimental.set_runtime_options](./pypto-experimental-set_runtime_options.md)。 <br> 类型：int <br> 取值范围:1 ~ 1024 <br> 默认值：128 <br> 影响pass范围：NA |
 | max_workspace_kb               | 含义：为算子运行时的workspace内存占用设置总量上限，单位为KB。 <br> 说明：旨在算子执行存在workspace内存限制时，按总量上限压缩运行时workspace内存及并行度。`0`表示关闭。开启后取值必须严格大于当前算子可运行的最小workspace，否则会编译报错提示。使用场景：整网部署、NPU内存不足或申请失败。该配置生效后可能使临时内存不足以支撑目标并行度，stitch构建的loop数量变少，性能下降。本配置有效时，内存预留及并行度不再按`stitch_function_max_num`计算。配置过大可能增加占用甚至OOM；与`device_sched_parallelism`同时增大时，内存通常按并行度倍增。<br>若需提升并行度，请使用[pypto.experimental.set_runtime_options](./pypto-experimental-set_runtime_options.md)。 <br> 类型：int <br> 取值范围：0 ~ 2147483647 <br> 默认值：0 <br> 影响pass范围：NA |
 | run_mode                       | 含义：设置计算子图的执行设备 <br> 说明：<br> 0：表示在NPU上执行 <br> 1：表示在模拟器上执行 <br> 类型：int或`pypto.RunMode`枚举 <br> 取值范围：0或者1 <br> 默认值：根据是否设置CANN的环境变量来决定。如果设置了环境变量，则在NPU上执行；否则在模拟器上执行 <br> 影响pass范围：NA |
@@ -72,7 +72,6 @@ def kernel_function(...):
 | ready_on_host_tensors           | 含义：标记在Host端准备好的Kernel入口函数的输入tensor名称列表。<br> 说明：如果算子的计算逻辑对某输入tensor有值依赖(即获取了tensor的值)，且此tensor的device数据在Host端已提前准备好，那么cpu的控制流可以提前发射或者在Host侧执行以提升性能。该配置项有两种输入形式：如果在Host端无法获取值依赖tensor的值，可以通过["tensor1", "tensor2", ...]配置值依赖算子名称实现控制流的提前发射；如果在Host端能够获取值依赖tensor的值，可以将值依赖tensor对应的cpu tensor作为算子入参，并通过[["tensor1_npu", "tensor1_cpu"], ["tensor2_npu", "tensor2_cpu"], ...]来配置npu tensor与cpu tensor的配对关系，来让框架在Host端进行控制流展开以提升性能。<br> 类型：list of string 或者 list of list of strings <br> 默认值：空列表 <br> 影响pass范围：NA |
 | device_sched_parallelism        | 含义：当算子中pypto.loop设置了可并行标记(parallel=True)时，此配置项用于指定pypto.loop在调度执行时的并行度 <br> 说明：使用此配置项前，请确保标记为可并行的pypto.loop的各个迭代之间不存在任何依赖关系，满足并行调度的条件。当并行度大于1时，该pypto.loop的多个迭代任务将被并发调度执行。需要注意的是，并行度数值越大，所需的workspace内存使用量也越大，通常与设置的并行度成倍数关系。<br> 类型：int <br> 取值范围:1 ~ 8 <br> 默认值： 1 <br> 影响pass范围：NA |
 | launch_sched_aicpu_num        | 含义：指定启动的Schedule AICPU线程数量 <br> 说明：当指定的数量大于硬件最大可用aicpu数量或者小于等于0时，将启用硬件自动计算值。不同型号最大可用aicpu数量有所差异，详细请参见[约束说明](#约束说明)。<br> 类型：int <br> 取值范围:1 ~ 7 <br> 默认值： 7 <br> 影响pass范围：NA |
-
 
 ## 返回值说明
 
@@ -83,7 +82,7 @@ def kernel_function(...):
 - 张量参数，必须使用类型注解指定为`pypto.Tensor`类型
 - 动态维度必须使用`pypto.DYNAMIC`或`pypto.DYN`在参数注解中标记，未标记时，默认按静态维度处理
 - tensor format用format标记，format支持非显式标记(参考示例1中的a)，默认为pypto.TileOpFormat.TILEOP_ND；
-   format显式标记时，性能更优，要求传入的torch tensor与pypto.Tensor声明的format一致，能获得更优的性能；
+   format显式标记时，要求传入的torch tensor与pypto.Tensor声明的format一致，能获得更优的性能；
 - 张量参数在前，非张量参数（如`scalar`、`tiling`）在后
 - 非张量参数支持keyword传参、位置参数、使用默认值
 - 配置项使用限制说明：
