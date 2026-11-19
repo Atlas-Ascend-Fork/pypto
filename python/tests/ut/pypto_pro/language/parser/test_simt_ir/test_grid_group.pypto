@@ -5,7 +5,7 @@ program #entry() {
         simt.grid_group.sync(%grid_0);
         return %size_0;
     }
-    function kernel incast(tensor<12, uint64_t, tensor_view<, , ND, %out_ptr>> %out_0) outcast() #entry(false) #type(SimtKernel) {
+    function kernel incast(tensor<12, uint64_t, tensor_view<-2, ND, %out_ptr>> %out_0) outcast() #entry(false) #type(SimtKernel) {
         simt_group<3> %grid_0 = simt.group.this_grid();
         bool %_expr_tmp_0_0 = simt.grid_group.is_valid(%grid_0);
         block.setval(%out_0, tuple(0), %_expr_tmp_0_0);

@@ -4,7 +4,7 @@ program #entry() {
         simt.grid_group.sync(%grid_0);
         return;
     }
-    function kernel incast(tensor<39 x 32, uint64_t, tensor_view<, , ND, %out_ptr>> %out_0, tensor<1, uint32_t, tensor_view<, , ND, %widths_ptr>> %widths_0, uint32_t %width_0) outcast() #entry(false) #type(SimtKernel) {
+    function kernel incast(tensor<39 x 32, uint64_t, tensor_view<-2, ND, %out_ptr>> %out_0, tensor<1, uint32_t, tensor_view<-2, ND, %widths_ptr>> %widths_0, uint32_t %width_0) outcast() #entry(false) #type(SimtKernel) {
         simt_group<0> %block_0 = simt.group.this_thread_block();
         simt_group<1> %tile_0 = simt.group.tiled_partition(%block_0, 8);
         simt_group<1> %child_0 = simt.group.tiled_partition(%tile_0, 4);
