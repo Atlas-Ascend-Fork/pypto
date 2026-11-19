@@ -1124,6 +1124,28 @@ TEST_F(TorchAdaptorTest, QuantMXFp32)
     }
 }
 
+TEST_F(TorchAdaptorTest, QuantMXFp32PerformanceMode)
+{
+    constexpr int64_t rows = 2;
+    constexpr int64_t cols = 256;
+    constexpr int64_t groupsPerRow = cols / 32;
+    constexpr int64_t groups = rows * groupsPerRow;
+    std::vector<float> inputData(cols, 1.0f);
+    inputData.resize(rows * cols, 2.0f);
+    std::vector<uint8_t> expData(groupsPerRow, 119);
+    expData.resize(groups, 120);
+
+    auto input = makeTensorData(DT_FP32, {rows, cols}, inputData);
+    auto out = makeTensorData(DT_FP8E4M3, {rows, cols}, static_cast<uint8_t>(0));
+    auto exp = makeTensorData(DT_FP8E8M0, {groups}, static_cast<uint8_t>(0));
+    auto max = makeTensorData(DT_FP32, {groups}, 0.0f);
+    auto scaling = makeTensorData(DT_FP32, {2 * groups}, 0.0f);
+    auto expGolden = makeTensorData(DT_FP8E8M0, {groups}, expData);
+
+    calc::QuantMX(out, exp, max, scaling, input, true);
+    ASSERT_ALLCLOSE(exp, expGolden);
+}
+
 TEST_F(TorchAdaptorTest, QuantMXEmptyTail)
 {
     auto input = makeTensorData(DT_FP32, {2, 32}, 1.0f)->View({2, 0}, {0, 0});

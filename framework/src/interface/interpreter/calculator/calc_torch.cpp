@@ -3891,12 +3891,12 @@ static void StoreQuantMXValue(uint8_t* quantPtr, int64_t row, int64_t cols, int6
 }
 
 static void FillQuantMXGroup(const float* inputPtr, uint8_t* quantPtr, uint8_t* expPtr, float* scalingPtr,
-                             float* maxPtr, int64_t row, int64_t group, int64_t cols, int64_t expCols,
-                             int64_t groupCols, int64_t quantCols, const QuantMXContext& ctx)
+                             float* maxPtr, int64_t row, int64_t group, int64_t cols, int64_t groupCols,
+                             int64_t quantCols, const QuantMXContext& ctx)
 {
     const float maxAbsValue = ComputeQuantMXGroupMax(inputPtr, row, cols, group, ctx);
     const auto exponentAndScaling = ComputeQuantMXExponentAndScaling(maxAbsValue, ctx);
-    expPtr[row * expCols + group] = exponentAndScaling.first;
+    expPtr[row * groupCols + group] = exponentAndScaling.first;
     maxPtr[row * groupCols + group] = maxAbsValue;
     StoreQuantMXScaling(scalingPtr, row, groupCols, group, exponentAndScaling.second, ctx);
     for (int64_t inner = 0; inner < MX_QUANT_TILE_BLOCK; ++inner) {
@@ -3909,14 +3909,14 @@ static void FillQuantMXGroup(const float* inputPtr, uint8_t* quantPtr, uint8_t* 
 }
 
 static void FillQuantMXRows(const float* inputPtr, uint8_t* quantPtr, uint8_t* expPtr, float* scalingPtr, float* maxPtr,
-                            int64_t rows, int64_t cols, int64_t expCols, int64_t groupCols, int64_t quantCols,
-                            DataType srcDtype, DataType quantDtype, bool performanceMode, int64_t mode)
+                            int64_t rows, int64_t cols, int64_t groupCols, int64_t quantCols, DataType srcDtype,
+                            DataType quantDtype, bool performanceMode, int64_t mode)
 {
     const QuantMXContext ctx = MakeQuantMXContext(srcDtype, quantDtype, performanceMode, mode);
     for (int64_t row = 0; row < rows; ++row) {
         for (int64_t group = 0; group < groupCols; ++group) {
-            FillQuantMXGroup(inputPtr, quantPtr, expPtr, scalingPtr, maxPtr, row, group, cols, expCols, groupCols,
-                             quantCols, ctx);
+            FillQuantMXGroup(inputPtr, quantPtr, expPtr, scalingPtr, maxPtr, row, group, cols, groupCols, quantCols,
+                             ctx);
         }
     }
 }
@@ -3932,7 +3932,6 @@ struct QuantMXShapes {
     int64_t rows;
     int64_t cols;
     int64_t groupCols;
-    int64_t expCols;
     int64_t quantCols;
     int64_t prefixRows;
     int64_t mDim;
@@ -4030,7 +4029,6 @@ static QuantMXShapes BuildQuantMXShapes(const torch::Tensor& input, DataType src
         shapes.rows = input.numel() / shapes.nDim;
         shapes.cols = shapes.nDim;
         shapes.groupCols = shapes.mDim / MX_QUANT_TILE_BLOCK;
-        shapes.expCols = shapes.nDim * 0x2;
         shapes.quantCols = shapes.quantShape.back();
         shapes.prefixRows = input.numel() / (shapes.mDim * shapes.nDim);
         return shapes;
@@ -4055,7 +4053,6 @@ static QuantMXShapes BuildQuantMXShapes(const torch::Tensor& input, DataType src
     shapes.scalingShape = shapes.performanceScalingShape;
     shapes.rows = input.numel() / shapes.cols;
     shapes.groupCols = shapes.groupedShape.back();
-    shapes.expCols = shapes.expShape.back();
     shapes.quantCols = shapes.quantShape.back();
     shapes.prefixRows = 0;
     shapes.mDim = 0;
@@ -4121,7 +4118,7 @@ static void QuantMX(const TensorData& out, const TensorData& exp, const TensorDa
     }
     auto inputFlat = input.view({shapes.rows, shapes.cols});
     auto quantFlat = quantRaw.view({shapes.rows, shapes.quantCols});
-    auto expFlat = expRaw.view({shapes.rows, shapes.expCols});
+    auto expFlat = expRaw.view({shapes.rows, shapes.groupCols});
     auto scalingFlat = scalingTemp.view({shapes.rows, shapes.groupCols * (self.dtype == DT_FP32 ? 2 : 1)});
     auto maxFlat = maxTemp.view({shapes.rows, shapes.groupCols});
 
@@ -4131,8 +4128,8 @@ static void QuantMX(const TensorData& out, const TensorData& exp, const TensorDa
     auto* scalingPtr = scalingFlat.data_ptr<float>();
     auto* maxPtr = maxFlat.data_ptr<float>();
 
-    FillQuantMXRows(inputPtr, quantPtr, expPtr, scalingPtr, maxPtr, shapes.rows, shapes.cols, shapes.expCols,
-                    shapes.groupCols, shapes.quantCols, self.dtype, out.dtype, performanceMode, mode);
+    FillQuantMXRows(inputPtr, quantPtr, expPtr, scalingPtr, maxPtr, shapes.rows, shapes.cols, shapes.groupCols,
+                    shapes.quantCols, self.dtype, out.dtype, performanceMode, mode);
     CopyQuantMXOutputs(tout, texp, tmax, tscaling, quantRaw, expRaw, maxTemp, scalingTemp, shapes, performanceMode);
 }
 

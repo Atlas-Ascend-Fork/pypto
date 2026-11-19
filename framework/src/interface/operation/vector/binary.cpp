@@ -454,7 +454,12 @@ int64_t GetRemainderTmpCols(int64_t tileCols, DataType dtype, Opcode opcode, int
     const int64_t legacyCols = alignedCols + AlignUp(maskBytes, NUM_VALUE_256) / elementBytes + repeatCols;
     if (dtype != DT_FP32 || precisionType != static_cast<int64_t>(PrecisionType::HIGH_PRECISION) ||
         Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_2201) {
-        return legacyCols;
+        const int64_t rowStride = AlignUp(tileCols, BLOCK_SIZE / elementBytes);
+        const int64_t compareMaskBytes = (rowStride + NUM_VALUE_8 - 1) / NUM_VALUE_8;
+        const int64_t compareMaskCols = AlignUp(compareMaskBytes, BLOCK_SIZE) / elementBytes;
+        const int64_t addressCols = BLOCK_SIZE / elementBytes;
+        const int64_t requiredCols = NUM_VALUE_3 * rowStride + compareMaskCols + addressCols;
+        return std::max(legacyCols, requiredCols);
     }
 
     // Match the A2/A3 pto-isa TREM and TREMS high-precision scratch layouts.
