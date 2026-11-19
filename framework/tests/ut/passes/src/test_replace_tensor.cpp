@@ -292,8 +292,16 @@ TEST_F(ReplaceTensorTest, TestViewAssemble)
     */
     auto& viewOp0 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_VIEW, {incast}, {viewOut0});
     auto& viewOp1 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_VIEW, {incast}, {viewOut1});
-    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_IN, {viewOut0}, {copyOut0});
-    PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_IN, {viewOut1}, {copyOut1});
+    auto& copyInOp0 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_IN, {viewOut0}, {copyOut0});
+    auto& copyInOp1 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_IN, {viewOut1}, {copyOut1});
+    auto copyInAttr0 = std::make_shared<CopyOpAttribute>(
+        OpImmediate::Specified(offset0), copyOut0->GetMemoryTypeOriginal(), OpImmediate::Specified(shape1),
+        OpImmediate::Specified(shape1));
+    auto copyInAttr1 = std::make_shared<CopyOpAttribute>(
+        OpImmediate::Specified(offset0), copyOut1->GetMemoryTypeOriginal(), OpImmediate::Specified(shape1),
+        OpImmediate::Specified(shape1));
+    copyInOp0.SetOpAttribute(copyInAttr0);
+    copyInOp1.SetOpAttribute(copyInAttr1);
     PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_OUT, {copyOut0}, {assOut0});
     PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_COPY_OUT, {copyOut1}, {assOut1});
     auto& assOp0 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_ASSEMBLE, {assOut0}, {outcast});
@@ -2200,6 +2208,205 @@ TEST_F(ReplaceTensorTest, CheckUnconnectedIncast)
     EXPECT_EQ(secondCopyIn->tokens_.front(), firstMuls->result_token_.front());
     EXPECT_FALSE(function->GetVarDependency().HasDependency(token));
     CheckTokenDependencies(*function);
+}
+
+/*
+ * 看护功能: Reshape 输入前的 inplace producer 输入 rawshape 更大时，RunOnFunction 在 Reshape 前插入拷贝。
+ * 计算图结构: incast(DDR64) -> CopyIn(DDR64->UB64) -> Exp(UB64) -> View(UB64->UB32) -> Reshape(UB32->UB32)
+ *              -> Exp(UB32) -> CopyOut(UB32->DDR32) -> outcast(DDR32)
+ * 预期结构: View(UB64->UB32) -> CopyOut(UB32->DDR32) -> CopyIn(DDR32->UB32) -> Reshape(UB32->UB32)
+ */
+TEST_F(ReplaceTensorTest, RunOnFunctionInsertsCopyBeforeReshapeForLargerInplaceProducer)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "ForwardReshapeCopy", "ForwardReshapeCopy",
+                                               nullptr);
+    auto makeTensor = [](const Shape& shape, MemoryType memoryType) {
+        auto tensor = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        tensor->SetMemoryTypeBoth(memoryType, true);
+        return tensor;
+    };
+    Shape sourceShape = {kNumEight, kNumEight};
+    Shape viewShape = {kNumFour, kNumEight};
+    Shape reshapeShape = {kNumTwo, kNumSixteen};
+    Offset offset(viewShape.size(), 0);
+    auto source = makeTensor(sourceShape, MEM_DEVICE_DDR);
+    auto copyInOutput = makeTensor(sourceShape, MEM_UB);
+    auto expBeforeViewOutput = makeTensor(sourceShape, MEM_UB);
+    auto viewOutput = makeTensor(viewShape, MEM_UB);
+    auto reshapeOutput = makeTensor(reshapeShape, MEM_UB);
+    auto expOutput = makeTensor(reshapeShape, MEM_UB);
+    auto finalOutput = makeTensor(reshapeShape, MEM_DEVICE_DDR);
+    function->inCasts_.push_back(source);
+    function->outCasts_.push_back(finalOutput);
+    PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_IN, {source}, {copyInOutput});
+    PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {copyInOutput}, {expBeforeViewOutput});
+    auto& view = PassOperationUtils::AddOperation(*function, Opcode::OP_VIEW, {expBeforeViewOutput}, {viewOutput});
+    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(offset));
+    auto& reshape = PassOperationUtils::AddOperation(*function, Opcode::OP_RESHAPE, {viewOutput}, {reshapeOutput});
+    PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {reshapeOutput}, {expOutput});
+    PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_OUT, {expOutput}, {finalOutput});
+
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    auto reshapeInputProducers = reshape.GetIOperands()[0]->GetProducers();
+    ASSERT_EQ(reshapeInputProducers.size(), 1u);
+    auto* copyIn = *reshapeInputProducers.begin();
+    EXPECT_EQ(copyIn->GetOpcode(), Opcode::OP_COPY_IN);
+    auto copyOutProducers = copyIn->GetIOperands()[0]->GetProducers();
+    ASSERT_EQ(copyOutProducers.size(), 1u);
+    auto* copyOut = *copyOutProducers.begin();
+    EXPECT_EQ(copyOut->GetOpcode(), Opcode::OP_COPY_OUT);
+    EXPECT_EQ(copyOut->GetOOperands()[0]->GetMemoryTypeOriginal(), MEM_DEVICE_DDR);
+    EXPECT_EQ(copyIn->GetOOperands()[0]->GetMemoryTypeOriginal(), MEM_UB);
+}
+
+/*
+ * 看护功能: Reshape 后的 inplace Assemble 输出 rawshape 更大时，在 Reshape 后插入一次拷贝。
+ * 计算图结构: incast(DDR32) -> CopyIn(DDR32->UB32) -> Exp(UB32) -> Reshape(UB32->UB32)
+ *              -> Assemble(UB32->UB64) -> CopyOut(UB64->DDR64) -> outcast(DDR64)
+ * 预期结构: Reshape(UB32->UB32) -> CopyOut(UB32->DDR32) -> CopyIn(DDR32->UB32)
+ *            -> Assemble(UB32->UB64)
+ */
+TEST_F(ReplaceTensorTest, RunOnFunctionInsertsCopyAfterReshapeForLargerInplaceConsumer)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "BackwardReshapeCopy", "BackwardReshapeCopy",
+                                               nullptr);
+    auto makeTensor = [](const Shape& shape, MemoryType memoryType) {
+        auto tensor = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        tensor->SetMemoryTypeBoth(memoryType, true);
+        return tensor;
+    };
+    Shape reshapeShape = {kNumTwo, kNumSixteen};
+    Shape assembleShape = {kNumFour, kNumSixteen};
+    Offset offset(assembleShape.size(), 0);
+    auto input = makeTensor(reshapeShape, MEM_DEVICE_DDR);
+    auto copyInOutput = makeTensor(reshapeShape, MEM_UB);
+    auto expOutput = makeTensor(reshapeShape, MEM_UB);
+    auto reshapeOutput = makeTensor(reshapeShape, MEM_UB);
+    auto assembleOutput = makeTensor(assembleShape, MEM_UB);
+    auto finalOutput = makeTensor(assembleShape, MEM_DEVICE_DDR);
+    function->inCasts_.push_back(input);
+    function->outCasts_.push_back(finalOutput);
+    PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_IN, {input}, {copyInOutput});
+    PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {copyInOutput}, {expOutput});
+    auto& reshape = PassOperationUtils::AddOperation(*function, Opcode::OP_RESHAPE, {expOutput}, {reshapeOutput});
+    auto& assemble = PassOperationUtils::AddOperation(*function, Opcode::OP_ASSEMBLE, {reshapeOutput},
+                                                      {assembleOutput});
+    assemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UB, offset));
+    auto& copyOut = PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_OUT, {assembleOutput}, {finalOutput});
+    assemble.UpdateSubgraphID(1);
+    copyOut.UpdateSubgraphID(2);
+
+    EXPECT_EQ(reshapeOutput->GetRawTensor()->GetRawShapeSize(), 32);
+    EXPECT_EQ(assembleOutput->GetRawTensor()->GetRawShapeSize(), 64);
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    auto reshapeOutputConsumers = reshape.GetOOperands()[0]->GetConsumers();
+    ASSERT_EQ(reshapeOutputConsumers.size(), 1u);
+    auto* insertedCopyOut = *reshapeOutputConsumers.begin();
+    EXPECT_EQ(insertedCopyOut->GetOpcode(), Opcode::OP_COPY_OUT);
+    auto insertedCopyInConsumers = insertedCopyOut->GetOOperands()[0]->GetConsumers();
+    ASSERT_EQ(insertedCopyInConsumers.size(), 1u);
+    auto* insertedCopyIn = *insertedCopyInConsumers.begin();
+    EXPECT_EQ(insertedCopyIn->GetOpcode(), Opcode::OP_COPY_IN);
+    EXPECT_EQ(insertedCopyOut->GetOOperands()[0]->GetMemoryTypeOriginal(), MEM_DEVICE_DDR);
+    EXPECT_EQ(insertedCopyIn->GetOOperands()[0]->GetMemoryTypeOriginal(), MEM_UB);
+    EXPECT_EQ(insertedCopyIn->GetOOperands()[0], assemble.GetIOperands()[0]);
+}
+
+/*
+ * 看护功能: FindNeedToCopyAssemble 选中的操作经 RunOnFunction 在 ASSEMBLE 输入前插入拷贝。
+ * 计算图结构: incast(DDR16) -> CopyIn(DDR16->UB16) -> Exp(UB16) -> Reshape(UB16->UB16)
+ *              -> Assemble(UB16->UB16) -> Exp(UB16) -> CopyOut(UB16->DDR16) -> outcast(DDR16)
+ * 预期结构: Reshape(UB16->UB16) -> CopyOut(UB16->DDR16) -> CopyIn(DDR16->UB16)
+ *            -> Assemble(UB16->UB16)
+ */
+TEST_F(ReplaceTensorTest, RunOnFunctionInsertsCopyBeforeAssemble)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "AssembleForwardCopy", "AssembleForwardCopy",
+                                               nullptr);
+    auto makeTensor = [](const Shape& shape, MemoryType memoryType) {
+        auto tensor = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        tensor->SetMemoryTypeBoth(memoryType, true);
+        return tensor;
+    };
+    Shape shape = {kNumTwo, kNumEight};
+    Offset offset(shape.size(), 0);
+    auto input = makeTensor(shape, MEM_DEVICE_DDR);
+    auto inputUb = makeTensor(shape, MEM_UB);
+    auto expOutput = makeTensor(shape, MEM_UB);
+    auto reshapeOutput = makeTensor(shape, MEM_UB);
+    auto assembleOutput = makeTensor(shape, MEM_UB);
+    auto finalUb = makeTensor(shape, MEM_UB);
+    auto finalOutput = makeTensor(shape, MEM_DEVICE_DDR);
+    function->inCasts_.push_back(input);
+    function->outCasts_.push_back(finalOutput);
+    PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_IN, {input}, {inputUb});
+    PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {inputUb}, {expOutput});
+    PassOperationUtils::AddOperation(*function, Opcode::OP_RESHAPE, {expOutput}, {reshapeOutput});
+    auto& assemble = PassOperationUtils::AddOperation(*function, Opcode::OP_ASSEMBLE, {reshapeOutput},
+                                                      {assembleOutput});
+    assemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UB, offset));
+    PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {assembleOutput}, {finalUb});
+    PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_OUT, {finalUb}, {finalOutput});
+
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    auto assembleInputProducers = assemble.GetIOperands()[0]->GetProducers();
+    ASSERT_EQ(assembleInputProducers.size(), 1u);
+    auto* copyIn = *assembleInputProducers.begin();
+    EXPECT_EQ(copyIn->GetOpcode(), Opcode::OP_COPY_IN);
+    auto copyOutProducers = copyIn->GetIOperands()[0]->GetProducers();
+    ASSERT_EQ(copyOutProducers.size(), 1u);
+    auto* copyOut = *copyOutProducers.begin();
+    EXPECT_EQ(copyOut->GetOpcode(), Opcode::OP_COPY_OUT);
+    EXPECT_EQ(copyOut->GetOOperands()[0]->GetMemoryTypeOriginal(), MEM_DEVICE_DDR);
+    EXPECT_EQ(copyIn->GetOOperands()[0]->GetMemoryTypeOriginal(), MEM_UB);
+}
+
+/*
+ * 看护功能: DDR Reshape 输出的 inplace consumer 需要插入拷贝但超出 UB 容量时，RunOnFunction 返回 FAILED。
+ * 计算图结构: incast(DDR[128,2048], rawshape=262144) -> Reshape(DDR[256,1024], rawshape=262144)
+ *              -> Assemble(DDR[256,2048], rawshape=524288) -> outcast
+ * 预期结构: 超 UB 检查失败，不新增 CopyOut + CopyIn。
+ */
+TEST_F(ReplaceTensorTest, RunOnFunctionFailsForOversizedDdrReshape)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "OversizedDdrReshape", "OversizedDdrReshape",
+                                               nullptr);
+    auto makeDdrTensor = [](const Shape& shape) {
+        auto tensor = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        tensor->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+        return tensor;
+    };
+    Shape inputShape = {128, 2048};
+    Shape reshapeShape = {256, 1024};
+    Shape assembleShape = {256, 2048};
+    Offset offset(assembleShape.size(), 0);
+    auto input = makeDdrTensor(inputShape);
+    auto reshapeOutput = makeDdrTensor(reshapeShape);
+    auto assembleOutput = makeDdrTensor(assembleShape);
+    function->inCasts_.push_back(input);
+    function->outCasts_.push_back(assembleOutput);
+    auto& reshape = PassOperationUtils::AddOperation(*function, Opcode::OP_RESHAPE, {input}, {reshapeOutput});
+    auto& assemble = PassOperationUtils::AddOperation(*function, Opcode::OP_ASSEMBLE, {reshapeOutput},
+                                                      {assembleOutput});
+    assemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, offset));
+
+    EXPECT_EQ(reshapeOutput->GetRawTensor()->GetRawShapeSize(), 262144);
+    EXPECT_EQ(assembleOutput->GetRawTensor()->GetRawShapeSize(), 524288);
+    const auto operationCount = function->Operations().size();
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(*function), FAILED);
+    EXPECT_EQ(function->Operations().size(), operationCount);
+    EXPECT_EQ(reshape.GetIOperands()[0], input);
+    EXPECT_EQ(reshape.GetOOperands()[0], reshapeOutput);
+    EXPECT_EQ(assemble.GetIOperands()[0], reshapeOutput);
+    EXPECT_EQ(assemble.GetOOperands()[0], assembleOutput);
+    for (const auto& op : function->Operations()) {
+        EXPECT_NE(op.GetOpcode(), Opcode::OP_COPY_IN);
+        EXPECT_NE(op.GetOpcode(), Opcode::OP_COPY_OUT);
+    }
 }
 
 } // namespace tile_fwk

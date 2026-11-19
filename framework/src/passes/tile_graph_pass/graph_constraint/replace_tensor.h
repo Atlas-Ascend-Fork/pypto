@@ -214,12 +214,30 @@ private:
     void RebuildTokenProducer(Function& function);
     void RebuildTokenConsumer(Function& function);
 
-    Status InsertCopyUBOp(Function& function, Operation* needInsertCopyAssOp, LogicalTensorPtr& input);
-    Status InsertCopyDDROp(Function& function, Operation* needInsertCopyAssOp, LogicalTensorPtr& input);
-    Status FindNeedToCopyAssemble(std::unordered_set<Operation*>& needInsertCopyAssOps,
+    struct CopyChainContext {
+        LogicalTensorPtr input;
+        LogicalTensorPtr output;
+        LogicalTensorPtr ubTensor;
+        Offset copyInOffset;
+        bool viewOffsetAbsorbed;
+    };
+
+    Status InsertCopyUBToDDRAndDDRToUB(Function& function, Operation* op, const LogicalTensorPtr& input,
+                                       const LogicalTensorPtr& output);
+    Status InsertCopyDDRToUBAndUBToDDR(Function& function, Operation* op, const LogicalTensorPtr& input,
+                                       const LogicalTensorPtr& output);
+    Status InsertCopyDDRToUBAndUBToDDRChain(Function& function, Operation* op, const CopyChainContext& context);
+    Status FindNeedToCopyAssemble(std::unordered_set<Operation*>& forwardInsertCopy,
                                   std::unordered_set<int>& visitedAssOps, Operation& op, Function& function);
-    Status FindNeedToCopyReshape(std::unordered_set<Operation*>& needInsertCopyAssOps,
+    Status FindNeedToCopyReshape(std::unordered_set<Operation*>& forwardInsertCopy,
                                  std::unordered_set<int>& visitedReshapeOps, Operation& op, Function& function);
+    Status FindForwardInsertCopy(Operation& op, std::unordered_set<Operation*>& forwardInsertCopy);
+    Status FindBackwardInsertCopy(Operation& op, std::unordered_set<Operation*>& backwardInsertCopy);
+    int GetUbSizeThreshold();
+    bool IsCopyToUBOverSize(const LogicalTensorPtr& tensor);
+    Status CollectNeedInsertCopyOps(Function& function, std::unordered_set<Operation*>& forwardInsertCopy,
+                                    std::unordered_set<Operation*>& backwardInsertCopy);
+    Status InsertCopyForOps(Function& function, const std::unordered_set<Operation*>& ops, bool afterOp);
     Status InsertNeedCopy(Function& function);
     bool isBoundTensor(LogicalTensorPtr& curTensor);
 
@@ -227,6 +245,7 @@ private:
 
     std::unordered_map<DataType, int> viewTypeTable = {{DT_INT8, 1},    {DT_BF16, 2},    {DT_FP16, 2},   {DT_FP32, 4},
                                                        {DT_FP8E4M3, 1}, {DT_FP8E5M2, 1}, {DT_FP8E8M0, 1}};
+    int ubSizeThreshold_ = -1;
     std::queue<LogicalTensorPtr> backRoots;
     std::queue<LogicalTensorPtr> forRoots;
     std::unordered_set<int> processedOp;

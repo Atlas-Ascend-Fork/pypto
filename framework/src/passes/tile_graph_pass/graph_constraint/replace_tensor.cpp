@@ -16,6 +16,7 @@
 #include "replace_tensor.h"
 #include <algorithm>
 #include <deque>
+#include <functional>
 #include "interface/tensor/irbuilder.h"
 #include "passes/pass_log/pass_log.h"
 #include "passes/pass_utils/pass_operation_utils.h"
@@ -77,6 +78,32 @@ bool IsInplaceOperation(const Operation& op)
     }
     return (op.GetOpcode() == Opcode::OP_COPY_OUT && op.HasAttribute(OpAttributeKey::inplaceIdx)) ||
            IsInplaceIdxOperation(op);
+}
+
+using InplaceTensorPair = std::pair<LogicalTensorPtr, LogicalTensorPtr>;
+
+std::vector<InplaceTensorPair> GetInplaceTensorPairs(const Operation& op)
+{
+    std::vector<InplaceTensorPair> pairs;
+    auto addPair = [&op, &pairs](size_t inputIdx, size_t outputIdx) {
+        if (inputIdx < op.GetIOperands().size() && outputIdx < op.GetOOperands().size()) {
+            pairs.emplace_back(op.GetIOperands()[inputIdx], op.GetOOperands()[outputIdx]);
+        }
+    };
+
+    auto mapIt = inplaceOpMap.find(op.GetOpcode());
+    if (mapIt != inplaceOpMap.end()) {
+        for (const auto& [inputIdx, outputIdx] : mapIt->second) {
+            addPair(inputIdx, outputIdx);
+        }
+    }
+    if (op.HasAttribute(OpAttributeKey::inplaceIdx)) {
+        addPair(static_cast<size_t>(op.GetIntAttribute(OpAttributeKey::inplaceIdx)), 0);
+    }
+    if (pairs.empty() && IsInplaceOperation(op)) {
+        addPair(0, 0);
+    }
+    return pairs;
 }
 
 std::vector<Operation*> FindFirstNonInplaceConsumers(Operation& op)
@@ -162,6 +189,17 @@ void AddTokenConsumer(Operation& op, const Token& token, Function& function)
     function.GetVarDependency().AddConsumer(token, GetStmt(op));
 }
 } // namespace
+
+/**
+ * @brief Read and cache the UB capacity on first use because platform configuration remains stable during a pass.
+ */
+int ReplaceTensor::GetUbSizeThreshold()
+{
+    if (ubSizeThreshold_ < 0) {
+        ubSizeThreshold_ = static_cast<int>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB));
+    }
+    return ubSizeThreshold_;
+}
 
 bool ReplaceTensor::CheckAddrConflict(const Operation& op)
 {
@@ -1191,98 +1229,172 @@ std::unordered_map<LogicalTensorPtr, int> ReplaceTensor::BuildTensorOrderIndexMa
 }
 
 /**
- * @brief 为 UB 内存类型的输入插入拷贝序列 (UB → DDR → UB)
+ * @brief Insert a UB -> DDR -> UB copy chain on the input or output side of the specified operation.
  */
-Status ReplaceTensor::InsertCopyUBOp(Function& function, Operation* needInsertCopyAssOp, LogicalTensorPtr& input)
+Status ReplaceTensor::InsertCopyUBToDDRAndDDRToUB(Function& function, Operation* op, const LogicalTensorPtr& input,
+                                                  const LogicalTensorPtr& output)
 {
-    auto copyShape = input->GetShape();
-    auto copyRawShape = input->tensor->GetDynRawShape();
-    auto copyDynShape = input->GetDynValidShape();
+    if (op == nullptr || (input == nullptr) == (output == nullptr)) {
+        return FAILED;
+    }
+    auto edgeTensor = input != nullptr ? input : output;
+    if (edgeTensor->tensor == nullptr) {
+        return FAILED;
+    }
+
+    auto copyShape = edgeTensor->GetShape();
+    auto copyRawShape = edgeTensor->tensor->GetDynRawShape();
+    auto copyDynShape = edgeTensor->GetDynValidShape();
     Offset offset(copyShape.size(), 0);
-    auto copyOutOutputPtr = irBuilder_.CreateTensorVar(input->Datatype(), copyShape, std::vector<SymbolicScalar>{});
-    copyOutOutputPtr->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+
+    auto ddrTensor = irBuilder_.CreateTensorVar(edgeTensor->Datatype(), copyShape, copyDynShape);
+    ddrTensor->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+    auto ubTensor = irBuilder_.CreateTensorVar(edgeTensor->Datatype(), copyShape, copyDynShape);
+    ubTensor->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+
+    auto copyOutInput = input != nullptr ? input : ubTensor;
+    auto copyInOutput = input != nullptr ? ubTensor : output;
+    if (output != nullptr) {
+        op->ReplaceOutput(ubTensor, output);
+    }
 
     auto& copyOutOp = PassOperationUtils::AddOperation(
-        function, Opcode::OP_COPY_OUT, {input}, {copyOutOutputPtr},
-        [&input, &offset, &copyShape, &copyRawShape, &copyDynShape](Operation& op) {
-            op.SetOpAttribute(std::make_shared<CopyOpAttribute>(
-                input->GetMemoryTypeOriginal(), OpImmediate::Specified(offset), OpImmediate::Specified(copyShape),
-                OpImmediate::Specified(copyRawShape), OpImmediate::Specified(copyDynShape)));
+        function, Opcode::OP_COPY_OUT, {copyOutInput}, {ddrTensor},
+        [&copyOutInput, &offset, &copyShape, &copyRawShape, &copyDynShape](Operation& copyOp) {
+            copyOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(
+                copyOutInput->GetMemoryTypeOriginal(), OpImmediate::Specified(offset),
+                OpImmediate::Specified(copyShape), OpImmediate::Specified(copyRawShape),
+                OpImmediate::Specified(copyDynShape)));
         });
-    copyOutOp.UpdateSubgraphID(needInsertCopyAssOp->GetSubgraphID());
+    copyOutOp.UpdateSubgraphID(op->GetSubgraphID());
 
-    auto copyInOutputPtr = irBuilder_.CreateTensorVar(input->Datatype(), copyShape, std::vector<SymbolicScalar>{});
-    copyInOutputPtr->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
     auto& copyInOp = PassOperationUtils::AddOperation(
-        function, Opcode::OP_COPY_IN, {copyOutOutputPtr}, {copyInOutputPtr},
-        [&offset, &input, &copyShape, &copyRawShape, &copyDynShape](Operation& op) {
-            op.SetOpAttribute(std::make_shared<CopyOpAttribute>(
-                OpImmediate::Specified(offset), input->GetMemoryTypeOriginal(), OpImmediate::Specified(copyShape),
-                OpImmediate::Specified(copyRawShape), OpImmediate::Specified(copyDynShape)));
+        function, Opcode::OP_COPY_IN, {ddrTensor}, {copyInOutput},
+        [&copyInOutput, &offset, &copyShape, &copyRawShape, &copyDynShape](Operation& copyOp) {
+            copyOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(
+                OpImmediate::Specified(offset), copyInOutput->GetMemoryTypeOriginal(),
+                OpImmediate::Specified(copyShape), OpImmediate::Specified(copyRawShape),
+                OpImmediate::Specified(copyDynShape)));
         });
-    copyInOp.UpdateSubgraphID(needInsertCopyAssOp->GetSubgraphID());
+    copyInOp.UpdateSubgraphID(op->GetSubgraphID());
 
-    needInsertCopyAssOp->ReplaceInput(copyInOutputPtr, input);
+    if (input != nullptr) {
+        op->ReplaceInput(ubTensor, input);
+    }
     return SUCCESS;
 }
 
 /**
- * @brief 为 DDR 内存类型的输入插入拷贝序列 (DDR → UB → DDR)
+ * @brief Insert a DDR -> UB -> DDR copy chain and check the aligned UB capacity.
  */
-Status ReplaceTensor::InsertCopyDDROp(Function& function, Operation* needInsertCopyAssOp, LogicalTensorPtr& input)
+Status ReplaceTensor::InsertCopyDDRToUBAndUBToDDR(Function& function, Operation* op, const LogicalTensorPtr& input,
+                                                  const LogicalTensorPtr& output)
 {
-    auto copyShape = input->GetShape();
-    auto copyRawShape = input->tensor->GetDynRawShape();
-    auto copyDynShape = input->GetDynValidShape();
-    Offset offset(copyShape.size(), 0);
-    Offset inOffset = input->GetOffset();
-    auto& inOp = *(input)->GetProducers().begin();
-    bool viewOffsetAbsorbed = false;
-    if (needInsertCopyAssOp->GetOpcode() == Opcode::OP_RESHAPE && inOp->GetOpcode() == Opcode::OP_VIEW) {
-        auto viewOpAttr = std::dynamic_pointer_cast<ViewOpAttribute>(inOp->GetOpAttribute());
-        inOffset = viewOpAttr->GetFrom();
-        // codegen对DDR copyIn只使用fromOffset(绝对量), 烤入view窗口偏移是必需的;
-        // 打标记防止后续pass(如PreGraph的view-copyin折叠)再次叠加view偏移
-        viewOffsetAbsorbed = true;
+    if (op == nullptr || (input == nullptr) == (output == nullptr)) {
+        return FAILED;
     }
-    auto copyInOutputPtr = irBuilder_.CreateTensorVar(input->Datatype(), copyShape, std::vector<SymbolicScalar>{});
-    copyInOutputPtr->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
-    const int UB_SIZE_THRESHOLD = static_cast<int>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB));
-    auto memType = copyInOutputPtr->GetMemoryTypeOriginal();
-    if ((memType == MemoryType::MEM_UB) && (copyInOutputPtr->GetDataSize() > UB_SIZE_THRESHOLD)) {
-        APASS_LOG_ERROR_F(Elements::Tensor,
-                          "Tensor [%d] can not copy to UB, tensor size [%ld] exceeds the UB size [%d] limit.",
-                          input->magic, input->GetDataSize(), UB_SIZE_THRESHOLD);
+    auto edgeTensor = input != nullptr ? input : output;
+    if (edgeTensor->tensor == nullptr) {
         return FAILED;
     }
 
-    // 为copy到Ub的Tensor进行32B对齐
-    AlignmentUtils::ProcessLastDim32BAlignedOnUB(copyInOutputPtr);
+    auto copyShape = edgeTensor->GetShape();
+    auto copyDynShape = edgeTensor->GetDynValidShape();
+    Offset zeroOffset(copyShape.size(), 0);
+    Offset copyInOffset = input != nullptr ? input->GetOffset() : zeroOffset;
+    bool viewOffsetAbsorbed = false;
+    if (input != nullptr && op->GetOpcode() == Opcode::OP_RESHAPE) {
+        for (auto* producer : input->GetProducers()) {
+            if (producer == nullptr || producer->GetOpcode() != Opcode::OP_VIEW) {
+                continue;
+            }
+            auto viewOpAttr = std::dynamic_pointer_cast<ViewOpAttribute>(producer->GetOpAttribute());
+            if (viewOpAttr != nullptr) {
+                copyInOffset = viewOpAttr->GetFrom();
+                viewOffsetAbsorbed = true;
+            }
+            break;
+        }
+    }
+
+    auto ubTensor = irBuilder_.CreateTensorVar(edgeTensor->Datatype(), copyShape, copyDynShape);
+    ubTensor->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+    AlignmentUtils::ProcessLastDim32BAlignedOnUB(ubTensor);
+    const int64_t ubDataSize = ubTensor->GetDataSize();
+    const int ubSizeThreshold = GetUbSizeThreshold();
+    if (ubDataSize > ubSizeThreshold) {
+        APASS_LOG_ERROR_F(Elements::Tensor,
+                          "Tensor [%d] can not copy to UB, padded tensor size [%ld] exceeds the UB size [%d] limit.",
+                          edgeTensor->magic, ubDataSize, ubSizeThreshold);
+        return FAILED;
+    }
+
+    CopyChainContext context{input, output, ubTensor, copyInOffset, viewOffsetAbsorbed};
+    return InsertCopyDDRToUBAndUBToDDRChain(function, op, context);
+}
+
+Status ReplaceTensor::InsertCopyDDRToUBAndUBToDDRChain(Function& function, Operation* op,
+                                                       const CopyChainContext& context)
+{
+    const auto& input = context.input;
+    const auto& output = context.output;
+    const auto& ubTensor = context.ubTensor;
+    const auto& copyInOffset = context.copyInOffset;
+    auto edgeTensor = input != nullptr ? input : output;
+    auto copyShape = edgeTensor->GetShape();
+    auto copyRawShape = edgeTensor->tensor->GetDynRawShape();
+    auto copyDynShape = edgeTensor->GetDynValidShape();
+    Offset offset(copyShape.size(), 0);
+
+    auto ddrTensor = irBuilder_.CreateTensorVar(edgeTensor->Datatype(), copyShape, copyDynShape);
+    ddrTensor->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+    auto copyInInput = input != nullptr ? input : ddrTensor;
+    auto copyOutOutput = input != nullptr ? ddrTensor : output;
+    if (output != nullptr) {
+        op->ReplaceOutput(ddrTensor, output);
+    }
+
     auto& copyInOp = PassOperationUtils::AddOperation(
-        function, Opcode::OP_COPY_IN, {input}, {copyInOutputPtr},
-        [&inOffset, &copyShape, &copyRawShape, &copyDynShape](Operation& op) {
-            op.SetOpAttribute(std::make_shared<CopyOpAttribute>(
-                OpImmediate::Specified(inOffset), MemoryType::MEM_UB, OpImmediate::Specified(copyShape),
+        function, Opcode::OP_COPY_IN, {copyInInput}, {ubTensor},
+        [&copyInOffset, &copyShape, &copyRawShape, &copyDynShape](Operation& copyOp) {
+            copyOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(
+                OpImmediate::Specified(copyInOffset), MemoryType::MEM_UB, OpImmediate::Specified(copyShape),
                 OpImmediate::Specified(copyRawShape), OpImmediate::Specified(copyDynShape)));
         });
-    if (viewOffsetAbsorbed) {
+    if (context.viewOffsetAbsorbed) {
         copyInOp.SetAttr(COPY_IN_VIEW_OFFSET_ABSORBED, true);
     }
-    copyInOp.UpdateSubgraphID(needInsertCopyAssOp->GetSubgraphID());
+    copyInOp.UpdateSubgraphID(op->GetSubgraphID());
 
-    auto copyOutOutputPtr = irBuilder_.CreateTensorVar(input->Datatype(), copyShape, std::vector<SymbolicScalar>{});
-    copyOutOutputPtr->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
     auto& copyOutOp = PassOperationUtils::AddOperation(
-        function, Opcode::OP_COPY_OUT, {copyInOutputPtr}, {copyOutOutputPtr},
-        [&offset, &copyShape, &copyRawShape, &copyDynShape](Operation& op) {
-            op.SetOpAttribute(std::make_shared<CopyOpAttribute>(
+        function, Opcode::OP_COPY_OUT, {ubTensor}, {copyOutOutput},
+        [&offset, &copyShape, &copyRawShape, &copyDynShape](Operation& copyOp) {
+            copyOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(
                 MemoryType::MEM_UB, OpImmediate::Specified(offset), OpImmediate::Specified(copyShape),
                 OpImmediate::Specified(copyRawShape), OpImmediate::Specified(copyDynShape)));
         });
-    copyOutOp.UpdateSubgraphID(needInsertCopyAssOp->GetSubgraphID());
+    copyOutOp.UpdateSubgraphID(op->GetSubgraphID());
 
-    needInsertCopyAssOp->ReplaceInput(copyOutOutputPtr, input);
+    if (input != nullptr) {
+        op->ReplaceInput(ddrTensor, input);
+    }
     return SUCCESS;
+}
+
+/**
+ * @brief Check whether copying the aligned DDR tensor to UB exceeds the capacity.
+ */
+bool ReplaceTensor::IsCopyToUBOverSize(const LogicalTensorPtr& tensor)
+{
+    if (tensor == nullptr || tensor->tensor == nullptr ||
+        tensor->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
+        return false;
+    }
+    auto ubTensor = irBuilder_.CreateTensorVar(tensor->Datatype(), tensor->GetShape(), tensor->GetDynValidShape());
+    ubTensor->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+    AlignmentUtils::ProcessLastDim32BAlignedOnUB(ubTensor);
+    const int ubSizeThreshold = GetUbSizeThreshold();
+    return ubTensor->GetDataSize() > ubSizeThreshold;
 }
 
 /**
@@ -1367,7 +1479,7 @@ bool ReplaceTensor::IsAssembleSameGmWriteBack(Function& function, Operation* ass
 /**
  * @brief 递归查找需要插入拷贝的 ASSEMBLE 操作
  */
-Status ReplaceTensor::FindNeedToCopyAssemble(std::unordered_set<Operation*>& needInsertCopyAssOps,
+Status ReplaceTensor::FindNeedToCopyAssemble(std::unordered_set<Operation*>& forwardInsertCopy,
                                              std::unordered_set<int>& visitedAssOps, Operation& op, Function& function)
 {
     visitedAssOps.insert(op.GetOpMagic());
@@ -1386,10 +1498,10 @@ Status ReplaceTensor::FindNeedToCopyAssemble(std::unordered_set<Operation*>& nee
         });
     if (assembleIn->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR && hasScatterInplaceProducer &&
         !IsAssembleSameGmWriteBack(function, &op)) {
-        needInsertCopyAssOps.insert(&op);
+        forwardInsertCopy.insert(&op);
         return SUCCESS;
     }
-    const int UB_SIZE_THRESHOLD = static_cast<int>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB));
+    const int UB_SIZE_THRESHOLD = GetUbSizeThreshold();
     auto inProducerOps = inOp->ProducerOps();
     bool allProducerAssemble = !inProducerOps.empty();
 
@@ -1400,7 +1512,7 @@ Status ReplaceTensor::FindNeedToCopyAssemble(std::unordered_set<Operation*>& nee
 
     if (inOp->GetOpcode() == Opcode::OP_RESHAPE && !allProducerAssemble && !function.IsFromOutCast(assembleOut) &&
         !isBoundTensor(assembleOut) && op.GetIOperands()[0]->tensor->GetRawDataSize() <= UB_SIZE_THRESHOLD) {
-        needInsertCopyAssOps.insert(&op);
+        forwardInsertCopy.insert(&op);
         return SUCCESS;
     }
     auto consumers = assembleIn->GetConsumers();
@@ -1423,7 +1535,7 @@ Status ReplaceTensor::FindNeedToCopyAssemble(std::unordered_set<Operation*>& nee
             }
             if (con->GetIOperands()[0]->GetDataSize() <= UB_SIZE_THRESHOLD) {
                 visitedAssOps.insert(con->GetOpMagic());
-                needInsertCopyAssOps.insert(con);
+                forwardInsertCopy.insert(con);
             }
         }
     }
@@ -1445,14 +1557,14 @@ bool ReplaceTensor::isBoundTensor(LogicalTensorPtr& curTensor)
     return false;
 }
 
-Status ReplaceTensor::FindNeedToCopyReshape(std::unordered_set<Operation*>& needInsertCopyAssOps,
+Status ReplaceTensor::FindNeedToCopyReshape(std::unordered_set<Operation*>& forwardInsertCopy,
                                             std::unordered_set<int>& visitedReshapeOps, Operation& op,
                                             Function& function)
 {
     visitedReshapeOps.insert(op.GetOpMagic());
     if (op.GetIOperands()[0]->tensor->GetRawShapeSize() > 0 && op.GetOOperands()[0]->tensor->GetRawShapeSize() > 0 &&
         op.GetIOperands()[0]->tensor->GetRawShapeSize() != op.GetOOperands()[0]->tensor->GetRawShapeSize()) {
-        needInsertCopyAssOps.insert(&op);
+        forwardInsertCopy.insert(&op);
         return SUCCESS;
     }
     auto producerOps = op.ProducerOps();
@@ -1465,12 +1577,12 @@ Status ReplaceTensor::FindNeedToCopyReshape(std::unordered_set<Operation*>& need
             !function.IsFromInCast(producesOp->GetIOperands().front()) &&
             producesOp->GetIOperands().front()->tensor->GetRawShapeSize() !=
                 op.GetOOperands().front()->tensor->GetRawShapeSize()) {
-            needInsertCopyAssOps.insert(&op);
+            forwardInsertCopy.insert(&op);
             continue;
         }
         for (auto consumerOp : consumerOps) {
             if (inplaceOpSet.find(consumerOp->GetOpcode()) != inplaceOpSet.end()) {
-                needInsertCopyAssOps.insert(&op);
+                forwardInsertCopy.insert(&op);
             }
         }
     }
@@ -1478,7 +1590,122 @@ Status ReplaceTensor::FindNeedToCopyReshape(std::unordered_set<Operation*>& need
 }
 
 /**
- * @brief 遍历所有 ASSEMBLE 操作，为需要拷贝的操作插入拷贝序列，避免多个 ASSEMBLE 操作共享同一个输入导致的内存冲突
+ * @brief Find Reshape operations that require a copy before the in-place producer chain.
+ */
+Status ReplaceTensor::FindForwardInsertCopy(Operation& op, std::unordered_set<Operation*>& forwardInsertCopy)
+{
+    if (op.GetOpcode() != Opcode::OP_RESHAPE || op.GetIOperands().empty() || op.GetOOperands().empty()) {
+        return SUCCESS;
+    }
+    auto reshapeInput = op.GetIOperands().front();
+    if (reshapeInput == nullptr || reshapeInput->tensor == nullptr) {
+        return SUCCESS;
+    }
+    const int64_t reshapeInputSize = reshapeInput->GetDataSize();
+    std::unordered_set<LogicalTensorPtr> visited;
+    std::function<bool(const LogicalTensorPtr&)> hasLargerInplaceProducerInput = [&](const LogicalTensorPtr& tensor) {
+        if (tensor == nullptr || !visited.insert(tensor).second) {
+            return false;
+        }
+        for (auto* producer : tensor->GetProducers()) {
+            if (producer == nullptr || !IsInplaceOperation(*producer)) {
+                continue;
+            }
+            const auto inplaceTensorPairs = GetInplaceTensorPairs(*producer);
+            const bool producerHasNegativeOneShapeInput = std::any_of(
+                inplaceTensorPairs.begin(), inplaceTensorPairs.end(), [&tensor](const auto& pair) {
+                    const auto& [inplaceInput, inplaceOutput] = pair;
+                    return inplaceOutput == tensor && inplaceInput != nullptr && inplaceInput->tensor != nullptr &&
+                           CommonUtils::ContainsNegativeOne(inplaceInput->GetShape());
+                });
+            if (producerHasNegativeOneShapeInput) {
+                continue;
+            }
+            for (const auto& [inplaceInput, inplaceOutput] : inplaceTensorPairs) {
+                if (inplaceOutput != tensor || inplaceInput == nullptr || inplaceInput->tensor == nullptr) {
+                    continue;
+                }
+                if (inplaceInput->GetDataSize() > reshapeInputSize || hasLargerInplaceProducerInput(inplaceInput)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    if (hasLargerInplaceProducerInput(reshapeInput)) {
+        if (IsCopyToUBOverSize(reshapeInput)) {
+            const int ubSizeThreshold = GetUbSizeThreshold();
+            APASS_LOG_ERROR_F(Elements::Tensor,
+                              "Cannot insert forward copy for Reshape[%d]: padded copy of DDR tensor[%d] exceeds "
+                              "UB size [%d] (raw data size [%ld]).",
+                              op.GetOpMagic(), reshapeInput->GetMagic(), ubSizeThreshold, reshapeInput->GetDataSize());
+            return FAILED;
+        }
+        forwardInsertCopy.insert(&op);
+    }
+    return SUCCESS;
+}
+
+/**
+ * @brief Find Reshape operations that require a copy after the in-place consumer chain.
+ */
+Status ReplaceTensor::FindBackwardInsertCopy(Operation& op, std::unordered_set<Operation*>& backwardInsertCopy)
+{
+    if (op.GetOpcode() != Opcode::OP_RESHAPE || op.GetIOperands().empty() || op.GetOOperands().empty()) {
+        return SUCCESS;
+    }
+    auto reshapeOutput = op.GetOOperands().front();
+    if (reshapeOutput == nullptr || reshapeOutput->tensor == nullptr) {
+        return SUCCESS;
+    }
+    const int64_t reshapeOutputSize = reshapeOutput->GetDataSize();
+    std::unordered_set<LogicalTensorPtr> visited;
+    std::function<bool(const LogicalTensorPtr&)> hasLargerInplaceConsumerOutput = [&](const LogicalTensorPtr& tensor) {
+        if (tensor == nullptr || !visited.insert(tensor).second) {
+            return false;
+        }
+        for (auto* consumer : tensor->GetConsumers()) {
+            if (consumer == nullptr || !IsInplaceOperation(*consumer)) {
+                continue;
+            }
+            const auto inplaceTensorPairs = GetInplaceTensorPairs(*consumer);
+            const bool consumerHasNegativeOneShapeOutput = std::any_of(
+                inplaceTensorPairs.begin(), inplaceTensorPairs.end(), [&tensor](const auto& pair) {
+                    const auto& [inplaceInput, inplaceOutput] = pair;
+                    return inplaceInput == tensor && inplaceOutput != nullptr && inplaceOutput->tensor != nullptr &&
+                           CommonUtils::ContainsNegativeOne(inplaceOutput->GetShape());
+                });
+            if (consumerHasNegativeOneShapeOutput) {
+                continue;
+            }
+            for (const auto& [inplaceInput, inplaceOutput] : inplaceTensorPairs) {
+                if (inplaceInput != tensor || inplaceOutput == nullptr || inplaceOutput->tensor == nullptr) {
+                    continue;
+                }
+                if (inplaceOutput->GetDataSize() > reshapeOutputSize || hasLargerInplaceConsumerOutput(inplaceOutput)) {
+                    return true;
+                }
+            }
+        }
+        return false;
+    };
+    if (hasLargerInplaceConsumerOutput(reshapeOutput)) {
+        if (IsCopyToUBOverSize(reshapeOutput)) {
+            const int ubSizeThreshold = GetUbSizeThreshold();
+            APASS_LOG_ERROR_F(Elements::Tensor,
+                              "Cannot insert backward copy for Reshape[%d]: padded copy of DDR tensor[%d] exceeds "
+                              "UB size [%d] (raw data size [%ld]).",
+                              op.GetOpMagic(), reshapeOutput->GetMagic(), ubSizeThreshold,
+                              reshapeOutput->GetDataSize());
+            return FAILED;
+        }
+        backwardInsertCopy.insert(&op);
+    }
+    return SUCCESS;
+}
+
+/**
+ * @brief Collect all operations that need copies before modifying the computation graph.
  * Tensor1 ---> Assemble ---> Tensor2
  *         ---> Assemble ---> Tensor3
  *         ---> Assemble ---> Tensor4
@@ -1487,42 +1714,84 @@ Status ReplaceTensor::FindNeedToCopyReshape(std::unordered_set<Operation*>& need
 
  * Tensor1 ---> Reshape ---> Assemble ---> Tensor2(可能造成CopyOut+Reshape+Assemble的一些场景性能损失)
  */
-Status ReplaceTensor::InsertNeedCopy(Function& function)
+Status ReplaceTensor::CollectNeedInsertCopyOps(Function& function, std::unordered_set<Operation*>& forwardInsertCopy,
+                                               std::unordered_set<Operation*>& backwardInsertCopy)
 {
     std::unordered_set<int> visitedAssOps;
     std::unordered_set<int> visitedReshapeOps;
-    std::unordered_set<Operation*> needInsertCopyAssOps;
     for (auto& op : function.Operations()) {
         if (op.GetOpcode() == Opcode::OP_ASSEMBLE && (!visitedAssOps.count(op.GetOpMagic()))) {
-            FindNeedToCopyAssemble(needInsertCopyAssOps, visitedAssOps, op, function);
+            FindNeedToCopyAssemble(forwardInsertCopy, visitedAssOps, op, function);
         }
         if (op.GetOpcode() == Opcode::OP_RESHAPE && (!visitedReshapeOps.count(op.GetOpMagic()))) {
-            FindNeedToCopyReshape(needInsertCopyAssOps, visitedReshapeOps, op, function);
-        }
-    }
-    std::vector<Operation*> sortedOps(needInsertCopyAssOps.begin(), needInsertCopyAssOps.end());
-    std::sort(sortedOps.begin(), sortedOps.end(),
-              [](const Operation* a, const Operation* b) { return a->GetOpMagic() < b->GetOpMagic(); });
-    for (auto& needInsertCopyAssOp : sortedOps) {
-        auto input = needInsertCopyAssOp->GetIOperands()[0];
-        constexpr size_t kMaxCopyShapeDim = 5;
-        if (input->GetShape().size() > kMaxCopyShapeDim) {
-            APASS_LOG_WARN_F(Elements::Tensor,
-                             "Skip inserting copy for op [%s:%d]: input [%d] shape dim [%zu] exceeds pto-isa copy "
-                             "limit [%zu].",
-                             needInsertCopyAssOp->GetOpcodeStr().c_str(), needInsertCopyAssOp->GetOpMagic(),
-                             input->GetMagic(), input->GetShape().size(), kMaxCopyShapeDim);
-            continue;
-        }
-        if (input->GetMemoryTypeOriginal() == MemoryType::MEM_UB) {
-            InsertCopyUBOp(function, needInsertCopyAssOp, input);
-        } else if (input->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR) {
-            if (InsertCopyDDROp(function, needInsertCopyAssOp, input) == FAILED) {
+            FindNeedToCopyReshape(forwardInsertCopy, visitedReshapeOps, op, function);
+            if (forwardInsertCopy.count(&op) == 0 && FindForwardInsertCopy(op, forwardInsertCopy) == FAILED) {
+                return FAILED;
+            }
+            if (FindBackwardInsertCopy(op, backwardInsertCopy) == FAILED) {
                 return FAILED;
             }
         }
     }
     return SUCCESS;
+}
+
+/**
+ * @brief Insert a copy chain on the input or output side of each selected operation.
+ */
+Status ReplaceTensor::InsertCopyForOps(Function& function, const std::unordered_set<Operation*>& ops, bool afterOp)
+{
+    constexpr size_t kMaxCopyShapeDim = 5;
+    std::vector<Operation*> sortedOps(ops.begin(), ops.end());
+    std::sort(sortedOps.begin(), sortedOps.end(),
+              [](const Operation* a, const Operation* b) { return a->GetOpMagic() < b->GetOpMagic(); });
+    for (auto* op : sortedOps) {
+        if (op == nullptr) {
+            continue;
+        }
+        if ((afterOp && (op->GetOOperands().empty() || op->GetOOperands()[0] == nullptr)) ||
+            (!afterOp && (op->GetIOperands().empty() || op->GetIOperands()[0] == nullptr))) {
+            continue;
+        }
+        auto tensor = afterOp ? op->GetOOperands()[0] : op->GetIOperands()[0];
+        if (tensor->GetShape().size() > kMaxCopyShapeDim) {
+            const char* tensorSide = afterOp ? "output" : "input";
+            APASS_LOG_WARN_F(Elements::Tensor,
+                             "Skip inserting copy for op [%s:%d]: %s [%d] shape dim [%zu] exceeds pto-isa copy "
+                             "limit [%zu].",
+                             op->GetOpcodeStr().c_str(), op->GetOpMagic(), tensorSide, tensor->GetMagic(),
+                             tensor->GetShape().size(), kMaxCopyShapeDim);
+            continue;
+        }
+        LogicalTensorPtr input;
+        LogicalTensorPtr output;
+        if (afterOp) {
+            output = tensor;
+        } else {
+            input = tensor;
+        }
+        if (tensor->GetMemoryTypeOriginal() == MemoryType::MEM_UB) {
+            if (InsertCopyUBToDDRAndDDRToUB(function, op, input, output) == FAILED) {
+                return FAILED;
+            }
+        } else if (tensor->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR) {
+            if (InsertCopyDDRToUBAndUBToDDR(function, op, input, output) == FAILED) {
+                return FAILED;
+            }
+        }
+    }
+    return SUCCESS;
+}
+
+Status ReplaceTensor::InsertNeedCopy(Function& function)
+{
+    std::unordered_set<Operation*> forwardInsertCopy;
+    std::unordered_set<Operation*> backwardInsertCopy;
+    if (CollectNeedInsertCopyOps(function, forwardInsertCopy, backwardInsertCopy) == FAILED ||
+        InsertCopyForOps(function, forwardInsertCopy, false) == FAILED) {
+        return FAILED;
+    }
+    return InsertCopyForOps(function, backwardInsertCopy, true);
 }
 
 void ReplaceTensor::RebuildTokenProducer(Function& function)
@@ -1795,7 +2064,7 @@ Status ReplaceTensor::UpdateCopyInAttr(Operation* copyInOp, bool updateOffset)
     auto input = copyInOp->GetIOperands()[0];
     auto copyInOpAttr = std::dynamic_pointer_cast<CopyOpAttribute>(copyInOp->GetOpAttribute());
     if (copyInOpAttr == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Tensor, "CopyInOp[%d] don not have attr.", copyInOp->GetOpMagic());
+        APASS_LOG_ERROR_F(Elements::Tensor, "CopyInOp[%d] does not have attr.", copyInOp->GetOpMagic());
         return FAILED;
     } else {
         std::vector<OpImmediate> inputOffset;
@@ -1805,8 +2074,10 @@ Status ReplaceTensor::UpdateCopyInAttr(Operation* copyInOp, bool updateOffset)
             inputOffset = OpImmediate::Specified(input->GetDynOffset());
         }
         std::vector<OpImmediate> oldFromOffset = copyInOpAttr->GetFromOffset();
-        if (updateOffset && !inputOffset.empty() && !oldFromOffset.empty() &&
-            (inputOffset.size() == oldFromOffset.size())) {
+        if (copyInOp->HasAttr(COPY_IN_VIEW_OFFSET_ABSORBED)) {
+            copyInOpAttr->SetFromOffset(OpImmediate::Specified(input->GetTensorOffset()));
+        } else if (updateOffset && !inputOffset.empty() && !oldFromOffset.empty() &&
+                   (inputOffset.size() == oldFromOffset.size())) {
             copyInOpAttr->SetFromOffset(SumOffsetForCopyIn(inputOffset, oldFromOffset));
         }
         copyInOpAttr->SetRawShape(OpImmediate::Specified(input->tensor->GetDynRawShape()));
