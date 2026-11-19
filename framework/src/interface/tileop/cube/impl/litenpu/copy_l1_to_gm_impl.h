@@ -21,20 +21,24 @@
 // kirin9050(DAV_5101) 无 L0C：cube 输出驻留 L1（NZ Mat）。直接 L1(NZ) -> GM(ND) 落盘
 // （pto-isa TSTORE(Mat) 直连，省去 L1->UB->GM 两步搬运）。
 // 仅支持 2D ND global：Shape<1,1,1,validRow,validCol>，validRow/Col 取自源 tile 的有效形状。
+// offset0/1 由调用方按照末尾两维提取
+// 因此shape/stride也必须取末尾两维，否则4D的batch维度会错位
 template <typename config, typename GlobalData, typename TileData>
-INLINE void TStoreL1MatNz2Nd(GlobalData& dst, TileData& src, const int64_t& offset0, const int64_t& offset1)
+INLINE void TStoreL1MatNz2Nd(GlobalData& dst, TileData& src, const int64_t& offset0, const int64_t& offset1,
+                             const int64_t& batchOffset = 0)
 {
     static_assert(config::kMode == CopyOutMode::NZ2ND, "kirin9050 L1->GM only supports NZ2ND.");
     constexpr uint64_t shapeSize = Std::tuple_size<typename TileData::Shape>::value;
     constexpr auto staticL1H = Std::tuple_element<shapeSize - SHAPE_DIM2, typename TileData::TileShape>::type::value;
     constexpr auto staticL1W = Std::tuple_element<shapeSize - 1, typename TileData::TileShape>::type::value;
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
-    int64_t dstStride0 = GetStride<0>(dst);
-    int64_t dstStride1 = GetStride<1>(dst);
+    int64_t srcShape0 = GetTailShape<1>(src);
+    int64_t srcShape1 = GetTailShape<0>(src);
+    int64_t dstStride0 = GetTailStride<1>(dst);
+    int64_t dstStride1 = GetTailStride<0>(dst);
     using shapeDim2 = pto::Shape<1, 1, 1, -1, -1>;
     using strideDim2 = pto::Stride<1, 1, 1, -1, -1>;
-    int64_t gmOffset = offset1 + offset0 * dstStride0;
+    // batchOffset 由调用方按照batch维度stride累计，与末两维的offset独立相加
+    int64_t gmOffset = batchOffset + offset1 + offset0 * dstStride0;
     using globalData = pto::GlobalTensor<typename GlobalData::Type, shapeDim2, strideDim2, pto::Layout::ND>;
     // 源为 L1 中 mmad 直接写出的 NZ Mat（无 L0C，TSTORE(Mat) 要求 NZ 分形）。
     // 分形宽度与硬件 C 布局一致（内列 = max(16, 32B/sizeof)）：1B 类型用 AB 分形（32），

@@ -464,10 +464,16 @@ TILEOP void TStore(GlobalData& dst, TileData& src, const Coord& coord)
 {
 #if defined(__LITE_NPU)
     if constexpr (TileData::FORMAT == Hardware::L1 && GlobalData::FORMAT == Hardware::GM) {
-        static_assert(Std::tuple_size<Coord>::value == SHAPE_DIM2, "L1->GM store coord must be 2-dim.");
+        constexpr uint64_t shapeSize = Std::tuple_size<typename TileData::Shape>::value;
+        static_assert((shapeSize == SHAPE_DIM2 || shapeSize == SHAPE_DIM3 || shapeSize == SHAPE_DIM4) &&
+                          Std::tuple_size<Coord>::value == shapeSize,
+                      "L1->GM store shape size should be 2, 3 or 4 Dim and match Coord size.");
         int64_t offset0 = TileOp::GetTupleElement<Coord, DIM_1ST, SHAPE_DIM2, 0>(coord);
         int64_t offset1 = TileOp::GetTupleElement<Coord, DIM_2ND, SHAPE_DIM2, 0>(coord);
-        TStoreL1MatNz2Nd<config, GlobalData, TileData>(dst, src, offset0, offset1);
+        // 末两维之外是batch维： 4D [n, c, h, w]时 offset0/1 只覆盖h, w. 需要加 batch 偏移
+        // 否则不同batch写入同一GM位置
+        int64_t batchOffset = GetBatchDimsOffset(dst, coord);
+        TStoreL1MatNz2Nd<config, GlobalData, TileData>(dst, src, offset0, offset1, batchOffset);
     } else {
         TStoreL1SpillImpl<config>(dst, src, coord);
     }

@@ -47,10 +47,10 @@ INLINE void TCopyL12UBImpl(DstTileTensor& dst, SrcTileTensor& src, const Coord& 
     constexpr auto
         staticL1H = Std::tuple_element<shapeSize - SHAPE_DIM2, typename SrcTileTensor::TileShape>::type::value;
     constexpr auto staticL1W = Std::tuple_element<shapeSize - 1, typename SrcTileTensor::TileShape>::type::value;
-    int64_t srcShape0 = GetShape<0>(src);
-    int64_t srcShape1 = GetShape<1>(src);
-    int64_t dstShape0 = GetShape<0>(dst);
-    int64_t dstShape1 = GetShape<1>(dst);
+    int64_t srcShape0 = GetTailShape<1>(src);
+    int64_t srcShape1 = GetTailShape<0>(src);
+    int64_t dstShape0 = GetTailShape<1>(dst);
+    int64_t dstShape1 = GetTailShape<0>(dst);
     // L1->UB 仅支持 NZ2ND：L1 源为 mmad 直接写出的 NZ Mat，UB 目的为 ND
     using ubTileData = pto::Tile<pto::TileType::Vec, typename DstTileTensor::Type, staticUBH, staticUBW,
                                  pto::BLayout::RowMajor, -1, -1, pto::SLayout::NoneBox>;

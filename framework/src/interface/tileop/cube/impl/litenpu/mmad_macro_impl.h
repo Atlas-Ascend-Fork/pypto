@@ -28,9 +28,9 @@
 template <bool initMatrixC, bool isGemv = false, typename TileAcc, typename TileLeft, typename TileRight>
 INLINE void TMatmulMacroAccImpl(TileAcc& c, TileLeft& a, TileRight& b)
 {
-    int64_t validM = GetShape<0>(a);
-    int64_t validN = GetShape<1>(b);
-    int64_t validK = GetShape<1>(a);
+    int64_t validM = GetTailShape<1>(a);
+    int64_t validN = GetTailShape<0>(b);
+    int64_t validK = GetTailShape<0>(a);
     if (validM == 0 || validN == 0 || (validK == 0 && !initMatrixC)) {
         return;
     }
@@ -78,9 +78,9 @@ INLINE void TMatmulMacroAccImpl(TileAcc& c, TileLeft& a, TileRight& b)
 template <bool isGemv = false, typename TileAcc, typename TileLeft, typename TileRight, typename TileBias>
 INLINE void TMatmulMacroAccBiasImpl(TileAcc& c, TileLeft& a, TileRight& b, TileBias& bias)
 {
-    int64_t validM = GetShape<0>(a);
-    int64_t validN = GetShape<1>(b);
-    int64_t validK = GetShape<1>(a);
+    int64_t validM = GetTailShape<1>(a);
+    int64_t validN = GetTailShape<0>(b);
+    int64_t validK = GetTailShape<0>(a);
     if (validM == 0 || validN == 0 || validK == 0) {
         return;
     }
@@ -124,9 +124,9 @@ template <bool isGemv = false, bool withQuantPre = false, typename TileAcc, type
           typename TileAccIn>
 INLINE void TMatmulMacroAccFromImpl(TileAcc& c, TileLeft& a, TileRight& b, TileAccIn& cIn, uint64_t quantPreAddr = 0)
 {
-    int64_t validM = GetShape<0>(a);
-    int64_t validN = GetShape<1>(b);
-    int64_t validK = GetShape<1>(a);
+    int64_t validM = GetTailShape<1>(a);
+    int64_t validN = GetTailShape<0>(b);
+    int64_t validK = GetTailShape<0>(a);
     if (validM == 0 || validN == 0 || validK == 0) {
         return;
     }
@@ -205,9 +205,9 @@ template <bool initMatrixC, bool isGemv = false, typename TileAcc, typename Tile
           typename TileQuantPre>
 INLINE void TMatmulMacroInstrImpl(TileAcc& c, TileLeft& a, TileRight& b, TileQuantPre& quantPre)
 {
-    int64_t validM = GetShape<0>(a);
-    int64_t validN = GetShape<1>(b);
-    int64_t validK = GetShape<1>(a);
+    int64_t validM = GetTailShape<1>(a);
+    int64_t validN = GetTailShape<0>(b);
+    int64_t validK = GetTailShape<0>(a);
     if (validM == 0 || validN == 0 || (validK == 0 && !initMatrixC)) {
         return;
     }
@@ -253,9 +253,9 @@ template <bool initMatrixC, bool isGemv = false, typename TileAcc, typename Tile
           typename TileBias, typename TileQuantPre>
 INLINE void TMatmulMacroInstrBiasImpl(TileAcc& c, TileLeft& a, TileRight& b, TileBias& bias, TileQuantPre& quantPre)
 {
-    int64_t validM = GetShape<0>(a);
-    int64_t validN = GetShape<1>(b);
-    int64_t validK = GetShape<1>(a);
+    int64_t validM = GetTailShape<1>(a);
+    int64_t validN = GetTailShape<0>(b);
+    int64_t validK = GetTailShape<0>(a);
     if (validM == 0 || validN == 0 || validK == 0) {
         return;
     }
