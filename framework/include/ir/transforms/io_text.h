@@ -67,6 +67,7 @@
 #define IR_KW_TILE "tile"
 #define IR_KW_MUTEX_TILE "mutex_tile"
 #define IR_KW_PTR "ptr"
+#define IR_KW_SIMT_GROUP "simt_group"
 #define IR_KW_TOKEN "token"
 #define IR_KW_NONE "none"
 #define IR_KW_NULL "null"
@@ -192,6 +193,7 @@ enum class IRTextLexerTokenKind {
     KwTile,
     KwMutexTile,
     KwPtr,
+    KwSimtGroup,
     KwToken,
     KwNone,
     KwTensorView,
@@ -343,6 +345,7 @@ static inline const npu::tile_fwk::BiMap<IRTextLexerTokenKind>& IRTextGetLexerTo
         {IRTextLexerTokenKind::KwTile, IR_KW_TILE},
         {IRTextLexerTokenKind::KwMutexTile, IR_KW_MUTEX_TILE},
         {IRTextLexerTokenKind::KwPtr, IR_KW_PTR},
+        {IRTextLexerTokenKind::KwSimtGroup, IR_KW_SIMT_GROUP},
         {IRTextLexerTokenKind::KwToken, IR_KW_TOKEN},
         {IRTextLexerTokenKind::KwNone, IR_KW_NONE},
         {IRTextLexerTokenKind::KwTensorView, IR_KW_TENSOR_VIEW},
@@ -497,6 +500,7 @@ protected:
     void VisitType_(const PtrTypePtr& op) override;
     void VisitType_(const TokenTypePtr& op) override;
     void VisitType_(const NoneTypePtr& op) override;
+    void VisitType_(const SimtGroupTypePtr& op) override;
     void VisitType_(const LogicalTensorTypePtr& op) override;
     void VisitType_(const RegTypePtr& op) override;
 

@@ -22,6 +22,7 @@
 #include "ir/identifier.h"
 #include "ir/scalar_expr.h"
 #include "ir/span.h"
+#include "pypto_pro/error.h"
 #include "tilefwk/error.h"
 
 namespace pypto {
@@ -64,5 +65,14 @@ TileType::TileType(std::vector<ExprPtr> shape, DataType dtype, std::optional<Mem
 {}
 
 TupleType::TupleType(std::vector<TypePtr> types) : types_(std::move(types)) {}
+
+SimtGroupType::SimtGroupType(SimtGroupKind kind) : kind_(kind)
+{
+    using npu::tile_fwk::ExternalError;
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT,
+                 kind >= SimtGroupKind::ThreadBlock && kind <= SimtGroupKind::GridGroup)
+        << "Invalid SIMT group kind";
+}
+
 } // namespace ir
 } // namespace pypto

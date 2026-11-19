@@ -58,6 +58,14 @@ std::string TupleItemName(const std::string& tupleName, size_t index)
     return tupleName + "__item_" + std::to_string(index);
 }
 
+bool IsImplicitSimtGroup(const ir::TypePtr& type)
+{
+    // ThreadBlock and GridGroup operations read the current launch context.
+    auto groupType = ir::As<ir::SimtGroupType>(type);
+    return groupType &&
+           (groupType->kind_ == ir::SimtGroupKind::ThreadBlock || groupType->kind_ == ir::SimtGroupKind::GridGroup);
+}
+
 } // namespace
 
 std::string BuildFP32FmodExpression(const std::string& lhs, const std::string& rhs)
@@ -688,6 +696,7 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
 
     ResetFunctionGenerationState();
     needsSimtAtomicHeader_ = false;
+    needsSimtGroupHeader_ = false;
     needsScalarHelpers_ = false;
     currentKernelType_ = ir::FunctionType::OPAQUE;
     arch_ = arch;
@@ -768,13 +777,16 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
 
     if (kernelFunc->funcType_ == ir::FunctionType::SIMT_KERNEL) {
         GenerateVfFunction(kernelFunc);
+        std::string simtHeaders;
         if (needsSimtAtomicHeader_) {
-            return "#if defined(__DAV_VEC__)\n"
-                   "#include \"__clang_cce_simt_atomic.h\"\n"
-                   "#endif\n" +
-                   emitter_.GetCode();
+            simtHeaders += "#if defined(__DAV_VEC__)\n"
+                           "#include \"__clang_cce_simt_atomic.h\"\n"
+                           "#endif\n";
         }
-        return emitter_.GetCode();
+        if (needsSimtGroupHeader_) {
+            simtHeaders += "#include <pypto_simt_group.h>\n";
+        }
+        return simtHeaders + emitter_.GetCode();
     }
 
     std::string simtFuncCode = emitter_.GetCode();
@@ -831,6 +843,9 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
     }
     if (needsScalarHelpers_) {
         emitter_.EmitLine("#include <pypto_scalar.h>");
+    }
+    if (needsSimtGroupHeader_) {
+        emitter_.EmitLine("#include <pypto_simt_group.h>");
     }
     // RtWrap and the _vag_bXX_N wrappers live in the framework support header;
     // only the SIMD VF/callee functions use them, so it is pulled in exactly
@@ -1103,6 +1118,9 @@ void CCECodegen::VisitStmt_(const ir::AssignStmtPtr& op)
     auto targetVar = op->targets_.front();
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, targetVar != nullptr)
         << "Internal error: AssignStmt has null target";
+    if (IsImplicitSimtGroup(targetVar->GetType())) {
+        return;
+    }
     std::string varName = context_.SanitizeName(targetVar);
     context_.RegisterVar(targetVar, varName);
 
@@ -1236,6 +1254,16 @@ std::vector<std::string> CCECodegen::CollectTupleElemNames(const ir::ExprPtr& tu
 
 std::string CCECodegen::GetGeneratedType(const ir::TypePtr& type) const
 {
+    if (auto groupType = ir::As<ir::SimtGroupType>(type)) {
+        switch (groupType->kind_) {
+            case ir::SimtGroupKind::ThreadBlockTile:
+                return "pypto::simt::ThreadBlockTile";
+            case ir::SimtGroupKind::CoalescedGroup:
+                return "pypto::simt::CoalescedGroup";
+            default:
+                break;
+        }
+    }
     if (auto scalarType = ir::As<ir::ScalarType>(type)) {
         return scalarType->dtype_.ToCTypeString();
     }
@@ -1318,7 +1346,7 @@ bool CCECodegen::IsArrayTuple(const ir::TupleTypePtr& tt) const
 {
     if (!tt || tt->types_.empty())
         return false;
-    if (GetTupleTypeInfo(tt) != nullptr || !IsHomogeneousTuple(tt))
+    if (GetTupleTypeInfo(tt) != nullptr || IsImplicitSimtGroup(tt->types_.front()) || !IsHomogeneousTuple(tt))
         return false;
     auto elemTuple = ir::As<ir::TupleType>(tt->types_[0]);
     return !elemTuple || GetStructName(elemTuple) != nullptr;
@@ -1388,7 +1416,7 @@ void CCECodegen::VisitStmt_(const ir::IfStmtPtr& op)
 bool CCECodegen::CheckEmitVariable(const ir::VarPtr& target, ir::ExprPtr& value, bool initialize)
 {
     const auto& targetType = target->GetType();
-    if (ir::As<ir::UnknownType>(targetType) || ir::As<ir::NoneType>(targetType)) {
+    if (ir::As<ir::UnknownType>(targetType) || ir::As<ir::NoneType>(targetType) || IsImplicitSimtGroup(targetType)) {
         return false;
     }
 

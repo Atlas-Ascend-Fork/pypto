@@ -23,11 +23,16 @@
 #include <vector>
 
 #include "core/dtype.h"
+#include "ir/function.h"
 #include "ir/kind_traits.h"
 #include "ir/op_attr_types.h"
 #include "ir/op_registry.h"
 #include "ir/scalar_expr.h"
+#include "ir/stmt.h"
 #include "ir/type.h"
+#include "ir/transforms/io_text.h"
+#include "ir/transforms/printer.h"
+#include "ir/transforms/structural_comparison.h"
 #include "test_op_helpers.h"
 #include "tilefwk/error.h"
 
@@ -37,6 +42,233 @@ namespace ir {
 using namespace test_helpers;
 
 using Kwargs = std::vector<std::pair<std::string, std::any>>;
+
+TEST(SimtOpsTest, GroupTypeRoundTripComparisonAndHashPreserveKind)
+{
+    const std::vector<std::pair<SimtGroupKind, std::string>> cases = {
+        {SimtGroupKind::ThreadBlock, "simt_group<0>"},
+        {SimtGroupKind::ThreadBlockTile, "simt_group<1>"},
+        {SimtGroupKind::CoalescedGroup, "simt_group<2>"},
+        {SimtGroupKind::GridGroup, "simt_group<3>"},
+    };
+    for (const auto& [kind, text] : cases) {
+        auto type = std::make_shared<SimtGroupType>(kind);
+        auto same_kind = std::make_shared<SimtGroupType>(kind);
+        EXPECT_EQ(TextDumpType(type), text);
+        EXPECT_TRUE(structural_equal(type, same_kind));
+        EXPECT_EQ(structural_hash(type), structural_hash(same_kind));
+        std::string error;
+        auto loaded = TextLoadType(text, error);
+        ASSERT_NE(loaded, nullptr) << error;
+        EXPECT_TRUE(error.empty());
+        EXPECT_TRUE(structural_equal(type, loaded));
+        EXPECT_EQ(structural_hash(type), structural_hash(loaded));
+    }
+    auto block = std::make_shared<SimtGroupType>(SimtGroupKind::ThreadBlock);
+    auto tile = std::make_shared<SimtGroupType>(SimtGroupKind::ThreadBlockTile);
+    auto active = std::make_shared<SimtGroupType>(SimtGroupKind::CoalescedGroup);
+    EXPECT_FALSE(structural_equal(block, tile));
+    EXPECT_FALSE(structural_equal(block, active));
+    EXPECT_FALSE(structural_equal(tile, active));
+    EXPECT_NE(structural_hash(block), structural_hash(tile));
+    EXPECT_NE(structural_hash(block), structural_hash(active));
+    EXPECT_NE(structural_hash(tile), structural_hash(active));
+}
+
+TEST(SimtOpsTest, GroupTypePythonPrintUsesSimtNamespace)
+{
+    const std::vector<std::pair<SimtGroupKind, std::string>> cases = {
+        {SimtGroupKind::ThreadBlock, "ThreadBlock"},
+        {SimtGroupKind::ThreadBlockTile, "ThreadBlockTile"},
+        {SimtGroupKind::CoalescedGroup, "CoalescedGroup"},
+        {SimtGroupKind::GridGroup, "GridGroup"},
+    };
+    for (const auto& [kind, name] : cases) {
+        EXPECT_EQ(PythonPrint(std::make_shared<SimtGroupType>(kind), "pl"), "pl.simt." + name);
+    }
+}
+
+TEST(SimtOpsTest, GroupTextLoaderRejectsMalformedKinds)
+{
+    for (const auto& text :
+         {"simt_group<-1>", "simt_group<4>", "simt_group<256>", "simt_group<1.5>", "simt_group<>", "simt_group<1"}) {
+        std::string error;
+        EXPECT_EQ(TextLoadType(text, error), nullptr) << text;
+        EXPECT_FALSE(error.empty()) << text;
+    }
+}
+
+TEST(SimtOpsTest, GroupValuesTextRoundTripPreservesTypes)
+{
+    auto type = std::make_shared<SimtGroupType>(SimtGroupKind::CoalescedGroup);
+    auto source = std::make_shared<Var>("source", type, Sp());
+    auto copy = std::make_shared<Var>("copy", type, Sp());
+    auto body = std::make_shared<SeqStmts>(
+        std::vector<StmtPtr>{std::make_shared<AssignStmt>(std::vector<VarPtr>{copy}, source, Sp()),
+                             std::make_shared<ReturnStmt>(std::vector<ExprPtr>{}, Sp())},
+        Sp());
+    auto function = std::make_shared<Function>("copy_group", std::vector<VarPtr>{source}, std::vector<TypePtr>{}, body,
+                                               Sp());
+    std::string error;
+    auto text = TextDump(function);
+    auto loaded = TextLoadFunction(text, error);
+    ASSERT_NE(loaded, nullptr) << error;
+    EXPECT_TRUE(error.empty());
+    EXPECT_EQ(TextDump(loaded), text);
+    EXPECT_TRUE(structural_equal(function, loaded));
+    EXPECT_EQ(structural_hash(function), structural_hash(loaded));
+}
+
+TEST(SimtOpsTest, SemanticGroupOperationsRequireTypedReceivers)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto block = registry.Create("simt.group.this_thread_block", {}, Sp());
+    auto size = std::make_shared<ConstInt>(8, DataType::INT32, Sp());
+    auto tile = registry.Create("simt.group.tiled_partition", {block, size}, Sp());
+    auto active = registry.Create("simt.group.coalesced_threads", {}, Sp());
+    auto pred = std::make_shared<ConstBool>(true, Sp());
+    auto split = registry.Create("simt.group.binary_partition", {tile, pred}, Sp());
+    EXPECT_NO_THROW((void)structural_hash(split));
+    EXPECT_EQ(tile->args_.size(), 2U);
+    EXPECT_TRUE(tile->kwargs_.empty());
+    EXPECT_EQ(split->args_.size(), 2U);
+    EXPECT_TRUE(split->kwargs_.empty());
+    EXPECT_EQ(As<SimtGroupType>(split->GetType())->kind_, SimtGroupKind::CoalescedGroup);
+    EXPECT_EQ(As<SimtGroupType>(tile->GetType())->kind_, SimtGroupKind::ThreadBlockTile);
+    for (const auto& group : {tile, active, split}) {
+        const std::string prefix = group == tile ? "simt.thread_block_tile." : "simt.coalesced_group.";
+        for (const auto& query : {"size", "thread_rank", "meta_group_rank", "meta_group_size"}) {
+            auto call = registry.Create(prefix + query, {group}, Sp());
+            EXPECT_EQ(As<ScalarType>(call->GetType())->dtype_, DataType::UINT32);
+        }
+        EXPECT_TRUE(As<NoneType>(registry.Create(prefix + "sync", {group}, Sp())->GetType()));
+    }
+    EXPECT_THROW((void)registry.Create("simt.thread_block.size", {pred}, Sp()), std::exception);
+    EXPECT_THROW((void)registry.Create("simt.thread_block.size", {}, Sp()), std::exception);
+    EXPECT_THROW((void)registry.Create("simt.group.this_thread_block", {pred}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.group.coalesced_threads", {pred}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.group.tiled_partition", {block}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.group.tiled_partition", {block, size, size}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.group.binary_partition", {tile}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.thread_block_tile.shfl_xor", {active, pred, pred}, Sp()), std::exception);
+    EXPECT_THROW((void)registry.Create("simt.coalesced_group.ballot", {block, pred}, Sp()), std::exception);
+    EXPECT_THROW((void)registry.Create("simt.group.binary_partition", {block, pred}, Sp()), std::exception);
+    EXPECT_THROW((void)registry.Create("simt.group.tiled_partition", {active, size}, Sp()), std::exception);
+}
+
+TEST(SimtOpsTest, GroupMemberNamespacesRequireMatchingReceivers)
+{
+    auto& registry = OpRegistry::GetInstance();
+    const std::vector<std::pair<std::string, SimtGroupKind>> groups = {
+        {"simt.thread_block.", SimtGroupKind::ThreadBlock},
+        {"simt.thread_block_tile.", SimtGroupKind::ThreadBlockTile},
+        {"simt.coalesced_group.", SimtGroupKind::CoalescedGroup},
+        {"simt.grid_group.", SimtGroupKind::GridGroup},
+    };
+    for (const auto& [prefix, expectedKind] : groups) {
+        for (const auto& [otherPrefix, actualKind] : groups) {
+            auto receiver = std::make_shared<Var>("group", std::make_shared<SimtGroupType>(actualKind), Sp());
+            for (const auto& method : {"size", "thread_rank", "sync"}) {
+                if (actualKind != expectedKind) {
+                    EXPECT_THROW((void)registry.Create(prefix + method, {receiver}, Sp()), npu::tile_fwk::Error)
+                        << prefix << method << " accepted receiver from " << otherPrefix;
+                    continue;
+                }
+                auto result = registry.Create(prefix + method, {receiver}, Sp());
+                if (std::string(method) == "sync") {
+                    EXPECT_TRUE(As<NoneType>(result->GetType()));
+                } else {
+                    const auto dtype = expectedKind == SimtGroupKind::GridGroup ? DataType::UINT64 : DataType::UINT32;
+                    EXPECT_EQ(As<ScalarType>(result->GetType())->dtype_, dtype);
+                }
+            }
+        }
+    }
+}
+
+TEST(SimtOpsTest, GridGroupQueriesAndReceiverContracts)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto grid = registry.Create("simt.group.this_grid", {}, Sp());
+    auto block = registry.Create("simt.group.this_thread_block", {}, Sp());
+    ASSERT_EQ(As<SimtGroupType>(grid->GetType())->kind_, SimtGroupKind::GridGroup);
+    for (const auto& name : {"size", "thread_rank", "block_rank", "num_blocks"}) {
+        auto query = registry.Create(std::string("simt.grid_group.") + name, {grid}, Sp());
+        EXPECT_EQ(As<ScalarType>(query->GetType())->dtype_, DataType::UINT64);
+    }
+    EXPECT_EQ(As<ScalarType>(registry.Create("simt.grid_group.is_valid", {grid}, Sp())->GetType())->dtype_,
+              DataType::BOOL);
+    EXPECT_TRUE(As<NoneType>(registry.Create("simt.grid_group.sync", {grid}, Sp())->GetType()));
+    for (const auto& name : {"group_dim", "block_index"}) {
+        for (int axis = 0; axis < 3; ++axis) {
+            auto query = registry.Create(std::string("simt.grid_group.") + name, {grid}, {{"axis", axis}}, Sp());
+            EXPECT_EQ(As<ScalarType>(query->GetType())->dtype_, DataType::UINT32);
+        }
+    }
+    for (const auto& name : {"is_valid", "block_rank", "num_blocks", "block_index"}) {
+        EXPECT_THROW((void)registry.Create(std::string("simt.grid_group.") + name, {block}, {{"axis", 0}}, Sp()),
+                     npu::tile_fwk::Error);
+    }
+    for (const auto& name : {"simt.thread_block.group_index", "simt.thread_block.thread_index",
+                             "simt.thread_block_tile.meta_group_rank", "simt.coalesced_group.meta_group_size"}) {
+        EXPECT_THROW((void)registry.Create(name, {grid}, {{"axis", 0}}, Sp()), npu::tile_fwk::Error);
+    }
+    auto size = std::make_shared<ConstInt>(8, DataType::INT32, Sp());
+    auto pred = std::make_shared<ConstBool>(true, Sp());
+    EXPECT_THROW((void)registry.Create("simt.group.this_grid", {size}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.group.tiled_partition", {grid, size}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.group.binary_partition", {grid, pred}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.coalesced_group.ballot", {grid, pred}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.thread_block_tile.shfl", {grid, size, size}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.grid_group.group_dim", {grid}, {{"axis", 3}}, Sp()), npu::tile_fwk::Error);
+}
+
+TEST(SimtOpsTest, SemanticGroupDtypeAndShapeContracts)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto block = registry.Create("simt.group.this_thread_block", {}, Sp());
+    auto size = std::make_shared<ConstInt>(8, DataType::INT32, Sp());
+    auto tile = registry.Create("simt.group.tiled_partition", {block, size}, Sp());
+    auto active = registry.Create("simt.group.coalesced_threads", {}, Sp());
+    auto index = MakeScalarVar("index", DataType::INT32);
+    for (const auto& group : {tile, active}) {
+        const std::string prefix = group == tile ? "simt.thread_block_tile." : "simt.coalesced_group.";
+        for (auto dtype : {DataType::FP16, DataType::BF16, DataType::FP32, DataType::INT32, DataType::UINT32,
+                           DataType::INT64, DataType::UINT64}) {
+            auto value = MakeScalarVar("value", dtype);
+            for (const auto& method : {"shfl", "shfl_up", "shfl_down"}) {
+                auto result = registry.Create(prefix + method, {group, value, index}, Sp());
+                EXPECT_EQ(As<ScalarType>(result->GetType())->dtype_, dtype);
+            }
+        }
+        for (auto dtype : {DataType::BOOL, DataType::INT32, DataType::UINT32, DataType::INT64, DataType::UINT64}) {
+            auto predicate = MakeScalarVar("predicate", dtype);
+            for (const auto& method : {"all", "any", "ballot"}) {
+                auto result = registry.Create(prefix + method, {group, predicate}, Sp());
+                EXPECT_EQ(As<ScalarType>(result->GetType())->dtype_,
+                          std::string(method) == "ballot" ? DataType::UINT32 : DataType::INT32);
+            }
+        }
+        EXPECT_THROW((void)registry.Create(prefix + "ballot", {group, MakeScalarVar("f", DataType::FP32)}, Sp()),
+                     npu::tile_fwk::Error);
+        EXPECT_THROW((void)registry.Create(prefix + "shfl", {group, MakeScalarVar("b", DataType::BOOL), index}, Sp()),
+                     npu::tile_fwk::Error);
+        EXPECT_THROW((void)registry.Create(prefix + "shfl", {group, index}, Sp()), npu::tile_fwk::Error);
+        EXPECT_THROW((void)registry.Create("simt.thread_block.group_dim", {group}, Kwargs{{"axis", 0}}, Sp()),
+                     npu::tile_fwk::Error);
+    }
+    for (int invalid_size : {0, 3, 64}) {
+        auto invalid = std::make_shared<ConstInt>(invalid_size, DataType::INT32, Sp());
+        EXPECT_THROW((void)registry.Create("simt.group.tiled_partition", {block, invalid}, Sp()), npu::tile_fwk::Error);
+    }
+    auto runtime_size = MakeScalarVar("runtime_size", DataType::UINT32);
+    EXPECT_NO_THROW((void)registry.Create("simt.group.tiled_partition", {block, runtime_size}, Sp()));
+    EXPECT_NO_THROW((void)registry.Create("simt.group.tiled_partition", {tile, runtime_size}, Sp()));
+    EXPECT_THROW((void)registry.Create("simt.group.tiled_partition", {block, MakeScalarVar("f", DataType::FP32)}, Sp()),
+                 npu::tile_fwk::Error);
+    EXPECT_THROW((void)registry.Create("simt.thread_block.group_dim", {block}, Kwargs{{"axis", 3}}, Sp()),
+                 npu::tile_fwk::Error);
+}
 
 TEST(SimtOpsTest, ContextAndBuiltinScalarTypes)
 {

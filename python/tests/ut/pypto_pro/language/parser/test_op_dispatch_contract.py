@@ -159,6 +159,10 @@ def runtime(monkeypatch):
         TupleType=_TupleType, PtrType=type("PtrType", (), {}), NoneType=_NoneType,
         WindowType=type("WindowType", (), {}),
         Cast=type("Cast", (_Expr,), {}),
+        SimtGroupType=type("SimtGroupType", (), {}),
+        SimtGroupKind=types.SimpleNamespace(**{
+            name: name for name in ("ThreadBlock", "ThreadBlockTile", "CoalescedGroup", "GridGroup")
+        }),
         Span=_Span, DataType=_DType, MemorySpace=types.SimpleNamespace(Vec="vec"),
         FunctionType=types.SimpleNamespace(
             SimtVF="simt", SimtCallee="simt_callee", SimtKernel="simt_kernel",
@@ -182,7 +186,7 @@ def runtime(monkeypatch):
     )
     error_names = (
         "CommonExternal", "InvalidArgument", "InvalidOperation", "InvalidShape",
-        "InvalidType", "InvalidVal", "NotSupported", "OutOfRange",
+        "InvalidType", "InvalidVal", "NameNotFound", "NotSupported", "OutOfRange",
     )
     errors = module("pypto_pro._errors")
     # Use the production ambient-location helpers rather than a second implementation.
@@ -210,6 +214,7 @@ def runtime(monkeypatch):
             super().__init__(message, span=span if span is not None else errors._CURRENT_SPAN.get(), **kwargs)
 
     errors.__dict__.update({name: type(name, (AmbientDispatchError,), {}) for name in error_names})
+    errors.PyptoProError = _DispatchError
     errors.error_class_of_spec_message = lambda message: None
     ambient = []
     production_current_span = errors.current_span
@@ -229,7 +234,7 @@ def runtime(monkeypatch):
     simt = types.SimpleNamespace()
     module("pypto_pro.language._simt_api", Simt=simt)
     module("pypto_pro.language._system_api", System=types.SimpleNamespace())
-    module("pypto_pro.language.distribute")
+    distribute = module("pypto_pro.language.distribute")
     vf = types.SimpleNamespace()
     module("pypto_pro.language._vf_api", Vf=vf)
     module(
@@ -258,7 +263,7 @@ def runtime(monkeypatch):
         "_dispatch_ast_op",
         "_dispatch_op", "_check_declared_params", "_check_declared_types", "_validate_op_scope",
         "_check_aicpu_tensor_surface",
-        "parse_op_call",
+        "parse_op_call", "_extract_op_name",
         "_parse_simt_template_call", "_parse_simd_template_call",
         "_instantiate_vf_call", "_instantiate_simd_function",
     }
@@ -282,8 +287,17 @@ def runtime(monkeypatch):
     helper_class.body.extend(
         node for node in expression_mixin.body
         if isinstance(node, ast.FunctionDef)
-        and node.name in ("parse_list", "parse_tuple_literal", "_validate_subscript_value")
+        and node.name in (
+            "parse_list", "parse_tuple_literal", "_validate_subscript_value",
+            "_get_object_method_op_name", "_route_ir_node_method",
+        )
     )
+    helper_class.body.append(next(
+        node for node in expression_mixin.body
+        if isinstance(node, ast.Assign) and any(
+            isinstance(target, ast.Name) and target.id == "_OBJECT_OP_PREFIXES" for target in node.targets
+        )
+    ))
     helper_module = ast.Module(body=[
         ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
         next(node for node in call_tree.body if isinstance(node, ast.FunctionDef) and node.name == "_is_const_arg"),
@@ -291,6 +305,7 @@ def runtime(monkeypatch):
     ], type_ignores=[])
     namespace = {
         "ast": ast, "ir": ir, "inspect": inspect, "_argument_checker": checker,
+        "Vf": vf, "_language_api": api, "_distribute_api": distribute,
         "_const_int_value": utils._const_int_value,
         "_is_simt_func_type": lambda func_type: func_type in (
             ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee, ir.FunctionType.SimtKernel
@@ -307,6 +322,7 @@ def runtime(monkeypatch):
 
     class Parser(namespace["ParserHelpers"]):
         _auto_mutex = False
+        _TILE_GROUP_ACCESSORS = frozenset({"next", "current", "previous"})
 
         def __init__(self, source, values=None):
             self.span_tracker = tracker.SpanTracker("test.py", [source])
@@ -319,9 +335,14 @@ def runtime(monkeypatch):
             self.target = ir.SectionKind.Cube
             self.expr_evaluator = types.SimpleNamespace(
                 ir_to_python_value=_constant_value, try_eval_expr=lambda node: (False, None),
+                closure_vars={"pl": api, "pld": distribute, "vf": vf},
             )
 
         def parse_expression(self, node, *, nested=True):
+            if isinstance(node, ast.Attribute):
+                raise errors.InvalidType("Attribute has no IR value", parser_retry=True)
+            if isinstance(node, ast.Name) and node.id not in self.values:
+                raise errors.NameNotFound(f"Undefined variable '{node.id}'", parser_retry=True)
             self.evaluated.append(ast.unparse(node))
             if isinstance(node, ast.Name):
                 return self.values[node.id]
@@ -358,14 +379,14 @@ def runtime(monkeypatch):
         def _record_op_access(self, op_name, operands, keyword_names, span):
             self.recorded.append((op_name, operands, keyword_names))
 
-        def _route_ir_node_method(self, call):
-            return None
+        def local_binding(self, name):
+            return ("var", self.values[name]) if name in self.values else None
+
+        def is_tile_group(self, expr):
+            return isinstance(expr.type, _TupleType) and getattr(expr.type, "name", None) == "tile_group"
 
         def _route_channel_method(self, call):
             return None
-
-        def _extract_op_name(self, node):
-            return ast.unparse(node).removeprefix("pl.")
 
     def simt_module():
         name = "pypto_pro.ir.op.simt_ops"
@@ -375,7 +396,7 @@ def runtime(monkeypatch):
     def load_functions(relative, names, **extra):
         """Run production helpers whose containing module requires the native IR."""
         tree = ast.parse((_SOURCE / relative).read_text(encoding="utf-8"))
-        functions = [node for node in tree.body if isinstance(node, ast.FunctionDef) and node.name in names]
+        functions = [node for node in ast.walk(tree) if isinstance(node, ast.FunctionDef) and node.name in names]
         assert {node.name for node in functions} == set(names)
         for node in functions:
             node.decorator_list = []
@@ -400,6 +421,122 @@ def runtime(monkeypatch):
         registry=registry, Parser=Parser, errors=errors, ir=ir, utils=utils,
         declare=declare, ambient=ambient, load=load, simt_module=simt_module, load_functions=load_functions,
     )
+
+
+@pytest.mark.parametrize("namespace,method", [
+    ("simt.ThreadBlock", "size"), ("simt.ThreadBlockTile", "size"),
+    ("simt.CoalescedGroup", "size"), ("simt.GridGroup", "size"),
+    ("TileGroup", "next"), ("dist.Window", "rank"),
+])
+def test_object_method_resolves_type_and_parses_receiver_once(runtime, monkeypatch, namespace, method):
+    group_type = runtime.ir.SimtGroupType()
+    group_type.kind = namespace.removeprefix("simt.")
+    tile_group_type = _TupleType()
+    tile_group_type.name = "tile_group"
+    value_type = group_type if namespace.startswith("simt.") else {
+        "TileGroup": tile_group_type, "dist.Window": runtime.ir.WindowType(),
+    }[namespace]
+    obj = _Expr(value_type)
+    op_name = f"{namespace}.{method}"
+    result = _ConstInt(1)
+
+    @runtime.registry.op_impl(op_name)
+    def build(self, receiver, /, *, span):
+        assert receiver is obj
+        return result
+
+    parser = runtime.Parser(f"obj.{method}()", {"obj": obj})
+    parser._current_func_type = "simt" if namespace.startswith("simt.") else "ordinary_kernel"
+
+    def reject_fallthrough(call):
+        pytest.fail("An object method must return its dispatched result directly")
+
+    monkeypatch.setattr(parser, "_route_channel_method", reject_fallthrough)
+    assert parser.parse_op_call(parser.call) is result
+    assert parser.evaluated == ["obj"]
+    assert parser.recorded == [(op_name, [], ())]
+
+
+@pytest.mark.parametrize("parser_retry", [False, True])
+def test_object_parse_error_declines_method_route(runtime, monkeypatch, parser_retry):
+    parser = runtime.Parser("obj.size()")
+    error = runtime.errors.InvalidType("Cannot parse object", parser_retry=parser_retry)
+
+    def reject_object(node):
+        raise error
+
+    monkeypatch.setattr(parser, "parse_expression", reject_object)
+    assert parser._route_ir_node_method(parser.call) is None
+
+
+def test_object_method_builder_error_is_preserved(runtime):
+    group_type = runtime.ir.SimtGroupType()
+    group_type.kind = "ThreadBlock"
+    parser = runtime.Parser("obj.size()", {"obj": _Expr(group_type)})
+    error = runtime.errors.InvalidArgument("Invalid method argument", parser_retry=True)
+
+    @runtime.registry.op_impl("simt.ThreadBlock.size")
+    def build(self, obj, /, *, span):
+        raise error
+
+    with pytest.raises(runtime.errors.InvalidArgument) as caught:
+        parser.parse_op_call(parser.call)
+    assert caught.value is error
+
+
+@pytest.mark.parametrize("source", ["tiles[0].current()", "pl.make_tile_group().next()"])
+def test_tile_group_expression_receivers_remain_supported(runtime, monkeypatch, source):
+    group_type = _TupleType()
+    group_type.name = "tile_group"
+    group = _Expr(group_type)
+    parser = runtime.Parser(source, {"tiles": group})
+    parser._current_func_type = "ordinary_kernel"
+    monkeypatch.setattr(parser, "parse_expression", lambda node: group)
+
+    @runtime.registry.op_impl(f"TileGroup.{parser.call.func.attr}")
+    def build(self, receiver, /, *, span):
+        assert receiver is group
+        return receiver
+
+    assert parser.parse_op_call(parser.call) is group
+
+
+@pytest.mark.parametrize("module,function,op_name,source", [
+    ("ir/op/dist_ops.py", "_build_window_rank", "dist.Window.rank", "obj.rank(1)"),
+    ("language/parser/_buffer_parser.py", "_build_tile_group_next", "TileGroup.next", "obj.next(value=1)"),
+])
+def test_accessor_builder_rejects_explicit_arguments(runtime, module, function, op_name, source):
+    helpers = runtime.load_functions(module, (function,))
+    runtime.registry.op_impl(op_name)(getattr(helpers, function))
+
+    group_type = _TupleType()
+    group_type.name = "tile_group"
+    obj_type = runtime.ir.WindowType() if op_name.startswith("dist.") else group_type
+    parser = runtime.Parser(source, {"obj": _Expr(obj_type)})
+    parser._current_func_type = "ordinary_kernel"
+    with pytest.raises(TypeError):
+        parser.parse_op_call(parser.call)
+    assert parser.evaluated == ["obj", "1"]
+
+
+@pytest.mark.parametrize("op_name,arguments", [
+    ("simt.this_thread_block", ""), ("simt.this_grid", ""), ("simt.coalesced_threads", ""),
+    ("simt.tiled_partition", "group, 8"),
+])
+def test_namespace_calls_fall_back_to_regular_dispatch(runtime, op_name, arguments):
+    group = _Expr(runtime.ir.SimtGroupType())
+
+    @runtime.registry.op_impl(op_name)
+    def build(self, *args, span):
+        if arguments:
+            assert len(args) == 2 and args[0] is group and args[1].value == 8
+        else:
+            assert args == ()
+        return op_name
+
+    parser = runtime.Parser(f"pl.{op_name}({arguments})", {"group": group})
+    assert parser.parse_op_call(parser.call) == op_name
+    assert parser.evaluated == (["group", "8"] if arguments else [])
 
 
 def test_builder_receives_ir_for_operands_and_static_keyword_attributes(runtime):

@@ -49,6 +49,10 @@ void IRVisitor::VisitStmt(const StmtPtr& stmt) { StmtFunctor<void>::VisitStmt(st
 
 void IRVisitor::VisitType(const TypePtr& type)
 {
+    if (auto op = As<SimtGroupType>(type)) {
+        VisitType_(op);
+        return;
+    }
     if (auto op = As<TensorType>(type)) {
         VisitType_(op);
         return;
@@ -355,6 +359,7 @@ void IRVisitor::VisitType_(const MemRefTypePtr&) {}
 void IRVisitor::VisitType_(const PtrTypePtr&) {}
 void IRVisitor::VisitType_(const TokenTypePtr&) {}
 void IRVisitor::VisitType_(const NoneTypePtr&) {}
+void IRVisitor::VisitType_(const SimtGroupTypePtr&) {}
 void IRVisitor::VisitType_(const LogicalTensorTypePtr&) {}
 void IRVisitor::VisitType_(const RegTypePtr&) {}
 

@@ -1959,3 +1959,99 @@ def test_simt_launch_rejects_dynamic_tensor_shape(sanitizer):
 
     with pytest.raises(DynamicShapeUnsupported, match="must have a static shape"):
         _compile_to_cce(kernel, sanitizer=sanitizer)
+
+
+# -----------------------------------------------------------------------------------------------------------
+# SIMT cooperative groups
+# -----------------------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("mode", ["simt", "simd"])
+def test_simt_group_codegen_uses_cce_operations(mode):
+    @pl.vector_function(mode="simt")
+    def group_ops(out, width):
+        block = pl.simt.this_thread_block()
+        tile = pl.simt.tiled_partition(block, width)
+        active = pl.simt.coalesced_threads()
+        rank = tile.thread_rank()
+        split = pl.simt.binary_partition(active, rank < 4)
+        out[0] = tile.shfl(rank, 0)
+        out[1] = split.shfl(rank, 0)
+        out[2] = split.ballot(rank < 4)
+        block.sync()
+        tile.sync()
+        active.sync()
+
+    @pl.vector_function(mode="simt", max_threads=32)
+    def entry(out, width):
+        group_ops(out, width)
+
+    @pl.jit(mode="simt", max_threads=32)
+    def pure(out: pl.Tensor[[3], pl.DT_UINT32], width: pl.DT_UINT32):
+        group_ops(out, width)
+
+    @pl.jit
+    def mixed(out: pl.Tensor[[3], pl.DT_UINT32], width: pl.DT_UINT32):
+        with pl.section_vector():
+            entry[32](out, width)
+
+    cpp = _compile_to_cce(pure if mode == "simt" else mixed)
+    function = _simt_function_source(cpp, "group_ops")
+    group_header = "#include <pypto_simt_group.h>"
+    assert cpp.count(group_header) == 1
+    assert cpp.index(group_header) < cpp.index("inline void group_ops(")
+    assert not re.search(r"\bpypto::simt::ThreadBlock\b", cpp)
+    assert re.search(r"__cg_size\s*=\s*static_cast<unsigned int>\(width(?:_\d+)*\)", function)
+    assert function.count("__activemask()") == 1
+    assert "__shfl(" in function
+    assert "__ballot(" in function
+    assert "__cg_select_mask" in function
+    assert "__cg_packed" in function
+    assert function.count("__sync_workitems();") == 1
+    assert function.count("__threadfence_block();") == 2
+
+
+def test_simt_grid_group_codegen_uses_grid_barrier():
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(out: pl.Tensor[[2], pl.DT_UINT64], rounds: pl.DT_INT64):
+        if rounds > 0:
+            grid = pl.simt.this_grid()
+        else:
+            grid = pl.simt.this_grid()
+        block = pl.simt.this_thread_block()
+        for _ in pl.range(rounds):
+            block = pl.simt.this_thread_block()
+        out[0] = grid.size()
+        out[1] = block.size()
+        grid.sync()
+
+    cpp = _compile_to_cce(kernel)
+    assert "#include <pypto_simt_group.h>" not in cpp
+    assert cpp.count('#include "__clang_cce_simt_atomic.h"') == 1
+    assert not re.search(r"\bpypto::simt::(?:ThreadBlock|GridGroup)\b", cpp)
+    assert "(blockDim.x * blockDim.y * blockDim.z)" in cpp
+    assert "static_cast<uint64_t>(gridDim.x)" in cpp
+    assert "__cce_simt_get_para_base_imp()" in cpp
+    assert "__atomic_add(" in cpp
+    assert cpp.count("__sync_workitems();") == 2
+
+
+def test_simt_group_codegen_resets_header_state():
+    from pypto.pypto_impl import NpuArch, ir
+    from pypto.pypto_impl.codegen import CCECodegen
+
+    @pl.jit(mode="simt", max_threads=32)
+    def with_groups(out: pl.Tensor[[1], pl.DT_UINT32]):
+        active = pl.simt.coalesced_threads()
+        out[0] = active.size()
+
+    @pl.jit(mode="simt", max_threads=32)
+    def without_groups(out: pl.Tensor[[1], pl.DT_UINT32]):
+        out[0] = pl.simt.linear_thread_idx()
+
+    codegen = CCECodegen(ir.SectionKind.Vector)
+    group_header = "#include <pypto_simt_group.h>"
+    for kernel, needs_header in ((with_groups, True), (without_groups, False), (with_groups, True)):
+        program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+        cpp = codegen.generate_single(program, NpuArch.DAV_3510)
+        assert cpp.count(group_header) == int(needs_header)

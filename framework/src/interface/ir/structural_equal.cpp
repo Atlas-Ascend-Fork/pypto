@@ -812,6 +812,12 @@ bool StructuralEqualImpl<AssertMode>::EqualType(const TypePtr& lhs, const TypePt
                 return false;
         }
         return true;
+    } else if (auto group = As<SimtGroupType>(lhs)) {
+        auto other = As<SimtGroupType>(rhs);
+        if (!other || group->kind_ != other->kind_) {
+            return IRAssert({}, "SIMT group kind mismatch");
+        }
+        return true;
     } else if (auto lhsToken = As<TokenType>(lhs)) {
         auto rhsToken = As<TokenType>(rhs);
         if (!rhsToken) {

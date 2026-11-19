@@ -466,9 +466,7 @@ class CallParserMixin:
     # bound and emit no pipe, buffer or section work of their own.
     _VF_SCALAR_PL_OPS: frozenset[str] = frozenset({"range", "min", "max", "const"})
 
-    # Tile-group cursor accessors, lowered by _route_ir_node_method rather than by
-    # the op registry. Named here because that route emits a struct.set plus scalar
-    # arithmetic, which is plain CCE work and must not land in a VEC_SCOPE.
+    # Tile-group cursor accessors emit scalar work that must stay outside VEC_SCOPE.
     _TILE_GROUP_ACCESSORS: frozenset[str] = frozenset({"next", "current", "previous"})
 
     def _extract_op_name(self, func: ast.expr) -> str | None:
@@ -806,7 +804,7 @@ class CallParserMixin:
                     parser_retry=True,
                 )
 
-    def _dispatch_op(self, op_name: str, call: ast.Call, op_func: Callable):
+    def _dispatch_op(self, op_name: str, call: ast.Call, op_func: Callable, *, obj: ir.Expr | None = None):
         """Check and parse arguments, then call the registered implementation."""
         span = self.span_tracker.get_span(call)
         with current_span(span):
@@ -816,7 +814,8 @@ class CallParserMixin:
             self._check_declared_types(op_name, args, kwargs)
             self._check_aicpu_tensor_surface(op_name, args, kwargs, span)
             self._current_node = call
-            result = op_func(self, *args, **kwargs, span=span)
+            operands = [obj, *args] if obj is not None else args
+            result = op_func(self, *operands, **kwargs, span=span)
         self._record_op_access(
             op_name,
             [(position, None, arg) for position, arg in enumerate(args)]
@@ -873,11 +872,6 @@ class CallParserMixin:
 
     def _validate_op_scope(self, op_name: str) -> None:
         """Check VF execution scope before parsing operands or emitting IR.
-
-        Every dispatch in parse_op_call runs behind this check, the tile-group
-        route included: those routes lower their own operands and emit IR, so a
-        check placed after them would reject the call only once its side effects
-        already sat in the section being built.
 
         Match VF instructions by namespace so newly added operations inherit
         the same restriction.

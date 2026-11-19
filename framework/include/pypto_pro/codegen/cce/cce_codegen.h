@@ -148,6 +148,7 @@ public:
     [[nodiscard]] std::string GetCurrentResultTarget() const override { return currentTargetVar_; }
     void Emit(const std::string& line) override;
     bool needsSimtAtomicHeader_ = false;
+    bool needsSimtGroupHeader_ = false;
     std::string GetExprAsCode(const ir::ExprPtr& expr) override;
     std::string ScalarCast(const std::string& value, const ir::DataType& source, const ir::DataType& target);
     std::string GetGeneratedType(const ir::TypePtr& type) const;

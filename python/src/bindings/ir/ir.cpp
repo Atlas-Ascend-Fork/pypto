@@ -500,6 +500,15 @@ void BindTypeClass(py::module_& ir)
         .value("READ", TokenKind::READ, "Tensor graph read token")
         .value("WRITE", TokenKind::WRITE, "Tensor graph write token");
 
+    py::enum_<SimtGroupKind>(ir, "SimtGroupKind")
+        .value("ThreadBlock", SimtGroupKind::ThreadBlock)
+        .value("ThreadBlockTile", SimtGroupKind::ThreadBlockTile)
+        .value("CoalescedGroup", SimtGroupKind::CoalescedGroup)
+        .value("GridGroup", SimtGroupKind::GridGroup);
+    auto group_type_class = py::class_<SimtGroupType, Type, std::shared_ptr<SimtGroupType>>(ir, "SimtGroupType");
+    group_type_class.def(py::init<SimtGroupKind>(), py::arg("kind"));
+    BindFields<SimtGroupType>(group_type_class);
+
     // TokenType - const shared_ptr
     auto tokenTypeClass = py::class_<TokenType, Type, std::shared_ptr<TokenType>>(ir, "TokenType", "Opaque token type");
     tokenTypeClass.def(py::init<TokenKind>(), py::arg("kind") = TokenKind::NORMAL, "Create a token type")

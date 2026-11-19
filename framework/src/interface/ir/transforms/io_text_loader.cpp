@@ -474,6 +474,20 @@ TypePtr IRTextParser::ParseTypePtr()
     return std::make_shared<PtrType>(dt->data);
 }
 
+TypePtr IRTextParser::ParseTypeSimtGroup()
+{
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwSimtGroup));
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunLt));
+    const auto kind = Peek().intVal;
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::TokInt));
+    if (kind < static_cast<int64_t>(SimtGroupKind::ThreadBlock) ||
+        kind > static_cast<int64_t>(SimtGroupKind::GridGroup)) {
+        return Error("Invalid SIMT group kind: " + std::to_string(kind));
+    }
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunGt));
+    return std::make_shared<SimtGroupType>(static_cast<SimtGroupKind>(kind));
+}
+
 TypePtr IRTextParser::ParseTypeTuple()
 {
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwTuple));
@@ -703,6 +717,7 @@ TypePtr IRTextParser::ParseType()
         {IRTextLexerTokenKind::KwNone, &IRTextParser::ParseTypeNone},
         {IRTextLexerTokenKind::KwV0LogicalTensor, &IRTextParser::ParseTypeLogicalTensor},
         {IRTextLexerTokenKind::KwPtr, &IRTextParser::ParseTypePtr},
+        {IRTextLexerTokenKind::KwSimtGroup, &IRTextParser::ParseTypeSimtGroup},
         {IRTextLexerTokenKind::KwTuple, &IRTextParser::ParseTypeTuple},
         {IRTextLexerTokenKind::KwTensor, &IRTextParser::ParseTypeTensor},
         {IRTextLexerTokenKind::KwTile, &IRTextParser::ParseTypeTile},
@@ -1249,6 +1264,7 @@ StmtPtr IRTextParser::ParseStmt()
         IRTextLexerTokenKind::KwTypeBf16,    IRTextLexerTokenKind::KwTypeFp8e4m3fn,
         IRTextLexerTokenKind::KwTypeFp8e5m2, IRTextLexerTokenKind::KwTypeHf4,
         IRTextLexerTokenKind::KwTypeHf8,     IRTextLexerTokenKind::KwTypeUnknown,
+        IRTextLexerTokenKind::KwSimtGroup,
     };
     if (typeKeywords.count(tok.kind)) {
         return ParseStmtVarDef();

@@ -1,0 +1,43 @@
+program #entry() {
+    function grid_size incast() outcast(uint64_t) #entry(false) #type(SimtCallee) {
+        simt_group<3> %grid_0 = simt.group.this_grid();
+        uint64_t %size_0 = simt.grid_group.size(%grid_0);
+        simt.grid_group.sync(%grid_0);
+        return %size_0;
+    }
+    function kernel incast(tensor<12, uint64_t, tensor_view<, , ND, %out_ptr>> %out_0) outcast() #entry(false) #type(SimtKernel) {
+        simt_group<3> %grid_0 = simt.group.this_grid();
+        bool %_expr_tmp_0_0 = simt.grid_group.is_valid(%grid_0);
+        block.setval(%out_0, tuple(0), %_expr_tmp_0_0);
+        uint64_t %_expr_tmp_1_0 = simt.grid_group.thread_rank(%grid_0);
+        block.setval(%out_0, tuple(1), %_expr_tmp_1_0);
+        uint64_t %_expr_tmp_2_0 = simt.grid_group.block_rank(%grid_0);
+        block.setval(%out_0, tuple(2), %_expr_tmp_2_0);
+        uint64_t %_expr_tmp_3_0 = simt.grid_group.size(%grid_0);
+        block.setval(%out_0, tuple(3), %_expr_tmp_3_0);
+        uint64_t %_expr_tmp_4_0 = simt.grid_group.num_blocks(%grid_0);
+        block.setval(%out_0, tuple(4), %_expr_tmp_4_0);
+        tuple<uint32_t, uint32_t, uint32_t> %_tuple_anchor_5_0 = tuple(simt.grid_group.group_dim(%grid_0, axis=0), simt.grid_group.group_dim(%grid_0, axis=1), simt.grid_group.group_dim(%grid_0, axis=2));
+        uint32_t %_expr_tmp_6_0 = simt.grid_group.group_dim(%grid_0, axis=0);
+        block.setval(%out_0, tuple(5), %_expr_tmp_6_0);
+        tuple<uint32_t, uint32_t, uint32_t> %_tuple_anchor_7_0 = tuple(simt.grid_group.group_dim(%grid_0, axis=0), simt.grid_group.group_dim(%grid_0, axis=1), simt.grid_group.group_dim(%grid_0, axis=2));
+        uint32_t %_expr_tmp_8_0 = simt.grid_group.group_dim(%grid_0, axis=1);
+        block.setval(%out_0, tuple(6), %_expr_tmp_8_0);
+        tuple<uint32_t, uint32_t, uint32_t> %_tuple_anchor_9_0 = tuple(simt.grid_group.group_dim(%grid_0, axis=0), simt.grid_group.group_dim(%grid_0, axis=1), simt.grid_group.group_dim(%grid_0, axis=2));
+        uint32_t %_expr_tmp_10_0 = simt.grid_group.group_dim(%grid_0, axis=2);
+        block.setval(%out_0, tuple(7), %_expr_tmp_10_0);
+        tuple<uint32_t, uint32_t, uint32_t> %_tuple_anchor_11_0 = tuple(simt.grid_group.block_index(%grid_0, axis=0), simt.grid_group.block_index(%grid_0, axis=1), simt.grid_group.block_index(%grid_0, axis=2));
+        uint32_t %_expr_tmp_12_0 = simt.grid_group.block_index(%grid_0, axis=0);
+        block.setval(%out_0, tuple(8), %_expr_tmp_12_0);
+        tuple<uint32_t, uint32_t, uint32_t> %_tuple_anchor_13_0 = tuple(simt.grid_group.block_index(%grid_0, axis=0), simt.grid_group.block_index(%grid_0, axis=1), simt.grid_group.block_index(%grid_0, axis=2));
+        uint32_t %_expr_tmp_14_0 = simt.grid_group.block_index(%grid_0, axis=1);
+        block.setval(%out_0, tuple(9), %_expr_tmp_14_0);
+        tuple<uint32_t, uint32_t, uint32_t> %_tuple_anchor_15_0 = tuple(simt.grid_group.block_index(%grid_0, axis=0), simt.grid_group.block_index(%grid_0, axis=1), simt.grid_group.block_index(%grid_0, axis=2));
+        uint32_t %_expr_tmp_16_0 = simt.grid_group.block_index(%grid_0, axis=2);
+        block.setval(%out_0, tuple(10), %_expr_tmp_16_0);
+        simt.grid_group.sync(%grid_0);
+        uint64_t %_expr_tmp_17_0 = grid_size();
+        block.setval(%out_0, tuple(11), %_expr_tmp_17_0);
+        return;
+    }
+}

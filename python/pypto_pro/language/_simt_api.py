@@ -34,8 +34,190 @@ from ._api import DType, Offset, Scalar, Tensor, Tile, _api_decl
 class Simt:
     """SIMT namespace (``pl.simt.*``).
 
-    Provides SIMT context queries, synchronization, scalar operations, and atomics.
+    Provides SIMT context queries, cooperative-group handles, synchronization,
+    scalar operations, and atomics.
     """
+
+    class GridGroup:
+        """All threads in a standalone SIMT kernel, returned by this_grid()."""
+
+        @staticmethod
+        @_api_decl
+        def is_valid() -> Scalar:
+            """Return a BOOL scalar, true for a standalone SIMT grid."""
+
+        @staticmethod
+        @_api_decl
+        def sync() -> None:
+            """Synchronize all grid threads at the same call site.
+
+            The grid must not exceed the device's physical AIV core count.
+            This is an execution barrier, not cross-block data-cache coherence.
+            """
+
+        @staticmethod
+        @_api_decl
+        def thread_rank() -> Scalar:
+            """Return this thread's flattened UINT64 rank in the grid."""
+
+        @staticmethod
+        @_api_decl
+        def block_rank() -> Scalar:
+            """Return this block's flattened UINT64 rank in the grid."""
+
+        @staticmethod
+        @_api_decl
+        def size() -> Scalar:
+            """Return the total grid thread count as UINT64."""
+
+        @staticmethod
+        @_api_decl
+        def num_blocks() -> Scalar:
+            """Return the total grid block count as UINT64."""
+
+        @staticmethod
+        @_api_decl
+        def group_dim() -> Any:
+            """Return the grid dimensions in blocks."""
+
+        @staticmethod
+        @_api_decl
+        def block_index() -> Any:
+            """Return this block's coordinates in the grid."""
+
+    class ThreadBlock:
+        """Current SIMT thread block, returned by ``pl.simt.this_thread_block()``.
+
+        Calls on this handle are lowered by the kernel parser; they do not execute in Python.
+        """
+
+        @staticmethod
+        @_api_decl
+        def sync() -> None:
+            """Synchronize all threads in the block."""
+
+        @staticmethod
+        @_api_decl
+        def thread_rank() -> Scalar:
+            """Return the flattened thread index within the block."""
+
+        @staticmethod
+        @_api_decl
+        def group_index() -> Any:
+            """Return the block coordinates in the grid."""
+
+        @staticmethod
+        @_api_decl
+        def thread_index() -> Any:
+            """Return the thread coordinates in the block."""
+
+        @staticmethod
+        @_api_decl
+        def group_dim() -> Any:
+            """Return the three block dimensions."""
+
+        @staticmethod
+        @_api_decl
+        def size() -> Scalar:
+            """Return the total number of threads in the block."""
+
+    class ThreadBlockTile:
+        """A fixed-size cooperative group of consecutive lanes within one warp."""
+
+        @staticmethod
+        @_api_decl
+        def sync() -> None: ...
+
+        @staticmethod
+        @_api_decl
+        def thread_rank() -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def size() -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def meta_group_rank() -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def meta_group_size() -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def shfl(value: Scalar, src_rank: Scalar, /) -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def shfl_up(value: Scalar, delta: Scalar, /) -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def shfl_down(value: Scalar, delta: Scalar, /) -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def shfl_xor(value: Scalar, lane_mask: Scalar, /) -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def any(predicate: Scalar, /) -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def all(predicate: Scalar, /) -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def ballot(predicate: Scalar, /) -> Scalar: ...
+
+    class CoalescedGroup:
+        """A captured set of active lanes in one warp."""
+
+        @staticmethod
+        @_api_decl
+        def sync() -> None: ...
+
+        @staticmethod
+        @_api_decl
+        def thread_rank() -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def size() -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def meta_group_rank() -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def meta_group_size() -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def shfl(value: Scalar, src_rank: Scalar, /) -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def shfl_up(value: Scalar, delta: Scalar, /) -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def shfl_down(value: Scalar, delta: Scalar, /) -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def any(predicate: Scalar, /) -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def all(predicate: Scalar, /) -> Scalar: ...
+
+        @staticmethod
+        @_api_decl
+        def ballot(predicate: Scalar, /) -> Scalar: ...
 
     @staticmethod
     @_api_decl
@@ -66,6 +248,42 @@ class Simt:
     @_api_decl
     def warp_size() -> int:
         """Return the target SIMT warp size."""
+
+    @staticmethod
+    @_api_decl
+    def this_thread_block() -> Simt.ThreadBlock:
+        """Return a handle for the current SIMT thread block."""
+
+    @staticmethod
+    @_api_decl
+    def this_grid() -> Simt.GridGroup:
+        """Return the current standalone SIMT kernel's grid.
+
+        Available in @pypto_pro.language.jit(mode="simt") and its SIMT helpers,
+        not in SIMT vector functions launched from a SIMD kernel.
+        """
+
+    @staticmethod
+    @_api_decl
+    def tiled_partition(parent: Simt.ThreadBlock | Simt.ThreadBlockTile, size: Scalar, /) -> Simt.ThreadBlockTile:
+        """Partition a block or tile into equal-sized subgroups.
+
+        All parent threads must participate with the same constant or runtime
+        size, one of 1, 2, 4, 8, 16, or 32. The size must divide the parent
+        group's size and must be smaller than the parent size for nested tiles.
+        """
+
+    @staticmethod
+    @_api_decl
+    def coalesced_threads() -> Simt.CoalescedGroup:
+        """Capture the current warp's active-lane mask."""
+
+    @staticmethod
+    @_api_decl
+    def binary_partition(
+        group: Simt.ThreadBlockTile | Simt.CoalescedGroup, predicate: Scalar, /
+    ) -> Simt.CoalescedGroup:
+        """Partition a single-warp group by a per-thread predicate."""
 
     @staticmethod
     @_api_decl

@@ -1393,6 +1393,819 @@ REGISTER_OP("simt.atomic_xor")
                                     kwargs);
     });
 
+// ============================================================================
+// SIMT cooperative groups
+// ============================================================================
+
+namespace {
+
+void CheckSimtGroupPredicate(const ExprPtr& expr)
+{
+    auto scalar = As<ScalarType>(expr->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE,
+                 scalar && (scalar->dtype_ == DataType::BOOL || scalar->dtype_ == DataType::INT32 ||
+                            scalar->dtype_ == DataType::UINT32 || scalar->dtype_ == DataType::INT64 ||
+                            scalar->dtype_ == DataType::UINT64))
+        << "SIMT group predicate/index requires an integer or BOOL";
+}
+
+void CheckSimtGroupIntegerArg(const ExprPtr& expr, const std::string& name)
+{
+    auto scalar = As<ScalarType>(expr->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar && scalar->dtype_.IsInt())
+        << name << " requires a non-BOOL integer scalar";
+}
+
+TypePtr DeduceSimtThisThreadBlockType(const std::vector<ExprPtr>& args,
+                                      const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.empty()) << "this_thread_block accepts no operands";
+    return std::make_shared<SimtGroupType>(SimtGroupKind::ThreadBlock);
+}
+
+TypePtr DeduceSimtCoalescedThreadsType(const std::vector<ExprPtr>& args,
+                                       const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.empty()) << "coalesced_threads accepts no operands";
+    return std::make_shared<SimtGroupType>(SimtGroupKind::CoalescedGroup);
+}
+
+TypePtr DeduceSimtThisGridType(const std::vector<ExprPtr>& args,
+                               const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.empty()) << "this_grid accepts no operands";
+    return std::make_shared<SimtGroupType>(SimtGroupKind::GridGroup);
+}
+
+TypePtr DeduceSimtTiledPartitionType(const std::vector<ExprPtr>& args,
+                                     const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+        << "tiled_partition requires a parent group and size";
+    auto parent = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, parent != nullptr) << "tiled_partition parent must be a SIMT group";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE,
+                 parent->kind_ == SimtGroupKind::ThreadBlock || parent->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "tiled_partition requires a thread block or thread block tile";
+    CheckSimtGroupIntegerArg(args[1], "tiled_partition size");
+    if (auto size = As<ConstInt>(args[1])) {
+        PRO_IR_CHECK(ExternalError::INVALID_VAL,
+                     size->value_ > 0 && size->value_ <= 32 && (size->value_ & (size->value_ - 1)) == 0)
+            << "tiled_partition size must be a power of two in [1, 32]";
+    }
+    return std::make_shared<SimtGroupType>(SimtGroupKind::ThreadBlockTile);
+}
+
+TypePtr DeduceSimtBinaryPartitionType(const std::vector<ExprPtr>& args,
+                                      const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+        << "binary_partition requires a parent group and predicate";
+    auto parent = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, parent != nullptr) << "binary_partition parent must be a SIMT group";
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE,
+                 parent->kind_ == SimtGroupKind::CoalescedGroup || parent->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "binary_partition requires a coalesced group or thread block tile";
+    CheckSimtGroupPredicate(args[1]);
+    return std::make_shared<SimtGroupType>(SimtGroupKind::CoalescedGroup);
+}
+
+ScalarTypePtr CheckSimtGroupShuffleValueType(const ExprPtr& expr)
+{
+    auto value = As<ScalarType>(expr->GetType());
+    PRO_IR_CHECK(
+        ExternalError::INVALID_TYPE,
+        value && IsDtypeInList(value->dtype_, {DataType::INT32, DataType::UINT32, DataType::INT64, DataType::UINT64,
+                                               DataType::FP32, DataType::FP16, DataType::BF16}))
+        << "Unsupported SIMT group shuffle value dtype";
+    return value;
+}
+
+TypePtr DeduceSimtThreadBlockSyncType(const std::vector<ExprPtr>& args,
+                                      const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.thread_block.sync received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlock)
+        << "simt.thread_block.sync requires a ThreadBlock receiver";
+    return GetNoneType();
+}
+
+TypePtr DeduceSimtThreadBlockThreadRankType(const std::vector<ExprPtr>& args,
+                                            const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.thread_block.thread_rank received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlock)
+        << "simt.thread_block.thread_rank requires a ThreadBlock receiver";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtThreadBlockGroupIndexType(const std::vector<ExprPtr>& args,
+                                            const std::vector<std::pair<std::string, std::any>>& attrs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.thread_block.group_index received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlock)
+        << "simt.thread_block.group_index requires a ThreadBlock receiver";
+    const int axis = GetOpKwarg<int>(attrs, "axis");
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < 3) << "Invalid coordinate axis";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtThreadBlockThreadIndexType(const std::vector<ExprPtr>& args,
+                                             const std::vector<std::pair<std::string, std::any>>& attrs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.thread_block.thread_index received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlock)
+        << "simt.thread_block.thread_index requires a ThreadBlock receiver";
+    const int axis = GetOpKwarg<int>(attrs, "axis");
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < 3) << "Invalid coordinate axis";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtThreadBlockGroupDimType(const std::vector<ExprPtr>& args,
+                                          const std::vector<std::pair<std::string, std::any>>& attrs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.thread_block.group_dim received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlock)
+        << "simt.thread_block.group_dim requires a ThreadBlock receiver";
+    const int axis = GetOpKwarg<int>(attrs, "axis");
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < 3) << "Invalid coordinate axis";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtThreadBlockSizeType(const std::vector<ExprPtr>& args,
+                                      const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.thread_block.size received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlock)
+        << "simt.thread_block.size requires a ThreadBlock receiver";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtThreadBlockTileSyncType(const std::vector<ExprPtr>& args,
+                                          const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.thread_block_tile.sync received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "simt.thread_block_tile.sync requires a ThreadBlockTile receiver";
+    return GetNoneType();
+}
+
+TypePtr DeduceSimtThreadBlockTileThreadRankType(const std::vector<ExprPtr>& args,
+                                                const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.thread_block_tile.thread_rank received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "simt.thread_block_tile.thread_rank requires a ThreadBlockTile receiver";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtThreadBlockTileSizeType(const std::vector<ExprPtr>& args,
+                                          const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.thread_block_tile.size received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "simt.thread_block_tile.size requires a ThreadBlockTile receiver";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtThreadBlockTileMetaGroupRankType(const std::vector<ExprPtr>& args,
+                                                   const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.thread_block_tile.meta_group_rank received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "simt.thread_block_tile.meta_group_rank requires a ThreadBlockTile receiver";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtThreadBlockTileMetaGroupSizeType(const std::vector<ExprPtr>& args,
+                                                   const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.thread_block_tile.meta_group_size received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "simt.thread_block_tile.meta_group_size requires a ThreadBlockTile receiver";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtThreadBlockTileShflType(const std::vector<ExprPtr>& args,
+                                          const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+        << "simt.thread_block_tile.shfl received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "simt.thread_block_tile.shfl requires a ThreadBlockTile receiver";
+    CheckSimtGroupIntegerArg(args[2], "shfl index");
+    return CheckSimtGroupShuffleValueType(args[1]);
+}
+
+TypePtr DeduceSimtThreadBlockTileShflUpType(const std::vector<ExprPtr>& args,
+                                            const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+        << "simt.thread_block_tile.shfl_up received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "simt.thread_block_tile.shfl_up requires a ThreadBlockTile receiver";
+    CheckSimtGroupIntegerArg(args[2], "shfl_up index");
+    return CheckSimtGroupShuffleValueType(args[1]);
+}
+
+TypePtr DeduceSimtThreadBlockTileShflDownType(const std::vector<ExprPtr>& args,
+                                              const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+        << "simt.thread_block_tile.shfl_down received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "simt.thread_block_tile.shfl_down requires a ThreadBlockTile receiver";
+    CheckSimtGroupIntegerArg(args[2], "shfl_down index");
+    return CheckSimtGroupShuffleValueType(args[1]);
+}
+
+TypePtr DeduceSimtThreadBlockTileShflXorType(const std::vector<ExprPtr>& args,
+                                             const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+        << "simt.thread_block_tile.shfl_xor received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "simt.thread_block_tile.shfl_xor requires a ThreadBlockTile receiver";
+    CheckSimtGroupIntegerArg(args[2], "shfl_xor index");
+    return CheckSimtGroupShuffleValueType(args[1]);
+}
+
+TypePtr DeduceSimtThreadBlockTileAnyType(const std::vector<ExprPtr>& args,
+                                         const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+        << "simt.thread_block_tile.any received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "simt.thread_block_tile.any requires a ThreadBlockTile receiver";
+    CheckSimtGroupPredicate(args[1]);
+    return std::make_shared<ScalarType>(DataType::INT32);
+}
+
+TypePtr DeduceSimtThreadBlockTileAllType(const std::vector<ExprPtr>& args,
+                                         const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+        << "simt.thread_block_tile.all received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "simt.thread_block_tile.all requires a ThreadBlockTile receiver";
+    CheckSimtGroupPredicate(args[1]);
+    return std::make_shared<ScalarType>(DataType::INT32);
+}
+
+TypePtr DeduceSimtThreadBlockTileBallotType(const std::vector<ExprPtr>& args,
+                                            const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+        << "simt.thread_block_tile.ballot received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
+        << "simt.thread_block_tile.ballot requires a ThreadBlockTile receiver";
+    CheckSimtGroupPredicate(args[1]);
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtCoalescedGroupSyncType(const std::vector<ExprPtr>& args,
+                                         const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.coalesced_group.sync received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
+        << "simt.coalesced_group.sync requires a CoalescedGroup receiver";
+    return GetNoneType();
+}
+
+TypePtr DeduceSimtCoalescedGroupThreadRankType(const std::vector<ExprPtr>& args,
+                                               const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.coalesced_group.thread_rank received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
+        << "simt.coalesced_group.thread_rank requires a CoalescedGroup receiver";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtCoalescedGroupSizeType(const std::vector<ExprPtr>& args,
+                                         const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.coalesced_group.size received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
+        << "simt.coalesced_group.size requires a CoalescedGroup receiver";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtCoalescedGroupMetaGroupRankType(const std::vector<ExprPtr>& args,
+                                                  const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.coalesced_group.meta_group_rank received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
+        << "simt.coalesced_group.meta_group_rank requires a CoalescedGroup receiver";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtCoalescedGroupMetaGroupSizeType(const std::vector<ExprPtr>& args,
+                                                  const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.coalesced_group.meta_group_size received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
+        << "simt.coalesced_group.meta_group_size requires a CoalescedGroup receiver";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtCoalescedGroupShflType(const std::vector<ExprPtr>& args,
+                                         const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+        << "simt.coalesced_group.shfl received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
+        << "simt.coalesced_group.shfl requires a CoalescedGroup receiver";
+    CheckSimtGroupIntegerArg(args[2], "shfl index");
+    return CheckSimtGroupShuffleValueType(args[1]);
+}
+
+TypePtr DeduceSimtCoalescedGroupShflUpType(const std::vector<ExprPtr>& args,
+                                           const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+        << "simt.coalesced_group.shfl_up received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
+        << "simt.coalesced_group.shfl_up requires a CoalescedGroup receiver";
+    CheckSimtGroupIntegerArg(args[2], "shfl_up index");
+    return CheckSimtGroupShuffleValueType(args[1]);
+}
+
+TypePtr DeduceSimtCoalescedGroupShflDownType(const std::vector<ExprPtr>& args,
+                                             const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+        << "simt.coalesced_group.shfl_down received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
+        << "simt.coalesced_group.shfl_down requires a CoalescedGroup receiver";
+    CheckSimtGroupIntegerArg(args[2], "shfl_down index");
+    return CheckSimtGroupShuffleValueType(args[1]);
+}
+
+TypePtr DeduceSimtCoalescedGroupAnyType(const std::vector<ExprPtr>& args,
+                                        const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+        << "simt.coalesced_group.any received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
+        << "simt.coalesced_group.any requires a CoalescedGroup receiver";
+    CheckSimtGroupPredicate(args[1]);
+    return std::make_shared<ScalarType>(DataType::INT32);
+}
+
+TypePtr DeduceSimtCoalescedGroupAllType(const std::vector<ExprPtr>& args,
+                                        const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+        << "simt.coalesced_group.all received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
+        << "simt.coalesced_group.all requires a CoalescedGroup receiver";
+    CheckSimtGroupPredicate(args[1]);
+    return std::make_shared<ScalarType>(DataType::INT32);
+}
+
+TypePtr DeduceSimtCoalescedGroupBallotType(const std::vector<ExprPtr>& args,
+                                           const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+        << "simt.coalesced_group.ballot received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
+        << "simt.coalesced_group.ballot requires a CoalescedGroup receiver";
+    CheckSimtGroupPredicate(args[1]);
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtGridGroupIsValidType(const std::vector<ExprPtr>& args,
+                                       const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.grid_group.is_valid received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::GridGroup)
+        << "simt.grid_group.is_valid requires a GridGroup receiver";
+    return std::make_shared<ScalarType>(DataType::BOOL);
+}
+
+TypePtr DeduceSimtGridGroupSyncType(const std::vector<ExprPtr>& args,
+                                    const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.grid_group.sync received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::GridGroup)
+        << "simt.grid_group.sync requires a GridGroup receiver";
+    return GetNoneType();
+}
+
+TypePtr DeduceSimtGridGroupThreadRankType(const std::vector<ExprPtr>& args,
+                                          const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.grid_group.thread_rank received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::GridGroup)
+        << "simt.grid_group.thread_rank requires a GridGroup receiver";
+    return std::make_shared<ScalarType>(DataType::UINT64);
+}
+
+TypePtr DeduceSimtGridGroupBlockRankType(const std::vector<ExprPtr>& args,
+                                         const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.grid_group.block_rank received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::GridGroup)
+        << "simt.grid_group.block_rank requires a GridGroup receiver";
+    return std::make_shared<ScalarType>(DataType::UINT64);
+}
+
+TypePtr DeduceSimtGridGroupSizeType(const std::vector<ExprPtr>& args,
+                                    const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.grid_group.size received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::GridGroup)
+        << "simt.grid_group.size requires a GridGroup receiver";
+    return std::make_shared<ScalarType>(DataType::UINT64);
+}
+
+TypePtr DeduceSimtGridGroupNumBlocksType(const std::vector<ExprPtr>& args,
+                                         const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.grid_group.num_blocks received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::GridGroup)
+        << "simt.grid_group.num_blocks requires a GridGroup receiver";
+    return std::make_shared<ScalarType>(DataType::UINT64);
+}
+
+TypePtr DeduceSimtGridGroupGroupDimType(const std::vector<ExprPtr>& args,
+                                        const std::vector<std::pair<std::string, std::any>>& attrs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.grid_group.group_dim received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::GridGroup)
+        << "simt.grid_group.group_dim requires a GridGroup receiver";
+    const int axis = GetOpKwarg<int>(attrs, "axis");
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < 3) << "Invalid coordinate axis";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+TypePtr DeduceSimtGridGroupBlockIndexType(const std::vector<ExprPtr>& args,
+                                          const std::vector<std::pair<std::string, std::any>>& attrs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1)
+        << "simt.grid_group.block_index received an invalid operand count";
+    auto group = As<SimtGroupType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::GridGroup)
+        << "simt.grid_group.block_index requires a GridGroup receiver";
+    const int axis = GetOpKwarg<int>(attrs, "axis");
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < 3) << "Invalid coordinate axis";
+    return std::make_shared<ScalarType>(DataType::UINT32);
+}
+
+} // namespace
+
+// -------------------- Group factories and partition operations --------------------
+
+REGISTER_OP("simt.group.this_thread_block")
+    .set_op_category("SimtOp")
+    .set_description("Create this_thread_block")
+    .no_argument()
+    .f_deduce_type(DeduceSimtThisThreadBlockType);
+
+REGISTER_OP("simt.group.this_grid")
+    .set_op_category("SimtOp")
+    .set_description("Create the standalone SIMT grid group")
+    .no_argument()
+    .f_deduce_type(DeduceSimtThisGridType);
+
+REGISTER_OP("simt.group.coalesced_threads")
+    .set_op_category("SimtOp")
+    .set_description("Create coalesced_threads")
+    .no_argument()
+    .f_deduce_type(DeduceSimtCoalescedThreadsType);
+
+REGISTER_OP("simt.group.tiled_partition")
+    .set_op_category("SimtOp")
+    .set_description("Create tiled_partition")
+    .add_argument("parent", "Parent group value")
+    .add_argument("size", "Tile size scalar")
+    .f_deduce_type(DeduceSimtTiledPartitionType);
+
+REGISTER_OP("simt.group.binary_partition")
+    .set_op_category("SimtOp")
+    .set_description("Create binary_partition")
+    .add_argument("group", "Parent group value")
+    .add_argument("predicate", "Per-thread predicate")
+    .f_deduce_type(DeduceSimtBinaryPartitionType);
+
+// -------------------- ThreadBlock --------------------
+
+REGISTER_OP("simt.thread_block.sync")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group sync")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtThreadBlockSyncType);
+
+REGISTER_OP("simt.thread_block.thread_rank")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group thread_rank")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtThreadBlockThreadRankType);
+
+REGISTER_OP("simt.thread_block.group_index")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group group_index")
+    .add_argument("group", "Typed cooperative group value")
+    .set_attr<int>("axis")
+    .f_deduce_type(DeduceSimtThreadBlockGroupIndexType);
+
+REGISTER_OP("simt.thread_block.thread_index")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group thread_index")
+    .add_argument("group", "Typed cooperative group value")
+    .set_attr<int>("axis")
+    .f_deduce_type(DeduceSimtThreadBlockThreadIndexType);
+
+REGISTER_OP("simt.thread_block.group_dim")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group group_dim")
+    .add_argument("group", "Typed cooperative group value")
+    .set_attr<int>("axis")
+    .f_deduce_type(DeduceSimtThreadBlockGroupDimType);
+
+REGISTER_OP("simt.thread_block.size")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group size")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtThreadBlockSizeType);
+
+// -------------------- ThreadBlockTile --------------------
+
+REGISTER_OP("simt.thread_block_tile.sync")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group sync")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtThreadBlockTileSyncType);
+
+REGISTER_OP("simt.thread_block_tile.thread_rank")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group thread_rank")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtThreadBlockTileThreadRankType);
+
+REGISTER_OP("simt.thread_block_tile.size")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group size")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtThreadBlockTileSizeType);
+
+REGISTER_OP("simt.thread_block_tile.meta_group_rank")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group meta_group_rank")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtThreadBlockTileMetaGroupRankType);
+
+REGISTER_OP("simt.thread_block_tile.meta_group_size")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group meta_group_size")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtThreadBlockTileMetaGroupSizeType);
+
+REGISTER_OP("simt.thread_block_tile.shfl")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group shfl")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("value", "Scalar value")
+    .add_argument("index", "Source rank or delta")
+    .f_deduce_type(DeduceSimtThreadBlockTileShflType);
+
+REGISTER_OP("simt.thread_block_tile.shfl_up")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group shfl_up")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("value", "Scalar value")
+    .add_argument("index", "Source rank or delta")
+    .f_deduce_type(DeduceSimtThreadBlockTileShflUpType);
+
+REGISTER_OP("simt.thread_block_tile.shfl_down")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group shfl_down")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("value", "Scalar value")
+    .add_argument("index", "Source rank or delta")
+    .f_deduce_type(DeduceSimtThreadBlockTileShflDownType);
+
+REGISTER_OP("simt.thread_block_tile.shfl_xor")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group shfl_xor")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("value", "Scalar value")
+    .add_argument("index", "Source rank or delta")
+    .f_deduce_type(DeduceSimtThreadBlockTileShflXorType);
+
+REGISTER_OP("simt.thread_block_tile.any")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group any")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("predicate", "Per-thread predicate")
+    .f_deduce_type(DeduceSimtThreadBlockTileAnyType);
+
+REGISTER_OP("simt.thread_block_tile.all")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group all")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("predicate", "Per-thread predicate")
+    .f_deduce_type(DeduceSimtThreadBlockTileAllType);
+
+REGISTER_OP("simt.thread_block_tile.ballot")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group ballot")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("predicate", "Per-thread predicate")
+    .f_deduce_type(DeduceSimtThreadBlockTileBallotType);
+
+// -------------------- CoalescedGroup --------------------
+
+REGISTER_OP("simt.coalesced_group.sync")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group sync")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtCoalescedGroupSyncType);
+
+REGISTER_OP("simt.coalesced_group.thread_rank")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group thread_rank")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtCoalescedGroupThreadRankType);
+
+REGISTER_OP("simt.coalesced_group.size")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group size")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtCoalescedGroupSizeType);
+
+REGISTER_OP("simt.coalesced_group.meta_group_rank")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group meta_group_rank")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtCoalescedGroupMetaGroupRankType);
+
+REGISTER_OP("simt.coalesced_group.meta_group_size")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group meta_group_size")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtCoalescedGroupMetaGroupSizeType);
+
+REGISTER_OP("simt.coalesced_group.shfl")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group shfl")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("value", "Scalar value")
+    .add_argument("index", "Source rank or delta")
+    .f_deduce_type(DeduceSimtCoalescedGroupShflType);
+
+REGISTER_OP("simt.coalesced_group.shfl_up")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group shfl_up")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("value", "Scalar value")
+    .add_argument("index", "Source rank or delta")
+    .f_deduce_type(DeduceSimtCoalescedGroupShflUpType);
+
+REGISTER_OP("simt.coalesced_group.shfl_down")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group shfl_down")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("value", "Scalar value")
+    .add_argument("index", "Source rank or delta")
+    .f_deduce_type(DeduceSimtCoalescedGroupShflDownType);
+
+REGISTER_OP("simt.coalesced_group.any")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group any")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("predicate", "Per-thread predicate")
+    .f_deduce_type(DeduceSimtCoalescedGroupAnyType);
+
+REGISTER_OP("simt.coalesced_group.all")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group all")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("predicate", "Per-thread predicate")
+    .f_deduce_type(DeduceSimtCoalescedGroupAllType);
+
+REGISTER_OP("simt.coalesced_group.ballot")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group ballot")
+    .add_argument("group", "Typed cooperative group value")
+    .add_argument("predicate", "Per-thread predicate")
+    .f_deduce_type(DeduceSimtCoalescedGroupBallotType);
+
+// -------------------- GridGroup --------------------
+
+REGISTER_OP("simt.grid_group.is_valid")
+    .set_op_category("SimtOp")
+    .set_description("Whether the grid group supports synchronization")
+    .add_argument("group", "Grid group value")
+    .f_deduce_type(DeduceSimtGridGroupIsValidType);
+
+REGISTER_OP("simt.grid_group.sync")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group sync")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtGridGroupSyncType);
+
+REGISTER_OP("simt.grid_group.thread_rank")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group thread_rank")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtGridGroupThreadRankType);
+
+REGISTER_OP("simt.grid_group.block_rank")
+    .set_op_category("SimtOp")
+    .set_description("Flattened block rank in the grid")
+    .add_argument("group", "Grid group value")
+    .f_deduce_type(DeduceSimtGridGroupBlockRankType);
+
+REGISTER_OP("simt.grid_group.size")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group size")
+    .add_argument("group", "Typed cooperative group value")
+    .f_deduce_type(DeduceSimtGridGroupSizeType);
+
+REGISTER_OP("simt.grid_group.num_blocks")
+    .set_op_category("SimtOp")
+    .set_description("Number of blocks in the grid")
+    .add_argument("group", "Grid group value")
+    .f_deduce_type(DeduceSimtGridGroupNumBlocksType);
+
+REGISTER_OP("simt.grid_group.group_dim")
+    .set_op_category("SimtOp")
+    .set_description("Cooperative group group_dim")
+    .add_argument("group", "Typed cooperative group value")
+    .set_attr<int>("axis")
+    .f_deduce_type(DeduceSimtGridGroupGroupDimType);
+
+REGISTER_OP("simt.grid_group.block_index")
+    .set_op_category("SimtOp")
+    .set_description("Block coordinates in the grid")
+    .add_argument("group", "Grid group value")
+    .set_attr<int>("axis")
+    .f_deduce_type(DeduceSimtGridGroupBlockIndexType);
+
+// ============================================================================
+// SIMT launch
+// ============================================================================
+
 REGISTER_OP("simt.launch")
     .set_op_category("SimtOp")
     .set_description("Launch a SIMT vector function from an AIV kernel")

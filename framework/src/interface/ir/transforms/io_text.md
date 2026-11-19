@@ -30,12 +30,14 @@ attr_list               ::= { attr }
 type                    ::= 'unknown' | dtype | 'memref_type' | 'token' | 'none'
                          |  'ptr' '<' dtype '>'
                          |  'reg' '<' reg_kind ',' dtype '>'
+                         |  'simt_group' '<' group_kind '>'
                          |  'tuple' '<' [ type_list ] '>'
                          |  'tensor' '<' shape ',' dtype ',' tensor_view '>'
                          |  'tile' '<' shape ',' dtype ',' tile_view ',' hw_info '>'
                          |  v0_logical_tensor;
 reg_kind                ::= 'vec_reg' | 'pred_reg' | 'addr_reg' | 'unalign_reg';
 type_list               ::= type { ',' type };
+group_kind              ::= '0' | '1' | '2' | '3'; // ThreadBlock, ThreadBlockTile, CoalescedGroup, GridGroup
 shape                   ::= expr { 'x' expr };
 tensor_view             ::= 'tensor_view' '<' [ shape ',' ident [ ',' expr ] ] '>';
 tile_view               ::= 'tile_view' '<' [ shape ] '>';

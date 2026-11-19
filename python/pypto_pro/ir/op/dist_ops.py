@@ -31,6 +31,18 @@ from ._op_registry import op_impl, op_impl_ast
 _MAX_TIMEOUT_CYCLES = (1 << 31) - 1
 
 
+@op_impl("dist.Window.rank")
+def _build_window_rank(self, window: Expr, /, *, span: Span) -> Call:
+    field = _ir_core.ConstInt(0, _ir_core.DataType.INT64, span)
+    return _ir_core.create_op_call("dist.window_get", [window, field], {}, span)
+
+
+@op_impl("dist.Window.nrank")
+def _build_window_nrank(self, window: Expr, /, *, span: Span) -> Call:
+    field = _ir_core.ConstInt(1, _ir_core.DataType.INT64, span)
+    return _ir_core.create_op_call("dist.window_get", [window, field], {}, span)
+
+
 def barrier(
     window: Expr,
     timeout: int | None = None,

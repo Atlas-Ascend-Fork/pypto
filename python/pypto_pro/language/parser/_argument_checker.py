@@ -62,11 +62,13 @@ def declared_api(op_name: str) -> Callable | None:
 
     Coverage follows the declaration files rather than ``_OP_REGISTRY``.
     """
-    namespace, _, attribute = op_name.rpartition(".")
-    declarations = _NAMESPACE_DECLARATIONS.get(namespace) if namespace else _TOP_LEVEL_DECLARATIONS
-    if declarations is None:
-        return None
-    declared = getattr(declarations, attribute, None)
+    parts = op_name.split(".")
+    declared = _NAMESPACE_DECLARATIONS.get(parts[0]) if len(parts) > 1 else _TOP_LEVEL_DECLARATIONS
+    attributes = parts[1:] if len(parts) > 1 else parts
+    for attribute in attributes:
+        if declared is None:
+            return None
+        declared = getattr(declared, attribute, None)
     return declared if getattr(declared, "__wrapped__", None) is not None else None
 
 
@@ -219,6 +221,11 @@ _LEAF_TYPES: dict[str, tuple[type, ...]] = {
     # of them: whether it is a legal value in a given position -- an event id, a
     # loop bound -- is the builder's judgement, not this gate's.
     "Scalar": (_IntScalar, _FloatScalar, _BoolScalar, int, float, bool),
+    # The IR operation validates the supported group kinds, not this role gate.
+    "Simt.ThreadBlock": (ir.SimtGroupType,),
+    "Simt.ThreadBlockTile": (ir.SimtGroupType,),
+    "Simt.CoalescedGroup": (ir.SimtGroupType,),
+    "Simt.GridGroup": (ir.SimtGroupType,),
     "Shape": (ir.TupleType, list, tuple),
     "Offset": (ir.TupleType, list, tuple),
     # Python counts a bool as an int -- isinstance(True, int), min(True, 2) -- and

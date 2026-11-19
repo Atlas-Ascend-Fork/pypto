@@ -600,6 +600,10 @@ std::string IRPrinter::Print(const TypePtr& type)
         }
     }
 
+    if (auto group = As<SimtGroupType>(type)) {
+        static const char* names[] = {"ThreadBlock", "ThreadBlockTile", "CoalescedGroup", "GridGroup"};
+        return prefix_ + ".simt." + names[static_cast<int>(group->kind_)];
+    }
     if (auto noneType = As<NoneType>(type)) {
         return prefix_ + ".None";
     }

@@ -24,6 +24,7 @@ from pypto_pro._errors import (
     NotSupported,
     OutOfRange,
     PyptoProError,
+    RuntimeFailure,
 )
 import pypto_pro.language as pl
 import pytest
@@ -1709,3 +1710,83 @@ def test_simt_operations_reject_argument_unpacking_at_common_entry():
 
         with pytest.raises(InvalidArgument, match="does not support argument unpacking"):
             kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+# -----------------------------------------------------------------------------------------------------------
+# SIMT cooperative group validation
+# -----------------------------------------------------------------------------------------------------------
+
+
+def test_group_method_requires_receiver():
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(_jit_entry: pl.DT_INT64):
+        pl.simt.ThreadBlock.size()
+
+    with pytest.raises(RuntimeFailure, match="missing .*required positional argument: 'group'"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("extra_argument,message", [
+    pytest.param(True, "too many positional arguments", id="extra-query-argument"),
+    pytest.param(False, "missing a required argument: 'src_rank'", id="missing-shuffle-argument"),
+])
+def test_group_method_checks_explicit_arguments(extra_argument, message):
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(_jit_entry: pl.DT_INT64):
+        block = pl.simt.this_thread_block()
+        if extra_argument:
+            block.size(1)
+        else:
+            tile = pl.simt.tiled_partition(block, 8)
+            tile.shfl(1)
+
+    with pytest.raises(InvalidArgument, match=message):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_group_method_rejects_unsupported_operation():
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(_jit_entry: pl.DT_INT64):
+        active = pl.simt.coalesced_threads()
+        active.shfl_xor(1, 1)
+
+    with pytest.raises(NotSupported, match="shfl_xor"):
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_group_method_accepts_group_expression():
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(_jit_entry: pl.DT_INT64):
+        pl.simt.this_thread_block().sync()
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    function = program.get_function(kernel.__name__)
+    factory, sync = [
+        stmt for stmt in function.body.stmts
+        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call)
+    ]
+    assert factory.value.name == "simt.group.this_thread_block"
+    assert sync.value.name == "simt.thread_block.sync"
+    assert ir.structural_equal(sync.value.args[0], factory.targets[0])
+
+
+@pytest.mark.parametrize("in_helper", [False, True])
+def test_grid_group_requires_standalone_simt_entry(in_helper):
+    @pl.vector_function(mode="simt")
+    def helper():
+        pl.simt.this_grid()
+
+    @pl.vector_function(mode="simt", max_threads=32)
+    def vf():
+        if in_helper:
+            helper()
+        else:
+            pl.simt.this_grid()
+
+    @pl.jit
+    def mixed(_jit_entry: pl.DT_INT64):
+        with pl.section_vector():
+            vf[32]()
+
+    with pytest.raises(InvalidOperation, match="requires a standalone SIMT kernel"):
+        mixed.to_kernel_def().parse_target_program(ir.SectionKind.Vector)

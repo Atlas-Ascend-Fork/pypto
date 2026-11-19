@@ -114,6 +114,7 @@ enum class ObjectKind {
     LogicalTensorType,
     WindowType,
     RegType,
+    SimtGroupType,
 
     // Other IR node kinds
     Function,

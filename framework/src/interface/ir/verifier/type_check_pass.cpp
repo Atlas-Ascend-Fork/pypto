@@ -150,6 +150,17 @@ void TypeChecker::CheckTypeEquality(const TypePtr& type1, const TypePtr& type2, 
         return;
     }
 
+    if (auto group1 = As<SimtGroupType>(type1)) {
+        auto group2 = As<SimtGroupType>(type2);
+        if (group1->kind_ != group2->kind_) {
+            std::ostringstream msg;
+            msg << "SIMT group kind mismatch in " << context << ": " << desc1 << " kind "
+                << static_cast<int>(group1->kind_) << " != " << desc2 << " kind " << static_cast<int>(group2->kind_);
+            RecordError(typecheck::ErrorType::TYPE_KIND_MISMATCH, msg.str(), span);
+        }
+        return;
+    }
+
     // For dtype-only types (ScalarType, RegType), check dtype
     auto getDtype = [](const TypePtr& t) -> DataType {
         if (t->GetKind() == ObjectKind::ScalarType)

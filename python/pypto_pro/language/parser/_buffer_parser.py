@@ -390,6 +390,18 @@ class BufferParserMixin:
         self._tuple_idx_counter += 1
         return ir.GetItemExpr(tiles, idx, span)
 
+    @op_impl("TileGroup.next")
+    def _build_tile_group_next(self, group: ir.Expr, /, *, span: ir.Span) -> ir.Expr:
+        return self._lower_group_accessor(group, "next", span)
+
+    @op_impl("TileGroup.current")
+    def _build_tile_group_current(self, group: ir.Expr, /, *, span: ir.Span) -> ir.Expr:
+        return self._lower_group_accessor(group, "current", span)
+
+    @op_impl("TileGroup.previous")
+    def _build_tile_group_previous(self, group: ir.Expr, /, *, span: ir.Span) -> ir.Expr:
+        return self._lower_group_accessor(group, "previous", span)
+
     def _lower_group_accessor(self, group_var, method_name: str, span: ir.Span):
         """Select a complete bound tile using the rotating cursor."""
         depth, _mutex_ids, _memory = self._group_meta(group_var)

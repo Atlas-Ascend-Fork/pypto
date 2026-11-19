@@ -116,6 +116,7 @@ protected:
     void VisitType_(const PtrTypePtr& op) override;
     void VisitType_(const TokenTypePtr& op) override;
     void VisitType_(const NoneTypePtr& op) override;
+    void VisitType_(const SimtGroupTypePtr& op) override;
     void VisitType_(const LogicalTensorTypePtr& op) override;
     void VisitType_(const RegTypePtr& op) override;
 

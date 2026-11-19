@@ -43,8 +43,8 @@ def _create_simt_call(op_name: str, *operands: Expr, span: Span | None) -> Call:
     return _ir_core.create_op_call(f"simt.{op_name}", list(operands), {}, actual_span)
 
 
-def _make_dim3_components(op_name: str, span: Span) -> list[Call]:
-    return [_ir_core.create_op_call(op_name, [], {"axis": axis}, span) for axis in range(len(_DIM3_FIELDS))]
+def _make_dim3_components(op_name: str, span: Span, *operands: Expr) -> list[Call]:
+    return [_ir_core.create_op_call(op_name, list(operands), {"axis": axis}, span) for axis in range(len(_DIM3_FIELDS))]
 
 
 def _make_dim3_context(op_name: str, span: Span | None = None) -> Expr:
@@ -881,6 +881,240 @@ def launch(
 
 
 # DSL operation registration
+
+
+@op_impl("simt.this_thread_block")
+def _build_this_thread_block(self, *, span: Span) -> Expr:
+    return _create_simt_call("group.this_thread_block", span=span)
+
+
+@op_impl("simt.this_grid")
+def _build_this_grid(self, *, span: Span) -> Expr:
+    if self._simt_entry_type != _ir_core.FunctionType.SimtKernel:
+        raise InvalidOperation(
+            "this_grid() requires a standalone SIMT kernel",
+            span=span,
+            hint='Use @pypto_pro.language.jit(mode="simt") or a SIMT helper called from it.',
+        )
+    return _create_simt_call("group.this_grid", span=span)
+
+
+@op_impl("simt.tiled_partition")
+def _build_tiled_partition(self, parent: Expr, size: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "group.tiled_partition", parent, size, span=span)
+
+
+@op_impl("simt.coalesced_threads")
+def _build_coalesced_threads(self, *, span: Span) -> Expr:
+    return _create_simt_call("group.coalesced_threads", span=span)
+
+
+@op_impl("simt.binary_partition")
+def _build_binary_partition(self, group: Expr, predicate: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "group.binary_partition", group, predicate, span=span)
+
+
+def _build_group_dim3(self, op_name: str, group: Expr, span: Span) -> Expr:
+    return self.make_named_tuple(
+        _make_dim3_components(op_name, span, group), _DIM3_FIELDS, span, name=_DIM3_CONTEXT_NAME,
+    )
+
+
+# ThreadBlock
+
+
+@op_impl("simt.ThreadBlock.sync")
+def _build_thread_block_sync(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block.sync", group, span=span)
+
+
+@op_impl("simt.ThreadBlock.thread_rank")
+def _build_thread_block_thread_rank(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block.thread_rank", group, span=span)
+
+
+@op_impl("simt.ThreadBlock.group_index")
+def _build_thread_block_group_index(self, group: Expr, /, *, span: Span) -> Expr:
+    return _build_group_dim3(self, "simt.thread_block.group_index", group, span)
+
+
+@op_impl("simt.ThreadBlock.thread_index")
+def _build_thread_block_thread_index(self, group: Expr, /, *, span: Span) -> Expr:
+    return _build_group_dim3(self, "simt.thread_block.thread_index", group, span)
+
+
+@op_impl("simt.ThreadBlock.group_dim")
+def _build_thread_block_group_dim(self, group: Expr, /, *, span: Span) -> Expr:
+    return _build_group_dim3(self, "simt.thread_block.group_dim", group, span)
+
+
+@op_impl("simt.ThreadBlock.size")
+def _build_thread_block_size(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block.size", group, span=span)
+
+
+# ThreadBlockTile
+
+
+@op_impl("simt.ThreadBlockTile.sync")
+def _build_thread_block_tile_sync(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block_tile.sync", group, span=span)
+
+
+@op_impl("simt.ThreadBlockTile.thread_rank")
+def _build_thread_block_tile_thread_rank(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block_tile.thread_rank", group, span=span)
+
+
+@op_impl("simt.ThreadBlockTile.size")
+def _build_thread_block_tile_size(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block_tile.size", group, span=span)
+
+
+@op_impl("simt.ThreadBlockTile.meta_group_rank")
+def _build_thread_block_tile_meta_group_rank(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block_tile.meta_group_rank", group, span=span)
+
+
+@op_impl("simt.ThreadBlockTile.meta_group_size")
+def _build_thread_block_tile_meta_group_size(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block_tile.meta_group_size", group, span=span)
+
+
+@op_impl("simt.ThreadBlockTile.shfl")
+def _build_thread_block_tile_shfl(self, group: Expr, value: Expr, src_rank: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block_tile.shfl", group, value, src_rank, span=span)
+
+
+@op_impl("simt.ThreadBlockTile.shfl_up")
+def _build_thread_block_tile_shfl_up(self, group: Expr, value: Expr, delta: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block_tile.shfl_up", group, value, delta, span=span)
+
+
+@op_impl("simt.ThreadBlockTile.shfl_down")
+def _build_thread_block_tile_shfl_down(self, group: Expr, value: Expr, delta: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block_tile.shfl_down", group, value, delta, span=span)
+
+
+@op_impl("simt.ThreadBlockTile.shfl_xor")
+def _build_thread_block_tile_shfl_xor(self, group: Expr, value: Expr, lane_mask: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block_tile.shfl_xor", group, value, lane_mask, span=span)
+
+
+@op_impl("simt.ThreadBlockTile.any")
+def _build_thread_block_tile_any(self, group: Expr, predicate: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block_tile.any", group, predicate, span=span)
+
+
+@op_impl("simt.ThreadBlockTile.all")
+def _build_thread_block_tile_all(self, group: Expr, predicate: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block_tile.all", group, predicate, span=span)
+
+
+@op_impl("simt.ThreadBlockTile.ballot")
+def _build_thread_block_tile_ballot(self, group: Expr, predicate: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "thread_block_tile.ballot", group, predicate, span=span)
+
+
+# CoalescedGroup
+
+
+@op_impl("simt.CoalescedGroup.sync")
+def _build_coalesced_group_sync(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "coalesced_group.sync", group, span=span)
+
+
+@op_impl("simt.CoalescedGroup.thread_rank")
+def _build_coalesced_group_thread_rank(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "coalesced_group.thread_rank", group, span=span)
+
+
+@op_impl("simt.CoalescedGroup.size")
+def _build_coalesced_group_size(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "coalesced_group.size", group, span=span)
+
+
+@op_impl("simt.CoalescedGroup.meta_group_rank")
+def _build_coalesced_group_meta_group_rank(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "coalesced_group.meta_group_rank", group, span=span)
+
+
+@op_impl("simt.CoalescedGroup.meta_group_size")
+def _build_coalesced_group_meta_group_size(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "coalesced_group.meta_group_size", group, span=span)
+
+
+@op_impl("simt.CoalescedGroup.shfl")
+def _build_coalesced_group_shfl(self, group: Expr, value: Expr, src_rank: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "coalesced_group.shfl", group, value, src_rank, span=span)
+
+
+@op_impl("simt.CoalescedGroup.shfl_up")
+def _build_coalesced_group_shfl_up(self, group: Expr, value: Expr, delta: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "coalesced_group.shfl_up", group, value, delta, span=span)
+
+
+@op_impl("simt.CoalescedGroup.shfl_down")
+def _build_coalesced_group_shfl_down(self, group: Expr, value: Expr, delta: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "coalesced_group.shfl_down", group, value, delta, span=span)
+
+
+@op_impl("simt.CoalescedGroup.any")
+def _build_coalesced_group_any(self, group: Expr, predicate: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "coalesced_group.any", group, predicate, span=span)
+
+
+@op_impl("simt.CoalescedGroup.all")
+def _build_coalesced_group_all(self, group: Expr, predicate: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "coalesced_group.all", group, predicate, span=span)
+
+
+@op_impl("simt.CoalescedGroup.ballot")
+def _build_coalesced_group_ballot(self, group: Expr, predicate: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "coalesced_group.ballot", group, predicate, span=span)
+
+
+# GridGroup
+
+
+@op_impl("simt.GridGroup.is_valid")
+def _build_grid_group_is_valid(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "grid_group.is_valid", group, span=span)
+
+
+@op_impl("simt.GridGroup.sync")
+def _build_grid_group_sync(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "grid_group.sync", group, span=span)
+
+
+@op_impl("simt.GridGroup.thread_rank")
+def _build_grid_group_thread_rank(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "grid_group.thread_rank", group, span=span)
+
+
+@op_impl("simt.GridGroup.block_rank")
+def _build_grid_group_block_rank(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "grid_group.block_rank", group, span=span)
+
+
+@op_impl("simt.GridGroup.size")
+def _build_grid_group_size(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "grid_group.size", group, span=span)
+
+
+@op_impl("simt.GridGroup.num_blocks")
+def _build_grid_group_num_blocks(self, group: Expr, /, *, span: Span) -> Expr:
+    return _simt_builder(_create_simt_call, "grid_group.num_blocks", group, span=span)
+
+
+@op_impl("simt.GridGroup.group_dim")
+def _build_grid_group_group_dim(self, group: Expr, /, *, span: Span) -> Expr:
+    return _build_group_dim3(self, "simt.grid_group.group_dim", group, span)
+
+
+@op_impl("simt.GridGroup.block_index")
+def _build_grid_group_block_index(self, group: Expr, /, *, span: Span) -> Expr:
+    return _build_group_dim3(self, "simt.grid_group.block_index", group, span)
 
 
 @op_impl("simt.thread_idx")

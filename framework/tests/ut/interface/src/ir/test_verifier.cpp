@@ -437,6 +437,47 @@ TEST_F(VerifierTypeCheckTest, IfStmt_YieldSizeMismatch_ReportsError)
     EXPECT_TRUE(HasErrorCode(diags, static_cast<int>(typecheck::ErrorType::SIZE_MISMATCH)));
 }
 
+TEST_F(VerifierTypeCheckTest, IfStmt_SimtGroupKindsMustMatch)
+{
+    auto tile_type = std::make_shared<SimtGroupType>(SimtGroupKind::ThreadBlockTile);
+    auto result = std::make_shared<Var>("result", tile_type, Sp());
+    auto tile = std::make_shared<Var>("tile", tile_type, Sp());
+    auto then_yield = std::make_shared<YieldStmt>(std::vector<ExprPtr>{tile}, Sp());
+    auto condition = std::make_shared<Var>("condition", Scalar(DataType::BOOL), Sp());
+    for (auto kind : {SimtGroupKind::ThreadBlock, SimtGroupKind::ThreadBlockTile, SimtGroupKind::CoalescedGroup}) {
+        auto other = std::make_shared<Var>("other", std::make_shared<SimtGroupType>(kind), Sp());
+        auto else_yield = std::make_shared<YieldStmt>(std::vector<ExprPtr>{other}, Sp());
+        auto stmt = std::make_shared<IfStmt>(condition, then_yield, else_yield, std::vector<VarPtr>{result}, Sp());
+        auto diagnostics = VerifyWithTypeCheck(stmt);
+        if (kind == SimtGroupKind::ThreadBlockTile) {
+            EXPECT_TRUE(diagnostics.empty());
+        } else {
+            EXPECT_TRUE(HasErrorCode(diagnostics, static_cast<int>(typecheck::ErrorType::TYPE_KIND_MISMATCH)));
+        }
+    }
+}
+
+TEST_F(VerifierTypeCheckTest, WhileStmt_SimtGroupKindsMustMatch)
+{
+    auto type = std::make_shared<SimtGroupType>(SimtGroupKind::CoalescedGroup);
+    auto initial = std::make_shared<Var>("initial", type, Sp());
+    auto carry = std::make_shared<IterArg>("carry", type, initial, Sp());
+    auto result = std::make_shared<Var>("result", type, Sp());
+    auto condition = std::make_shared<Var>("condition", Scalar(DataType::BOOL), Sp());
+    for (auto kind : {SimtGroupKind::CoalescedGroup, SimtGroupKind::ThreadBlockTile}) {
+        auto next = std::make_shared<Var>("next", std::make_shared<SimtGroupType>(kind), Sp());
+        auto yield = std::make_shared<YieldStmt>(std::vector<ExprPtr>{next}, Sp());
+        auto stmt = std::make_shared<WhileStmt>(condition, std::vector<IterArgPtr>{carry}, yield,
+                                                std::vector<VarPtr>{result}, Sp());
+        auto diagnostics = VerifyWithTypeCheck(stmt);
+        if (kind == SimtGroupKind::CoalescedGroup) {
+            EXPECT_TRUE(diagnostics.empty());
+        } else {
+            EXPECT_TRUE(HasErrorCode(diagnostics, static_cast<int>(typecheck::ErrorType::TYPE_KIND_MISMATCH)));
+        }
+    }
+}
+
 TEST_F(VerifierTypeCheckTest, TensorType_ShapeValueMismatch_ReportsError)
 {
     IRVerifier v;

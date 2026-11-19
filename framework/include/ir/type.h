@@ -123,6 +123,26 @@ public:
 
 using ScalarTypePtr = std::shared_ptr<const ScalarType>;
 
+// Logical group kinds are independent of the target's runtime representation.
+enum class SimtGroupKind : uint8_t { ThreadBlock, ThreadBlockTile, CoalescedGroup, GridGroup };
+
+class SimtGroupType : public Type {
+public:
+    SimtGroupKind kind_;
+
+    explicit SimtGroupType(SimtGroupKind kind);
+
+    [[nodiscard]] ObjectKind GetKind() const override { return ObjectKind::SimtGroupType; }
+    [[nodiscard]] std::string TypeName() const override { return "SimtGroupType"; }
+    static constexpr auto GetFieldDescriptors()
+    {
+        return std::tuple_cat(Type::GetFieldDescriptors(),
+                              std::make_tuple(reflection::UsualField(&SimtGroupType::kind_, "kind")));
+    }
+};
+
+using SimtGroupTypePtr = std::shared_ptr<const SimtGroupType>;
+
 /**
  * \brief VF register kind carried by RegType
  *

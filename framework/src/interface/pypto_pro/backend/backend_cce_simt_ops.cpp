@@ -3374,6 +3374,503 @@ REGISTER_BACKEND_OP(BackendCCE, "simt.linear_thread_idx")
     .set_pipe(ir::PipeType::S)
     .f_codegen(MakeSimtLinearThreadIdxCodegenCCE);
 
+// ============================================================================
+// SIMT cooperative groups
+// ============================================================================
+
+namespace {
+
+std::string MakeSimtGroupThisThreadBlockCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& /*codegen_base*/)
+{
+    return "";
+}
+
+std::string MakeSimtGroupCoalescedThreadsCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    codegen.needsSimtGroupHeader_ = true;
+    return "pypto::simt::CoalescedGroup{__activemask(), 0U, 1U}";
+}
+
+std::string MakeSimtGroupThisGridCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& /*codegen_base*/)
+{
+    return "";
+}
+
+std::string MakeSimtGridGroupIsValidCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& /*codegen_base*/)
+{
+    return "true";
+}
+
+std::string MakeSimtGridGroupNumBlocksCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& /*codegen_base*/)
+{
+    return "(static_cast<uint64_t>(gridDim.x) * gridDim.y * gridDim.z)";
+}
+
+std::string MakeSimtGridGroupBlockRankCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& /*codegen_base*/)
+{
+    return "(blockIdx.x + static_cast<uint64_t>(blockIdx.y) * gridDim.x + "
+           "static_cast<uint64_t>(blockIdx.z) * gridDim.x * gridDim.y)";
+}
+
+std::string MakeSimtThreadBlockSizeCodegenCCE(const ir::CallPtr& /*op*/, codegen::CodegenBase& /*codegenBase*/)
+{
+    return "(blockDim.x * blockDim.y * blockDim.z)";
+}
+
+std::string MakeSimtThreadBlockTileSizeCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    return "(" + codegen.GetExprAsCode(op->args_[0]) + ").size";
+}
+
+std::string MakeSimtGroupTiledPartitionCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    codegen.needsSimtGroupHeader_ = true;
+    const auto group = ir::As<ir::SimtGroupType>(op->args_[0]->GetType());
+    const bool blockParent = group->kind_ == ir::SimtGroupKind::ThreadBlock;
+    const auto parentSize = blockParent ? MakeSimtThreadBlockSizeCodegenCCE(op, codegen) :
+                                          MakeSimtThreadBlockTileSizeCodegenCCE(op, codegen);
+    const auto parentRank = blockParent ? MakeSimtLinearThreadIdxCodegenCCE(op, codegen) :
+                                          "(laneid() & (__cg_parent_size - 1U))";
+    const auto size = codegen.GetExprAsCode(op->args_[1]);
+
+    // Tile membership follows lane order and is independent of the active mask.
+    std::ostringstream s;
+    s << "({const unsigned int __cg_parent_size = " << parentSize << ";"
+      << "const unsigned int __cg_parent_rank = " << parentRank << ";"
+      << "const unsigned int __cg_size = static_cast<unsigned int>(" << size << ");"
+      << "const unsigned int __cg_first_lane = laneid() & ~(__cg_size - 1U);"
+      << "const unsigned int __cg_mask = (0xFFFFFFFFU >> (32U - __cg_size)) << __cg_first_lane;"
+      << "pypto::simt::ThreadBlockTile{__cg_size, __cg_mask, "
+         "__cg_parent_rank / __cg_size, __cg_parent_size / __cg_size};})";
+    return s.str();
+}
+
+std::string MakeSimtGroupBinaryPartitionCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    codegen.needsSimtGroupHeader_ = true;
+    const auto receiver = codegen.GetExprAsCode(op->args_[0]);
+    const auto predicate = codegen.GetExprAsCode(op->args_[1]);
+    std::ostringstream s;
+    s << "({unsigned int __cg_mask = (" << receiver << ").lane_mask;"
+      << "bool __cg_predicate = (" << predicate << ") != 0;"
+      << "unsigned int __cg_selected = __ballot(__cg_predicate) & __cg_mask;"
+      << "bool __cg_uniform = __cg_selected == 0U || __cg_selected == __cg_mask;"
+      << "pypto::simt::CoalescedGroup{"
+      << "__cg_uniform ? __cg_mask : (__cg_predicate ? __cg_selected : (__cg_mask & ~__cg_selected)),"
+      << "__cg_uniform ? 0U : (__cg_predicate ? 1U : 0U),"
+      << "__cg_uniform ? 1U : 2U};})";
+    return s.str();
+}
+
+std::string MakeSimtThreadBlockTileThreadRankCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    return "(laneid() & (" + MakeSimtThreadBlockTileSizeCodegenCCE(op, codegenBase) + " - 1U))";
+}
+
+std::string MakeSimtGridGroupSizeCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    return "(" + MakeSimtGridGroupNumBlocksCodegenCCE(op, codegenBase) + " * blockDim.x * blockDim.y * blockDim.z)";
+}
+
+std::string MakeSimtWarpGroupSizeCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    const auto receiver = codegen.GetExprAsCode(op->args_[0]);
+    const std::string mask = "(" + receiver + ").lane_mask";
+    return "(uint32_t)__popc(" + mask + ")";
+}
+
+std::string MakeSimtGridGroupThreadRankCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    return "(" + MakeSimtGridGroupBlockRankCodegenCCE(op, codegenBase) + " * blockDim.x * blockDim.y * blockDim.z + " +
+           MakeSimtLinearThreadIdxCodegenCCE(op, codegenBase) + ")";
+}
+
+std::string MakeSimtWarpGroupThreadRankCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    const auto receiver = codegen.GetExprAsCode(op->args_[0]);
+    const std::string mask = "(" + receiver + ").lane_mask";
+    return "(uint32_t)__popc((" + mask + ") & lanemask_lt())";
+}
+
+std::string MakeSimtGroupMetaGroupRankCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto receiver = codegen.GetExprAsCode(op->args_[0]);
+    return "(" + receiver + ").meta_group_rank";
+}
+
+std::string MakeSimtGroupMetaGroupSizeCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto receiver = codegen.GetExprAsCode(op->args_[0]);
+    return "(" + receiver + ").meta_group_size";
+}
+
+std::string MakeSimtGridGroupSyncCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    codegen.needsSimtAtomicHeader_ = true;
+    // Pure SIMT launch reserves a uint64 counter 32 bytes before the parameter base.
+    // Match ASC's phase-flipping protocol; this is not a data-cache coherence operation.
+    std::ostringstream s;
+    s << "{__sync_workitems();"
+      << "if (" << MakeSimtLinearThreadIdxCodegenCCE(op, codegenBase) << " == 0U) {"
+      << "auto __cg_counter = reinterpret_cast<uint64_t*>(__cce_simt_get_para_base_imp() - 4U * 8U);"
+      << "const uint64_t __cg_phase = uint64_t{1} << 63;"
+      << "uint64_t __cg_delta = 1U;"
+      << "if (" << MakeSimtGridGroupBlockRankCodegenCCE(op, codegenBase) << " == 0U) {"
+      << "__cg_delta = __cg_phase - (" << MakeSimtGridGroupNumBlocksCodegenCCE(op, codegenBase) << " - 1U);"
+      << "}"
+      << "uint64_t __cg_old = __atomic_add(__cg_counter, __cg_delta);"
+      << "auto __cg_poll = reinterpret_cast<volatile uint64_t*>(__cg_counter);"
+      << "while (((__cg_old ^ *__cg_poll) & __cg_phase) == 0U) { __nop(); }"
+      << "}"
+      << "__sync_workitems();}";
+    codegen.Emit(s.str());
+    return "";
+}
+
+std::string MakeSimtGroupSelectLaneCCE(const std::string& mask, const std::string& rank)
+{
+    std::ostringstream s;
+    s << "({unsigned int __cg_select_mask = (" << mask << ");"
+      << "int __cg_select_rank = (" << rank << ");"
+      << "int __cg_select_lane = -1;"
+      << "if (__cg_select_rank >= 0 && __cg_select_rank < __popc(__cg_select_mask)) {"
+      << "int __cg_select_offset = __cg_select_rank + 1;"
+      << "__cg_select_lane = 0;"
+      << "for (int __cg_select_step = 16; __cg_select_step > 0; __cg_select_step >>= 1) {"
+      << "unsigned int __cg_select_low = __cg_select_mask & ((1U << __cg_select_step) - 1U);"
+      << "int __cg_select_count = __popc(__cg_select_low);"
+      << "if (__cg_select_count < __cg_select_offset) {"
+      << "__cg_select_mask >>= __cg_select_step;"
+      << "__cg_select_offset -= __cg_select_count;"
+      << "__cg_select_lane += __cg_select_step;"
+      << "} else {"
+      << "__cg_select_mask = __cg_select_low;"
+      << "}"
+      << "}"
+      << "}"
+      << "__cg_select_lane;})";
+    return s.str();
+}
+
+std::string MakeSimtGroupShflCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto receiver = codegen.GetExprAsCode(op->args_[0]);
+    const auto value = codegen.GetExprAsCode(op->args_[1]);
+    const auto index = codegen.GetExprAsCode(op->args_[2]);
+    const auto lane = MakeSimtGroupSelectLaneCCE("__cg_mask", "__cg_index % __popc(__cg_mask)");
+    std::ostringstream s;
+    s << "({unsigned int __cg_mask = (" << receiver << ").lane_mask;"
+      << "auto __cg_value = (" << value << ");"
+      << "auto __cg_index = (" << index << ");"
+      << "int __cg_lane = __popc(__cg_mask) == 32 ? __cg_index % 32 : " << lane << ";"
+      << "__shfl(__cg_value, __cg_lane, 32);})";
+    return s.str();
+}
+
+std::string MakeSimtGroupShflUpCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto receiver = codegen.GetExprAsCode(op->args_[0]);
+    const auto value = codegen.GetExprAsCode(op->args_[1]);
+    const auto index = codegen.GetExprAsCode(op->args_[2]);
+    const auto lane = MakeSimtGroupSelectLaneCCE("__cg_mask", "__cg_rank - static_cast<int>(__cg_index)");
+    std::ostringstream s;
+    s << "({unsigned int __cg_mask = (" << receiver << ").lane_mask;"
+      << "auto __cg_value = (" << value << ");"
+      << "auto __cg_index = (" << index << ");"
+      << "__cg_mask == 0xFFFFFFFFU ? __shfl_up(__cg_value, static_cast<uint32_t>(__cg_index), 32) : ({"
+      << "int __cg_rank = __popc(__cg_mask & lanemask_lt());"
+      << "int __cg_lane = static_cast<uint64_t>(__cg_index) <= static_cast<uint64_t>(__cg_rank) ? " << lane << " : -1;"
+      << "__shfl(__cg_value, __cg_lane < 0 ? laneid() : __cg_lane, 32);});})";
+    return s.str();
+}
+
+std::string MakeSimtGroupShflDownCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto receiver = codegen.GetExprAsCode(op->args_[0]);
+    const auto value = codegen.GetExprAsCode(op->args_[1]);
+    const auto index = codegen.GetExprAsCode(op->args_[2]);
+    const auto lane = MakeSimtGroupSelectLaneCCE("__cg_mask", "__cg_rank + static_cast<int>(__cg_index)");
+    std::ostringstream s;
+    s << "({unsigned int __cg_mask = (" << receiver << ").lane_mask;"
+      << "auto __cg_value = (" << value << ");"
+      << "auto __cg_index = (" << index << ");"
+      << "__cg_mask == 0xFFFFFFFFU ? __shfl_down(__cg_value, static_cast<uint32_t>(__cg_index), 32) : ({"
+      << "int __cg_rank = __popc(__cg_mask & lanemask_lt());"
+      << "int __cg_remaining = __popc(__cg_mask) - __cg_rank;"
+      << "int __cg_lane = static_cast<uint64_t>(__cg_index) < static_cast<uint64_t>(__cg_remaining) ? " << lane
+      << " : -1;"
+      << "__shfl(__cg_value, __cg_lane < 0 ? laneid() : __cg_lane, 32);});})";
+    return s.str();
+}
+
+std::string MakeSimtThreadBlockTileShuffleCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase,
+                                                     const char* intrinsic, const char* indexType)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    const auto value = codegen.GetExprAsCode(op->args_[1]);
+    const auto index = codegen.GetExprAsCode(op->args_[2]);
+    const auto size = MakeSimtThreadBlockTileSizeCodegenCCE(op, codegenBase);
+    return std::string(intrinsic) + "(" + value + ", static_cast<" + indexType + ">(" + index +
+           "), static_cast<int32_t>(" + size + "))";
+}
+
+std::string MakeSimtGroupAnyCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto receiver = codegen.GetExprAsCode(op->args_[0]);
+    const std::string mask = "(" + receiver + ").lane_mask";
+    const auto predicate = codegen.GetExprAsCode(op->args_[1]);
+    const std::string votes = "(__ballot((" + predicate + ") != 0) & (" + mask + "))";
+    return "(int)(" + votes + " != 0)";
+}
+
+std::string MakeSimtGroupAllCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto receiver = codegen.GetExprAsCode(op->args_[0]);
+    const std::string mask = "(" + receiver + ").lane_mask";
+    const auto predicate = codegen.GetExprAsCode(op->args_[1]);
+    const std::string votes = "(__ballot((" + predicate + ") != 0) & (" + mask + "))";
+    return "(int)(" + votes + " == (" + mask + "))";
+}
+
+std::string MakeSimtGroupBallotCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    const auto receiver = codegen.GetExprAsCode(op->args_[0]);
+    const auto predicate = codegen.GetExprAsCode(op->args_[1]);
+    std::ostringstream s;
+    s << "({unsigned int __cg_mask = (" << receiver << ").lane_mask;"
+      << "unsigned int __cg_votes = __ballot((" << predicate << ") != 0);"
+      << "__cg_mask == 0xFFFFFFFFU ? __cg_votes : ({"
+      << "__cg_votes &= __cg_mask;"
+      << "unsigned int __cg_packed = 0U;"
+      << "unsigned int __cg_rank = 0U;"
+      << "for (int __cg_lane = 0; __cg_lane < 32; ++__cg_lane) {"
+      << "if ((__cg_mask & (1U << __cg_lane)) != 0U) {"
+      << "if ((__cg_votes & (1U << __cg_lane)) != 0U) __cg_packed |= 1U << __cg_rank;"
+      << "++__cg_rank;"
+      << "}"
+      << "}"
+      << "__cg_packed;});})";
+    return s.str();
+}
+
+std::string MakeSimtThreadBlockTileBallotCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    const auto receiver = codegen.GetExprAsCode(op->args_[0]);
+    const auto predicate = codegen.GetExprAsCode(op->args_[1]);
+    return "({const auto __cg_tile = (" + receiver +
+           ");"
+           "const unsigned int __cg_first_lane = laneid() & ~(__cg_tile.size - 1U);"
+           "(__ballot((" +
+           predicate + ") != 0) & __cg_tile.lane_mask) >> __cg_first_lane;})";
+}
+
+} // namespace
+
+// -------------------- Group factories and partition operations --------------------
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.group.this_thread_block")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupThisThreadBlockCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.group.this_grid")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupThisGridCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.group.coalesced_threads")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupCoalescedThreadsCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.group.tiled_partition")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupTiledPartitionCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.group.binary_partition")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupBinaryPartitionCodegenCCE);
+
+// -------------------- ThreadBlock --------------------
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block.sync")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtSyncthreadsCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block.thread_rank")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtLinearThreadIdxCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block.group_index")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtBlockIdxCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block.thread_index")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtThreadIdxCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block.group_dim")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtBlockDimCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block.size")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtThreadBlockSizeCodegenCCE);
+
+// -------------------- ThreadBlockTile --------------------
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block_tile.sync")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtThreadfenceBlockCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block_tile.thread_rank")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtThreadBlockTileThreadRankCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block_tile.size")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtThreadBlockTileSizeCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block_tile.meta_group_rank")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupMetaGroupRankCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block_tile.meta_group_size")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupMetaGroupSizeCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block_tile.shfl")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeSimtThreadBlockTileShuffleCodegenCCE(op, codegen, "__shfl", "int32_t");
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block_tile.shfl_up")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeSimtThreadBlockTileShuffleCodegenCCE(op, codegen, "__shfl_up", "uint32_t");
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block_tile.shfl_down")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeSimtThreadBlockTileShuffleCodegenCCE(op, codegen, "__shfl_down", "uint32_t");
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block_tile.shfl_xor")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeSimtThreadBlockTileShuffleCodegenCCE(op, codegen, "__shfl_xor", "int32_t");
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block_tile.any")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupAnyCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block_tile.all")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupAllCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.thread_block_tile.ballot")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtThreadBlockTileBallotCodegenCCE);
+
+// -------------------- CoalescedGroup --------------------
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.coalesced_group.sync")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtThreadfenceBlockCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.coalesced_group.thread_rank")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtWarpGroupThreadRankCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.coalesced_group.size")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtWarpGroupSizeCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.coalesced_group.meta_group_rank")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupMetaGroupRankCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.coalesced_group.meta_group_size")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupMetaGroupSizeCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.coalesced_group.shfl")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupShflCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.coalesced_group.shfl_up")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupShflUpCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.coalesced_group.shfl_down")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupShflDownCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.coalesced_group.any")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupAnyCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.coalesced_group.all")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupAllCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.coalesced_group.ballot")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGroupBallotCodegenCCE);
+
+// -------------------- GridGroup --------------------
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.grid_group.is_valid")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGridGroupIsValidCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.grid_group.sync")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGridGroupSyncCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.grid_group.thread_rank")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGridGroupThreadRankCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.grid_group.block_rank")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGridGroupBlockRankCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.grid_group.size")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGridGroupSizeCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.grid_group.num_blocks")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGridGroupNumBlocksCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.grid_group.group_dim")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtGridDimCodegenCCE);
+
+REGISTER_BACKEND_OP(BackendCCE, "simt.grid_group.block_index")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen(MakeSimtBlockIdxCodegenCCE);
+
+// ============================================================================
+// Other SIMT operations
+// ============================================================================
 REGISTER_BACKEND_OP(BackendCCE, "simt.warp_size").set_pipe(ir::PipeType::S).f_codegen(MakeSimtWarpSizeCodegenCCE);
 
 REGISTER_BACKEND_OP(BackendCCE, "simt.syncthreads").set_pipe(ir::PipeType::S).f_codegen(MakeSimtSyncthreadsCodegenCCE);

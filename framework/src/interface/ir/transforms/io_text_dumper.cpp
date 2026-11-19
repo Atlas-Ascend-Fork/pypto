@@ -202,6 +202,11 @@ void IRTextDumper::VisitType_(const TokenTypePtr&) { stream_ << IR_KW_TOKEN; }
 
 void IRTextDumper::VisitType_(const NoneTypePtr&) { stream_ << IR_KW_NONE; }
 
+void IRTextDumper::VisitType_(const SimtGroupTypePtr& op)
+{
+    stream_ << IR_KW_SIMT_GROUP << "<" << static_cast<int>(op->kind_) << ">";
+}
+
 void IRTextDumper::VisitType_(const LogicalTensorTypePtr&) { stream_ << IR_KWV0_LOGICAL_TENSOR; }
 
 void IRTextDumper::PrintShape(const std::vector<ExprPtr>& shape)

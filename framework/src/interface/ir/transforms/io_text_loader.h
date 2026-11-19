@@ -189,6 +189,7 @@ public:
     TypePtr ParseTypeNone();
     TypePtr ParseTypeLogicalTensor();
     TypePtr ParseTypePtr();
+    TypePtr ParseTypeSimtGroup();
     TypePtr ParseTypeTuple();
     TypePtr ParseTypeTensor();
     TypePtr ParseTypeTile();

@@ -19,6 +19,7 @@ from pypto.pypto_impl.ir import DataType
 from pypto_pro.ir import op as ir_op
 from pypto_pro.ir._operators import make_binary as _make_binary
 from pypto_pro.ir._utils import _const_int_value, _normalize_expr, _to_make_tuple
+from pypto_pro.ir.op._op_registry import _OP_REGISTRY
 
 from ..._errors import (
     InvalidFormat,
@@ -56,7 +57,14 @@ def _is_enum_value(value: Any) -> bool:
 class ExpressionParserMixin:
     """Mixin containing expression, attribute, and subscript parsing."""
 
-    _WINDOW_ACCESSOR_FIELDS = {"rank": 0, "nrank": 1}
+    _OBJECT_OP_PREFIXES = {
+        ir.SimtGroupKind.ThreadBlock: "simt.ThreadBlock",
+        ir.SimtGroupKind.ThreadBlockTile: "simt.ThreadBlockTile",
+        ir.SimtGroupKind.CoalescedGroup: "simt.CoalescedGroup",
+        ir.SimtGroupKind.GridGroup: "simt.GridGroup",
+        ir.TupleType: "TileGroup",
+        ir.WindowType: "dist.Window",
+    }
 
     def lookup_expr_by_name(self, name: str) -> Any | None:
         """Resolve a parser name to its current expression."""
@@ -1559,35 +1567,40 @@ class ExpressionParserMixin:
         self._transfer_tile_group_metadata(value, result)
         return value
 
-    def _route_ir_node_method(self, node: ast.Call):
-        """Route ``xxx.f(...)`` to an op func when ``xxx`` is a tile-group handle or a window.
+    def _get_object_method_op_name(self, obj: ir.Expr, method: str) -> str | None:
+        """Resolve an object's method to its registered operation name."""
+        obj_type = obj.type
+        if isinstance(obj_type, ir.TupleType) and not self.is_tile_group(obj):
+            return None
 
-        Tile-group handle: next/current/previous (each returns a bare tile).
-        Window handle: rank/nrank, each a scalar GM read of the device dist::Window
-        descriptor (dist.window_get).
-        Returns the IR result, or None when not routed.
-        """
+        key = obj_type.kind if isinstance(obj_type, ir.SimtGroupType) else type(obj_type)
+        prefix = self._OBJECT_OP_PREFIXES.get(key)
+        return f"{prefix}.{method}" if prefix is not None else None
+
+    def _route_ir_node_method(self, node: ast.Call) -> ir.Expr | None:
+        """Resolve and dispatch an object method, returning its IR result."""
         if not isinstance(node.func, ast.Attribute):
             return None
-        method = node.func.attr
-        if method in ("next", "current", "previous"):
+        try:
             obj = self.parse_expression(node.func.value)
-            if isinstance(obj, ir.Expr) and self.is_tile_group(obj):
-                return self._lower_group_accessor(obj, method, self.span_tracker.get_span(node))
+        except PyptoProError:
             return None
-        if method in self._WINDOW_ACCESSOR_FIELDS:
-            obj = self.parse_expression(node.func.value)
-            if isinstance(obj, ir.Expr) and isinstance(obj.type, ir.WindowType):
-                span = self.span_tracker.get_span(node)
-                if node.args or node.keywords:
-                    raise InvalidOperation(
-                        f"Window accessor '.{method}()' takes no arguments",
-                        span=span,
-                        hint="Use win.rank() / win.nrank()",
-                    )
-                field = ir.ConstInt(self._WINDOW_ACCESSOR_FIELDS[method], DataType.INT64, span)
-                return ir.create_op_call("dist.window_get", [obj, field], {}, span)
-        return None
+        method = node.func.attr
+        if not isinstance(obj, ir.Expr):
+            return None
+        op_name = self._get_object_method_op_name(obj, method)
+        if op_name is None:
+            return None
+        if isinstance(obj.type, ir.SimtGroupType) and not _is_simt_func_type(self._current_func_type):
+            raise InvalidOperation(
+                f"pl.{op_name}() can only be used inside a SIMT function",
+                hint='Move SIMT-context-dependent logic into @pl.vector_function(mode="simt").',
+            )
+
+        op_func = _OP_REGISTRY.get(op_name)
+        if op_func is None:
+            raise NotSupported(f"Unsupported operation call: {ast.unparse(node)}", parser_retry=True)
+        return self._dispatch_op(op_name, node, op_func, obj=obj)
 
     _CHANNEL_METHODS = frozenset(
         {"remote_ptr", "write", "read", "write_reduce", "atomic_fetch_add", "atomic_cas", "write_indexed",

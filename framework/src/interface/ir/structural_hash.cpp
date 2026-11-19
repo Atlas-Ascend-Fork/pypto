@@ -407,6 +407,8 @@ StructuralHasher::ResultType StructuralHasher::HashType(const TypePtr& type)
         }
     } else if (auto tokenType = As<TokenType>(type)) {
         h = HashCombine(h, static_cast<ResultType>(tokenType->kind_));
+    } else if (auto groupType = As<SimtGroupType>(type)) {
+        h = HashCombine(h, static_cast<ResultType>(groupType->kind_));
     } else if (IsFieldLessType(type)) {
         // Field-less singletons have no fields; only the type name is hashed (already done above)
     } else {
