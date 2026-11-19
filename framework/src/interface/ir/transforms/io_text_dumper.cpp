@@ -130,9 +130,11 @@ void IRTextDumper::VisitType_(const TensorTypePtr& op)
     stream_ << IR_PUN_COMMA << " " << IR_KW_TENSOR_VIEW << IR_PUN_LT;
     if (op->tensor_view_.has_value()) {
         const auto& tv = op->tensor_view_.value();
-        PrintShape(tv.validShape);
-        stream_ << IR_PUN_COMMA << " ";
-        PrintShape(tv.stride);
+        if (tv.stride.empty()) {
+            stream_ << "-2";
+        } else {
+            PrintShape(tv.stride);
+        }
         stream_ << IR_PUN_COMMA << " " << GetLayoutDict().Find(tv.layout);
         if (tv.ptr.has_value()) {
             stream_ << IR_PUN_COMMA << " ";

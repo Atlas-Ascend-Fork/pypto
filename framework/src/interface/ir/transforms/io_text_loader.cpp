@@ -543,25 +543,49 @@ TypePtr IRTextParser::ParseTypeReg()
     return std::make_shared<RegType>(kind, dt->data);
 }
 
+namespace {
+bool IsDefaultStride(const std::vector<ExprPtr>& stride)
+{
+    if (stride.empty()) {
+        return false;
+    }
+    for (const auto& dim : stride) {
+        auto constant = As<ConstInt>(dim);
+        if (constant == nullptr || constant->value_ != -2) {
+            return false;
+        }
+    }
+    return true;
+}
+
+} // namespace
+
+IRTextParserExprListPtr IRTextParser::ParseStride()
+{
+    MUST_VALID(stride, ParseShape());
+    if (IsDefaultStride(stride->data)) {
+        stride->data.clear();
+    }
+    return stride;
+}
+
 IRTextParserOptionalTensorViewPtr IRTextParser::ParserTensorTypeTensorView()
 {
-    // tensor_view<...> or tensor_view<>
+    // tensor_view<stride, layout[, ptr]> or tensor_view<>
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwTensorView));
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunLt));
 
     std::optional<TensorView> tensorView;
     if (!CheckToken(IRTextLexerTokenKind::PunGt)) {
-        MUST_VALID(validShape, ParseShape());
-        MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunComma));
-        MUST_VALID(stride, ParseShape());
+        MUST_VALID(stride, ParseStride());
         MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunComma));
         MUST_VALID(layoutStr, ParseIdent());
         Layout layout = GetLayoutDict().Find(layoutStr->data, Layout::ND);
         if (CheckToken(IRTextLexerTokenKind::PunComma, true)) {
             MUST_VALID(ptrExpr, ParseExpr());
-            tensorView = TensorView(validShape->data, stride->data, layout, ptrExpr);
+            tensorView = TensorView(stride->data, layout, ptrExpr);
         } else {
-            tensorView = TensorView(validShape->data, stride->data, layout);
+            tensorView = TensorView(stride->data, layout);
         }
     }
 

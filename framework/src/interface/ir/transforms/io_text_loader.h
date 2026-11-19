@@ -171,6 +171,7 @@ public:
 
     // ---- Shape parsing:  dim0 x dim1 x ... ----
     IRTextParserExprListPtr ParseShape();
+    IRTextParserExprListPtr ParseStride();
 
     // ---- Operator helpers ----
     ExprPtr MakeUnary(const std::string& opName, const ExprPtr& operand, const TypePtr& type);

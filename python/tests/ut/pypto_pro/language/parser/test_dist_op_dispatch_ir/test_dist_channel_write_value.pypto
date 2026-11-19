@@ -1,4 +1,4 @@
-function kernel incast( %win_0, tensor<1 x 8, int64_t, tensor_view<, , ND, %dst_ptr>> %dst_0) outcast() #entry(false) #type(pro) {
+function kernel incast( %win_0, tensor<1 x 8, int64_t, tensor_view<-2, ND, %dst_ptr>> %dst_0) outcast() #entry(false) #type(pro) {
     int64_t %ch_0 = dist.channel(%win_0, 1, ub_addr=64);
     ptr<int64_t> %rptr_0 = channel.remote_ptr(%ch_0, ptr.make_ptr(%dst_0));
     channel.write_value(%ch_0, %rptr_0, 7, submit=true, timeout_cycles=0, option=45);

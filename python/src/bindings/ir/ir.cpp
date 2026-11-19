@@ -446,9 +446,6 @@ void BindTypeClass(py::module_& ir)
         .def(py::init<>(), "Create an empty tensor view")
         .def(py::init<const std::vector<ExprPtr>&, Layout>(), py::arg("stride"), py::arg("layout"),
              "Create a tensor view with stride and layout")
-        .def(py::init<const std::vector<ExprPtr>&, const std::vector<ExprPtr>&, Layout>(), py::arg("valid_shape"),
-             py::arg("stride"), py::arg("layout"), "Create a tensor view with valid_shape, stride and layout")
-        .def_readwrite("valid_shape", &TensorView::validShape, "Valid shape dimensions")
         .def_readwrite("stride", &TensorView::stride, "Stride for each dimension")
         .def_readwrite("layout", &TensorView::layout, "Tensor layout type")
         .def_readwrite("ptr", &TensorView::ptr,

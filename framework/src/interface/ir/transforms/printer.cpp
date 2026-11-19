@@ -1236,11 +1236,6 @@ std::string IRPrinter::PrintTensorView(const TensorView& tensorView)
 {
     std::ostringstream oss;
     oss << prefix_ << ".TensorView(";
-    if (!tensorView.validShape.empty()) {
-        oss << "valid_shape=[";
-        PrintExprList(oss, tensorView.validShape);
-        oss << "], ";
-    }
     oss << "stride=[";
     PrintExprList(oss, tensorView.stride);
     oss << "], layout=" << prefix_ << ".Layout." << LayoutToPythonName(tensorView.layout);

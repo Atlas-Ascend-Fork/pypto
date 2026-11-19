@@ -223,10 +223,9 @@ using RegTypePtr = std::shared_ptr<const RegType>;
  * stride and layout information.
  */
 struct TensorView {
-    std::vector<ExprPtr> validShape; ///< Valid shape dimensions (symbolic or constant)
-    std::vector<ExprPtr> stride;     ///< Stride for each dimension
-    Layout layout;                   ///< Tensor layout type
-    std::optional<ExprPtr> ptr;      ///< Source pointer (set for ptr.make_tensor-created views)
+    std::vector<ExprPtr> stride; ///< Stride for each dimension
+    Layout layout;               ///< Tensor layout type
+    std::optional<ExprPtr> ptr;  ///< Source pointer (set for ptr.make_tensor-created views)
 
     TensorView() : layout(Layout::ND) {}
 
@@ -236,18 +235,9 @@ struct TensorView {
         : stride(std::move(strideIn)), layout(layoutIn), ptr(std::move(ptrExpr))
     {}
 
-    TensorView(std::vector<ExprPtr> validShapeIn, std::vector<ExprPtr> strideIn, Layout layoutIn)
-        : validShape(std::move(validShapeIn)), stride(std::move(strideIn)), layout(layoutIn)
-    {}
-
-    TensorView(std::vector<ExprPtr> validShapeIn, std::vector<ExprPtr> strideIn, Layout layoutIn, ExprPtr ptrExpr)
-        : validShape(std::move(validShapeIn)), stride(std::move(strideIn)), layout(layoutIn), ptr(std::move(ptrExpr))
-    {}
-
     static constexpr auto GetFieldDescriptors()
     {
-        return std::make_tuple(reflection::UsualField(&TensorView::validShape, "valid_shape"),
-                               reflection::UsualField(&TensorView::stride, "stride"),
+        return std::make_tuple(reflection::UsualField(&TensorView::stride, "stride"),
                                reflection::UsualField(&TensorView::layout, "layout"));
     }
 };

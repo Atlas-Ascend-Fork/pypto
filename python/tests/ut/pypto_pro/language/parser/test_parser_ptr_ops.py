@@ -58,7 +58,7 @@ def test_make_ptr_emits_ptr_make_ptr_call_with_new_dtype():
     assert "ptr.make_ptr" in s
     assert "dtype=half" in s
     # The tensor view built on the reinterpreted pointer carries the new dtype.
-    assert "tensor<64 x 128, half, tensor_view<, 128 x 1, ND, %fp16_ptr_0>>" in s
+    assert "tensor<64 x 128, half, tensor_view<128 x 1, ND, %fp16_ptr_0>>" in s
 
 
 def test_make_ptr_result_type_is_ptr_with_changed_dtype():
@@ -143,7 +143,7 @@ def test_make_tensor_from_tensor_ir_type():
 def test_make_tensor_from_tensor_reinterpret_dtype_ir():
     s = _ir_str(_retensor_dtype_kernel)
     assert "ptr.make_tensor" in s
-    assert "tensor<64 x 256, uint8_t, tensor_view<, 256 x 1, ND, %src_0>>" in s
+    assert "tensor<64 x 256, uint8_t, tensor_view<256 x 1, ND, %src_0>>" in s
 
 
 def test_make_tensor_view_of_view_ir():
@@ -199,7 +199,7 @@ def test_tensor_stride_reads_the_declared_or_the_row_major_step():
         ("whole_row_major", "8192 x 128 x 1"),
         ("whole_param", "128 x 1"),
     ]:
-        assert f", {stride_text}, ND, %p_0>> %{name}_0 = " in text, name
+        assert f"tensor_view<{stride_text}, ND, %p_0>> %{name}_0 = " in text, name
     assert "%_expr_tmp_7_0 = (%entry_0 mul 128)" in text
 
 

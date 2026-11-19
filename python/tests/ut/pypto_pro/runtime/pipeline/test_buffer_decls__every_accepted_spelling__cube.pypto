@@ -1,5 +1,5 @@
 program #entry() {
-    function decl_every_accepted_spelling incast(tensor<256 x 128, half, tensor_view<, , ND, %src_ptr>> %src_0) outcast() #entry(false) #type(pro) {
+    function decl_every_accepted_spelling incast(tensor<256 x 128, half, tensor_view<-2, ND, %src_ptr>> %src_0) outcast() #entry(false) #type(pro) {
         tuple<int64_t, int64_t> %_tuple_anchor_0_0 = tuple(0, 16384);
         tuple<int64_t, int64_t> %_tuple_anchor_1_0 = tuple(12, 13);
         tuple<int64_t, int64_t> %_tuple_anchor_2_0 = tuple(0, 1);
@@ -90,7 +90,7 @@ program #entry() {
             }
             tuple<int64_t, int64_t> %_tuple_anchor_16_0 = tuple(256, 128);
             tuple<int64_t, int64_t> %_tuple_anchor_17_0 = tuple(128, 1);
-            tensor<256 x 128, half, tensor_view<, 128 x 1, ND, %src_0>> %rows_0 = ptr.make_tensor(%src_0, tuple(256, 128), tuple(128, 1));
+            tensor<256 x 128, half, tensor_view<128 x 1, ND, %src_0>> %rows_0 = ptr.make_tensor(%src_0, tuple(256, 128), tuple(128, 1));
             struct.set(%_pl_ctx_0_0, %i_0, field=i);
             struct.set(%_pl_ctx_0_0, %_pl_task_id_1, field=_pl_task_id);
             int64_t %_expr_tmp_18_0 = (%_pl_task_id_1 add 1);

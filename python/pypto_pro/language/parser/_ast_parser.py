@@ -368,9 +368,7 @@ class ASTParser(
         tv = (
             ir.TensorView()
             if param_type.tensor_view is None
-            else ir.TensorView(
-                param_type.tensor_view.valid_shape, param_type.tensor_view.stride, param_type.tensor_view.layout
-            )
+            else ir.TensorView(param_type.tensor_view.stride, param_type.tensor_view.layout)
         )
         tv.ptr = ptr_var
         return ir.TensorType(param_type.shape, param_type.dtype, param_type.memref, tv)

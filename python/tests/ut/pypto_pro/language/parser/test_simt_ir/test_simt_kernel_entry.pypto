@@ -1,5 +1,5 @@
 program #entry() {
-    function _simt_kernel_copy incast(tensor<1024, float, tensor_view<, , ND, %out_ptr>> %out_0, tensor<1024, float, tensor_view<, , ND, %src_ptr>> %src_0, uint32_t %count_0) outcast() #entry(false) #type(SimtKernel) {
+    function _simt_kernel_copy incast(tensor<1024, float, tensor_view<-2, ND, %out_ptr>> %out_0, tensor<1024, float, tensor_view<-2, ND, %src_ptr>> %src_0, uint32_t %count_0) outcast() #entry(false) #type(SimtKernel) {
         tuple<uint32_t, uint32_t, uint32_t> %_tuple_anchor_0_0 = tuple(simt.block_idx(axis=0), simt.block_idx(axis=1), simt.block_idx(axis=2));
         uint32_t %_expr_tmp_1_0 = simt.block_idx(axis=0);
         tuple<uint32_t, uint32_t, uint32_t> %_tuple_anchor_2_0 = tuple(simt.block_dim(axis=0), simt.block_dim(axis=1), simt.block_dim(axis=2));
