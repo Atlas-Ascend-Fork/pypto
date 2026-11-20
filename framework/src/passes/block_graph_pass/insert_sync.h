@@ -240,6 +240,11 @@ private:
     void AddPhaseOp1(Function& function, const std::vector<Operation*>& srcLog, std::vector<Operation*>& dstLog,
                      size_t& i, size_t& prerun);
     void AddPhaseOp2(Function& function, std::vector<Operation*>& dstLog, size_t& prerun);
+    struct MatchingWait {
+        size_t idx;
+        bool blocksInsertion;
+    };
+    std::optional<MatchingWait> FindWaitOnSamePipe(const DepOp& setOp, const DepOp& waitOp) const;
     Status AddOpDep(DepOp& setOp, DepOp& waitOp, bool isMergeCvSyncBase = false);
     Status AdjustOpDep(DepOp& op, size_t waitOpIdx, IssueQueue& issueQ, bool& failedFlag);
     Status HandleEventID(DepOp& op, IssueQueue& issueQ, IssueNum& issuenum, bool& deadlock, bool& res,

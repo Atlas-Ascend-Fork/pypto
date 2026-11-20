@@ -698,35 +698,37 @@ void PipeSync::RemoveOpDep(DepOp& setOp, DepOp& waitOp) const
     waitOp.waitPipe = newWaitDep;
 }
 
+std::optional<PipeSync::MatchingWait> PipeSync::FindWaitOnSamePipe(const DepOp& setOp, const DepOp& waitOp) const
+{
+    const auto& target = waitOp.selfPipeCore;
+    const PipeCoreRealEx targetPipe(target.pipeStart, target.core, target.aivCore);
+    for (const auto idx : setOp.setPipe) {
+        const auto& existing = depOps_[idx].selfPipeCore;
+        if (PipeCoreRealEx(existing.pipeStart, existing.core, existing.aivCore) == targetPipe) {
+            return MatchingWait{idx, idx <= waitOp.idx};
+        }
+    }
+    return std::nullopt;
+}
+
 Status PipeSync::AddOpDep(DepOp& setOp, DepOp& waitOp, bool isMergeCvSyncBase)
 {
     size_t setOpIdx = setOp.idx;
     size_t waitOpIdx = waitOp.idx;
 
-    size_t depWaitIdx = static_cast<size_t>(-1);
-    for (auto ele : setOp.setPipe) {
-        if (ele == waitOpIdx) {
-            APASS_LOG_ERROR_F(Elements::Operation, "This dependency should not exist, AddOpDep failed.");
-            return FAILED;
-        }
-        PipeCoreRealEx elePipeCoreEx(depOps_[ele].selfPipeCore.pipeStart, depOps_[ele].selfPipeCore.core,
-                                     depOps_[ele].selfPipeCore.aivCore);
-        PipeCoreRealEx waitOpPipeCoreEx(depOps_[waitOpIdx].selfPipeCore.pipeStart, depOps_[waitOpIdx].selfPipeCore.core,
-                                        depOps_[waitOpIdx].selfPipeCore.aivCore);
-        if (elePipeCoreEx == waitOpPipeCoreEx) {
-            if (ele <= waitOpIdx && !isMergeCvSyncBase) {
-                APASS_LOG_ERROR_F(Elements::Operation, "New waitidx should less than old, AddOpDep failed.");
+    if (const auto existing = FindWaitOnSamePipe(setOp, waitOp)) {
+        if (existing->blocksInsertion) {
+            if (existing->idx == waitOpIdx) {
+                APASS_LOG_ERROR_F(Elements::Operation, "This dependency should not exist, AddOpDep failed.");
                 return FAILED;
-            } else if (ele <= waitOpIdx && isMergeCvSyncBase) {
+            }
+            if (isMergeCvSyncBase) {
                 return SUCCESS;
             }
-            depWaitIdx = ele;
-            break;
+            APASS_LOG_ERROR_F(Elements::Operation, "New waitidx should less than old, AddOpDep failed.");
+            return FAILED;
         }
-    }
-    // 同一种pipecore，不需要存记录依赖关系
-    if (depWaitIdx != static_cast<size_t>(-1)) {
-        RemoveOpDep(setOp, depOps_[depWaitIdx]);
+        RemoveOpDep(setOp, depOps_[existing->idx]);
     }
     setOp.setPipe.emplace_back(waitOpIdx);
     waitOp.waitPipe.emplace_back(setOpIdx);
@@ -755,6 +757,17 @@ Status PipeSync::AdjustOpDep(DepOp& op, size_t waitOpIdx, IssueQueue& issueQ, bo
         return SUCCESS;
     }
 
+    auto& nextOp = depOps_[nextOpIdx];
+    const auto existing = FindWaitOnSamePipe(nextOp, waitOp);
+    if (existing && existing->blocksInsertion) {
+        // Check the same conflict as AddOpDep before removing the original edge.
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Cannot AdjustOpDep: producer %zu already has wait %zu before or at %zu.", nextOpIdx,
+                          existing->idx, waitOpIdx);
+        failedFlag = true;
+        return SUCCESS;
+    }
+
     // Replay can introduce backward dependencies: original indices alone no
     // longer prove that delaying this wait to the next producer is acyclic.
     if (!CanAddReplayDependency(nextOpIdx, waitOpIdx)) {
@@ -765,7 +778,6 @@ Status PipeSync::AdjustOpDep(DepOp& op, size_t waitOpIdx, IssueQueue& issueQ, bo
 
     APASS_LOG_DEBUG_F(Elements::Operation, "Event reuse yield: dependency (%zu,%zu) moves to (%zu,%zu).", op.idx,
                       waitOpIdx, nextOpIdx, waitOpIdx);
-    auto& nextOp = depOps_[nextOpIdx];
     RemoveOpDep(op, waitOp);
     if (AddOpDep(nextOp, waitOp) != SUCCESS) {
         APASS_LOG_ERROR_F(Elements::Operation, "AdjustOpDep failed at function AddOpDep.");

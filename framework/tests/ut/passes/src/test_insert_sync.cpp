@@ -1429,6 +1429,102 @@ TEST_F(InsertSyncTest, YieldRejectsDependencyCycleAfterReplay)
     EXPECT_TRUE(ps.BuildReplayIssueOrder(ps.depOps_, order));
 }
 
+TEST_F(InsertSyncTest, AddOpDepRejectsDuplicateWaitInBothModes)
+{
+    PipeSync ps;
+    ps.depOps_.emplace_back(0, PipeSync::PipeCore{PIPE_MTE2, PIPE_MTE2, CoreType::AIC, AIVCore::UNSPECIFIED});
+    ps.depOps_.emplace_back(1, PipeSync::PipeCore{PIPE_MTE1, PIPE_MTE1, CoreType::AIC, AIVCore::UNSPECIFIED});
+    auto& set = ps.depOps_[0];
+    auto& wait = ps.depOps_[1];
+    ASSERT_EQ(ps.AddOpDep(set, wait), SUCCESS);
+    for (bool mergeCvSyncBase : {false, true}) {
+        EXPECT_EQ(ps.AddOpDep(set, wait, mergeCvSyncBase), FAILED);
+        EXPECT_EQ(set.setPipe, std::vector<size_t>({1}));
+        EXPECT_EQ(wait.waitPipe, std::vector<size_t>({0}));
+    }
+}
+
+TEST_F(InsertSyncTest, AddOpDepKeepsEarlierWaitWhenAddingLaterWaitOnSamePipe)
+{
+    PipeSync ps;
+    for (auto pipe : {PIPE_MTE2, PIPE_MTE1, PIPE_MTE1}) {
+        ps.depOps_.emplace_back(ps.depOps_.size(), PipeSync::PipeCore{pipe, pipe, CoreType::AIC, AIVCore::UNSPECIFIED});
+    }
+    auto& set = ps.depOps_[0];
+    auto& earlierWait = ps.depOps_[1];
+    auto& laterWait = ps.depOps_[2];
+    ASSERT_EQ(ps.AddOpDep(set, earlierWait), SUCCESS);
+    EXPECT_EQ(ps.AddOpDep(set, laterWait), FAILED);
+    EXPECT_EQ(set.setPipe, std::vector<size_t>({1}));
+    EXPECT_EQ(earlierWait.waitPipe, std::vector<size_t>({0}));
+    EXPECT_TRUE(laterWait.waitPipe.empty());
+
+    EXPECT_EQ(ps.AddOpDep(set, laterWait, true), SUCCESS);
+    EXPECT_EQ(set.setPipe, std::vector<size_t>({1}));
+    EXPECT_EQ(earlierWait.waitPipe, std::vector<size_t>({0}));
+    EXPECT_TRUE(laterWait.waitPipe.empty());
+}
+
+TEST_F(InsertSyncTest, YieldPreservesDependenciesAfterPendingWaitMovesEarlier)
+{
+    PipeSync ps;
+    for (auto pipe : {PIPE_MTE2, PIPE_MTE2, PIPE_MTE1, PIPE_MTE1}) {
+        ps.depOps_.emplace_back(ps.depOps_.size(), PipeSync::PipeCore{pipe, pipe, CoreType::AIC, AIVCore::UNSPECIFIED});
+    }
+    ps.depOps_[0].setPipe = {3};
+    ps.depOps_[3].waitPipe = {0};
+    // The next producer's pending wait has already moved ahead of the yield target.
+    ps.depOps_[1].setPipe = {2};
+    ps.depOps_[2].waitPipe = {1};
+    PipeSync::IssueQueue queue({PIPE_MTE2, CoreType::AIC, AIVCore::UNSPECIFIED});
+    queue.ops = {0, 1};
+    bool failed = false;
+    ASSERT_EQ(ps.AdjustOpDep(ps.depOps_[0], 3, queue, failed), SUCCESS);
+    EXPECT_TRUE(failed);
+    EXPECT_EQ(ps.depOps_[0].setPipe, std::vector<size_t>({3}));
+    EXPECT_EQ(ps.depOps_[1].setPipe, std::vector<size_t>({2}));
+    EXPECT_EQ(ps.depOps_[2].waitPipe, std::vector<size_t>({1}));
+    EXPECT_EQ(ps.depOps_[3].waitPipe, std::vector<size_t>({0}));
+}
+
+TEST_F(InsertSyncTest, YieldReplacesLaterWaitOnSamePipe)
+{
+    PipeSync ps;
+    for (auto pipe : {PIPE_MTE2, PIPE_MTE2, PIPE_MTE1, PIPE_MTE1}) {
+        ps.depOps_.emplace_back(ps.depOps_.size(), PipeSync::PipeCore{pipe, pipe, CoreType::AIC, AIVCore::UNSPECIFIED});
+    }
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[2]), SUCCESS);
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[1], ps.depOps_[3]), SUCCESS);
+    PipeSync::IssueQueue queue({PIPE_MTE2, CoreType::AIC, AIVCore::UNSPECIFIED});
+    queue.ops = {0, 1};
+    bool failed = false;
+    ASSERT_EQ(ps.AdjustOpDep(ps.depOps_[0], 2, queue, failed), SUCCESS);
+    EXPECT_FALSE(failed);
+    EXPECT_TRUE(ps.depOps_[0].setPipe.empty());
+    EXPECT_EQ(ps.depOps_[1].setPipe, std::vector<size_t>({2}));
+    EXPECT_EQ(ps.depOps_[2].waitPipe, std::vector<size_t>({1}));
+    EXPECT_TRUE(ps.depOps_[3].waitPipe.empty());
+}
+
+TEST_F(InsertSyncTest, YieldKeepsEarlierWaitOnDifferentPipe)
+{
+    PipeSync ps;
+    for (auto pipe : {PIPE_MTE2, PIPE_MTE2, PIPE_FIX, PIPE_MTE1}) {
+        ps.depOps_.emplace_back(ps.depOps_.size(), PipeSync::PipeCore{pipe, pipe, CoreType::AIC, AIVCore::UNSPECIFIED});
+    }
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[0], ps.depOps_[3]), SUCCESS);
+    ASSERT_EQ(ps.AddOpDep(ps.depOps_[1], ps.depOps_[2]), SUCCESS);
+    PipeSync::IssueQueue queue({PIPE_MTE2, CoreType::AIC, AIVCore::UNSPECIFIED});
+    queue.ops = {0, 1};
+    bool failed = false;
+    ASSERT_EQ(ps.AdjustOpDep(ps.depOps_[0], 3, queue, failed), SUCCESS);
+    EXPECT_FALSE(failed);
+    EXPECT_TRUE(ps.depOps_[0].setPipe.empty());
+    EXPECT_EQ(ps.depOps_[1].setPipe, std::vector<size_t>({2, 3}));
+    EXPECT_EQ(ps.depOps_[3].waitPipe, std::vector<size_t>({1}));
+    EXPECT_EQ(ps.depOps_[2].waitPipe, std::vector<size_t>({1}));
+}
+
 TEST_F(InsertSyncTest, CachedReplayOrderRejectsNewCrossCoreBoundary)
 {
     NpuArchScope archScope(NPUArch::DAV_3510);
