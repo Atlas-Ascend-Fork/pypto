@@ -1,0 +1,102 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="660" viewBox="0 0 1200 660" role="img" aria-labelledby="title desc">
+  <title id="title">全auto三层地址包容的mutex ID分配结果</title>
+  <desc id="desc">同一UB中的三个TileGroup均配置mutex_ids="auto"。root深度为1，包含两个children Tile，每个child包含两个leaf Tile。四个leaf依次分配ID 0、1、2、3，两个child的ID集合分别为{0,1}和{2,3}，root的ID集合为{0,1,2,3}。</desc>
+  <style>
+    text { font-family: "Microsoft YaHei", "Noto Sans CJK SC", sans-serif; fill: #1e293b; }
+    .title { font-size: 28px; font-weight: 700; }
+    .subtitle { font-size: 17px; fill: #475569; }
+    .label { font-size: 19px; font-weight: 700; }
+    .detail { font-size: 16px; fill: #475569; }
+    .mono { font-family: Consolas, "Liberation Mono", monospace; font-size: 17px; }
+    .ids { font-family: Consolas, "Liberation Mono", monospace; font-size: 23px; font-weight: 700; }
+    .guide { stroke: #cbd5e1; stroke-width: 1; stroke-dasharray: 4 5; }
+    .link { fill: none; stroke: #94a3b8; stroke-width: 2; }
+    .tile { stroke: #64748b; stroke-width: 1.5; }
+  </style>
+  <rect width="1200" height="660" fill="#ffffff"/>
+  <text x="36" y="48" class="title">三层地址包容：全auto分配结果</text>
+  <text x="36" y="80" class="subtitle">同一UB（MemorySpace.Vec） · FP16 · mutex_ids="auto" · auto_mutex=True</text>
+
+  <!-- Each column spans 0x0400 bytes; the three rows use the same address scale. -->
+  <text x="36" y="128" class="detail">地址（字节）</text>
+  <g class="mono" text-anchor="middle">
+    <text x="240" y="128">0x0000</text>
+    <text x="464" y="128">0x0400</text>
+    <text x="688" y="128">0x0800</text>
+    <text x="912" y="128">0x0C00</text>
+    <text x="1136" y="128">0x1000</text>
+  </g>
+  <g class="guide">
+    <path d="M240 142V542"/>
+    <path d="M464 142V542"/>
+    <path d="M688 142V542"/>
+    <path d="M912 142V542"/>
+    <path d="M1136 142V542"/>
+  </g>
+
+  <text x="36" y="204" class="label">第1层 · root</text>
+  <text x="36" y="234" class="detail">depth=1</text>
+  <text x="36" y="260" class="detail">shape=[64, 32]</text>
+  <rect x="240" y="158" width="896" height="112" rx="8" fill="#f1f5f9" class="tile"/>
+  <text x="688" y="192" text-anchor="middle" class="label">root[0] · [0x0000, 0x1000)</text>
+  <g>
+    <rect x="558" y="210" width="54" height="38" rx="6" fill="#dbeafe"/>
+    <rect x="626" y="210" width="54" height="38" rx="6" fill="#ccfbf1"/>
+    <rect x="694" y="210" width="54" height="38" rx="6" fill="#fef3c7"/>
+    <rect x="762" y="210" width="54" height="38" rx="6" fill="#ede9fe"/>
+    <text x="542" y="237" text-anchor="end" class="ids">{</text>
+    <text x="585" y="237" text-anchor="middle" class="ids">0</text>
+    <text x="653" y="237" text-anchor="middle" class="ids">1</text>
+    <text x="721" y="237" text-anchor="middle" class="ids">2</text>
+    <text x="789" y="237" text-anchor="middle" class="ids">3</text>
+    <text x="832" y="237" class="ids">}</text>
+  </g>
+
+  <path d="M688 270V288H464V308M688 288H912V308" class="link"/>
+  <text x="36" y="350" class="label">第2层 · children</text>
+  <text x="36" y="380" class="detail">depth=2</text>
+  <text x="36" y="406" class="detail">shape=[32, 32]</text>
+  <rect x="240" y="308" width="448" height="104" rx="8" fill="#f8fafc" class="tile"/>
+  <rect x="688" y="308" width="448" height="104" rx="8" fill="#f8fafc" class="tile"/>
+  <text x="464" y="340" text-anchor="middle" class="label">children[0] · [0x0000, 0x0800)</text>
+  <text x="912" y="340" text-anchor="middle" class="label">children[1] · [0x0800, 0x1000)</text>
+  <g>
+    <rect x="403" y="356" width="54" height="38" rx="6" fill="#dbeafe"/>
+    <rect x="471" y="356" width="54" height="38" rx="6" fill="#ccfbf1"/>
+    <rect x="851" y="356" width="54" height="38" rx="6" fill="#fef3c7"/>
+    <rect x="919" y="356" width="54" height="38" rx="6" fill="#ede9fe"/>
+    <text x="387" y="383" text-anchor="end" class="ids">{</text>
+    <text x="430" y="383" text-anchor="middle" class="ids">0</text>
+    <text x="498" y="383" text-anchor="middle" class="ids">1</text>
+    <text x="541" y="383" class="ids">}</text>
+    <text x="835" y="383" text-anchor="end" class="ids">{</text>
+    <text x="878" y="383" text-anchor="middle" class="ids">2</text>
+    <text x="946" y="383" text-anchor="middle" class="ids">3</text>
+    <text x="989" y="383" class="ids">}</text>
+  </g>
+
+  <path d="M464 412V430H352V450M464 430H576V450M912 412V430H800V450M912 430H1024V450" class="link"/>
+  <text x="36" y="488" class="label">第3层 · leaves</text>
+  <text x="36" y="518" class="detail">depth=4</text>
+  <text x="36" y="544" class="detail">shape=[16, 32]</text>
+  <rect x="240" y="450" width="224" height="92" rx="8" fill="#dbeafe" class="tile"/>
+  <rect x="464" y="450" width="224" height="92" rx="8" fill="#ccfbf1" class="tile"/>
+  <rect x="688" y="450" width="224" height="92" rx="8" fill="#fef3c7" class="tile"/>
+  <rect x="912" y="450" width="224" height="92" rx="8" fill="#ede9fe" class="tile"/>
+  <g text-anchor="middle">
+    <text x="352" y="480" class="label">leaves[0]</text>
+    <text x="576" y="480" class="label">leaves[1]</text>
+    <text x="800" y="480" class="label">leaves[2]</text>
+    <text x="1024" y="480" class="label">leaves[3]</text>
+    <text x="352" y="518" class="ids">{0}</text>
+    <text x="576" y="518" class="ids">{1}</text>
+    <text x="800" y="518" class="ids">{2}</text>
+    <text x="1024" y="518" class="ids">{3}</text>
+  </g>
+
+  <rect x="36" y="576" width="1128" height="70" rx="8" fill="#f1f5f9"/>
+  <text font-size="18">
+    <tspan x="60" y="602">色块表示mutex ID集合；外层集合为内层集合的并集。</tspan>
+    <tspan x="60" y="628">自动分配时，同层Tile会尽量使用不同ID；本例展示了同层Tile分配到不同ID的效果。</tspan>
+  </text>
+</svg>

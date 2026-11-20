@@ -28,6 +28,12 @@
 
 ![make_tile_group双缓冲地址与轮转关系](../../figures/make_tile_group_rotation.svg "make_tile_group双缓冲地址与轮转关系")
 
+开启auto_mutex并将mutex_ids配置为"auto"时，框架会针对Tile间包含场景（内层小Tile的地址区间完全位于外层大Tile的地址区间内）进行特殊处理：内层小Tile的mutex ID集合始终是外层大Tile的mutex ID集合的子集，从而保证外层大Tile的使用不会影响各内层小Tile的独立运行。
+
+下图展示同一UB中Tile间地址三层包含场景的mutex id自动分配的效果：root、children和leaves三个TileGroup均设置mutex_ids="auto"，depth依次为1、2和4。叶Tile各使用1个mutex ID，外层Tile使用所包容的内层Tile的mutex ID并集。图中以无其他Tile参与分配时的ID编号为例，地址区间均为左闭右开，单位为字节。
+
+![全auto三层地址包容的mutex ID分配结果](../../figures/make_tile_group_auto_containment.svg "全auto三层地址包容的mutex ID分配结果")
+
 ## 函数原型
 
 ```python
@@ -48,7 +54,7 @@ pypto_pro.language.make_tile_group(
 |---|---|---|
 | type | 输入 | Tile类型描述，[pypto_pro.language.TileType](../basic_data_structures/TileType.md)类型。 |
 | addrs | 输入 | Tile地址，int或List[int]类型，必须非负并在编译期确定，且满足对应Buffer的地址对齐要求。传入单个基地址时，第i块Tile的地址为base + i × slot_size，其中slot_size为单块Tile占用的字节数；传入地址列表时，列表长度必须等于mutex_ids的长度或depth的值，并按顺序为每块Tile指定地址。地址列表可用于非连续地址排布。 |
-| mutex_ids | 输入 | mutex ID配置，"auto"或整数列表/元组（每块Tile对应整数或非空整数列表/元组），可选，也可传入None或空列表/元组。Mutex ID的取值范围为[0, 31]。传入序列和"auto"时的使用要求如下：<br>- **手动配置（列表或元组）**：配置非空mutex_ids时，@pypto_pro.language.jit必须启用auto_mutex模式（auto_mutex=True），框架根据Tile与mutex的映射插入同步。每块Tile对应的mutex ID数量必须一致，同一块Tile的多个mutex ID不得重复，不同Tile之间可以使用相同的mutex ID。<br>- **"auto"（str类型）**：框架在编译期为组内每块Tile自动分配1个mutex ID，此时必须指定depth，使用时需注意以下几点：<br>&nbsp;&nbsp;- @pypto_pro.language.jit必须启用auto_mutex模式（auto_mutex=True）。<br>&nbsp;&nbsp;- 同一TileGroup内：不同Tile的mutex_id不能出现"auto"与手动配置ID混合的情况。<br>&nbsp;&nbsp;- 不同TileGroup间：<br>&nbsp;&nbsp;&nbsp;&nbsp;- 可设置手动配置mutex_ids与自动分配mutex_ids（"auto"）混合。<br>&nbsp;&nbsp;&nbsp;&nbsp;- 不支持需"auto"的Tile与其他Tile间地址范围有部分地址重叠，允许完全重叠。<br>&nbsp;&nbsp;&nbsp;&nbsp;- Tile间属于完全重叠场景且其中包含需"auto"的Tile时，处于该场景的所有Tile分配的ID需保持一致，且Tile中手动配置的mutex_id只能为1个。 |
+| mutex_ids | 输入 | mutex ID配置，"auto"或整数列表/元组（每块Tile对应整数或非空整数列表/元组），可选，也可传入None或空列表/元组。Mutex ID的取值范围为[0, 31]。传入序列和"auto"时的使用要求如下：<br>- **手动配置（列表或元组）**：配置非空mutex_ids时，@pypto_pro.language.jit必须启用auto_mutex模式（auto_mutex=True），框架根据Tile与mutex的映射插入同步。每块Tile对应的mutex ID数量必须一致，同一块Tile的多个mutex ID不得重复，不同Tile之间可以使用相同的mutex ID。<br>- **"auto"（str类型）**：框架在编译期为组内每块Tile自动分配mutex ID，此时必须指定depth，使用时需注意以下几点：<br>&nbsp;&nbsp;- @pypto_pro.language.jit必须启用auto_mutex模式（auto_mutex=True）。<br>&nbsp;&nbsp;- 同一TileGroup内：不同Tile的mutex_id不能出现"auto"与手动配置ID混合的情况，且各Tile的mutex ID数量保持一致。<br>&nbsp;&nbsp;- 不同TileGroup间：<br>&nbsp;&nbsp;&nbsp;&nbsp;- 可设置手动配置mutex_ids与自动分配mutex_ids（"auto"）混合。<br>&nbsp;&nbsp;&nbsp;&nbsp;- 不支持需"auto"的Tile与其他Tile间地址范围有部分地址重叠，允许完全重叠。<br>&nbsp;&nbsp;&nbsp;&nbsp;- Tile间地址范围完全重叠且其中包含需"auto"的Tile时，这些Tile使用相同的mutex ID集合；Tile间属于包含关系（内层小Tile地址区间完全在外层Tile地址区间内）时，外层Tile的mutex ID集合必须包含内层Tile的mutex ID集合。内层Tile间可使用相同或不同的mutex ID。自动分配时，框架会尽量为内层Tile分配不同的mutex ID。 |
 | depth | 输入 | TileGroup深度，int类型，可选，必须为正的编译期整数。mutex_ids为"auto"、None或空列表时必须指定depth；未指定depth且mutex_ids非空时，由mutex_ids的长度确定；同时指定时，两者必须相等。 |
 | fwd_ids | 输入 | 仅用于[自动CV并行流水](../../../../guide/programming_guide/pro/advanced_programming/auto_parallel_pipeline.md)，表示核间正向同步的event id，整数序列（列表或元组），可选。未开启自动流水时忽略。 |
 | bwd_ids | 输入 | 仅用于[自动CV并行流水](../../../../guide/programming_guide/pro/advanced_programming/auto_parallel_pipeline.md)，表示核间反向同步的event id，整数序列（列表或元组），可选。未开启自动流水时忽略。 |
