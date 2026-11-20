@@ -104,4 +104,42 @@ TRANSPOSE_TESTS = [
         'params': {'dims': [0, 3, 2, 1], 'first_dim': 1, 'second_dim': 3},
         'source_case_index': 18,
     },
+    {
+        'case_index': 31,
+        'case_name': 'Transpose_test_31',
+        'operation': 'Transpose',
+        'input_tensors': [
+            {
+                'name': 'input0',
+                'shape': (2, 3, 1, 16),
+                'dtype': 'fp32',
+                'data_range': {'min': 0, 'max': 1},
+                'format': 'ND',
+            }
+        ],
+        'output_tensors': [{'name': 'output0', 'shape': (1, 3, 2, 16), 'dtype': 'fp32', 'format': 'ND'}],
+        'view_shape': (2, 3, 1, 16),
+        'tile_shape': (1, 3, 1, 16),
+        'params': {'dims': [2, 1, 0, 3], 'first_dim': 0, 'second_dim': 2},
+        'source_case_index': 31,
+    },
+    {
+        'case_index': 32,
+        'case_name': 'Transpose_test_32',
+        'operation': 'Transpose',
+        'input_tensors': [
+            {
+                'name': 'input0',
+                'shape': (2, 3, 1, 16),
+                'dtype': 'fp32',
+                'data_range': {'min': 0, 'max': 1},
+                'format': 'ND',
+            }
+        ],
+        'output_tensors': [{'name': 'output0', 'shape': (2, 3, 16, 1), 'dtype': 'fp32', 'format': 'ND'}],
+        'view_shape': (2, 3, 1, 16),
+        'tile_shape': (2, 3, 1, 8),
+        'params': {'dims': [0, 1, 3, 2], 'first_dim': 2, 'second_dim': 3},
+        'source_case_index': 32,
+    },
 ]

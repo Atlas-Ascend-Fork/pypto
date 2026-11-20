@@ -605,6 +605,14 @@ static bool TryReshapeDegenerateTranspose(const Tensor& self, const std::vector<
         out = self;
         return true;
     }
+    // 两维非相邻且中间存在 size>1 的维度时，swap 会改变 size>1 各轴之间的相对顺序，
+    // 仍是一次真实的数据搬移（例如 (2048,8,1,128) 交换 (0,2)，中间 dim=8>1），
+    // 此时退化为 reshape 会得到错误结果，必须回落到真正的转置路径。
+    for (int d = dim0 + 1; d < dim1; ++d) {
+        if (shape[d] != 1) {
+            return false;
+        }
+    }
     const auto& vecTile = TileShape::Current().GetVecTile();
     bool tileCoversBatch = true;
     for (int d = 0; d < (int)shape.size(); ++d) {
