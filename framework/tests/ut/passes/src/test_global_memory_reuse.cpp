@@ -71,6 +71,23 @@ public:
     }
 };
 
+TEST_F(TestGlobalMemoryReuse, RejectDynamicAxisWhenAllocatingInternalStorage)
+{
+    ComputationalGraphBuilder G;
+    G.AddTensor(DataType::DT_FP32, {16, 64}, "input");
+    G.AddTensor(DataType::DT_FP32, {16, 64}, "internal");
+    G.AddOp(Opcode::OP_VIEW, {"input"}, {"internal"}, "view");
+    G.SetInCast({"input"});
+
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    function->rootFunc_ = function;
+    G.GetTensor("internal")->tensor->rawshape = {-1, 64};
+
+    GlobalMemoryReuse pass;
+    EXPECT_EQ(pass.RunOnFunction(*function), FAILED);
+}
+
 /*
 影响到切图了，这部分应当修改
 TEST_F(TestGlobalMemoryReuse, test_connection_matrix) {

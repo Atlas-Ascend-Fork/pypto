@@ -1138,6 +1138,11 @@ Status Allocator::Allocate()
             APASS_LOG_ERROR_F(Elements::Tensor, "Tensor rawMagic:%d, storage is nullptr.", tensor->GetRawMagic());
             return FAILED;
         }
+        if (tensor->storage_->length_ > static_cast<uint64_t>(INT64_MAX)) {
+            APASS_LOG_ERROR_F(Elements::Tensor, "GM storage size %lu exceeds INT64_MAX for rawmagic %d.",
+                              tensor->storage_->length_, tensor->GetRawMagic());
+            return FAILED;
+        }
         TensorBucket& bucket = GetBestFitBucket(tensorsDesc);
         if (!bucket.AddTensorGroup(tensorsDesc)) {
             APASS_LOG_ERROR_F(Elements::Tensor,
