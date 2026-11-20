@@ -1521,6 +1521,7 @@ class ExpressionParserMixin:
             {},
             span,
         )
+        self._transfer_auto_mutex_type(view_expr, container_expr)
         # A window onto a slot is that slot: an access to it is an access to its buffer.
         self._transfer_tile_group_metadata(view_expr, container_expr)
 

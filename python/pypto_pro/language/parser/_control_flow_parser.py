@@ -232,11 +232,41 @@ class ControlFlowParserMixin:
         info.jumps.append(jump_info)
         return jump_info
 
+    def _ssa_types_equal(self, lhs: ir.Type, rhs: ir.Type) -> bool:
+        """Defer AUTO/manual count mismatches at corresponding Tile leaves.
+
+        Keep PhiState's original representative; do not create merged types or
+        AUTO markers. AllocateMutexIds checks the actual SSA input constraints.
+        """
+        if self.tuple_type_registry.types_equal(lhs, rhs):
+            return True
+        if isinstance(lhs, ir.TupleType) and isinstance(rhs, ir.TupleType):
+            if (
+                len(lhs.types) != len(rhs.types)
+                or self.tuple_type_registry.classify(lhs) != self.tuple_type_registry.classify(rhs)
+            ):
+                return False
+            return all(self._ssa_types_equal(left, right) for left, right in zip(lhs.types, rhs.types, strict=True))
+
+        if isinstance(lhs, ir.MutexTileType) and isinstance(rhs, ir.MutexTileType):
+            lhs_auto = id(lhs) in self._auto_mutex_types
+            rhs_auto = id(rhs) in self._auto_mutex_types
+            if lhs_auto or rhs_auto:
+                # Zero is unbound, not AUTO. Normalize comparison copies only;
+                # shape/dtype/layout and all other fields must still match.
+                if lhs.mutex_count == 0 or rhs.mutex_count == 0:
+                    return False
+                return self.tuple_type_registry.types_equal(
+                    ir.MutexTileType(lhs, 1),
+                    ir.MutexTileType(rhs, 1),
+                )
+        return False
+
     def _infer_phi_states(self, info: ControlFlowInfo) -> list[PhiState]:
         if not info.jumps:
             return []
         output_count = len(info.jumps[0].outputs)
-        states = [PhiState(type_equal=self.tuple_type_registry.types_equal) for _ in range(output_count)]
+        states = [PhiState(type_equal=self._ssa_types_equal) for _ in range(output_count)]
         for jump in info.jumps:
             if len(jump.outputs) != output_count:
                 raise InvalidVal("control-flow jump output counts must match")
@@ -355,9 +385,9 @@ class ControlFlowParserMixin:
             state = LoopVarState(
                 PhiState(
                     constant_state=ConstantState.NONCONSTANT,
-                    type_equal=self.tuple_type_registry.types_equal,
+                    type_equal=self._ssa_types_equal,
                 ),
-                PhiState(type_equal=self.tuple_type_registry.types_equal),
+                PhiState(type_equal=self._ssa_types_equal),
             )
             if self._is_empty_control_flow_value(init_value):
                 iter_var = self.builder.var(name, init_value.type, span)

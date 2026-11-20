@@ -229,4 +229,4 @@ def test_native_auto_alias_rejection_preserves_mutex_id_validation():
     with pytest.raises(InvalidOperation) as caught:
         _manual_alias_kernel([0, 0], [1, 2], include_auto=True).to_kernel_def().parse_target_program(
             ir.SectionKind.Vector)
-    assert "overlapping address ranges must use the same mutex ID" in caught.value.message
+    assert "Tiles with the same address range require identical manual mutex IDs" in caught.value.message

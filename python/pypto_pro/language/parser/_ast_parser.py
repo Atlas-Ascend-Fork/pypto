@@ -283,6 +283,9 @@ class ASTParser(
         self._ifexpr_tmp_counter: int = 0
         # Maps group Expr objects -> (depth, mutex_ids, memory).
         self.tile_group_meta: dict[ir.Expr, tuple] = {}
+        # AUTO declaration/view types, keyed by identity rather than structural
+        # equality. Retain the wrappers to prevent id reuse during parsing.
+        self._auto_mutex_types: dict[int, ir.MutexTileType] = {}
         self.parse_facts = ParseFacts()
         # Where an op parsed from here on is recorded: the kernel-body node it sits under.
         self._access_site: tuple[int, int] | None = None

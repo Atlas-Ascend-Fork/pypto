@@ -69,6 +69,11 @@ class BufferParserMixin:
 
     # --- helpers --------------------------------------------------------------
 
+    def _transfer_auto_mutex_type(self, target: ir.Expr, source: ir.Expr) -> None:
+        """Propagate AUTO provenance to a view's newly deduced type."""
+        if id(source.type) in self._auto_mutex_types:
+            self._auto_mutex_types[id(target.type)] = target.type
+
     @staticmethod
     def _normalize_mutex_ids(mutex_ids) -> tuple[tuple[int, ...], ...]:
         """Check already parsed mutex ID groups for a consistent per-slot layout."""
@@ -327,6 +332,9 @@ class BufferParserMixin:
                 mutex_ids=ids, span=span,
             )
             self._record_tile_high_water(tile)
+            # TileGroup declarations are the only source of AUTO placeholders.
+            if mutex_id_irs is not None and isinstance(ids.elements[0], ir.Var):
+                self._auto_mutex_types[id(tile.type)] = tile.type
             value = self.builder.let(f"_tg_{var_name}_tiles_{i}", tile, span=span)
             tile_vars.append(value)
         tiles = ir.MakeTuple(tile_vars, span)
@@ -352,6 +360,7 @@ class BufferParserMixin:
         for i in range(depth):
             source = ir.GetItemExpr(tiles, ir.ConstInt(i, DataType.INT64, span), span)
             call = _ir_reinterpret(source, **kwargs, span=span)
+            self._transfer_auto_mutex_type(call, source)
             value = self.builder.let(f"_tg_{self.current_target_name}_tiles_{i}", call, span=span)
             values.append(value)
         tiles = ir.MakeTuple(values, span)

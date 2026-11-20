@@ -1,0 +1,77 @@
+#if defined(__DAV_VEC__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void _different_group_sibling_counts_kernel_impl_vector(__gm__ half* x_0_ptr)
+{
+
+    using x_0ShapeDim5 = pto::TileShape2D<half, pto::DYNAMIC, pto::DYNAMIC, Layout::ND>;
+    using x_0StrideDim5 = pto::Stride<-1, -1, -1, -1, -1>;
+    using x_0Type = GlobalTensor<half, x_0ShapeDim5, x_0StrideDim5, Layout::ND>;
+    x_0Type x_0(x_0_ptr, x_0ShapeDim5(), x_0StrideDim5(1, 1, 1, 64, 1));
+
+    int64_t _tuple_anchor_0_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(1), static_cast<int64_t>(2)};
+    using _tg_leaf_type_tiles_0_0_Type = SyncedTile<Tile<TileType::Vec, half, 1, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 3>;
+    _tg_leaf_type_tiles_0_0_Type _tg_leaf_type_tiles_0_0{_tg_leaf_type_tiles_0_0_Type::PtoTile(1, 64), {0, 1, 2}};
+    TASSIGN(_tg_leaf_type_tiles_0_0.tile, 0x0);
+    SyncedTile<Tile<TileType::Vec, half, 1, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 3> _tg_leaf_type_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Vec, half, 1, 64, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 3>>(_tg_leaf_type_tiles_0_0)};
+    using _tg_two_id_child_tiles_0_0_Type = SyncedTile<Tile<TileType::Vec, half, 1, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 2>;
+    _tg_two_id_child_tiles_0_0_Type _tg_two_id_child_tiles_0_0{_tg_two_id_child_tiles_0_0_Type::PtoTile(1, 32), {0, 1}};
+    TASSIGN(_tg_two_id_child_tiles_0_0.tile, 0x0);
+    SyncedTile<Tile<TileType::Vec, half, 1, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 2> _tg_two_id_child_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Vec, half, 1, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 2>>(_tg_two_id_child_tiles_0_0)};
+    int64_t _tuple_anchor_2_0[] = {static_cast<int64_t>(2)};
+    using _tg_one_id_sibling_tiles_0_0_Type = SyncedTile<Tile<TileType::Vec, half, 1, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 1>;
+    _tg_one_id_sibling_tiles_0_0_Type _tg_one_id_sibling_tiles_0_0{_tg_one_id_sibling_tiles_0_0_Type::PtoTile(1, 32), {2}};
+    TASSIGN(_tg_one_id_sibling_tiles_0_0.tile, 0x40);
+    SyncedTile<Tile<TileType::Vec, half, 1, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 1> _tg_one_id_sibling_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Vec, half, 1, 32, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 1>>(_tg_one_id_sibling_tiles_0_0)};
+    int64_t _tuple_anchor_3_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(1)};
+    using _tg_one_id_sibling_tiles_1_Type = SyncedTile<Tile<TileType::Vec, half, 1, 16, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 2>;
+    _tg_one_id_sibling_tiles_1_Type _tg_one_id_sibling_tiles_1{_tg_one_id_sibling_tiles_1_Type::PtoTile(1, 16), {0, 1}};
+    TASSIGN(_tg_one_id_sibling_tiles_1.tile, 0x0);
+    SyncedTile<Tile<TileType::Vec, half, 1, 16, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 2> _tg_one_id_sibling_tiles_2[] = {static_cast<SyncedTile<Tile<TileType::Vec, half, 1, 16, BLayout::RowMajor, -1, -1, SLayout::NoneBox, 512, PadValue::Null, CompactMode::Normal>, 2>>(_tg_one_id_sibling_tiles_1)};
+    int64_t _tuple_anchor_6_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(0)};
+    get_buf(PIPE_MTE2, 0, 0);
+    get_buf(PIPE_MTE2, 1, 0);
+    x_0.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(_tg_two_id_child_tiles_0[0].tile.GetValidRow()), static_cast<int64_t>(_tg_two_id_child_tiles_0[0].tile.GetValidCol()));
+    TASSIGN(x_0, x_0_ptr + (0 * (64) + 0));
+    TLOAD(_tg_two_id_child_tiles_0[0].tile, x_0);
+    rls_buf(PIPE_MTE2, 0, 0);
+    rls_buf(PIPE_MTE2, 1, 0);
+    int64_t _tuple_anchor_8_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(0)};
+    get_buf(PIPE_MTE3, 0, 0);
+    get_buf(PIPE_MTE3, 1, 0);
+    x_0.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(_tg_two_id_child_tiles_0[0].tile.GetValidRow()), static_cast<int64_t>(_tg_two_id_child_tiles_0[0].tile.GetValidCol()));
+    TASSIGN(x_0, x_0_ptr + (0 * (64) + 0));
+    TSTORE(x_0, _tg_two_id_child_tiles_0[0].tile);
+    rls_buf(PIPE_MTE3, 0, 0);
+    rls_buf(PIPE_MTE3, 1, 0);
+    int64_t _tuple_anchor_10_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(32)};
+    get_buf(PIPE_MTE2, 2, 0);
+    x_0.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(_tg_one_id_sibling_tiles_0[0].tile.GetValidRow()), static_cast<int64_t>(_tg_one_id_sibling_tiles_0[0].tile.GetValidCol()));
+    TASSIGN(x_0, x_0_ptr + (0 * (64) + 32));
+    TLOAD(_tg_one_id_sibling_tiles_0[0].tile, x_0);
+    rls_buf(PIPE_MTE2, 2, 0);
+    int64_t _tuple_anchor_12_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(32)};
+    get_buf(PIPE_MTE3, 2, 0);
+    x_0.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(_tg_one_id_sibling_tiles_0[0].tile.GetValidRow()), static_cast<int64_t>(_tg_one_id_sibling_tiles_0[0].tile.GetValidCol()));
+    TASSIGN(x_0, x_0_ptr + (0 * (64) + 32));
+    TSTORE(x_0, _tg_one_id_sibling_tiles_0[0].tile);
+    rls_buf(PIPE_MTE3, 2, 0);
+    return;
+}
+#endif
+
+
+__aicore__ inline void _different_group_sibling_counts_kernel_impl(__gm__ half* x_0)
+{
+#if defined(__DAV_VEC__)
+    ::_different_group_sibling_counts_kernel_impl_vector(x_0);
+#endif
+}

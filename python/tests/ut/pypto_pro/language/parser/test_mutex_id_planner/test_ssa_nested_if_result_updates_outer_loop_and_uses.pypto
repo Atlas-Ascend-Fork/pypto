@@ -1,0 +1,20 @@
+function main incast(bool %flag) outcast() #entry(false) #type(pro) {
+    mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2> %tile_0 = block.make_mutex_tile(tuple(1, 1), tuple(), tuple(2, 5), dtype=int8_t, target_memory=Vec, memref_addr=0, memref_size=8, memref_id=0);
+    tuple<mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2>> %left_tiles = tuple(%tile_0);
+    tuple<tuple<mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2>>> %left = tuple(%left_tiles);
+    mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2> %tile_1 = block.make_mutex_tile(tuple(1, 1), tuple(), tuple(0, 1), dtype=int8_t, target_memory=Vec, memref_addr=32, memref_size=8, memref_id=3);
+    tuple<mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2>> %right_tiles = tuple(%tile_1);
+    tuple<tuple<mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2>>> %right = tuple(%right_tiles);
+    mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2> %tile_2 = block.make_mutex_tile(tuple(1, 1), tuple(), tuple(2, 5), dtype=int8_t, target_memory=Vec, memref_addr=0, memref_size=8, memref_id=6);
+    tuple<mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2>> %pin_tiles = tuple(%tile_2);
+    tuple<tuple<mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2>>> %pin = tuple(%pin_tiles);
+    mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2> %result = for %index inrange 0, 1, 1 iter { mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2> %carried = %tile_1; } {
+        mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2> %selected = if %flag then {
+            yield %tile_0;
+        } else {
+            yield %carried;
+        }
+        continue %selected;
+    }
+    mutex_tile<tile<1 x 1, int8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 2> %alias = %result;
+}

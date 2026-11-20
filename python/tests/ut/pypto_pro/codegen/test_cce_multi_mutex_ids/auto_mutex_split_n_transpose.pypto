@@ -1,0 +1,161 @@
+#if defined(__DAV_CUBE__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+class _TileGroupCursor {
+public:
+    int64_t cursor;
+};
+#include <pypto_dump.h>
+__aicore__ inline void _auto_mutex_split_n_transpose_kernel_impl_cube(__gm__ half* a_0_ptr, __gm__ half* b_0_ptr, __gm__ float* out_0_ptr)
+{
+
+    using a_0ShapeDim5 = pto::TileShape2D<half, pto::DYNAMIC, pto::DYNAMIC, Layout::ND>;
+    using a_0StrideDim5 = pto::Stride<-1, -1, -1, -1, -1>;
+    using a_0Type = GlobalTensor<half, a_0ShapeDim5, a_0StrideDim5, Layout::ND>;
+    a_0Type a_0(a_0_ptr, a_0ShapeDim5(), a_0StrideDim5(1, 1, 1, 128, 1));
+
+    using b_0ShapeDim5 = pto::TileShape2D<half, pto::DYNAMIC, pto::DYNAMIC, Layout::ND>;
+    using b_0StrideDim5 = pto::Stride<-1, -1, -1, -1, -1>;
+    using b_0Type = GlobalTensor<half, b_0ShapeDim5, b_0StrideDim5, Layout::ND>;
+    b_0Type b_0(b_0_ptr, b_0ShapeDim5(), b_0StrideDim5(1, 1, 1, 128, 1));
+
+    using out_0ShapeDim5 = pto::TileShape2D<float, pto::DYNAMIC, pto::DYNAMIC, Layout::ND>;
+    using out_0StrideDim5 = pto::Stride<-1, -1, -1, -1, -1>;
+    using out_0Type = GlobalTensor<float, out_0ShapeDim5, out_0StrideDim5, Layout::ND>;
+    out_0Type out_0(out_0_ptr, out_0ShapeDim5(), out_0StrideDim5(1, 1, 1, 64, 1));
+
+    using _tg_ga_tiles_0_0_Type = SyncedTile<Tile<TileType::Mat, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1>;
+    _tg_ga_tiles_0_0_Type _tg_ga_tiles_0_0{_tg_ga_tiles_0_0_Type::PtoTile(64, 128), {0}};
+    TASSIGN(_tg_ga_tiles_0_0.tile, 0x0);
+    SyncedTile<Tile<TileType::Mat, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1> _tg_ga_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Mat, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1>>(_tg_ga_tiles_0_0)};
+    using _tg_gb_tiles_0_0_Type = SyncedTile<Tile<TileType::Mat, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1>;
+    _tg_gb_tiles_0_0_Type _tg_gb_tiles_0_0{_tg_gb_tiles_0_0_Type::PtoTile(64, 128), {1}};
+    TASSIGN(_tg_gb_tiles_0_0.tile, 0x10000);
+    SyncedTile<Tile<TileType::Mat, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1> _tg_gb_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Mat, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1>>(_tg_gb_tiles_0_0)};
+    using _tg_la_tiles_0_0_Type = SyncedTile<Tile<TileType::Left, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1>;
+    _tg_la_tiles_0_0_Type _tg_la_tiles_0_0{_tg_la_tiles_0_0_Type::PtoTile(64, 128), {2}};
+    TASSIGN(_tg_la_tiles_0_0.tile, 0x0);
+    using _tg_la_tiles_1_0_Type = SyncedTile<Tile<TileType::Left, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1>;
+    _tg_la_tiles_1_0_Type _tg_la_tiles_1_0{_tg_la_tiles_1_0_Type::PtoTile(64, 128), {3}};
+    TASSIGN(_tg_la_tiles_1_0.tile, 0x4000);
+    SyncedTile<Tile<TileType::Left, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1> _tg_la_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Left, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1>>(_tg_la_tiles_0_0), static_cast<SyncedTile<Tile<TileType::Left, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, 1>>(_tg_la_tiles_1_0)};
+    _TileGroupCursor _tg_la_cursor_0 = {.cursor=static_cast<int64_t>(1)};
+    using _tg_lb_tiles_0_0_Type = SyncedTile<Tile<TileType::Right, half, 128, 32, BLayout::RowMajor, -1, -1, SLayout::ColMajor, 512, PadValue::Null, CompactMode::Normal>, 1>;
+    _tg_lb_tiles_0_0_Type _tg_lb_tiles_0_0{_tg_lb_tiles_0_0_Type::PtoTile(128, 32), {4}};
+    TASSIGN(_tg_lb_tiles_0_0.tile, 0x0);
+    using _tg_lb_tiles_1_0_Type = SyncedTile<Tile<TileType::Right, half, 128, 32, BLayout::RowMajor, -1, -1, SLayout::ColMajor, 512, PadValue::Null, CompactMode::Normal>, 1>;
+    _tg_lb_tiles_1_0_Type _tg_lb_tiles_1_0{_tg_lb_tiles_1_0_Type::PtoTile(128, 32), {5}};
+    TASSIGN(_tg_lb_tiles_1_0.tile, 0x2000);
+    SyncedTile<Tile<TileType::Right, half, 128, 32, BLayout::RowMajor, -1, -1, SLayout::ColMajor, 512, PadValue::Null, CompactMode::Normal>, 1> _tg_lb_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Right, half, 128, 32, BLayout::RowMajor, -1, -1, SLayout::ColMajor, 512, PadValue::Null, CompactMode::Normal>, 1>>(_tg_lb_tiles_0_0), static_cast<SyncedTile<Tile<TileType::Right, half, 128, 32, BLayout::RowMajor, -1, -1, SLayout::ColMajor, 512, PadValue::Null, CompactMode::Normal>, 1>>(_tg_lb_tiles_1_0)};
+    _TileGroupCursor _tg_lb_cursor_0 = {.cursor=static_cast<int64_t>(1)};
+    using _tg_gc_tiles_0_0_Type = SyncedTile<Tile<TileType::Acc, float, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 2>;
+    _tg_gc_tiles_0_0_Type _tg_gc_tiles_0_0{_tg_gc_tiles_0_0_Type::PtoTile(64, 64), {20, 21}};
+    TASSIGN(_tg_gc_tiles_0_0.tile, 0x0);
+    SyncedTile<Tile<TileType::Acc, float, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 2> _tg_gc_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Acc, float, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 2>>(_tg_gc_tiles_0_0)};
+    int64_t _tuple_anchor_0_0[] = {static_cast<int64_t>(20)};
+    using _tg_acc_leaf_type_tiles_0_0_Type = SyncedTile<Tile<TileType::Acc, float, 32, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 1>;
+    _tg_acc_leaf_type_tiles_0_0_Type _tg_acc_leaf_type_tiles_0_0{_tg_acc_leaf_type_tiles_0_0_Type::PtoTile(32, 64), {20}};
+    TASSIGN(_tg_acc_leaf_type_tiles_0_0.tile, 0x0);
+    SyncedTile<Tile<TileType::Acc, float, 32, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 1> _tg_acc_leaf_type_tiles_0[] = {static_cast<SyncedTile<Tile<TileType::Acc, float, 32, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 1>>(_tg_acc_leaf_type_tiles_0_0)};
+    int64_t _tuple_anchor_1_0[] = {static_cast<int64_t>(21)};
+    using _tg_acc_leaf_type_tiles_1_Type = SyncedTile<Tile<TileType::Acc, float, 32, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 1>;
+    _tg_acc_leaf_type_tiles_1_Type _tg_acc_leaf_type_tiles_1{_tg_acc_leaf_type_tiles_1_Type::PtoTile(32, 64), {21}};
+    TASSIGN(_tg_acc_leaf_type_tiles_1.tile, 0x2000);
+    SyncedTile<Tile<TileType::Acc, float, 32, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 1> _tg_acc_leaf_type_tiles_2[] = {static_cast<SyncedTile<Tile<TileType::Acc, float, 32, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 1>>(_tg_acc_leaf_type_tiles_1)};
+    int64_t _tuple_anchor_2_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(0)};
+    get_buf(PIPE_MTE2, 0, 0);
+    a_0.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(_tg_ga_tiles_0[0].tile.GetValidRow()), static_cast<int64_t>(_tg_ga_tiles_0[0].tile.GetValidCol()));
+    TASSIGN(a_0, a_0_ptr + (0 * (128) + 0));
+    TLOAD(_tg_ga_tiles_0[0].tile, a_0);
+    rls_buf(PIPE_MTE2, 0, 0);
+    int64_t _tuple_anchor_3_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(0)};
+    get_buf(PIPE_MTE2, 1, 0);
+    b_0.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(_tg_gb_tiles_0[0].tile.GetValidRow()), static_cast<int64_t>(_tg_gb_tiles_0[0].tile.GetValidCol()));
+    TASSIGN(b_0, b_0_ptr + (0 * (128) + 0));
+    TLOAD(_tg_gb_tiles_0[0].tile, b_0);
+    rls_buf(PIPE_MTE2, 1, 0);
+    int64_t _tuple_anchor_4_0[] = {static_cast<int64_t>(128), static_cast<int64_t>(64)};
+    using _pl_gemm1_l1b_0_Type = SyncedTile<Tile<TileType::Mat, half, 128, 64, BLayout::RowMajor, -1, -1, SLayout::ColMajor, 512, PadValue::Null, CompactMode::Normal>, 1>;
+    _pl_gemm1_l1b_0_Type _pl_gemm1_l1b_0{_pl_gemm1_l1b_0_Type::PtoTile(128, 64), {_tg_gb_tiles_0[0].mutex_ids[0]}};
+    TASSIGN(_pl_gemm1_l1b_0.tile, (uint64_t)_tg_gb_tiles_0[0].tile.data());
+    int64_t _tuple_anchor_5_0[] = {static_cast<int64_t>(64), static_cast<int64_t>(64)};
+    _tg_gc_tiles_0[0].tile.SetValidShape(64, 64);
+    using _expr_tmp_6_0_Type = SyncedTile<Tile<TileType::Acc, float, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 2>;
+    _expr_tmp_6_0_Type _expr_tmp_6_0{_expr_tmp_6_0_Type::PtoTile(64, 32), {_tg_gc_tiles_0[0].mutex_ids[0], _tg_gc_tiles_0[0].mutex_ids[1]}};
+    TASSIGN(_expr_tmp_6_0.tile, (uint64_t)_tg_gc_tiles_0[0].tile.data() + ((pto::GetTileOffset<std::remove_reference_t<decltype(_tg_gc_tiles_0[0].tile)>>(0, 0))*32/8));
+    _expr_tmp_6_0.tile.SetValidShape(64, 32);
+    int64_t _tuple_anchor_7_0[] = {static_cast<int64_t>(64), static_cast<int64_t>(32)};
+    using _expr_tmp_8_0_Type = SyncedTile<Tile<TileType::Acc, float, 64, 32, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 2>;
+    _expr_tmp_8_0_Type _expr_tmp_8_0{_expr_tmp_8_0_Type::PtoTile(64, 32), {_expr_tmp_6_0.mutex_ids[0], _expr_tmp_6_0.mutex_ids[1]}};
+    TASSIGN(_expr_tmp_8_0.tile, (uint64_t)_expr_tmp_6_0.tile.data());
+    using _expr_tmp_9_0_Type = SyncedTile<Tile<TileType::Acc, float, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 2>;
+    _expr_tmp_9_0_Type _expr_tmp_9_0{_expr_tmp_9_0_Type::PtoTile(64, min((int64_t)((64 - 32)), (int64_t)(32))), {_tg_gc_tiles_0[0].mutex_ids[0], _tg_gc_tiles_0[0].mutex_ids[1]}};
+    TASSIGN(_expr_tmp_9_0.tile, (uint64_t)_tg_gc_tiles_0[0].tile.data() + ((pto::GetTileOffset<std::remove_reference_t<decltype(_tg_gc_tiles_0[0].tile)>>(0, 32))*32/8));
+    _expr_tmp_9_0.tile.SetValidShape(64, min((int64_t)((64 - 32)), (int64_t)(32)));
+    int64_t _tuple_anchor_10_0[] = {static_cast<int64_t>(64), static_cast<int64_t>(32)};
+    using _expr_tmp_11_0_Type = SyncedTile<Tile<TileType::Acc, float, 64, 32, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 2>;
+    _expr_tmp_11_0_Type _expr_tmp_11_0{_expr_tmp_11_0_Type::PtoTile(64, 32), {_expr_tmp_9_0.mutex_ids[0], _expr_tmp_9_0.mutex_ids[1]}};
+    TASSIGN(_expr_tmp_11_0.tile, (uint64_t)_expr_tmp_9_0.tile.data());
+    SyncedTile<Tile<TileType::Acc, float, 64, 32, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 2> _pl_gemm1_strips_0[] = {static_cast<SyncedTile<Tile<TileType::Acc, float, 64, 32, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 2>>(_expr_tmp_8_0), static_cast<SyncedTile<Tile<TileType::Acc, float, 64, 32, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 2>>(_expr_tmp_11_0)};
+    _tg_la_cursor_0.cursor = (_tg_la_cursor_0.cursor + 1);
+    auto _bufidx_0_0 = ({int64_t __pypto_lhs = (_tg_la_cursor_0.cursor), __pypto_rhs = (2);int64_t __pypto_rem = __pypto_lhs % __pypto_rhs;__pypto_rem + ((__pypto_rem != 0 && ((__pypto_rem < 0) != (__pypto_rhs < 0))) ? __pypto_rhs : 0);});
+    int64_t _tuple_anchor_12_0[] = {static_cast<int64_t>(64), static_cast<int64_t>(128)};
+    _tg_la_tiles_0[_bufidx_0_0].tile.SetValidShape(64, 128);
+    auto __sync_id_0 = _tg_la_tiles_0[_bufidx_0_0].mutex_ids[0];
+    get_buf(PIPE_MTE1, __sync_id_0, 0);
+    get_buf(PIPE_MTE1, 0, 0);
+    TMOV<Tile<TileType::Left, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>, Tile<TileType::Mat, half, 64, 128, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 512, PadValue::Null, CompactMode::Normal>>(_tg_la_tiles_0[_bufidx_0_0].tile, _tg_ga_tiles_0[0].tile);
+    rls_buf(PIPE_MTE1, __sync_id_0, 0);
+    rls_buf(PIPE_MTE1, 0, 0);
+    for (int64_t _pl_gemm1_n__iterator_0 = 0; _pl_gemm1_n__iterator_0 < 64; _pl_gemm1_n__iterator_0 += 32) {
+        _tg_lb_cursor_0.cursor = (_tg_lb_cursor_0.cursor + 1);
+        auto _bufidx_1_0 = ({int64_t __pypto_lhs = (_tg_lb_cursor_0.cursor), __pypto_rhs = (2);int64_t __pypto_rem = __pypto_lhs % __pypto_rhs;__pypto_rem + ((__pypto_rem != 0 && ((__pypto_rem < 0) != (__pypto_rhs < 0))) ? __pypto_rhs : 0);});
+        int64_t _tuple_anchor_13_0[] = {static_cast<int64_t>(128), static_cast<int64_t>(32)};
+        _tg_lb_tiles_0[_bufidx_1_0].tile.SetValidShape(128, 32);
+        int64_t _tuple_anchor_14_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(_pl_gemm1_n__iterator_0)};
+        auto __sync_id_1 = _tg_lb_tiles_0[_bufidx_1_0].mutex_ids[0];
+        get_buf(PIPE_MTE1, __sync_id_1, 0);
+        get_buf(PIPE_MTE1, 1, 0);
+        TEXTRACT<Tile<TileType::Right, half, 128, 32, BLayout::RowMajor, -1, -1, SLayout::ColMajor, 512, PadValue::Null, CompactMode::Normal>, decltype(_pl_gemm1_l1b_0.tile)>(_tg_lb_tiles_0[_bufidx_1_0].tile, _pl_gemm1_l1b_0.tile, 0, _pl_gemm1_n__iterator_0);
+        rls_buf(PIPE_MTE1, __sync_id_1, 0);
+        rls_buf(PIPE_MTE1, 1, 0);
+        auto _expr_tmp_15_0 = ({int64_t __pypto_lhs = (_pl_gemm1_n__iterator_0), __pypto_rhs = (32);int64_t __pypto_quot = __pypto_lhs / __pypto_rhs;__pypto_quot - (((__pypto_lhs < 0) != (__pypto_rhs < 0)) && (__pypto_lhs % __pypto_rhs != 0));});
+        auto __sync_id_2 = _tg_la_tiles_0[_bufidx_0_0].mutex_ids[0];
+        auto __sync_id_3 = _tg_lb_tiles_0[_bufidx_1_0].mutex_ids[0];
+        get_buf(PIPE_M, 20, 0);
+        get_buf(PIPE_M, 21, 0);
+        get_buf(PIPE_M, __sync_id_2, 0);
+        get_buf(PIPE_M, __sync_id_3, 0);
+        TMATMUL(_pl_gemm1_strips_0[_expr_tmp_15_0].tile, _tg_la_tiles_0[_bufidx_0_0].tile, _tg_lb_tiles_0[_bufidx_1_0].tile);
+        rls_buf(PIPE_M, 20, 0);
+        rls_buf(PIPE_M, 21, 0);
+        rls_buf(PIPE_M, __sync_id_2, 0);
+        rls_buf(PIPE_M, __sync_id_3, 0);
+        continue;
+    }
+    int64_t _tuple_anchor_16_0[] = {static_cast<int64_t>(0), static_cast<int64_t>(0)};
+    get_buf(PIPE_FIX, 20, 0);
+    get_buf(PIPE_FIX, 21, 0);
+    out_0.SetShape<pto::GlobalTensorDim::DIM_3, pto::GlobalTensorDim::DIM_4>(static_cast<int64_t>(_tg_gc_tiles_0[0].tile.GetValidRow()), static_cast<int64_t>(_tg_gc_tiles_0[0].tile.GetValidCol()));
+    TASSIGN(out_0, out_0_ptr + (0 * (64) + 0));
+    TSTORE(out_0, _tg_gc_tiles_0[0].tile);
+    rls_buf(PIPE_FIX, 20, 0);
+    rls_buf(PIPE_FIX, 21, 0);
+    return;
+}
+#endif
+
+
+__aicore__ inline void _auto_mutex_split_n_transpose_kernel_impl(__gm__ half* a_0, __gm__ half* b_0, __gm__ float* out_0)
+{
+#if defined(__DAV_CUBE__)
+    ::_auto_mutex_split_n_transpose_kernel_impl_cube(a_0, b_0, out_0);
+#endif
+}

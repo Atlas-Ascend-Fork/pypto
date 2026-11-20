@@ -4703,6 +4703,7 @@ def _build_reinterpret(
         return self._build_reinterpreted_group(tile, kwargs, span)
 
     new_tile = _ir_reinterpret(tile, shape=new_shape, dtype=kwargs.get("dtype"), layout=kwargs.get("layout"), span=span)
+    self._transfer_auto_mutex_type(new_tile, tile)
 
     # The reinterpreted tile aliases the same buffer, so it inherits the source's
     # group origin (same propagation pattern as GetItemExpr in _expression_parser).
