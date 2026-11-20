@@ -1628,15 +1628,13 @@ bool MixGraphMerger::IsSinkMergeUnbeneficial(int root, const std::set<int>& inco
 bool MixGraphMerger::CheckLoopPathConsistency(const std::vector<int>& actualGroup)
 {
     // 同通路门控(carry 约束原则的语义化实现):
-    // 候选组内 loop-carry 通路归属混杂时, 逐对校验"集合不同的成员对"的耦合性 ——
+    // 候选组内 loop-carry 通路归属混杂时, 逐对校验"集合不同的成员对"的归类 ——
     //   全体集合相同(含全空): 链内/普通合并, 串行性原本就存在, 放行;
     //   混杂 + 成员对共环(集合相交): 同环多链, 链内合并, 放行;
-    //   混杂 + 空集(环外)成员挂在环上成员的直接边界 tensor 数据边:
-    //     生产者-消费者耦合, 执行次序已被依赖链约束(如 reshape-only 形状适配挂靠), 放行;
-    //   混杂 + 非空不相交(跨环)成员对: 即使存在数据边也拒绝 —— 融合两个独立 loop body
-    //     破坏 slot-scope 循环体完整性(两环 trip count 可不同), 正确性护栏;
-    //   混杂 + 空集成员无数据边挂靠: 真并行分支被吞进 carry 链,
-    //     串行链拖住并行体, 拒绝(护栏: mla 独立分支与脊柱融合 e2e +244%)。
+    //   混杂 + 环外(空集)挂靠与跨环(非空不相交): 一律拒绝 —— 数据边只约束执行次序,
+    //     防不住重计算被吸进环的每迭代串行链(glm PATH2 实证);
+    //     融合两个独立 loop body 破坏 slot-scope 循环体完整性(两环 trip count 可不同),
+    //     串行链拖住并行体(mla 独立分支与脊柱融合 e2e +244% 实证)。
     // 贪心合并按邻接展开, 非邻接的独立分支不会进入候选组, 该判据与合并动态自洽。
     // subgraphLoopPaths 为空向量表示前端无 slot scope/feedback slot, 门控不启用。
     if (mRootLoopPaths.empty()) {
@@ -1658,22 +1656,6 @@ bool MixGraphMerger::CheckLoopPathConsistency(const std::vector<int>& actualGrou
     if (!mixed) {
         return true;
     }
-    auto hasDirectDataEdge = [this](int rootA, int rootB) {
-        for (int tensorId : mRootToBoundaryTensorIds[rootA]) {
-            const auto& tensorInfo = mInput.boundaryTensors[tensorId];
-            for (int sg : tensorInfo.producerSubgraphs) {
-                if (FindParent(sg) == rootB) {
-                    return true;
-                }
-            }
-            for (int sg : tensorInfo.consumerSubgraphs) {
-                if (FindParent(sg) == rootB) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    };
     for (size_t i = 0; i < actualGroup.size(); ++i) {
         for (size_t j = i + 1; j < actualGroup.size(); ++j) {
             const auto& pathsA = mRootLoopPaths[actualGroup[i]];
@@ -1681,16 +1663,15 @@ bool MixGraphMerger::CheckLoopPathConsistency(const std::vector<int>& actualGrou
             if (pathsA == pathsB) {
                 continue;
             }
-            // 数据边豁免仅限环外(空集)成员挂靠; 非空不相交(跨环)即使有数据边也拒绝:
-            // 融合两个独立 loop body 破坏 slot-scope 循环体完整性(两环 trip count 可不同)
-            bool offRingCoupled = (pathsA.empty() || pathsB.empty()) &&
-                                  hasDirectDataEdge(actualGroup[i], actualGroup[j]);
-            if (HasSharedLoopPath(pathsA, pathsB) || offRingCoupled) {
+            // 环外(空集)成员挂靠一律拒绝(无论有无数据边); 非空不相交(跨环)即使有数据边也拒绝:
+            // 融合两个独立 loop body 破坏 slot-scope 循环体完整性(两环 trip count 可不同);
+            // 数据边只约束执行次序, 防不住重计算被吸进环的每迭代串行链(glm PATH2 实证)
+            if (HasSharedLoopPath(pathsA, pathsB)) {
                 continue;
             }
             APASS_LOG_DEBUG_F(Elements::Operation,
                               "Merge skipped: loop-carry path mismatch inside group [%s] "
-                              "(mismatched pair is cross-ring or uncoupled).",
+                              "(mismatched pair is cross-ring or off-ring attachment).",
                               IntVecToStr(actualGroup).c_str());
             return false;
         }

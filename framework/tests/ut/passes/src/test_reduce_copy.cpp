@@ -1326,9 +1326,9 @@ TEST_F(ReduceCopyTest, MixGraphMerger_LoopPathConsistencyDisabledWithoutSlotInfo
     EXPECT_TRUE(merger.CheckLoopPathConsistency({0, 1, 2}));
 }
 
-// 数据耦合豁免: 环外成员(空集)挂在环上成员的直接边界 tensor 数据边上放行;
-// 环上成员与无数据边的环外成员混合仍拒绝
-TEST_F(ReduceCopyTest, MixGraphMerger_LoopPathConsistencyDataEdgeExempted)
+// 环外数据边拒绝: 环外成员(空集)即使挂在环上成员的直接边界 tensor 数据边上也拒绝
+// (数据边只约束执行次序, 防不住重计算被吸进环的每迭代串行链); 无数据边的环外成员混合同样拒绝
+TEST_F(ReduceCopyTest, MixGraphMerger_LoopPathConsistencyOffRingDataEdgeRejected)
 {
     MergeInput input = BuildSimpleMergeInput(4, {{1}, {2}, {}, {}}, {});
     input.subgraphLoopPaths = {{7}, {7}, {}, {}}; // sg0/sg1 在 carry 环 7 上, sg2/sg3 环外
@@ -1340,8 +1340,8 @@ TEST_F(ReduceCopyTest, MixGraphMerger_LoopPathConsistencyDataEdgeExempted)
     merger.mRootLoopPaths = input.subgraphLoopPaths;
     merger.mParent = {0, 1, 2, 3};
     merger.mRootToBoundaryTensorIds = input.subgraphToBoundaryTensorIds;
-    EXPECT_TRUE(merger.CheckLoopPathConsistency({0, 2}));  // 环外成员挂在环上成员数据边, 豁免放行
-    EXPECT_FALSE(merger.CheckLoopPathConsistency({1, 2})); // sg1 与 sg2 既不共环也无数据边, 仍拒绝
+    EXPECT_FALSE(merger.CheckLoopPathConsistency({0, 2})); // 环外成员挂在环上成员数据边, 仍拒绝
+    EXPECT_FALSE(merger.CheckLoopPathConsistency({1, 2})); // sg1 与 sg2 既不共环也无数据边, 拒绝
     EXPECT_TRUE(merger.CheckLoopPathConsistency({0, 1}));  // 同环, 放行不变
 }
 
@@ -1468,9 +1468,9 @@ TEST_F(ReduceCopyTest, Merge_NoSlotInfoGateDisabledMergesAll)
 }
 
 // 端到端(RunOnFunction): feedback slot 7 标记 carry 链 sg0(读 incast)->sg1(写 outcast);
-// 环外 sg2 挂在 carryOut 数据边上(生产者-消费者耦合), 数据耦合豁免允许并入 carry 链,
-// sg2->sg3 为链式下游(组内可达) -> 全图归 1
-TEST_F(ReduceCopyTest, RunOnFunction_CarrySlotGateAbsorbsDataCoupledBranch)
+// 环外 sg2 挂在 carryOut 数据边上(生产者-消费者耦合)仍被门控拒绝, 与 sg3(同为空集)独立成组
+// -> carry 链与环外支路各归 1, 共 2 子图
+TEST_F(ReduceCopyTest, RunOnFunction_CarrySlotGateRejectsDataCoupledBranch)
 {
     ComputationalGraphBuilder G;
     std::vector<std::string> incasts;
@@ -1495,9 +1495,9 @@ TEST_F(ReduceCopyTest, RunOnFunction_CarrySlotGateAbsorbsDataCoupledBranch)
     function->paramConfigs_.autoMixPartition = 1;
     ReduceCopyMerge merger;
     EXPECT_EQ(merger.RunOnFunction(*function), SUCCESS);
-    // sg0/sg1(同环)与环外 sg2(carryOut 数据边挂靠)/sg3(链式下游)依次并入 -> 1 子图
-    const int Num1 = 1;
-    EXPECT_EQ(function->GetTotalSubGraphCount(), Num1);
+    // sg0/sg1(同环)合并为 1; 环外 sg2(carryOut 数据边挂靠被拒)与 sg3(空集组)合并为另 1 -> 2 子图
+    const int Num2 = 2;
+    EXPECT_EQ(function->GetTotalSubGraphCount(), Num2);
 }
 
 // 双 feedback slot(7/8) 共享读端子图 sg0 —— online softmax 的 out/sum/max 同环抽象:
