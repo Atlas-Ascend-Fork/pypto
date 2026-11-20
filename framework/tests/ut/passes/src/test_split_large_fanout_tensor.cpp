@@ -3447,6 +3447,54 @@ TEST_F(SplitLargeFanoutTensorTest, SharedStorageIsNotSplitIndependently)
     }
 }
 
+TEST_F(SplitLargeFanoutTensorTest, PreserveSharedRawAcrossMultiProducerSplit)
+{
+    config::SetPassOption("enable_slice", true);
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {8, 16}, {"first", "second", "early_lo", "early_hi", "late_hi"}));
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {16, 16}, {"before", "after"}));
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {4, 16}, {"patch"}));
+    const auto before = graph.GetTensor("before");
+    const auto after = graph.GetTensor("after");
+    after->tensor = before->GetRawTensor();
+    ASSERT_TRUE(graph.AddOps({Opcode::OP_CONTRACT, Opcode::OP_CONTRACT, Opcode::OP_SLICE, Opcode::OP_SLICE,
+                              Opcode::OP_CONTRACT, Opcode::OP_SLICE},
+                             {{"first"}, {"second"}, {"before"}, {"before"}, {"patch"}, {"after"}},
+                             {{"before"}, {"before"}, {"early_lo"}, {"early_hi"}, {"after"}, {"late_hi"}},
+                             {"write_lo", "write_hi", "read_lo", "read_hi", "overwrite", "read_after"}, true));
+    graph.GetOp("write_lo")->SetAssembleOpAttribute({0, 0});
+    graph.GetOp("write_hi")->SetAssembleOpAttribute({8, 0});
+    auto* overwrite = graph.GetOp("overwrite");
+    overwrite->SetAssembleOpAttribute({0, 0});
+    const auto tileValidShape = SymbolicScalar::FromConcrete({8, 16});
+    graph.GetOp("read_lo")->SetOpAttribute(
+        std::make_shared<ViewOpAttribute>(Offset{0, 0}, std::vector<SymbolicScalar>{}, tileValidShape));
+    for (auto name : {"read_hi", "read_after"}) {
+        graph.GetOp(name)->SetOpAttribute(
+            std::make_shared<ViewOpAttribute>(Offset{8, 0}, std::vector<SymbolicScalar>{}, tileValidShape));
+    }
+    for (auto name : {"read_lo", "read_hi"}) {
+        auto token = IRContext::Get().MakeSemanticToken(name, ir::TokenKind::READ, ir::Span::Unknown());
+        graph.GetOp(name)->result_token_.push_back(token);
+        overwrite->tokens_.push_back(token);
+    }
+    ASSERT_TRUE(graph.SetInCast({"first", "second", "patch"}));
+    ASSERT_TRUE(graph.SetOutCast({"early_lo", "early_hi", "late_hi"}));
+    SplitLargeFanoutTensor pass;
+
+    ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+
+    ASSERT_EQ(before->GetProducers().size(), 2U);
+    ASSERT_EQ(after->GetProducers().size(), 1U);
+    EXPECT_EQ(before->GetRawTensor(), after->GetRawTensor());
+    EXPECT_EQ((*after->GetProducers().begin())->ProducerOpsByToken().size(), 2U);
+    for (auto name : {"early_lo", "early_hi", "late_hi"}) {
+        const auto& producers = graph.GetTensor(name)->GetProducers();
+        ASSERT_EQ(producers.size(), 1U);
+        EXPECT_EQ((*producers.begin())->GetInputOperand(0), std::string(name) == "late_hi" ? after : before);
+    }
+}
+
 TEST_F(SplitLargeFanoutTensorTest, ContractSliceFoldingPreservesTokenBearingAccesses)
 {
     for (const auto& taggedOp : {"contract", "slice", "none"}) {

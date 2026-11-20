@@ -1364,12 +1364,13 @@ void SplitLargeFanoutTensor::CollectLargeTensor(Function& function)
                                  MAX_SPLIT_LARGE_FANOUT_TENSOR_DIM);
                 continue;
             }
-            if (logicalTensor->GetProducers().size() == 1 &&
-                multiLogicalTensorRawMagics.count(logicalTensor->tensor->rawmagic) > 0) {
-                APASS_LOG_DEBUG_F(Elements::Tensor,
-                                  "Large tensor[%d] rawMagic[%d] has multiple logicalTensors, "
-                                  "skip split for WAW-only token support.",
-                                  logicalTensor->GetMagic(), logicalTensor->tensor->rawmagic);
+            // Splitting one version can hide earlier writes from another. Group splitting needs
+            // coordinated storage and offset remapping while preserving token dependencies.
+            if (multiLogicalTensorRawMagics.count(logicalTensor->GetRawMagic()) > 0) {
+                APASS_LOG_DEBUG_F(
+                    Elements::Tensor,
+                    "Skip splitting large tensor[%d] because raw tensor[%d] has multiple logical tensors.",
+                    logicalTensor->GetMagic(), logicalTensor->GetRawMagic());
                 continue;
             }
             if (!RegisterMixedConsumerTensorIfNeeded(logicalTensor, allConsumersView)) {
