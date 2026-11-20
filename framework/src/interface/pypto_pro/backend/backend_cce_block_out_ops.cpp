@@ -446,6 +446,108 @@ static void EmitMergedTLoad(codegen::CCECodegen& codegen, const std::string& out
     codegen.Emit("}");
 }
 
+static std::vector<std::string> GetConvLoadWindowShapeArgs(const ir::TileTypePtr& dstTileType,
+                                                           const ir::TensorTypePtr& srcTensorType)
+{
+    const auto layout = static_cast<ir::Layout>(dstTileType->hardwareInfo_->convLayout);
+    auto tileDim = [&dstTileType, &layout](size_t idx) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, idx < dstTileType->shape_.size())
+            << "block.load: a conv-layout destination tile has rank " << dstTileType->shape_.size()
+            << ", too small for its " << ir::EnumToString(layout) << " shape";
+        auto dim = ir::As<ir::ConstInt>(dstTileType->shape_[idx]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, dim != nullptr)
+            << "block.load: a conv-layout tile requires compile-time constant shape dimensions";
+        return dim->value_;
+    };
+    auto tensorDim = [&srcTensorType](size_t idx) {
+        auto dim = ir::As<ir::ConstInt>(srcTensorType->shape_[idx]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, dim != nullptr)
+            << "block.load: a conv-layout weight load requires compile-time constant filter dims";
+        return dim->value_;
+    };
+
+    switch (layout) {
+        case ir::Layout::NC1HWC0:
+            // [N, C1, H, W, C0] -> NCHW [N, C1*C0, H, W]
+            return {std::to_string(tileDim(0)), std::to_string(tileDim(1) * tileDim(4)), std::to_string(tileDim(2)),
+                    std::to_string(tileDim(3))};
+        case ir::Layout::NDC1HWC0:
+            // [N, D, C1, H, W, C0] -> NCDHW [N, C1*C0, D, H, W]
+            return {std::to_string(tileDim(0)), std::to_string(tileDim(2) * tileDim(5)), std::to_string(tileDim(1)),
+                    std::to_string(tileDim(3)), std::to_string(tileDim(4))};
+        case ir::Layout::FRACTAL_Z: {
+            // [C1HW, N/16, 16, C0] over NCHW weight [Cout, Cin, Kh, Kw]
+            const int64_t kh = tensorDim(2);
+            const int64_t kw = tensorDim(3);
+            return {std::to_string(tileDim(1) * tileDim(2)), std::to_string(tileDim(0) / (kh * kw) * tileDim(3)),
+                    std::to_string(kh), std::to_string(kw)};
+        }
+        case ir::Layout::FRACTAL_Z_3D: {
+            // [C1DHW, N/16, 16, C0] over NCDHW weight [Cout, Cin, Kd, Kh, Kw]
+            const int64_t kh = tensorDim(3);
+            const int64_t kw = tensorDim(4);
+            return {std::to_string(tileDim(1) * tileDim(2)), std::to_string(tileDim(0) / (kh * kw) * tileDim(3)), "1",
+                    std::to_string(kh), std::to_string(kw)};
+        }
+        default:
+            INTERNAL_CHECK(false) << "block.load: unexpected conv layout " << ir::EnumToString(layout);
+            return {};
+    }
+}
+
+// ============================================================================
+// Conv load: an NCHW [N, C, H, W] / NCDHW [N, C, D, H, W] Tensor into L1
+// ============================================================================
+static std::string MakeConvLoadCodegenCCE(codegen::CCECodegen& codegen, const ir::TileTypePtr& dstTileType,
+                                          const ir::TensorTypePtr& srcTensorType, const ir::MakeTuplePtr& offsets,
+                                          const std::string& outName, const std::string& srcPtr,
+                                          const std::string& l2HintTemplate)
+{
+    const auto layout = static_cast<ir::Layout>(dstTileType->hardwareInfo_->convLayout);
+    const bool isConv3d = layout == ir::Layout::NDC1HWC0 || layout == ir::Layout::FRACTAL_Z_3D;
+    const size_t srcShapeSize = srcTensorType->shape_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, srcShapeSize == (isConv3d ? 5 : 4))
+        << "block.load: a conv-layout destination requires an "
+        << (isConv3d ? "NCDHW [N, C, D, H, W]" : "NCHW [N, C, H, W]") << " source tensor, got rank " << srcShapeSize;
+    if (layout == ir::Layout::FRACTAL_Z) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, dstTileType->shape_.size() == 4)
+            << "block.load: a FRACTAL_Z destination must be the 4-D packed [C1HW, N/16, 16, C0] form, got rank "
+            << dstTileType->shape_.size();
+    }
+    auto strides = codegen.BuildTensorStrideExpressions(srcTensorType);
+    if (!srcTensorType->tensor_view_.has_value() || srcTensorType->tensor_view_->stride.empty()) {
+        for (auto& stride : strides) {
+            stride = "uint64_t{1} * " + stride;
+        }
+    }
+    std::ostringstream pointer;
+    pointer << srcPtr;
+    for (size_t i = 0; i < srcShapeSize; ++i) {
+        pointer << " + static_cast<uint64_t>(" << cce::GetOperandAsCode(codegen, offsets->elements_[i]) << ") * ("
+                << strides[i] << ")";
+    }
+
+    const std::string gt = "__conv_gt" + std::to_string(codegen.GetTileOffsetCounter());
+    const std::string shapeType = isConv3d ? "pto::Shape<-1, -1, -1, -1, -1>" : "pto::Shape<1, -1, -1, -1, -1>";
+    const std::string strideType = isConv3d ? "pto::Stride<-1, -1, -1, -1, -1>" : "pto::Stride<1, -1, -1, -1, -1>";
+    const std::vector<std::string> windowShape = GetConvLoadWindowShapeArgs(dstTileType, srcTensorType);
+    std::string shapeArgs = windowShape[0];
+    std::string strideArgs = strides[0];
+    for (size_t i = 1; i < srcShapeSize; ++i) {
+        shapeArgs += ", " + windowShape[i];
+        strideArgs += ", " + strides[i];
+    }
+    codegen.Emit("using " + gt + "Shape = " + shapeType + ";");
+    codegen.Emit("using " + gt + "Stride = " + strideType + ";");
+    codegen.Emit("using " + gt + "Type = pto::GlobalTensor<" + srcTensorType->dtype_.ToCTypeString() + ", " + gt +
+                 "Shape, " + gt + "Stride, pto::Layout::" + (isConv3d ? "NCDHW" : "NCHW") + ">;");
+    codegen.Emit(gt + "Type " + gt + "(nullptr, " + gt + "Shape(" + shapeArgs + "), " + gt + "Stride(" + strideArgs +
+                 "));");
+    codegen.Emit("TASSIGN(" + gt + ", " + pointer.str() + ");");
+    EmitTemplated(codegen, "TLOAD", {l2HintTemplate}, {outName, gt});
+    return "";
+}
+
 // ============================================================================
 // block.load  -  args = [out_tile, tensor, offsets]
 // Emits: SetShape(...); TASSIGN(tensor_global, ptr + offset); TLOAD(out_tile, tensor_global);
@@ -483,6 +585,14 @@ static std::string MakeBlockOutLoadCodegenCCE(const ir::CallPtr& op, codegen::Co
     const std::string l2HintTemplate = op->HasKwarg("l2_cache_mode") ? ir::EnumToString(static_cast<ir::TLoadL2Hint>(
                                                                            op->GetKwarg<int>("l2_cache_mode"))) :
                                                                        "";
+
+    // Conv-layout destination: dispatch to the specialized conv load lowering.
+    auto dstTileType = ir::As<ir::TileType>(op->args_[0]->GetType());
+    if (dstTileType != nullptr && dstTileType->hardwareInfo_.has_value() &&
+        dstTileType->hardwareInfo_->convLayout >= 0) {
+        return MakeConvLoadCodegenCCE(codegen, dstTileType, srcTensorType, offsetsTuple, outName, srcPtr,
+                                      l2HintTemplate);
+    }
 
     // Merged-row load: `tile_dims` names three tensor axes and the destination Tile's row index
     // is the flattening of the first two (row = i_outer * nd_inner + i_inner). TLOAD's
@@ -531,6 +641,53 @@ static std::string MakeBlockOutLoadCodegenCCE(const ir::CallPtr& op, codegen::Co
 }
 
 // ============================================================================
+// Conv store: an NCHW [N, C, H, W] / NCDHW [N, C, D, H, W] Tensor out of a conv-layout tile.
+// ============================================================================
+static std::string MakeConvStoreCodegenCCE(codegen::CCECodegen& codegen, const ir::CallPtr& op,
+                                           const ir::TensorTypePtr& dstTensorType, const ir::MakeTuplePtr& offsets,
+                                           const std::string& srcTile, const std::string& dstPtr)
+{
+    const bool isConv3d = dstTensorType->tensor_view_->layout == ir::Layout::NCDHW;
+    const size_t dstShapeSize = dstTensorType->shape_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, dstShapeSize == (isConv3d ? 5 : 4))
+        << "block.store: a conv-output store requires an " << (isConv3d ? "NCDHW [N, C, D, H, W]" : "NCHW [N, C, H, W]")
+        << " tensor, got rank " << dstShapeSize;
+    auto strides = codegen.BuildTensorStrideExpressions(dstTensorType);
+    if (dstTensorType->tensor_view_->stride.empty()) {
+        // Dynamic dims are int32 at the kernel boundary: promote before multiplying.
+        for (auto& stride : strides) {
+            stride = "uint64_t{1} * " + stride;
+        }
+    }
+    std::ostringstream pointer;
+    pointer << dstPtr;
+    for (size_t i = 0; i < dstShapeSize; ++i) {
+        pointer << " + static_cast<uint64_t>(" << cce::GetOperandAsCode(codegen, offsets->elements_[i]) << ") * ("
+                << strides[i] << ")";
+    }
+    const std::string gt = "__conv_gt" + std::to_string(codegen.GetTileOffsetCounter());
+    const std::string shapeType = isConv3d ? "pto::Shape<-1, -1, -1, -1, -1>" : "pto::Shape<1, -1, -1, -1, -1>";
+    const std::string strideType = isConv3d ? "pto::Stride<-1, -1, -1, -1, -1>" : "pto::Stride<1, -1, -1, -1, -1>";
+    std::string shapeArgs = codegen.GetExprAsCode(dstTensorType->shape_[0]);
+    std::string strideArgs = strides[0];
+    for (size_t i = 1; i < dstShapeSize; ++i) {
+        shapeArgs += ", " + codegen.GetExprAsCode(dstTensorType->shape_[i]);
+        strideArgs += ", " + strides[i];
+    }
+    codegen.Emit("using " + gt + "Shape = " + shapeType + ";");
+    codegen.Emit("using " + gt + "Stride = " + strideType + ";");
+    codegen.Emit("using " + gt + "Type = pto::GlobalTensor<" + dstTensorType->dtype_.ToCTypeString() + ", " + gt +
+                 "Shape, " + gt + "Stride, pto::Layout::" + (isConv3d ? "NCDHW" : "NCHW") + ">;");
+    codegen.Emit(gt + "Type " + gt + "(" + pointer.str() + ", " + gt + "Shape(" + shapeArgs + "), " + gt + "Stride(" +
+                 strideArgs + "));");
+    EmitTemplated(codegen, "TSTORE",
+                  {TileTypeStringForTemplate(codegen, srcTile, op->args_[1]), gt + "Type",
+                   "pto::AtomicType::AtomicNone", "pto::ReluPreMode::NoRelu"},
+                  {gt, srcTile});
+    return "";
+}
+
+// ============================================================================
 // block.store  -  args = [output_tensor, tile, offsets, [scale]]
 // Emits TSTORE with an optional scalar or Scaling Tile scale.
 // The transfer shape is always read from the tile's runtime valid region.
@@ -559,6 +716,10 @@ static std::string MakeBlockOutStoreCodegenCCE(const ir::CallPtr& op, codegen::C
 
     std::string offset = codegen.ComputeTensorOffset(dstTensorType, offsetsTuple);
     std::string dstPtr = codegen.GetPointer(dstTensorVar);
+
+    if (backend::cce::IsConvTensorType(dstTensorType)) {
+        return MakeConvStoreCodegenCCE(codegen, op, dstTensorType, offsetsTuple, srcTile, dstPtr);
+    }
 
     const std::string dstTensorAccess = codegen.BindGlobalTensor(dstTensorVarPtr, op, dstPtr + " + " + offset,
                                                                  ValidRows(srcTile), ValidCols(srcTile));
@@ -838,6 +999,23 @@ static std::string MakeBlockOutMoveCodegenCCE(const ir::CallPtr& op, codegen::Co
     }
     const bool hasTileScale = scaleOperand != nullptr && ir::As<ir::TileType>(scaleOperand->GetType()) != nullptr;
 
+    auto srcTileType = ir::As<ir::TileType>(op->args_[1]->GetType());
+    if (srcTileType != nullptr && srcTileType->hardwareInfo_.has_value() &&
+        srcTileType->hardwareInfo_->convLayout >= 0) {
+        auto makeTuple = ir::As<ir::MakeTuple>(offsetOperand);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, makeTuple != nullptr && makeTuple->elements_.size() == 2)
+            << opName << ": a conv-layout move requires an explicit offset [offset_m, offset_k]";
+        std::string row = cce::GetOperandAsCode(codegen, makeTuple->elements_[0]);
+        std::string col = cce::GetOperandAsCode(codegen, makeTuple->elements_[1]);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, scaleOperand == nullptr)
+            << opName << ": a conv-layout source does not support scale";
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION,
+                          !op->HasKwarg("acc_to_vec_mode") && !op->HasKwarg("relu_pre_mode") && !op->HasKwarg("phase"))
+            << opName << ": a conv-layout source does not support acc_to_vec_mode/relu_pre_mode/phase";
+        EmitMoveInsertInstructionCCE(codegen, op, "TEXTRACT", dst, src, nullptr, "", row, col);
+        return "";
+    }
+
     std::string modeTemplate;
     if (op->HasKwarg("acc_to_vec_mode")) {
         int modeVal = op->GetKwarg<int>("acc_to_vec_mode");
@@ -867,6 +1045,143 @@ static std::string MakeBlockOutMoveCodegenCCE(const ir::CallPtr& op, codegen::Co
 
     EmitMoveInsertInstructionCCE(codegen, op, instruction, dst, src, scaleOperand, modeTemplate, row, col);
 
+    return "";
+}
+
+// ============================================================================
+// block.img2col  -  args = [dst, src, pos_m, pos_k] + geometry kwargs
+// ============================================================================
+static std::string MakeBlockOutImg2ColCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
+        << "block.img2col: expected 4 args (dst, src, pos_m, pos_k), got " << op->args_.size();
+
+    auto dst_tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_tile_type != nullptr) << "block.img2col: expected TileType dst";
+    auto src_tile_type = ir::As<ir::TileType>(op->args_[1]->GetType());
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, src_tile_type != nullptr) << "block.img2col: expected TileType src";
+
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_tile_type->shape_.size() == 2)
+        << "block.img2col: dst tile must be rank-2, got " << dst_tile_type->shape_.size();
+    auto dst_rows = ir::As<ir::ConstInt>(dst_tile_type->shape_[0]);
+    auto dst_cols = ir::As<ir::ConstInt>(dst_tile_type->shape_[1]);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_rows != nullptr && dst_cols != nullptr)
+        << "block.img2col: dst tile shape must be static";
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, dst_rows->value_ % 16 == 0)
+        << "block.img2col: dst rows must be a multiple of the 16-row L0A fractal, got " << dst_rows->value_;
+
+    // The src must be a conv-layout TileType (pto::ConvTile) whose layout matches the
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
+                      src_tile_type->hardwareInfo_.has_value() && src_tile_type->hardwareInfo_->convLayout >= 0)
+        << "block.img2col: src must be a conv-layout TileType (NC1HWC0/NDC1HWC0 feature-map window)";
+    const auto src_layout = static_cast<ir::Layout>(src_tile_type->hardwareInfo_->convLayout);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
+                      src_layout == ir::Layout::NC1HWC0 || src_layout == ir::Layout::NDC1HWC0)
+        << "block.img2col: src conv layout must be NC1HWC0 or NDC1HWC0 (a TIMG2COL feature-map window), got "
+        << ir::EnumToString(src_layout);
+    const size_t src_rank = src_layout == ir::Layout::NC1HWC0 ? 5 : 6;
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, src_tile_type->shape_.size() == src_rank)
+        << "block.img2col: src tile must be rank " << src_rank << " for layout " << ir::EnumToString(src_layout)
+        << ", got rank " << src_tile_type->shape_.size();
+    std::vector<int64_t> src_dims;
+    src_dims.reserve(src_rank);
+    for (const auto& dim_expr : src_tile_type->shape_) {
+        auto dim = ir::As<ir::ConstInt>(dim_expr);
+        PRO_CODEGEN_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, dim != nullptr)
+            << "block.img2col: src tile shape must be static";
+        src_dims.push_back(dim->value_);
+    }
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, src_dims[0] == 1)
+        << "block.img2col: src tile must hold exactly one feature-map window (N=1), got N=" << src_dims[0];
+    if (src_rank == 6) {
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, src_dims[1] == 1)
+            << "block.img2col: src tile must hold exactly one feature-map window per call (D=1 for NDC1HWC0), "
+               "got D="
+            << src_dims[1];
+    }
+
+    const int64_t kernel_h = op->GetKwarg<int>("kernel_h");
+    const int64_t kernel_w = op->GetKwarg<int>("kernel_w");
+    const int64_t stride_h = op->GetKwarg<int>("stride_h");
+    const int64_t stride_w = op->GetKwarg<int>("stride_w");
+    const int64_t dilation_h = op->GetKwarg<int>("dilation_h");
+    const int64_t dilation_w = op->GetKwarg<int>("dilation_w");
+    const int64_t pad_top = op->GetKwarg<int>("pad_top");
+    const int64_t pad_bottom = op->GetKwarg<int>("pad_bottom");
+    const int64_t pad_left = op->GetKwarg<int>("pad_left");
+    const int64_t pad_right = op->GetKwarg<int>("pad_right");
+    const int64_t pad_value = op->GetKwarg<int>("pad_value");
+    const int64_t fmap_h = op->GetKwarg<int>("fmap_h");
+    const int64_t fmap_w = op->GetKwarg<int>("fmap_w");
+    const int64_t channel_size = op->GetKwarg<int>("channel_size");
+
+    // The window extents the frontend derived must match the tile (defensive: the
+    // frontend validated the same shape before building the op).
+    const size_t c1_idx = src_rank == 5 ? 1 : 2;
+    const size_t h_idx = src_rank == 5 ? 2 : 3;
+    const size_t w_idx = src_rank == 5 ? 3 : 4;
+    const size_t c0_idx = src_rank == 5 ? 4 : 5;
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_SHAPE, src_dims[h_idx] == fmap_h && src_dims[w_idx] == fmap_w &&
+                                                        src_dims[c1_idx] * src_dims[c0_idx] == channel_size)
+        << "block.img2col: src tile window [C1=" << src_dims[c1_idx] << ", H=" << src_dims[h_idx]
+        << ", W=" << src_dims[w_idx] << ", C0=" << src_dims[c0_idx]
+        << "] disagrees with the derived geometry (H=" << fmap_h << ", W=" << fmap_w << ", channelSize=" << channel_size
+        << ")";
+
+    const std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
+    const std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
+    const std::string pos_m = cce::GetOperandAsCode(codegen, op->args_[2]);
+    const std::string pos_k = cce::GetOperandAsCode(codegen, op->args_[3]);
+
+    const std::string ctype = src_tile_type->dtype_.ToCTypeString();
+    int64_t buffer_elements = 1;
+    std::string shape_params;
+    for (size_t i = 0; i < src_dims.size(); ++i) {
+        buffer_elements *= src_dims[i];
+        shape_params += (i ? ", " : "") + std::to_string(src_dims[i]);
+    }
+
+    static size_t img2col_counter = 0;
+    const std::string suffix = std::to_string(img2col_counter++);
+    const std::string dst_type_name = "__block_img2col_dst_type_" + suffix;
+    const std::string src_type_name = "__block_img2col_src_type_" + suffix;
+    const std::string dst_var = "__block_img2col_dst_" + suffix;
+    const std::string src_var = "__block_img2col_src_" + suffix;
+    const std::string pad_list = "__block_img2col_pads_" + suffix;
+
+    codegen.Emit("using " + src_type_name + " = pto::ConvTile<pto::TileType::Mat, " + ctype + ", " +
+                 std::to_string(buffer_elements) + ", pto::" + ir::EnumToString(src_layout) + ", pto::ConvTileShape<" +
+                 shape_params + ">>;");
+    codegen.Emit(src_type_name + " " + src_var + ";");
+    codegen.Emit("using " + dst_type_name + " = pto::TileLeft<" + ctype + ", " + std::to_string(dst_rows->value_) +
+                 ", " + std::to_string(dst_cols->value_) + ", -1, -1>;");
+    codegen.Emit(dst_type_name + " " + dst_var + "(" + ValidRows(dst) + ", " + ValidCols(dst) + ");");
+
+    // pto padList order is {left, right, top, bottom} (fmatrix register packing).
+    codegen.Emit("uint8_t " + pad_list + "[4] = {" + std::to_string(pad_left) + ", " + std::to_string(pad_right) +
+                 ", " + std::to_string(pad_top) + ", " + std::to_string(pad_bottom) + "};");
+    codegen.Emit(src_var + ".SetPadListArray(" + pad_list + ");");
+    codegen.Emit(src_var + ".SetFilterH(" + std::to_string(kernel_h) + ");");
+    codegen.Emit(src_var + ".SetFilterW(" + std::to_string(kernel_w) + ");");
+    codegen.Emit(src_var + ".SetDilationH(" + std::to_string(dilation_h) + ");");
+    codegen.Emit(src_var + ".SetDilationW(" + std::to_string(dilation_w) + ");");
+    codegen.Emit(src_var + ".SetStrideH(" + std::to_string(stride_h) + ");");
+    codegen.Emit(src_var + ".SetStrideW(" + std::to_string(stride_w) + ");");
+    codegen.Emit(src_var + ".SetPadValue(" + std::to_string(pad_value) + ");");
+    codegen.Emit(src_var + ".SetFmapH(" + std::to_string(fmap_h) + ");");
+    codegen.Emit(src_var + ".SetFmapW(" + std::to_string(fmap_w) + ");");
+    codegen.Emit(src_var + ".SetChannelSize(" + std::to_string(channel_size) + ");");
+    codegen.Emit(src_var + ".SetRepeatMode(0);");
+    codegen.Emit(src_var + ".SetRepeatTime(1);");
+    codegen.Emit(src_var + ".SetRepeatStride(0);");
+    codegen.Emit(src_var + ".SetDstStride((" + ValidRows(dst) + " + 15) / 16);");
+    codegen.Emit(src_var + ".SetDstMposition(0);");
+
+    codegen.Emit("TASSIGN(" + src_var + ", (uint64_t)(" + src + ".data()));");
+    codegen.Emit("TASSIGN(" + dst_var + ", (uint64_t)(" + dst + ".data()));");
+    codegen.Emit("pto::TIMG2COL<" + dst_type_name + ", " + src_type_name + ", pto::SetFmatrixMode::FMATRIX_A_AUTO>(" +
+                 dst_var + ", " + src_var + ", " + pos_m + ", " + pos_k + ");");
     return "";
 }
 
@@ -1580,6 +1895,12 @@ REGISTER_BACKEND_OP(BackendCCE, "block.set_validshape")
 REGISTER_BACKEND_OP(BackendCCE, "block.move").f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
     return MakeBlockOutMoveCodegenCCE(op, codegen, "block.move");
 });
+
+REGISTER_BACKEND_OP(BackendCCE, "block.img2col")
+    .set_pipe(ir::PipeType::MTE1)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeBlockOutImg2ColCodegenCCE(op, codegen);
+    });
 
 REGISTER_BACKEND_OP(BackendCCE, "block.insert").f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
     return MakeBlockOutInsertCodegenCCE(op, codegen);

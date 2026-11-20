@@ -3157,10 +3157,12 @@ void CCECodegen::GenerateGlobalTensorTypeDeclaration(const TensorDef& def)
     std::string globalTypeName = varName + "Type";
 
     const bool isNz = backend::cce::IsNZTensorType(tensorType);
+    const bool isConvTensor = backend::cce::IsConvTensorType(tensorType);
     std::string shapeType;
     std::string layoutArg;
     std::string strideType;
     std::string strideArgs;
+    std::string shapeArgs;
     if (def.isMerged) {
         // Keep Shape2 dynamic even for a single matrix: PTO's multi-matrix path
         // respects the runtime valid extent, including a partial final matrix.
@@ -3179,6 +3181,17 @@ void CCECodegen::GenerateGlobalTensorTypeDeclaration(const TensorDef& def)
         const std::string paddedCols = ComputeAlignedShapeDimension(tensorType->shape_[colAxis], c0);
         strideType = "pto::BaseShape2D<" + elementType + ", pto::DYNAMIC, pto::DYNAMIC, Layout::NZ>";
         strideArgs = paddedRows + ", " + paddedCols;
+    } else if (isConvTensor) {
+        const bool isConv3d = tensorType->tensor_view_->layout == ir::Layout::NCDHW;
+        layoutArg = isConv3d ? "Layout::NCDHW" : "Layout::NCHW";
+        shapeType = isConv3d ? "pto::Shape<-1, -1, -1, -1, -1>" : "pto::Shape<1, -1, -1, -1, -1>";
+        strideType = isConv3d ? "pto::Stride<-1, -1, -1, -1, -1>" : "pto::Stride<1, -1, -1, -1, -1>";
+        for (const auto& dim : tensorType->shape_) {
+            shapeArgs += (shapeArgs.empty() ? "" : ", ") + GetExprAsCode(dim);
+        }
+        for (const auto& stride : BuildTensorStrideExpressions(tensorType)) {
+            strideArgs += (strideArgs.empty() ? "" : ", ") + stride;
+        }
     } else {
         // Every non-NZ declaration is an access variant whose shape and order determine
         // its ND/DN or MX layout and the two tensor strides it walks.
@@ -3201,7 +3214,7 @@ void CCECodegen::GenerateGlobalTensorTypeDeclaration(const TensorDef& def)
     emitter_.EmitLine("using " + globalTypeName + " = GlobalTensor<" + elementType + ", " + shapeTypeName + ", " +
                       strideTypeName + ", " + layoutArg + ">;");
 
-    EmitGlobalTensorInstance(varName, varName, basePointer, "", strideArgs);
+    EmitGlobalTensorInstance(varName, varName, basePointer, shapeArgs, strideArgs);
 }
 
 std::string CCECodegen::DeclareFlatGlobalTensor(const ir::VarPtr& tensorVar, const std::string& numelExpr)

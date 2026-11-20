@@ -737,6 +737,186 @@ TEST(BackendCCEBlockOutOps, SetValidShape)
     EXPECT_CONTAINS(code, "tile.tile.SetValidShape(16, 8);");
 }
 
+// ---------------------------------------------------------------------------
+// Conv-layout paths: NCHW/NCDHW tensors into ConvTile destinations
+// ---------------------------------------------------------------------------
+
+namespace {
+// A conv-layout destination tile: HardwareInfo.convLayout carries the Layout ordinal.
+ir::TypePtr MakeConvTileType(const std::vector<int64_t>& shape, ir::Layout layout,
+                             ir::DataType dtype = ir::DataType::FP16)
+{
+    ir::HardwareInfo hw;
+    hw.convLayout = static_cast<int>(layout);
+    return std::make_shared<const ir::MutexTileType>(
+        ir::TileType(shape, dtype, std::make_optional(MakeMemRef(ir::MemorySpace::Mat)), std::nullopt, hw), 0);
+}
+
+ir::VarPtr MakeConvTileVar(const std::string& name, const std::vector<int64_t>& shape, ir::Layout layout)
+{
+    return MakeVar(name, MakeConvTileType(shape, layout));
+}
+
+ir::ExprPtr MakeOffsetsList(const std::vector<int64_t>& values)
+{
+    std::vector<ir::ExprPtr> elements;
+    for (const auto value : values) {
+        elements.push_back(MakeConstInt(value));
+    }
+    return std::make_shared<const ir::MakeTuple>(elements, ir::Span::Unknown());
+}
+} // namespace
+
+TEST(BackendCCEBlockOutOps, ConvLoadNchwInputEmitsConvGlobalTensorAndTload)
+{
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    auto tensor = MakeTensorVar("x", {1, 16, 8, 8}, ir::DataType::FP16, ir::Layout::ND);
+    // NC1HWC0 [N=1, C1=1, H=8, W=8, C0=16]
+    auto tile = MakeConvTileVar("tile", {1, 1, 8, 8, 16}, ir::Layout::NC1HWC0);
+    codegen.RegisterPointer("x", "x_ptr");
+    auto call = MakeCall("block.load", {tile, tensor, MakeOffsetsList({0, 0, 0, 0})});
+    auto* info = BackendCCE::Instance().GetOpInfo("block.load");
+    ASSERT_NE(info, nullptr);
+    info->codegenFunc(call, codegen);
+    auto code = codegen.GetEmittedCode();
+    // A per-call conv GlobalTensor with the NCHW layout tag spelled over the window.
+    EXPECT_CONTAINS(code, "pto::Layout::NCHW");
+    EXPECT_CONTAINS(code, "TASSIGN(");
+    EXPECT_CONTAINS(code, "TLOAD(tile.tile, ");
+    // The conv path has no 2-D SetShape/ValidRow logic.
+    EXPECT_NOT_CONTAINS(code, "SetShape");
+}
+
+TEST(BackendCCEBlockOutOps, ConvLoadNcdhwInputEmitsNcdhwGlobalTensor)
+{
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    auto tensor = MakeTensorVar("x", {1, 16, 2, 8, 8}, ir::DataType::FP16, ir::Layout::ND);
+    // NDC1HWC0 [N=1, D=1, C1=1, H=8, W=8, C0=16]
+    auto tile = MakeConvTileVar("tile", {1, 1, 1, 8, 8, 16}, ir::Layout::NDC1HWC0);
+    codegen.RegisterPointer("x", "x_ptr");
+    auto call = MakeCall("block.load", {tile, tensor, MakeOffsetsList({0, 0, 0, 0, 0})});
+    auto* info = BackendCCE::Instance().GetOpInfo("block.load");
+    ASSERT_NE(info, nullptr);
+    info->codegenFunc(call, codegen);
+    auto code = codegen.GetEmittedCode();
+    EXPECT_CONTAINS(code, "pto::Layout::NCDHW");
+    EXPECT_CONTAINS(code, "TLOAD(tile.tile, ");
+    EXPECT_NOT_CONTAINS(code, "SetShape");
+}
+
+TEST(BackendCCEBlockOutOps, ConvLoadNchwWeightEmitsFractalZDestination)
+{
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    // Weight [Cout, Cin, Kh, Kw] into FRACTAL_Z [C1HW, Cout/16, 16, C0].
+    auto tensor = MakeTensorVar("w", {16, 16, 3, 3}, ir::DataType::FP16, ir::Layout::ND);
+    auto tile = MakeConvTileVar("tile", {9, 1, 16, 16}, ir::Layout::FRACTAL_Z);
+    codegen.RegisterPointer("w", "w_ptr");
+    auto call = MakeCall("block.load", {tile, tensor, MakeOffsetsList({0, 0, 0, 0})});
+    auto* info = BackendCCE::Instance().GetOpInfo("block.load");
+    ASSERT_NE(info, nullptr);
+    info->codegenFunc(call, codegen);
+    auto code = codegen.GetEmittedCode();
+    EXPECT_CONTAINS(code, "pto::Layout::NCHW");
+    // The window shape unfolds the packed K axis: [Cout, Cin, Kh, Kw] = (16, 16, 3, 3).
+    EXPECT_CONTAINS(code, "__conv_gt0Shape(16, 16, 3, 3)");
+    EXPECT_CONTAINS(code, "TLOAD(tile.tile, ");
+}
+
+TEST(BackendCCEBlockOutOps, ConvLoadNcdhwWeightEmitsFractalZ3DDestination)
+{
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    // 3-D weight [Cout, Cin, Kd, Kh, Kw] into FRACTAL_Z_3D [C1DHW, Cout/16, 16, C0]; the window
+    // carries D=1 (one depth plane per L1 tile).
+    auto tensor = MakeTensorVar("w", {16, 16, 2, 3, 3}, ir::DataType::FP16, ir::Layout::ND);
+    auto tile = MakeConvTileVar("tile", {18, 1, 16, 16}, ir::Layout::FRACTAL_Z_3D);
+    codegen.RegisterPointer("w", "w_ptr");
+    auto call = MakeCall("block.load", {tile, tensor, MakeOffsetsList({0, 0, 0, 0, 0})});
+    auto* info = BackendCCE::Instance().GetOpInfo("block.load");
+    ASSERT_NE(info, nullptr);
+    info->codegenFunc(call, codegen);
+    auto code = codegen.GetEmittedCode();
+    EXPECT_CONTAINS(code, "pto::Layout::NCDHW");
+    EXPECT_CONTAINS(code, ", 1, 3, 3)");
+    EXPECT_CONTAINS(code, "TLOAD(tile.tile, ");
+}
+
+TEST(BackendCCEBlockOutOps, ConvMoveEmitsTextract)
+{
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    // A 4-D packed FRACTAL_Z weight folds into the 2-D L0B Right matrix through TEXTRACT.
+    auto src = MakeConvTileVar("src", {9, 1, 16, 16}, ir::Layout::FRACTAL_Z);
+    auto dst = MakeVar("dst",
+                       MakeTileType({144, 16}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Right), std::nullopt));
+    auto call = MakeCall("block.move", {dst, src, MakeOffsets({0, 0})});
+    auto* info = BackendCCE::Instance().GetOpInfo("block.move");
+    ASSERT_NE(info, nullptr);
+    info->codegenFunc(call, codegen);
+    auto code = codegen.GetEmittedCode();
+    EXPECT_CONTAINS(code, "TEXTRACT<");
+    EXPECT_NOT_CONTAINS(code, "TMOV");
+}
+
+TEST(BackendCCEBlockOutOps, ConvImg2ColEmitsTimg2col)
+{
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    // One NC1HWC0 window [1, C1=1, H=8, W=8, C0=16] expanded into the Left matrix [64, 144].
+    auto src = MakeConvTileVar("src", {1, 1, 8, 8, 16}, ir::Layout::NC1HWC0);
+    auto dst = MakeVar("dst",
+                       MakeTileType({64, 144}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Left), std::nullopt));
+    auto call = MakeCallWithKwargs("block.img2col", {dst, src, MakeConstInt(0), MakeConstInt(0)},
+                                   {{"kernel_h", 3},
+                                    {"kernel_w", 3},
+                                    {"stride_h", 1},
+                                    {"stride_w", 1},
+                                    {"dilation_h", 1},
+                                    {"dilation_w", 1},
+                                    {"pad_top", 1},
+                                    {"pad_bottom", 1},
+                                    {"pad_left", 1},
+                                    {"pad_right", 1},
+                                    {"pad_value", 0},
+                                    {"fmap_h", 8},
+                                    {"fmap_w", 8},
+                                    {"channel_size", 16}});
+    auto* info = BackendCCE::Instance().GetOpInfo("block.img2col");
+    ASSERT_NE(info, nullptr);
+    info->codegenFunc(call, codegen);
+    auto code = codegen.GetEmittedCode();
+    EXPECT_CONTAINS(code, "TIMG2COL<");
+    EXPECT_CONTAINS(code, "FMATRIX_A_AUTO");
+    EXPECT_CONTAINS(code, "SetFilterH(3)");
+    EXPECT_CONTAINS(code, "SetChannelSize(16)");
+    // pto pads are packed {left, right, top, bottom} regardless of the user order.
+    EXPECT_CONTAINS(code, "{1, 1, 1, 1}");
+}
+
+TEST(BackendCCEBlockOutOps, ConvImg2ColRejectsNonConvSource)
+{
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    auto plain = MakeVar("src",
+                         MakeTileType({8, 8}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Mat), std::nullopt));
+    auto dst = MakeVar("dst",
+                       MakeTileType({64, 144}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Left), std::nullopt));
+    auto call = MakeCallWithKwargs("block.img2col", {dst, plain, MakeConstInt(0), MakeConstInt(0)},
+                                   {{"kernel_h", 3},
+                                    {"kernel_w", 3},
+                                    {"stride_h", 1},
+                                    {"stride_w", 1},
+                                    {"dilation_h", 1},
+                                    {"dilation_w", 1},
+                                    {"pad_top", 1},
+                                    {"pad_bottom", 1},
+                                    {"pad_left", 1},
+                                    {"pad_right", 1},
+                                    {"pad_value", 0},
+                                    {"fmap_h", 8},
+                                    {"fmap_w", 8},
+                                    {"channel_size", 16}});
+    auto* info = BackendCCE::Instance().GetOpInfo("block.img2col");
+    ASSERT_NE(info, nullptr);
+    EXPECT_ANY_THROW(info->codegenFunc(call, codegen));
+}
+
 TEST(BackendCCEBlockOutOps, Load)
 {
     TestableCCECodegen codegen(ir::SectionKind::Vector);

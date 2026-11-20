@@ -16,6 +16,8 @@
 
 在L1 Buffer、L0A Buffer/L0B Buffer、L0C Buffer、UB等各级内存之间提供数据搬运功能，并可在搬运过程中实现随路格式转换和量化激活等操作。
 
+src_tile为**卷积权重Tile**（FRACTAL_Z/FRACTAL_Z_3D，L1 Buffer）时走权重提取路径：4维打包权重折叠为L0B的2维Right矩阵，由格式转换指令TEXTRACT完成（非普通TMOV），必须显式配置offset，详见[约束说明](#约束说明)中的卷积权重提取约束。
+
 ## 函数原型
 
 ```python
@@ -46,12 +48,19 @@ pypto_pro.language.move(
 
 ## 约束说明
 
+- 卷积权重提取约束（src_tile为FRACTAL_Z/FRACTAL_Z_3D时）：
+
+  - src_tile必须为L1 Buffer上的**4维**打包权重布局``[Cin1HkWk, Cout/16, 16, Cin0]``（FRACTAL_Z）或``[Cin1KdKhKw, Cout/16, 16, Cin0]``（FRACTAL_Z_3D），折叠为L0B上的2维Right矩阵``[Cin1HkWk × Cin0, Cout1 × Cout0]``；5维``[C1, H, W, N, C0]``形式不支持该路径。
+  - **offset为必配参数**：``[offset_k, offset_n]``表示折叠后矩阵内的窗口起始位置（TEXTRACT的indexRow/indexCol）；``[0, 0]``取左上角窗口，允许L1 Tile大于L0 Tile时分块提取。
+  - NC1HWC0/NDC1HWC0的fmap窗口不走move：fmap展开使用[pypto_pro.language.img2col](img2col.md)。
+
 - 数据类型及分形约束：
 
   | 源 → 目的 | 分形要求 | 数据类型要求 |
   |---|---|---|
   | L1 Buffer → L0A/L0B Buffer（不配置offset） | 源支持ND、NZ、ZN、ZZ；L0A Buffer目的固定为NZ，L0B Buffer目的固定为ZN；源、目的Tile的物理shape必须相同。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2。 |
   | L1 Buffer → L0A/L0B Buffer（配置offset） | L0A Buffer支持ND/NZ/ZN → NZ，L0B Buffer支持NZ/ZN → ZN。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2。 |
+  | L1 Buffer → L0B Buffer（ConvTile权重提取） | FRACTAL_Z / FRACTAL_Z_3D（4维）→ ZN。 | 源与目的数据类型一致。 |
   | UB → UB（不配置offset） | 支持ND → ND、NZ → NZ、ND → NZ。 | 源与目的必须相同。<br>- ND → ND、NZ → NZ：支持DT_INT8、DT_INT16、DT_INT32、DT_UINT8、DT_UINT16、DT_UINT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。<br>- ND → NZ：支持DT_INT8、DT_UINT8、DT_INT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
   | UB → UB（配置offset） | 支持ND → ND、NZ → NZ。 | 源与目的必须相同，支持DT_INT8、DT_INT32、DT_FP16、DT_BF16、DT_FP32、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
   | UB → L1 Buffer（不配置offset，或配置offset且目的Tile的shape不大于源Tile） | 源支持ND、NZ，目的不校验分形。 | 源与目的必须相同，支持DT_INT8、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP16、DT_BF16、DT_FP32、DT_FP4E2M1、DT_FP4E1M2、DT_FP8E8M0。 |

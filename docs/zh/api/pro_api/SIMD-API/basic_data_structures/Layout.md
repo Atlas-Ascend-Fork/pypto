@@ -19,6 +19,7 @@
 - **GM Tensor**支持ND、NZ，默认ND。
 - **Tile**支持ND、DN、NZ、ZN、NN、ZZ，默认值由内存空间决定。
 - **卷积Tile（ConvTile）**支持NC1HWC0、NDC1HWC0、FRACTAL_Z、FRACTAL_Z_3D，须在多维Tile上使用且仅可放在L1；详见[pypto_pro.language.TileType](TileType.md)。
+- **卷积GM Tensor**支持NCHW、NCDHW：框架原生卷积数据在Kernel参数上的布局标记，[pypto_pro.language.load](../memory_data_movement/load.md)按该标记选择卷积搬运路径，[pypto_pro.language.store](../memory_data_movement/store.md)按该标记走Fixpipe卷积写出路径。
 
 ## 原型定义
 
@@ -34,7 +35,9 @@ PYPTO_DECLARE_ENUM(
     NC1HWC0,
     NDC1HWC0,
     FRACTAL_Z,
-    FRACTAL_Z_3D
+    FRACTAL_Z_3D,
+    NCHW,
+    NCDHW
 )
 ```
 
@@ -52,12 +55,16 @@ PYPTO_DECLARE_ENUM(
 | NDC1HWC0 | 3D卷积fmap布局，逻辑形状[N, D, C1, H, W, C0]（6维）。**仅支持用于卷积Tile**，须在L1，C0同上。 |
 | FRACTAL_Z | 卷积weight布局，逻辑形状[C1HW, N/16, 16, C0]（4维）或[C1, H, W, N, C0]（5维）。**仅支持用于卷积Tile**，须在L1；4维时倒数第二维固定为16。 |
 | FRACTAL_Z_3D | 3D卷积weight布局，逻辑形状[C1DHW, N/16, 16, C0]（4维）。**仅支持用于卷积Tile**，须在L1；倒数第二维固定为16。 |
+| NCHW | 2D卷积GM Tensor布局，逻辑形状[N, C, H, W]（4维），行主序连续。在Kernel参数上标记框架原生卷积输入/权重数据：[pypto_pro.language.load](../memory_data_movement/load.md)将其搬入NC1HWC0或FRACTAL_Z的ConvTile，[pypto_pro.language.store](../memory_data_movement/store.md)将Acc矩阵按该布局写出。不能作为TileType的layout。 |
+| NCDHW | 3D卷积GM Tensor布局，逻辑形状[N, C, D, H, W]（5维），行主序连续。语义同NCHW：load搬入NDC1HWC0或FRACTAL_Z_3D的ConvTile，store按该布局写出。不能作为TileType的layout。 |
 
 ## 约束说明
 
 - GM Tensor仅支持ND（行主序，默认）和NZ（分形布局）。
 
 - NC1HWC0、NDC1HWC0、FRACTAL_Z、FRACTAL_Z_3D为**卷积布局**，只在卷积Tile（ConvTile）上有效：Tile须为多维（rank > 2）、target_memory须为MemorySpace.Mat（L1）。多维Tile若使用非卷积布局会报错；普通Tiles不支持多维形态。
+
+- NCHW、NCDHW为**卷积GM Tensor布局**，只在Kernel参数注解（``pl.Tensor[[shape], dtype, pl.NCHW]``）上有效：NCHW要求rank-4、NCDHW要求rank-5，数据必须已按该布局物理排布（标记不重排数据）。在TileType的layout上使用NCHW/NCDHW会报错；load/store按参数注解选择卷积路径，详见对应接口文档。
 
 - NZ只声明GM内存的布局，不会把普通ND buffer自动转换成NZ。调用Kernel前，输入buffer必须已经按NZ物理顺序完成packing；NZ输出也必须使用按NZ格式分配的buffer。高维NZ Tensor的最后两轴固定解释为[M, N]，所有前导轴均作为batch轴，不支持在layout中指定任意分形轴。
 

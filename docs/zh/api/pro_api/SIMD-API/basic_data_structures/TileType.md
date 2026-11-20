@@ -151,7 +151,7 @@ wgt_buf = pl.make_tile_group(type=wgt_type, addrs=0x20000, depth=2, mutex_ids="a
 约束：
 
 - ConvTile**只能**声明在L1（MemorySpace.Mat）；其他内存空间会报错。
-- ConvTile不接受fractal、pad、valid_shape参数，且compact只接受默认值（normal）：fractal/pad/compact是2-D Tile的概念，pto::ConvTile模板本身不支持；valid_shape是当前接口范围（仅声明与分配）的限制，待卷积数据路径接入pto::ConvTile的ValidShape后开放。
+- ConvTile不接受fractal、pad参数，且compact只接受默认值（normal）：fractal/pad/compact是2-D Tile的概念，pto::ConvTile模板本身不支持。ConvTile的valid_shape已适配，可通过pypto_pro.language.set_validshape设置卷积Tile的有效形状。
 - **多维shape必须配合卷积布局**：多维且layout非卷积布局时会报错（普通2-D Tile没有多维形态）。
 - ConvTile的同一层可声明多个make_tile_group（L1/Cube层与L0A/L0B/L0C层分别声明），地址按各内存空间的字节偏移给出，mutex_ids="auto"（需`@pl.jit(auto_mutex=True)`）插入同核同步。
 - 本接口当前只提供ConvTile的**声明与分配**；卷积数据的im2col折叠需另行扩展，不在本接口范围内。

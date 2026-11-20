@@ -8,6 +8,7 @@ init_output
 insert
 load
 load_tile
+img2col
 move
 store
 store_tile

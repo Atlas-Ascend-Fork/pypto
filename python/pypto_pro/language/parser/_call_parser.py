@@ -414,9 +414,13 @@ def _validate_simt_tensor_type(tensor_type: ir.TensorType, subject: str) -> None
             parser_retry=True,
         )
     tensor_view = tensor_type.tensor_view
-    if tensor_view is None or tensor_view.layout != ir.Layout.ND:
+    if tensor_view is None or tensor_view.layout not in (
+        ir.Layout.ND,
+        ir.Layout.NCHW,
+        ir.Layout.NCDHW,
+    ):
         raise InvalidVal(
-            f"{subject} requires ND layout",
+            f"{subject} requires a contiguous layout (ND/NCHW/NCDHW)",
             hint="Use pl.Tensor[[shape], dtype] or specify pl.ND explicitly.",
             parser_retry=True,
         )

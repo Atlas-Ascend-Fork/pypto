@@ -1169,19 +1169,23 @@ class ExpressionParserMixin:
     def _tensor_stride_axis(self, base_expr: ir.Expr, axis: int, span: ir.Span) -> ir.Expr:
         """The step of one axis of a tensor, for an ``axis`` already within its rank.
 
-        A view created with a stride reads it back. Without one, an ND tensor is laid
-        out contiguously in row-major order, so the step is the product of the inner
-        axes' extents. No runtime tensor operation is emitted.
+        A view created with a stride reads it back. Without one, an ND/NCHW/NCDHW
+        tensor is laid out contiguously in row-major order, so the step is the
+        product of the inner axes' extents. No runtime tensor operation is emitted.
         """
         shape = list(base_expr.type.shape)
         tensor_view = base_expr.type.tensor_view
         if tensor_view is not None and tensor_view.stride:
             return tensor_view.stride[axis]
-        if tensor_view is not None and tensor_view.layout != ir.Layout.ND:
+        if tensor_view is not None and tensor_view.layout not in (
+            ir.Layout.ND,
+            ir.Layout.NCHW,
+            ir.Layout.NCDHW,
+        ):
             raise InvalidType(
                 f"tensor.stride of a {tensor_view.layout} tensor requires an explicit stride",
                 span=span,
-                hint="Only an ND tensor has an implicit row-major stride; create the view with "
+                hint="Only ND/NCHW/NCDHW tensors have an implicit row-major stride; create the view with "
                 "pl.make_tensor(ptr, shape, stride).",
             )
         if axis == len(shape) - 1:

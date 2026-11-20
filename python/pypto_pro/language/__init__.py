@@ -22,6 +22,7 @@ __all__ = [
     "simt",
     "mutex",
     "TileType",
+    "Img2ColConfig",
     "make_tile",
     "make_tensor",
     "tensor_view",
@@ -93,6 +94,7 @@ __all__ = [
     "store_tile",
     "init_output",
     "move",
+    "img2col",
     "insert",
     "ssbuf_store",
     "ssbuf_load",
@@ -311,7 +313,7 @@ from pypto.pypto_impl.ir import (
     PipeType,
     TilePad,
 )
-from pypto_pro.ir.op.block_ops import TileType
+from pypto_pro.ir.op.block_ops import Img2ColConfig, TileType
 from pypto_pro.ir.op.ptr_ops import addptr, make_ptr, make_tensor, tensor_view
 from pypto_pro.runtime import SkCap, jit, make_list_tensor_desc, pipeline
 
@@ -378,6 +380,7 @@ from ._api import (
     getval,
     gt,
     histogram,
+    img2col,
     init_output,
     insert,
     le,
@@ -531,6 +534,8 @@ NZ = Layout.NZ
 ZN = Layout.ZN
 NN = Layout.NN
 ZZ = Layout.ZZ
+NCHW = Layout.NCHW
+NCDHW = Layout.NCDHW
 NC1HWC0 = Layout.NC1HWC0
 NDC1HWC0 = Layout.NDC1HWC0
 FRACTAL_Z = Layout.FRACTAL_Z

@@ -477,6 +477,8 @@ _BLOCK_OP_TILE_ROLES: dict[str, list] = {
     "store_tile": ["W", "R", None, None, "R", None, None, None],
     # (dst_tile, src_tile, offset, *, acc_to_vec_mode, relu_pre_mode, scale, phase)
     "move": ["W", "R", None, None, None, "R", None],
+    # (dst_tile, src_tile, /, *, config, pos_m, pos_k) — L1 fmap window -> L0A matrix
+    "img2col": ["W", "R", None, None, None],
     # (dst_tile, src_tile, offset, *, relu_pre_mode, scale, phase)
     "insert": ["W", "R", None, None, "R", None],
     # ===== Matmul =====

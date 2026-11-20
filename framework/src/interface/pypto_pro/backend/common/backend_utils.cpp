@@ -165,6 +165,13 @@ bool IsNZTensorType(const ir::TensorTypePtr& tensorType)
     return tensorType && tensorType->tensor_view_.has_value() && tensorType->tensor_view_->layout == ir::Layout::NZ;
 }
 
+bool IsConvTensorType(const ir::TensorTypePtr& tensorType)
+{
+    return tensorType && tensorType->tensor_view_.has_value() &&
+           (tensorType->tensor_view_->layout == ir::Layout::NCHW ||
+            tensorType->tensor_view_->layout == ir::Layout::NCDHW);
+}
+
 bool IsMXLoad(const ir::TensorTypePtr& tensorType, const ir::TileTypePtr& tileType)
 {
     if (!tensorType || !tileType || tensorType->dtype_ != ir::DataType::FP8E8M0 ||

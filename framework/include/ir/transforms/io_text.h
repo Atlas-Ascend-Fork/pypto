@@ -705,6 +705,8 @@ static inline const npu::tile_fwk::BiMap<Layout>& GetLayoutDict()
         {Layout::NDC1HWC0, "NDC1HWC0"},
         {Layout::FRACTAL_Z, "FRACTAL_Z"},
         {Layout::FRACTAL_Z_3D, "FRACTAL_Z_3D"},
+        {Layout::NCHW, "NCHW"},
+        {Layout::NCDHW, "NCDHW"},
     }};
     return dict;
 }

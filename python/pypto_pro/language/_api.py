@@ -383,6 +383,29 @@ def move(
 
 
 @_api_decl
+def img2col(
+        dst_tile: Tile,
+        src_tile: Tile,
+        /,
+        *,
+        config: Img2ColConfig,
+        pos_m: int,
+        pos_k: int,
+) -> None:
+    """Expand one L1 feature-map window into the L0A matrix.
+
+    Args:
+        dst_tile: Destination Tile in ``Left`` (L0A) memory, dtype matching src (fp16/bf16)
+        src_tile: Source conv-layout TileType in ``Mat`` (L1) memory — ``pl.NC1HWC0``
+            shape ``[1, C1, H, W, C0]`` or ``pl.NDC1HWC0`` shape ``[1, 1, C1, H, W, C0]``
+        config: ``pl.Img2ColConfig`` window geometry (kernel/stride/dilation/padding/pad_value),
+            all compile-time constants
+        pos_m: Element offset of the first generated row in the (H, W) enumeration
+        pos_k: Element offset of the first generated column in the K enumeration
+    """
+
+
+@_api_decl
 def insert(
     dst_tile: Tile,
     src_tile: Tile,
@@ -1994,6 +2017,31 @@ def TileType(  # noqa: N802 -- the user writes pl.TileType(...), a class constru
         pad: Optional padding mode, a ``pl.TilePad`` or the integer 0/1/2/3 standing for one
             (not supported by conv-layout tiles)
         compact: Optional compact flag (conv-layout tiles are always normal mode)
+    """
+
+
+@_api_decl
+def Img2ColConfig(  # noqa: N802 -- the user writes pl.Img2ColConfig(...), a class constructor
+    *,
+    kernel: Shape,
+    stride: Shape,
+    dilation: Shape,
+    padding: Shape,
+    pad_value: int = 0,
+) -> Any:
+    """Describe the img2col window geometry for ``pl.img2col``.
+
+    Every field is a compile-time constant baked into the img2col call; the
+    config cannot depend on runtime values.
+
+    Args:
+        kernel: Convolution window ``[kernel_h, kernel_w]``, each in [1, 255]
+        stride: Window slide ``[stride_h, stride_w]``, each in [1, 63]
+        dilation: Window dilation ``[dilation_h, dilation_w]``, each in [1, 63]
+        padding: Feature-map border fill ``[pad_top, pad_bottom, pad_left, pad_right]``,
+            each in [0, 255]
+        pad_value: Optional fill value written outside the feature map, an
+            integer (default 0)
     """
 
 

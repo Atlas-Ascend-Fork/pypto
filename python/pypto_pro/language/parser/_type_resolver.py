@@ -92,6 +92,8 @@ class TypeResolver:
     _LAYOUT_MAP: dict[str, "ir.Layout"] = {
         "ND": ir.Layout.ND,
         "NZ": ir.Layout.NZ,
+        "NCHW": ir.Layout.NCHW,
+        "NCDHW": ir.Layout.NCDHW,
     }
 
     _MEMORY_SPACE_MAP: dict[str, "ir.MemorySpace"] = {
@@ -723,7 +725,7 @@ class TypeResolver:
                 raise InvalidArgument(
                     f"Unknown layout: {layout_name}",
                     span=span,
-                    hint="Tensor only supports pl.ND and pl.NZ",
+                    hint="Tensor only supports pl.ND, pl.NZ, pl.NCHW and pl.NCDHW",
                     parser_retry=True,
                 )
 
@@ -732,33 +734,45 @@ class TypeResolver:
                 raise InvalidArgument(
                     f"Unknown layout: {layout_node.attr}",
                     span=span,
-                    hint="Tensor only supports pl.ND and pl.NZ",
+                    hint="Tensor only supports pl.ND, pl.NZ, pl.NCHW and pl.NCDHW",
                     parser_retry=True,
                 )
             if layout_node is not None and not isinstance(layout_node, ast.Name):
                 raise InvalidFormat(
                     f"Cannot resolve layout: {ast.unparse(layout_node)}",
                     span=span,
-                    hint="Tensor only supports pl.ND and pl.NZ",
+                    hint="Tensor only supports pl.ND, pl.NZ, pl.NCHW and pl.NCDHW",
                     parser_retry=True,
                 )
             raise InvalidType(
                 f"Tensor layout must be a Layout, got {type(layout).__name__}",
                 span=span,
-                hint="Tensor only supports pl.ND and pl.NZ",
+                hint="Tensor only supports pl.ND, pl.NZ, pl.NCHW and pl.NCDHW",
                 parser_retry=True,
             )
         if layout not in self._LAYOUT_MAP.values():
             raise InvalidArgument(
                 f"Unknown layout: {layout.name}",
                 span=span,
-                hint="Tensor only supports pl.ND and pl.NZ",
+                hint="Tensor only supports pl.ND, pl.NZ, pl.NCHW and pl.NCDHW",
                 parser_retry=True,
             )
 
         if layout == ir.Layout.NZ and len(shape) < 2:
             raise InvalidShape(
                 "NZ Tensor requires rank >= 2",
+                span=span,
+                parser_retry=True,
+            )
+        if layout == ir.Layout.NCHW and len(shape) != 4:
+            raise InvalidShape(
+                "NCHW Tensor requires rank 4 [N, C, H, W]",
+                span=span,
+                parser_retry=True,
+            )
+        if layout == ir.Layout.NCDHW and len(shape) != 5:
+            raise InvalidShape(
+                "NCDHW Tensor requires rank 5 [N, C, D, H, W]",
                 span=span,
                 parser_retry=True,
             )

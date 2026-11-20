@@ -335,6 +335,48 @@ def _ir_binary_cast(
     )
 
 
+# Conv-layout loads (GM -> L1): the GM side is a plain ND Tensor whose shape spells
+# NCHW [N, C, H, W] or NCDHW [N, C, D, H, W]; the dst is a conv-layout ConvTile.
+_CONV_LOAD_TENSOR_RANKS: dict = {
+    Layout.NC1HWC0: 4,       # tensor [N, C, H, W] -> tile [N, C1, H, W, C0]
+    Layout.FRACTAL_Z: 4,     # tensor [N, C, H, W] -> tile [C1HW, N/16, 16, C0]
+    Layout.NDC1HWC0: 5,      # tensor [N, C, D, H, W] -> tile [N, D, C1, H, W, C0]
+    Layout.FRACTAL_Z_3D: 5,  # tensor [N, C, D, H, W] -> tile [C1DHW, N/16, 16, C0]
+}
+
+
+def _ir_load_conv(
+    dst_tile: Expr,
+    src_tensor: Expr,
+    offsets_tuple: _ir_core.MakeTuple,
+    *,
+    op_name: str,
+    span: Span,
+    l2_cache_mode: TLoadL2Hint | None = None,
+) -> Expr:
+    """Load an NCHW/NCDHW ND Tensor into an L1 conv-layout ConvTile.
+
+    Lowers to pto-isa's conv TLOAD methods (TLoadNCHW / TLoadNCDHW2NDC1HWC0 /
+    TLoadNCHW2FractalZ / TLoadNCDHW2FractalZ3D, selected by the dst layout);
+    the offsets are element-level per GM axis, like any other load.
+    """
+    layout = _tile_layout(dst_tile.type)
+    expected_rank = _CONV_LOAD_TENSOR_RANKS[layout]
+    tensor_rank = len(src_tensor.type.shape)
+    if tensor_rank != expected_rank:
+        shape_text = "NCDHW [N, C, D, H, W]" if expected_rank == 5 else "NCHW [N, C, H, W]"
+        raise NotSupported(
+            f"{op_name}: a {layout.name} destination loads from an {shape_text} Tensor "
+            f"(rank {expected_rank}), got rank {tensor_rank}",
+            span=span,
+        )
+    if src_tensor.type.dtype != dst_tile.type.dtype:
+        raise InvalidType(f"{op_name}: dtype mismatch between src tensor and dst tile", span=span)
+    _validate_offsets(op_name, offsets_tuple.elements, src_tensor.type.shape)
+    kwargs: dict[str, Any] = _l2_cache_mode_attr(l2_cache_mode, TLoadL2Hint, op_name)
+    return _ir_core.create_op_call(block_ir_op("load"), [dst_tile, src_tensor, offsets_tuple], kwargs, span)
+
+
 def _ir_load(
     dst_tile: Expr,
     src_tensor: Expr,
@@ -347,6 +389,15 @@ def _ir_load(
     op_name = "load"
     actual_span = span or _span()
     offsets_tuple = _to_make_tuple(offsets, actual_span)
+
+    if _is_conv_layout(_tile_layout(dst_tile.type)):
+        if order is not None:
+            raise NotSupported(
+                "load: order is not supported for a conv-layout destination Tile", span=actual_span
+            )
+        return _ir_load_conv(
+            dst_tile, src_tensor, offsets_tuple, op_name=op_name, span=actual_span, l2_cache_mode=l2_cache_mode
+        )
 
     tensor_ndim = len(src_tensor.type.shape)
     tile_ndim = len(dst_tile.type.shape)
@@ -489,6 +540,32 @@ def _ir_store(
     if phase is not None:
         require_enum(phase, STPhase, subject=f"{op_name}: phase")
     require_enum(atomic, AtomicType, subject=f"{op_name}: atomic")
+
+    _dst_declared = getattr(getattr(dst_tensor.type, "tensor_view", None), "layout", None)
+    if _dst_declared in (Layout.NCHW, Layout.NCDHW):
+        if _src_mem != _ir_core.MemorySpace.Acc or len(src_tile.type.shape) != 2:
+            raise NotSupported(
+                f"store: storing into a {_dst_declared.name} Tensor requires a rank-2 Acc tile "
+                "(the fixpipe TStoreAccNCHW/NCDHW path)",
+                span=actual_span,
+            )
+        if order is not None or scale is not None or relu_pre_mode is not None or phase is not None:
+            raise NotSupported(
+                f"store: order/scale/relu_pre_mode/phase are not supported for a {_dst_declared.name} Tensor",
+                span=actual_span,
+            )
+        if atomic != AtomicType.AtomicNone:
+            raise NotSupported(
+                f"store: atomic is not supported for a {_dst_declared.name} Tensor", span=actual_span
+            )
+        if l2_cache_mode is not None:
+            raise NotSupported(
+                f"store: l2_cache_mode is not supported for a {_dst_declared.name} Tensor", span=actual_span
+            )
+        _validate_offsets(op_name, offsets_tuple.elements, dst_tensor.type.shape)
+        return _ir_core.create_op_call(
+            block_ir_op(op_name), [dst_tensor, src_tile, offsets_tuple], {}, actual_span
+        )
 
     tensor_ndim = len(dst_tensor.type.shape)
     tile_shape = list(src_tile.type.shape)
@@ -851,6 +928,46 @@ def _maybe_dispatch_to_insert(
     return is_shape_insert or is_equal_transpose_vec_mat
 
 
+def _ir_move_conv_extract(
+        dst_tile: Expr,
+        src_tile: Expr,
+        offset_tuple: _ir_core.MakeTuple | None,
+        *,
+        span: Span,
+) -> Expr:
+    """Move a conv weight tile from L1 to L0B (TEXTRACT's ConvTile path).
+
+    The 4-D packed source (FRACTAL_Z/FRACTAL_Z_3D) folds into a 2-D Right matrix
+    and lowers to a format-converting TEXTRACT rather than a plain TMOV. The
+    required ``offset = [offset_k, offset_n]`` names the window start inside the
+    folded matrix, so the L1 tile may be larger than the L0 tile.
+    """
+    src_layout = _tile_layout(src_tile.type)
+    if src_layout not in (Layout.FRACTAL_Z, Layout.FRACTAL_Z_3D):
+        got = src_layout.name if src_layout is not None else "none"
+        raise NotSupported(
+            f"move: a conv-layout source must be FRACTAL_Z or FRACTAL_Z_3D to fold into an L0B "
+            f"matrix, got layout {got}",
+            span=span,
+            hint="NC1HWC0/NDC1HWC0 feature-map windows are expanded with pl.img2col instead.",
+        )
+    if len(src_tile.type.shape) != 4:
+        raise NotSupported(
+            f"move: a conv-layout source must be the 4-D packed shape "
+            f"[Cin1HkWk, Cout/16, 16, Cin0], got rank {len(src_tile.type.shape)}",
+            span=span,
+            hint="Use the packed 4-D FRACTAL_Z/FRACTAL_Z_3D form; the 5-D [C1, H, W, N, C0] "
+                 "form is not supported by this move path.",
+        )
+    if offset_tuple is None:
+        raise InvalidArgument(
+            "move: a conv-layout source requires an explicit offset [offset_k, offset_n] — the "
+            "window start inside the folded matrix; pass [0, 0] for the top-left window",
+            span=span,
+        )
+    return _ir_core.create_op_call(block_ir_op("move"), [dst_tile, src_tile, offset_tuple], {}, span)
+
+
 def _ir_move(
     dst_tile: Expr,
     src_tile: Expr,
@@ -876,6 +993,15 @@ def _ir_move(
 
     if phase is not None:
         require_enum(phase, STPhase, subject="move: phase")
+
+    if _is_conv_layout(_tile_layout(src_tile.type)):
+        if acc_to_vec_mode is not None or relu_pre_mode is not None or phase is not None or scale is not None:
+            raise NotSupported(
+                "move: acc_to_vec_mode/relu_pre_mode/phase/scale are not supported for a "
+                "conv-layout source",
+                span=actual_span,
+            )
+        return _ir_move_conv_extract(dst_tile, src_tile, offset_tuple, span=actual_span)
 
     if _maybe_dispatch_to_insert(dst_tile, src_tile, offset_tuple, acc_to_vec_mode):
         actual_offset = offset_tuple if offset_tuple is not None else [0, 0]
@@ -992,6 +1118,189 @@ def _ir_move(
     if pre_quant_scalar is not None:
         args.append(pre_quant_scalar)
     return _ir_core.create_op_call(block_ir_op("move"), args, kwargs, actual_span)
+
+
+_IMG2COL_DTYPES: tuple[DataType, ...] = (DataType.FP16, DataType.BF16)
+_IMG2COL_BLOCK_BYTES = 32
+_IMG2COL_M_ALIGN = 16
+_IMG2COL_MAX_FILTER = 0xFF
+_IMG2COL_MAX_STRIDE_DILATION = 63
+_IMG2COL_MAX_PAD = 0xFF
+_IMG2COL_MAX_CHANNEL = 0xFFFF
+_IMG2COL_SRC_LAYOUTS: tuple[Layout, ...] = (Layout.NC1HWC0, Layout.NDC1HWC0)
+
+
+def _require_config_ints(
+        value: Any, name: str, length: int, lower: int, upper: int
+) -> tuple[int, ...]:
+    """Validate one Img2ColConfig geometry field: ``length`` ints in ``[lower, upper]``."""
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise InvalidType(
+            f"Img2ColConfig {name} must be a list of {length} compile-time integers, got {value!r}."
+        )
+    if len(value) != length:
+        raise InvalidArgument(
+            f"Img2ColConfig {name} must contain exactly {length} elements, got {len(value)} ({value!r})."
+        )
+    for element in value:
+        if isinstance(element, bool) or not isinstance(element, int):
+            raise InvalidType(
+                f"Img2ColConfig {name} must contain integers, got {element!r} "
+                f"({type(element).__name__})."
+            )
+        if not lower <= element <= upper:
+            raise InvalidVal(
+                f"Img2ColConfig {name} elements must be in [{lower}, {upper}] "
+                f"(img2col hardware register width), got {element}."
+            )
+    return tuple(value)
+
+
+@dataclass
+class Img2ColConfig:
+    """Compile-time window geometry for ``pl.img2col``.
+
+    kernel/stride/dilation describe the convolution window; padding and
+    pad_value describe the feature-map border fill.
+    """
+
+    kernel: Sequence[int]
+    stride: Sequence[int]
+    dilation: Sequence[int]
+    padding: Sequence[int]
+    pad_value: int = 0
+
+    def __post_init__(self):
+        self.kernel = _require_config_ints(self.kernel, "kernel", 2, 1, _IMG2COL_MAX_FILTER)
+        self.stride = _require_config_ints(self.stride, "stride", 2, 1, _IMG2COL_MAX_STRIDE_DILATION)
+        self.dilation = _require_config_ints(self.dilation, "dilation", 2, 1, _IMG2COL_MAX_STRIDE_DILATION)
+        self.padding = _require_config_ints(self.padding, "padding", 4, 0, _IMG2COL_MAX_PAD)
+        if isinstance(self.pad_value, bool) or not isinstance(self.pad_value, int):
+            raise InvalidType(f"Img2ColConfig pad_value must be an integer, got {self.pad_value!r}.")
+
+
+def _img2col_out_extent(
+        pad_before: int, extent: int, pad_after: int, kernel: int, dilation: int, stride: int
+) -> int:
+    """Output positions along one axis: floor((in + padL + padR - dilatedK)/s) + 1."""
+    dilated = (kernel - 1) * dilation + 1
+    return (extent + pad_before + pad_after - dilated) // stride + 1
+
+
+def _ir_img2col(
+        dst_tile: Expr,
+        src_tile: Expr,
+        /,
+        *,
+        config: "Img2ColConfig",
+        pos_m: Expr,
+        pos_k: Expr,
+        span: Span | None = None,
+) -> Expr:
+    """Expand one L1 feature-map window into the L0A matrix.
+
+    dst (Left) receives [align16(H*W), C1*Kh*Kw*C0]; src is a conv-layout
+    TileType holding exactly one window. ``pos_m``/``pos_k`` name the
+    window/K enumeration offsets of the generated block.
+    """
+    if not isinstance(config, Img2ColConfig):
+        raise InvalidType(f"img2col: config must be a pl.Img2ColConfig, got {type(config).__name__}")
+    if not isinstance(dst_tile.type, _IRTileType):
+        raise InvalidType(f"img2col: dst must be a Tile, got {type(dst_tile.type).__name__}")
+    if not isinstance(src_tile.type, _IRTileType):
+        raise InvalidType(f"img2col: src must be a Tile, got {type(src_tile.type).__name__}")
+
+    dst_mem = getattr(getattr(dst_tile.type, "memref", None), "memory_space_", None)
+    src_mem = getattr(getattr(src_tile.type, "memref", None), "memory_space_", None)
+    if dst_mem != MemorySpace.Left:
+        raise NotSupported(
+            f"img2col: dst must be allocated in Left (L0A) memory, got {dst_mem}",
+            hint="Declare the destination with target_memory=pl.MemorySpace.Left.",
+        )
+    if src_mem != MemorySpace.Mat:
+        raise NotSupported(
+            f"img2col: src must be allocated in Mat (L1) memory, got {src_mem}",
+            hint="Declare the feature-map window with target_memory=pl.MemorySpace.Mat.",
+        )
+
+    src_dt = getattr(src_tile.type, "dtype", None)
+    dst_dt = getattr(dst_tile.type, "dtype", None)
+    require_dtype_in(src_dt, _IMG2COL_DTYPES, subject="img2col")
+    require_dtypes_match([dst_dt], src_dt, subject="img2col")
+
+    src_layout = _tile_layout(src_tile.type)
+    if src_layout not in _IMG2COL_SRC_LAYOUTS:
+        got = src_layout.name if src_layout is not None else "none"
+        raise InvalidFormat(
+            f"img2col: src must be a conv-layout tile holding one feature-map window — layout "
+            f"NC1HWC0 (shape [1, C1, H, W, C0]) or NDC1HWC0 (shape [1, 1, C1, H, W, C0]), got "
+            f"layout {got}",
+            hint="Declare the window with layout=pl.NC1HWC0 (or pl.NDC1HWC0) and "
+                 "target_memory=pl.MemorySpace.Mat.",
+        )
+
+    kh, kw = config.kernel
+    sh, sw = config.stride
+    dh, dw = config.dilation
+    pad_top, pad_bottom, pad_left, pad_right = config.padding
+
+    src_shape = _static_shape_ints(src_tile.type.shape, "img2col: src")
+    expected_rank = 5 if src_layout == Layout.NC1HWC0 else 6
+    if len(src_shape) != expected_rank:
+        raise InvalidShape(
+            f"img2col: src shape must be rank {expected_rank} for layout {src_layout.name}, "
+            f"got rank {len(src_shape)} (shape {src_shape})"
+        )
+    n, d, c1, fmap_h, fmap_w, c0 = (
+        src_shape if expected_rank == 6 else (src_shape[0], 1, *src_shape[1:])
+    )
+
+    if n != 1:
+        raise InvalidShape(
+            f"img2col: src must hold exactly one feature-map window (N=1), got N={n}; "
+            f"declare one window per tile and iterate with multiple tiles"
+        )
+    if d != 1:
+        raise InvalidShape(
+            f"img2col: src must hold exactly one feature-map window per call (D=1 for NDC1HWC0), "
+            f"got D={d}; the D loop is caller-side — declare one tile per d-slice"
+        )
+    expected_c0 = _IMG2COL_BLOCK_BYTES // (src_dt.get_bit() // 8)
+    if c0 != expected_c0:
+        raise InvalidShape(
+            f"img2col: src C0 ({c0}) must equal 32B / element size = {expected_c0} for dtype {src_dt}"
+        )
+    channel_size = c1 * c0
+    if not 1 <= channel_size <= _IMG2COL_MAX_CHANNEL:
+        raise InvalidShape(
+            f"img2col: src channel depth C1 * C0 must be in "
+            f"[1, {_IMG2COL_MAX_CHANNEL}] (img2col hardware register width), got {channel_size}"
+        )
+
+    require_int(pos_m, subject="img2col: pos_m", lower_bound=0)
+    require_int(pos_k, subject="img2col: pos_k", lower_bound=0)
+
+    return _ir_core.create_op_call(
+        block_ir_op("img2col"),
+        [dst_tile, src_tile, pos_m, pos_k],
+        {
+            "kernel_h": kh,
+            "kernel_w": kw,
+            "stride_h": sh,
+            "stride_w": sw,
+            "dilation_h": dh,
+            "dilation_w": dw,
+            "pad_top": pad_top,
+            "pad_bottom": pad_bottom,
+            "pad_left": pad_left,
+            "pad_right": pad_right,
+            "pad_value": config.pad_value,
+            "fmap_h": fmap_h,
+            "fmap_w": fmap_w,
+            "channel_size": channel_size,
+        },
+        span or _span(),
+        )
 
 
 def _normalize_2d_sequence(value: Any, parameter: str, span: Span) -> tuple[Expr, Expr]:
@@ -5391,6 +5700,44 @@ def _build_move(
         dst_tile, src_tile, offset, acc_to_vec_mode=acc_to_vec_mode, relu_pre_mode=relu_pre_mode,
         scale=scale, phase=phase, span=span,
     )
+
+
+@op_impl("img2col")
+def _build_img2col(self, *args, span: Span, **kwargs):
+    return _ir_img2col(*args, span=span, **kwargs)
+
+
+@op_impl_ast("Img2ColConfig")
+def _parse_img2col_config(self, call: ast.Call):
+    geometry = ("kernel", "stride", "dilation", "padding")
+    kwargs = {}
+    for keyword in call.keywords:
+        node = keyword.value
+        if keyword.arg in geometry and isinstance(node, (ast.List, ast.Tuple)):
+            kwargs[keyword.arg] = [self.parse_expression(element) for element in node.elts]
+        else:
+            kwargs[keyword.arg] = self.parse_expression(node)
+    self._check_declared_types("Img2ColConfig", [], kwargs)
+    try:
+        for key in list(kwargs):
+            value = kwargs[key]
+            # A geometry field may arrive as a list of parsed elements or fold to a
+            # MakeTuple (e.g. a list bound to a name); both spell per-element consts.
+            elements = getattr(value, "elements", value)
+            if key in geometry and isinstance(elements, (list, tuple)):
+                kwargs[key] = [
+                    _descriptor_integer(element, f"{key}[{index}]")
+                    for index, element in enumerate(elements)
+                ]
+            else:
+                kwargs[key] = _descriptor_integer(value, key)
+    except InvalidType as error:
+        error.hint = (
+            "Img2ColConfig geometry must contain compile-time constants; the window is "
+            "fixed while parsing and cannot depend on runtime values."
+        )
+        raise
+    return Img2ColConfig(**kwargs)
 
 
 @op_impl("insert")

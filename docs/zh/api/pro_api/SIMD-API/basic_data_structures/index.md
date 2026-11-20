@@ -12,6 +12,7 @@ CrossCoreSyncMode
 DataType
 DcciDst
 FillPadMode
+Img2ColConfig
 Layout
 MemDsb
 MemorySpace

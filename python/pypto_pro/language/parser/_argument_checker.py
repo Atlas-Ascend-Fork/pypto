@@ -282,6 +282,13 @@ def _named_class(name: str, declared: Callable) -> type | None:
         from pypto_pro.ir.op.block_ops import TileType
 
         return TileType
+    if name == "Img2ColConfig":
+        # Same situation as TileType: the declaration module binds this name to the
+        # declaration, while the value a caller passes is the frontend descriptor
+        # class from block_ops.
+        from pypto_pro.ir.op.block_ops import Img2ColConfig
+
+        return Img2ColConfig
     wanted = _CLASS_ALIASES.get(name, name)
     written_in = getattr(declared, "__wrapped__", declared).__globals__
     for resolved in (written_in.get(wanted), getattr(ir, wanted, None)):

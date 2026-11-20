@@ -16,6 +16,8 @@
 
 将GM Tensor中的数据搬入L1 Buffer或UB中的Tile。offsets按Tensor各维的绝对元素坐标指定搬运起始位置；Tensor维数大于Tile维数时，可通过order指定Tile的两个维度与Tensor维度的对应关系，并控制是否转置。
 
+dst_tile为**卷积Tile（ConvTile）**时走卷积搬运路径：src_tensor须为注解了NCHW（rank-4 ``[N, C, H, W]``）或NCDHW（rank-5 ``[N, C, D, H, W]``）的框架原生GM Tensor，搬运与格式转换由DMA在MTE2路径一次完成，详见[约束说明](#约束说明)中的卷积搬运约束。
+
 如果需要按Tile块编号指定搬运位置，使用[pypto_pro.language.load_tile](load_tile.md)。
 
 ## 函数原型
@@ -36,8 +38,8 @@ pypto_pro.language.load(
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| dst_tile | 输出 | 目的操作数，Tile类型，存储空间为L1 Buffer或UB，首地址必须按32字节对齐。接口按照该Tile的valid_shape搬运数据。支持的数据类型和分形组合详见[约束说明](#约束说明)。 |
-| src_tensor | 输入 | 源操作数，Tensor类型，存储空间为GM。支持的数据类型和分形组合详见[约束说明](#约束说明)。 |
+| dst_tile | 输出 | 目的操作数，Tile类型，存储空间为L1 Buffer或UB，首地址必须按32字节对齐。接口按照该Tile的valid_shape搬运数据。支持的数据类型和分形组合详见[约束说明](#约束说明)。dst_tile为ConvTile时须在L1（Mat），布局由[pypto_pro.language.TileType](../basic_data_structures/TileType.md)的layout指定，有效形状支持pypto_pro.language.set_validshape设置。 |
+| src_tensor | 输入 | 源操作数，Tensor类型，存储空间为GM。支持的数据类型和分形组合详见[约束说明](#约束说明)。dst_tile为ConvTile时，src_tensor须为NCHW/NCDHW注解的框架原生Tensor。 |
 | offsets | 输入 | 表示源Tensor各维度的绝对元素坐标，整数序列（列表或元组），每项可为整型常量或运行时整型标量表达式，长度须与源Tensor的维数相同。<br>- 不支持负数。<br>- 未被order选中的维度使用对应值固定下标。<br>- 搬运起始位置必须位于源Tensor的shape范围内；边界Tile可通过pypto_pro.language.set_validshape设置有效形状，保证有效搬运范围不越过源Tensor边界。<br>- 例如，offsets=[64, 0]表示从二维Tensor的第64行、第0列开始搬运。 |
 | order | 输入 | 可选，维度映射，长度为2或3的编译期整数列表。所有维度索引必须互不重复且位于src_tensor的维度范围内。<br>- 普通两轴搬运中，列表中的第i项表示dst_tile第i维对应src_tensor的维度。升序表示不转置，例如order=[0, 1]；降序表示转置，例如order=[1, 0]。<br>- 普通Tensor不设置order时，dst_tile默认对应src_tensor的最后两个维度，即[ndim - 2, ndim - 1]，且不转置。<br>- 搬运MX矩阵乘量化系数时，src_tensor的最后一维是物理phase轴，不能在order中选择；不设置order时，默认对应phase轴之前的两个维度，即[ndim - 3, ndim - 2]。<br>- GM ND Tensor搬入L1 Buffer时，也可显式指定三个轴索引，将两个源轴合并为一个Tile轴，详见[约束说明](#约束说明)中的三轴合并搬入L1 Buffer约束。<br>- 当Tensor为1维时，不支持传入order参数。 |
 | l2_cache_mode | 输入 | 可选，本次GM读取的L2 Cache策略，[pypto_pro.language.TLoadL2Hint](../basic_data_structures/TLoadL2Hint.md)类型。默认使用NormalFirstVictim。<br>- GM → UB：支持NormalFirstVictim、NormalLastVictim、NormalPersistent、NotAllocKeep、NotAllocClean、NotAllocDrop。<br>- GM → L1 Buffer：支持NormalFirstVictim、NormalLastVictim、NormalPersistent、NotAllocKeep。 |
@@ -54,11 +56,19 @@ pypto_pro.language.load(
   | GM → L1 Buffer | DN → ZN、NZ → NZ。 | 源与目的数据类型位宽必须相同，支持DT_INT8、DT_UINT8、DT_FP16、DT_BF16、DT_INT16、DT_UINT16、DT_FP32、DT_INT32、DT_UINT32、DT_INT64、DT_UINT64、DT_FP8E8M0、DT_FP8E4M3FN、DT_FP8E5M2、DT_HF8、DT_FP4E2M1、DT_FP4E1M2。 |
   | GM → L1 Buffer | ND → ND。 | 源与目的数据类型必须相同，仅支持DT_INT64、DT_UINT64。 |
   | GM → L1 Buffer | ND/DN → ZZ/NN，仅用于pypto_pro.language.matmul_mx或pypto_pro.language.matmul_mx_acc的量化系数搬运。 | 源与目的数据类型必须为DT_FP8E8M0。 |
+  | GM → L1 Buffer（ConvTile） | NCHW → NC1HWC0 / FRACTAL_Z；NCDHW → NDC1HWC0 / FRACTAL_Z_3D。 | 源与目的数据类型必须相同，支持DT_INT8、DT_UINT8、DT_INT16、DT_UINT16、DT_INT32、DT_UINT32、DT_FP8E4M3FN、DT_FP8E5M2、DT_FP16、DT_BF16、DT_FP32。 |
 
 - NZ搬运约束：
 
   - src_tensor声明为NZ时，dst_tile必须为NZ，且只支持从src_tensor的最后两个维度正序搬运，不支持通过降序order转置。NZ的物理排布和Tensor shape约束详见[Layout](../basic_data_structures/Layout.md)。
   - dst_tile的shape和valid_shape中，M必须按16对齐，N必须按src_tensor数据类型对应的C0对齐；N方向的offset也必须按C0对齐。
+
+- 卷积搬运约束（dst_tile为ConvTile时）：
+
+  - dst_tile的layout决定搬运解释：NC1HWC0、FRACTAL_Z加载NCHW源（rank-4 ``[N, C, H, W]``）；NDC1HWC0、FRACTAL_Z_3D加载NCDHW源（rank-5 ``[N, C, D, H, W]``）。格式转换（NCHW→NC1HWC0、NCHW→FRACTAL_Z、NCDHW→NDC1HWC0、NCDHW→FRACTAL_Z_3D）由MTE2的DMA在搬运中完成。
+  - 不支持order参数；l2_cache_mode可正常使用。
+  - ConvTile的有效形状已适配pypto_pro.language.set_validshape，可设置有效搬运范围；源与目的数据类型必须一致。
+  - ConvTile搬运对应pto-isa指令：TLoadNCHW、TLoadNCHW2FractalZ、TLoadNCDHW2NDC1HWC0、TLoadNCDHW2FractalZ3D。
 
 - MX矩阵乘量化系数搬运约束：
 

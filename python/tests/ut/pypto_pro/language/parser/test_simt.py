@@ -237,7 +237,7 @@ def test_simt_index_rejects_more_than_three_dimensions():
         ("pl.Ptr[pl.DT_FP32]", InvalidVal, "must resolve to a scalar or Tensor"),
         ("pl.Tensor[[pl.DYNAMIC], pl.DT_FP32]", InvalidType, "requires a static shape"),
         ("pl.Tensor[[32], pl.DT_INT4]", NotSupported, "unsupported sub-byte dtype"),
-        ("pl.Tensor[[16, 16], pl.DT_FP32, pl.NZ]", InvalidVal, "requires ND layout"),
+        ("pl.Tensor[[16, 16], pl.DT_FP32, pl.NZ]", InvalidVal, r"requires a contiguous layout \(ND/NCHW/NCDHW\)"),
     ],
 )
 def test_simt_kernel_parser_rejects_unsupported_parameters(annotation, error_type, message):

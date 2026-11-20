@@ -124,7 +124,7 @@ namespace ir {
 // Layout: see documentation in ir/type.h
 // The trailing conv values select the pto::ConvTile path for a multi-dim TileType
 // (conv data layouts; see pto/common/type.hpp Layout).
-PYPTO_DECLARE_ENUM(Layout, ND, DN, NZ, ZN, NN, ZZ, NC1HWC0, NDC1HWC0, FRACTAL_Z, FRACTAL_Z_3D)
+PYPTO_DECLARE_ENUM(Layout, ND, DN, NZ, ZN, NN, ZZ, NC1HWC0, NDC1HWC0, FRACTAL_Z, FRACTAL_Z_3D, NCHW, NCDHW)
 
 PYPTO_DECLARE_ENUM(ReluPreMode, NormalRelu)
 

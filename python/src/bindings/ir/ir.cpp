@@ -439,6 +439,8 @@ void BindTypeClass(py::module_& ir)
         .value("NDC1HWC0", Layout::NDC1HWC0, "ConvTile 3D fmap layout [N, D, C1, H, W, C0]")
         .value("FRACTAL_Z", Layout::FRACTAL_Z, "ConvTile weight layout [C1HW, N/16, 16, C0]")
         .value("FRACTAL_Z_3D", Layout::FRACTAL_Z_3D, "ConvTile 3D weight layout [C1DHW, N/16, 16, C0]")
+        .value("NCHW", Layout::NCHW, "Contiguous conv Tensor [N, C, H, W]")
+        .value("NCDHW", Layout::NCDHW, "Contiguous conv Tensor [N, C, D, H, W]")
         .export_values();
 
     // TensorView - struct for tensor view information - must be before TensorType
