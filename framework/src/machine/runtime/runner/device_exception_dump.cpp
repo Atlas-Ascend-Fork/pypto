@@ -134,7 +134,8 @@ void DumpNoSubFuncBundledKernel(const DyndevFunctionAttribute* dynAttr, Function
 }
 #endif
 
-void GetTensorInfo(uint32_t inputSize, DevTensorData* tensorData, AdxExceptionDumpInfo* exceptionDumpInfo)
+void GetTensorInfo(uint32_t inputSize, DevTensorData* tensorData, AdxExceptionDumpInfo* exceptionDumpInfo,
+                   RtExceptionExpandType exceptionType)
 {
     auto func = Program::GetInstance().GetLastFunction();
     if (func == nullptr) {
@@ -173,8 +174,10 @@ void GetTensorInfo(uint32_t inputSize, DevTensorData* tensorData, AdxExceptionDu
     exceptionDumpInfo->extraTensorNum = inputSize;
     DumpBundledKernel(dynAttr.get(), exceptionDumpInfo->kernelName);
 #ifndef TILE_FWK_BUNDLE_STANDALONE
-    // 触发 __HAS_SUB_FUNC__ 未定义的二进制编译并打包 dump（失败仅 WARNING 降级）
-    DumpNoSubFuncBundledKernel(dynAttr.get(), func, exceptionDumpInfo->kernelName);
+    // Recompile without subfunctions for CCE comparison on AICore exceptions.
+    if (exceptionType == RtExceptionExpandType::AICORE) {
+        DumpNoSubFuncBundledKernel(dynAttr.get(), func, exceptionDumpInfo->kernelName);
+    }
 #endif
 }
 
@@ -192,7 +195,7 @@ int32_t GetAicoreExceptionDumpInfo(std::vector<void*> kernelArg, AdxExceptionDum
     }
     MACHINE_LOGD("GetAicoreExceptionDumpInfo: mixedCount=[%ld]", tensor[0]);
     auto tensorData = (DevTensorData*)kernelArg[6];
-    GetTensorInfo(static_cast<uint32_t>(tensor[0]), tensorData, exceptionDumpInfo);
+    GetTensorInfo(static_cast<uint32_t>(tensor[0]), tensorData, exceptionDumpInfo, RtExceptionExpandType::AICORE);
     return 0;
 }
 
@@ -345,7 +348,7 @@ int32_t GetAicpuExceptionDumpInfo(RtAicpuExDetailInfo& aicpuExcepitionInfo, AdxE
     // Mixed operand list: [nMixed, nOut=0] then DevTensorData[nMixed].
     int64_t* tensorInfo = (int64_t*)(aicpuArgs + 1);
     auto tensorData = (DevTensorData*)(tensorInfo + 2);
-    GetTensorInfo(static_cast<uint32_t>(tensorInfo[0]), tensorData, exceptionDumpInfo);
+    GetTensorInfo(static_cast<uint32_t>(tensorInfo[0]), tensorData, exceptionDumpInfo, RtExceptionExpandType::AICPU);
     return 0;
 }
 
