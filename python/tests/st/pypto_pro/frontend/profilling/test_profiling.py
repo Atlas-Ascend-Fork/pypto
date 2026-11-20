@@ -227,11 +227,12 @@ def test_op_summary_exact_name(tmp_path, monkeypatch, name, mode):
     monkeypatch.setenv("ASCEND_WORK_PATH", str(tmp_path))
 
     @pl.jit(name=name)
-    def prof_named_kernel(out: pl.Tensor[[32], pl.DT_INT32, pl.Output]):
+    def prof_named_kernel(out: pl.Tensor[[256], pl.DT_INT32, pl.Output]):
         with pl.section_vector():
-            out[pl.get_block_idx()] = 7
+            # Separate cores' scalar stores by 512 bytes to avoid cache-line sharing.
+            out[pl.get_block_idx() * 128] = 7
 
-    out = torch.zeros(32, dtype=torch.int32, device=ST_DEVICE)
+    out = torch.zeros(256, dtype=torch.int32, device=ST_DEVICE)
     launch = prof_named_kernel[1]
     if mode == "graph_custom_op_core_limits":
         library = torch.library.Library("pypto_pro_profile_names", "FRAGMENT")
@@ -253,7 +254,9 @@ def test_op_summary_exact_name(tmp_path, monkeypatch, name, mode):
     out.zero_()
     torch.npu.synchronize()
     expected_output = torch.zeros_like(out)
-    expected_output[:2 if mode == "graph_custom_op_core_limits" else 1] = 7
+    expected_output[0] = 7
+    if mode == "graph_custom_op_core_limits":
+        expected_output[128] = 7
     output_dir = str(tmp_path / "profiler")
     skip_first = int(mode != "eager")
     with torch_npu.profiler.profile(
@@ -271,6 +274,8 @@ def test_op_summary_exact_name(tmp_path, monkeypatch, name, mode):
                     with torch.npu.graph(graph):
                         launch(out)
                 out.zero_()
+                # Finish resetting the output before submitting graph replay.
+                torch.npu.synchronize()
                 graph.replay()
             torch.npu.synchronize()
             prof.step()

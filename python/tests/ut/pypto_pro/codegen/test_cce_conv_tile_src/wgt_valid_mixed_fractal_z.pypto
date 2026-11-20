@@ -48,9 +48,9 @@ __aicore__ inline void _weight_valid_mixed_kernel_impl_vector(__gm__ half* x_0_p
 __aicore__ inline void _weight_valid_mixed_kernel_impl(__gm__ half* x_0)
 {
 #if defined(__DAV_CUBE__)
-    _weight_valid_mixed_kernel_impl_cube(x_0);
+    ::_weight_valid_mixed_kernel_impl_cube(x_0);
 #endif
 #if defined(__DAV_VEC__)
-    _weight_valid_mixed_kernel_impl_vector(x_0);
+    ::_weight_valid_mixed_kernel_impl_vector(x_0);
 #endif
 }
