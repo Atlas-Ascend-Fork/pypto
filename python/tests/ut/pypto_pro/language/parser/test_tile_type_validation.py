@@ -21,6 +21,7 @@ import re
 
 from pypto_pro._errors import (
     InvalidArgument,
+    InvalidOperation,
     InvalidShape,
     InvalidType,
     InvalidVal,
@@ -627,11 +628,145 @@ def test_conv_layout_rejects_fractal_argument():
                  target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0, fractal=512)
 
 
-def test_conv_layout_rejects_valid_shape_argument():
-    with pytest.raises(InvalidVal, match="drop the 'valid_shape' argument"):
+def test_conv_valid_shape_forms_accepted():
+    # -1 marks a dynamic valid dim (runtime-settable via set_validshape); a static dim
+    # may pin any extent within [1, declared]. Rank and bounds are checked generically
+    # in TileType.__post_init__ for every tile, conv included.
+    tt = _conv_tt(shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+                  target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0,
+                  valid_shape=[-1, -1, -1, -1, -1])
+    assert tt.valid_shape == [-1, -1, -1, -1, -1]
+    _conv_tt(shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+             target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0,
+             valid_shape=[1, 4, -1, -1, 16])
+
+
+def test_conv_valid_shape_rank_mismatch_rejected():
+    with pytest.raises(InvalidShape, match="must match shape rank 5"):
         _conv_tt(shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
                  target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0,
-                 valid_shape=[1, 4, 8, 8, 16])
+                 valid_shape=[-1, -1])
+
+
+@pytest.mark.parametrize("valid,match", [
+    ([1, 4, 8, 8, 17], "exceeds tile shape dimension 16"),
+    ([1, 4, 8, 8, 0], "must be positive or -1"),
+    ([1, 4, 8, 8, -2], "must be positive or -1"),
+])
+def test_conv_valid_shape_out_of_range_rejected(valid, match):
+    with pytest.raises(InvalidShape, match=match):
+        _conv_tt(shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+                 target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0,
+                 valid_shape=valid)
+
+
+def test_conv_set_validshape_all_dynamic_parses():
+    """One runtime value per shape dim; the all-dynamic declaration makes every dim settable."""
+
+    @pl.jit(auto_mutex=True)
+    def k(x: pl.Tensor[[64], pl.DT_FP16]):
+        tt = pl.TileType(
+            shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+            target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0,
+            valid_shape=[-1, -1, -1, -1, -1],
+        )
+        g = pl.make_tile_group(type=tt, addrs=0, depth=1, mutex_ids=[0])
+        pl.set_validshape(g.next(), [1, 4, 4, 4, 16])
+
+    ir_str = _ir_golden(k, "test_conv_set_validshape_all_dynamic")
+    assert "block.set_validshape" in ir_str
+
+
+def test_conv_set_validshape_group_broadcast_parses():
+    @pl.jit(auto_mutex=True)
+    def k(x: pl.Tensor[[64], pl.DT_FP16]):
+        tt = pl.TileType(
+            shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+            target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0,
+            valid_shape=[-1, -1, -1, -1, -1],
+        )
+        g = pl.make_tile_group(type=tt, addrs=0, depth=2, mutex_ids=[0, 1])
+        pl.set_validshape(g, [1, 4, 4, 4, 16])
+
+    program = _parse(k)
+    assert str(program).count("block.set_validshape") == 2
+
+
+def test_conv_set_validshape_without_declaration_parses():
+    # The IR TileType constructor normalizes an omitted valid_shape to all -1 (dynamic), the
+    # same as a 2-D tile, so an undeclared conv tile is runtime-settable as-is.
+    @pl.jit(auto_mutex=True)
+    def k(x: pl.Tensor[[64], pl.DT_FP16]):
+        tt = pl.TileType(
+            shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+            target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0,
+        )
+        g = pl.make_tile_group(type=tt, addrs=0, depth=1, mutex_ids=[0])
+        pl.set_validshape(g.next(), [1, 4, 4, 4, 16])
+
+    program = _parse(k)
+    assert "block.set_validshape" in str(program)
+
+
+def test_conv_set_validshape_rejects_static_declared_dim():
+    # A static valid dim keeps its compile-time value and is not runtime-settable (the 2-D
+    # rule, mirrored); a declared static dim therefore blocks the whole runtime set.
+    @pl.jit(auto_mutex=True)
+    def k(x: pl.Tensor[[64], pl.DT_FP16]):
+        tt = pl.TileType(
+            shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+            target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0,
+            valid_shape=[-1, -1, -1, -1, 16],
+        )
+        g = pl.make_tile_group(type=tt, addrs=0, depth=1, mutex_ids=[0])
+        pl.set_validshape(g.next(), [1, 4, 4, 4, 16])
+
+    with pytest.raises(InvalidOperation, match="cannot modify a TileType with static valid_shape"):
+        _parse(k)
+
+
+@pytest.mark.parametrize("values,match", [
+    ([1, 4, 4, 4, 0], "must be at least 1"),
+    ([1, 4, 4, 4, 17], "must be at most 16"),
+    ([1, 4, 4, 4], "requires 5 values"),
+])
+def test_conv_set_validshape_value_contract_rejected(values, match):
+    @pl.jit(auto_mutex=True)
+    def k(x: pl.Tensor[[64], pl.DT_FP16]):
+        tt = pl.TileType(
+            shape=[1, 4, 8, 8, 16], dtype=pl.DT_FP16,
+            target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0,
+            valid_shape=[-1, -1, -1, -1, -1],
+        )
+        g = pl.make_tile_group(type=tt, addrs=0, depth=1, mutex_ids=[0])
+        pl.set_validshape(g.next(), values)
+
+    with pytest.raises((InvalidVal, InvalidShape), match=match):
+        _parse(k)
+
+
+@pytest.mark.parametrize(
+    "shape, conv, values, match",
+    [
+        ([16, 16], False, 1, r"requires exactly 3 arguments, but got 2"),
+        ([16, 16], False, 3, r"requires exactly 3 arguments, but got 4"),
+        ([1, 4, 8, 8, 16], True, 4, r"requires exactly 6 arguments, but got 5"),
+        ([1, 4, 8, 8, 16], True, 6, r"requires exactly 6 arguments, but got 7"),
+    ],
+)
+def test_set_validshape_ir_builder_rejects_inexact_arity(shape, conv, values, match):
+    """The op registration itself demands the tile plus exactly rank-many values, so paths
+    that bypass the frontend (direct IR construction) fail at build time with the expected
+    count instead of at codegen."""
+    span = ir.Span.unknown()
+    hw = ir.HardwareInfo()
+    if conv:
+        hw.conv_layout = int(ir.Layout.NC1HWC0)
+    dims = [ir.ConstInt(d, ir.DataType.INT64, span) for d in shape]
+    tile = ir.Var("tile", ir.TileType(dims, ir.DataType.FP16, None, None, hw), span)
+    values = [ir.ConstInt(1, ir.DataType.INT64, span) for _ in range(values)]
+    with pytest.raises(RuntimeError, match=match):
+        ir.create_op_call("block.set_validshape", [tile, *values], {}, span)
 
 
 def test_conv_layout_rejects_pad_argument():

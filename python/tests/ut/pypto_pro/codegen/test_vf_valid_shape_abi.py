@@ -78,4 +78,4 @@ def test_vf_valid_shape_abi(mode, dynamic_row, dynamic_col, assert_golden):
         assert f"__simt_vf__ __launch_bounds__(32) inline void entry({signature})" in source
         assert f"cce::async_invoke<entry>(cce::dim3{{32, 1, 1}}, {', '.join(entry_args)});" in source
     if dynamic_row and dynamic_col:
-        assert "tile_0.tile.SetValidShape(rows_0, cols_0);" in source
+        assert "tile_0.tile.SetValidShape(static_cast<int64_t>(rows_0), static_cast<int64_t>(cols_0));" in source

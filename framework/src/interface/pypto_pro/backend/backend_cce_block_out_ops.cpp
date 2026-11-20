@@ -1186,18 +1186,29 @@ static std::string MakeBlockOutImg2ColCodegenCCE(const ir::CallPtr& op, codegen:
 }
 
 // ============================================================================
-// block.set_validshape  - args = [tile, row, col]
-// Emits: tile.SetValidShape(row, col);
+// block.set_validshape  - args = [tile, d0, ..., dN] (one per shape dim)
+// Emits: tile.SetValidShape(static_cast<int64_t>(d0), ..., static_cast<int64_t>(dN));
+// Every value is cast to int64_t: ConvTile's variadic SetValidShape is a template
+// whose static_assert demands int64_t for every argument (bare literals deduce
+// int), and the 2-D Tile's unsigned params take the same value through the
+// implicit conversion.
 // ============================================================================
 static std::string MakeBlockOutSetValidShapeCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
-        << "block.set_validshape: expected 3 args (tile, row, col), got " << op->args_.size();
-    std::string tile = cce::GetOperandAsCode(codegen, op->args_[0]);
-    std::string row = cce::GetOperandAsCode(codegen, op->args_[1]);
-    std::string col = cce::GetOperandAsCode(codegen, op->args_[2]);
-    codegen.Emit(tile + ".SetValidShape(" + row + ", " + col + ");");
+    auto tileType = ir::As<ir::TileType>(op->args_[0]->GetType());
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, tileType != nullptr)
+        << "block.set_validshape: expected a Tile as the first argument";
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1 + tileType->shape_.size())
+        << "block.set_validshape: expected " << (1 + tileType->shape_.size())
+        << " args (tile plus one value per shape dim), got " << op->args_.size();
+    std::string call = cce::GetOperandAsCode(codegen, op->args_[0]) + ".SetValidShape(";
+    for (size_t i = 1; i < op->args_.size(); ++i) {
+        std::string value = cce::GetOperandAsCode(codegen, op->args_[i]);
+        call += (i > 1 ? ", " : "");
+        call += "static_cast<int64_t>(" + value + ")";
+    }
+    codegen.Emit(call + ");");
     return "";
 }
 

@@ -1567,20 +1567,42 @@ def _ir_col_sum(self, out: Expr, src: Expr, tmp: Expr, *, span: Span | None = No
 
 
 def _validate_validshape_bounds(tile: Expr, valid_shape: Sequence[Expr]) -> None:
-    """Check each valid dimension against the tile's static bounds when available."""
-    tile_type = getattr(tile, "type", None)
-    if isinstance(tile_type, _IRTileType) and tile_type.tile_view is not None:
-        if any(isinstance(dim, ConstInt) and dim.value != -1 for dim in tile_type.tile_view.valid_shape):
-            raise InvalidOperation(
-                "set_validshape cannot modify a TileType with static valid_shape; "
-                "omit valid_shape or declare valid_shape=[-1, -1]"
-            )
+    """Check the set_validshape contract: a shared static-dim gate, one value per shape
+    dim (a 2-D tile passes its row/col), and a per-form lower bound.
 
-    for i, (dim_name, dim) in enumerate(zip(("row", "col"), valid_shape, strict=True)):
-        upper_bound = _const_int_value(tile_type.shape[i]) if isinstance(tile_type, _IRTileType) else None
-        # Zero denotes an empty valid region, e.g. a fillpad source.
+    The IR TileType constructor normalizes an omitted valid_shape to all -1 (dynamic),
+    so only an all-dynamic tile (omitted or all -1) is runtime-settable here.
+
+    The lower bound branches per form: a conv tile (rank != 2) requires each value in
+    (0, dim] -- ConvTile has no 0-width region and no fillpad -- while a 2-D tile also
+    allows 0, an empty valid region being a legal fillpad state.
+    """
+    tile_type = getattr(tile, "type", None)
+    if not isinstance(tile_type, _IRTileType):
+        # Not a statically-typed tile (MutexTileType inherits TileType, so every tile
+        # passes): the IR op's type deduction rejects it with the authoritative error.
+        return
+    # A conv tile is rank != 2; every non-conv tile is rank-2 by the IR gate.
+    conv = len(tile_type.shape) != 2
+
+    if tile_type.tile_view is not None and any(
+        isinstance(dim, ConstInt) and dim.value != -1 for dim in tile_type.tile_view.valid_shape
+    ):
+        raise InvalidOperation(
+            "set_validshape cannot modify a TileType with static valid_shape; "
+            "only an all-dynamic tile (valid_shape omitted or all -1) is runtime-settable"
+        )
+
+    if len(valid_shape) != len(tile_type.shape):
+        raise InvalidShape(
+            f"set_validshape requires {len(tile_type.shape)} values, got {len(valid_shape)}."
+        )
+    for i, dim in enumerate(valid_shape):
         require_int(
-            dim, subject=f"set_validshape {dim_name}", lower_bound=0, upper_bound=upper_bound,
+            dim,
+            subject=f"set_validshape dim[{i}]",
+            lower_bound=1 if conv else 0,
+            upper_bound=_const_int_value(tile_type.shape[i]),
         )
 
 
@@ -1591,9 +1613,9 @@ def _ir_set_validshape(
     span: Span | None = None,
 ) -> Expr:
     actual_span = span or _span()
-    shape_0, shape_1 = _normalize_2d_sequence(shape, "shape", actual_span)
-    _validate_validshape_bounds(tile, (shape_0, shape_1))
-    return _ir_core.create_op_call(block_ir_op("set_validshape"), [tile, shape_0, shape_1], {}, actual_span)
+    dims = list(_to_make_tuple(shape, actual_span).elements)
+    _validate_validshape_bounds(tile, dims)
+    return _ir_core.create_op_call(block_ir_op("set_validshape"), [tile, *dims], {}, actual_span)
 
 
 def _check_scalar_access_supported(op_name: str, container: Expr) -> None:
@@ -2504,13 +2526,6 @@ def _validate_conv_tile_type(tt: "TileType") -> None:
         raise InvalidVal(
             f"conv-layout tile ({tt.layout.name}) is a pto::ConvTile; drop the 'fractal' argument "
             f"(got fractal={tt.fractal})."
-        )
-    if tt.valid_shape is not None:
-        raise InvalidVal(
-            f"conv-layout tile ({tt.layout.name}) is a pto::ConvTile; drop the 'valid_shape' argument "
-            f"(valid_shape is not supported by the current ConvTile declaration-and-allocation scope; "
-            f"pto::ConvTile's ValidShape serves the format-conversion data path, which is not wired yet; "
-            f"got valid_shape={tt.valid_shape!r})."
         )
     if tt.pad is not None:
         raise InvalidVal(

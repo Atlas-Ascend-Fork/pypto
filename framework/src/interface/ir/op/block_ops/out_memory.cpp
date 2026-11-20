@@ -361,17 +361,23 @@ REGISTER_OP("block.fillpad_expand")
         return DeduceBlockOutFillPadType(args, kwargs, "block.fillpad_expand", FillPadMode::EXPAND);
     });
 
-// block.set_validshape: (tile, row, col) -> NoneType
+// block.set_validshape: (tile, d0, ..., dN) -> NoneType
 REGISTER_OP("block.set_validshape")
     .set_op_category("BlockOp")
     .set_description("Update valid-shape metadata on a dynamic tile in place. "
-                     "Emits a pto.set_validshape instruction to set the runtime valid row/col.")
+                     "Emits a pto.set_validshape instruction to set one runtime valid extent per shape dim.")
     .add_argument("tile", "Dynamic tile buffer to update (TileType)")
-    .add_argument("row", "Runtime valid row count (ScalarType or constant)")
-    .add_argument("col", "Runtime valid column count (ScalarType or constant)")
-    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
+    .add_argument("...", "Runtime valid extents, one per shape dim (ScalarType or constant)")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceBlockOutType(args, kwargs, "block.set_validshape", 3);
+        // The tile passes one value per shape dim, so the expected arity is the tile plus
+        // exactly rank-many values.
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, !args.empty())
+            << "The operator block.set_validshape requires the tile plus one value per shape dim";
+        auto tileType = As<TileType>(args[0]->GetType());
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, tileType)
+            << "The operator block.set_validshape requires first argument (out) to be TileType";
+        return DeduceBlockOutType(args, kwargs, "block.set_validshape", 1 + tileType->shape_.size());
     });
 
 // block.init_output: (tensor, offset, size, value) -> void

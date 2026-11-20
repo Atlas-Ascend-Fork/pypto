@@ -231,6 +231,8 @@ std::string TypeConverter::ConvertConvTileType(const ir::TileTypePtr& tileType) 
 
     // BufferSize is the element count (the layout-shaped dimensions are already the packed
     // physical form), matching pto TileStorageBytes<ConvTile> = bufferSize * sizeof(DType).
+    // Every shape dim is a compile-time constant: block.make_mutex_tile's deduce (the single
+    // allocation path for tiles) CHECKs ConstInt per dim before the type exists in a program.
     int64_t bufferSize = 1;
     std::string shapeParams;
     for (size_t i = 0; i < tileType->shape_.size(); ++i) {
@@ -239,9 +241,22 @@ std::string TypeConverter::ConvertConvTileType(const ir::TileTypePtr& tileType) 
         shapeParams += (i ? ", " : "") + std::to_string(dim->value_);
     }
 
+    // ValidShape_ (the optional 6th template parameter): the TileType constructor
+    // normalizes an omitted valid_shape to all -1, so the 6th parameter is always
+    // emitted -- a conv tile is runtime-settable unless a dim is declared static.
+    // Each dim lowers to its constant, or -1 when it is DYNAMIC or only known at
+    // runtime (non-constant expression), set at runtime by SetValidShape.
+    const auto& validShape = tileType->tileView_->validShape; // NOLINT(bugprone-unchecked-optional-access)
+    std::string validParams;
+    for (size_t i = 0; i < validShape.size(); ++i) {
+        auto dim = ir::As<ir::ConstInt>(validShape[i]);
+        const int64_t value = (dim != nullptr) ? dim->value_ : -1;
+        validParams += (i ? ", " : "") + std::to_string(value);
+    }
+
     std::ostringstream oss;
     oss << "ConvTile<TileType::Mat, " << tileType->dtype_.ToCTypeString() << ", " << bufferSize
-        << ", pto::" << ptoLayout << ", ConvTileShape<" << shapeParams << ">>";
+        << ", pto::" << ptoLayout << ", ConvTileShape<" << shapeParams << ">, ConvTileShape<" << validParams << ">>";
     return oss.str();
 }
 

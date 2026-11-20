@@ -11,11 +11,14 @@
 """A conv-layout TileType lowers to a multi-dim pto::ConvTile, not a 2-D pto::Tile.
 
 The frontend selects the pto::ConvTile path from the layout alone; codegen must emit
-``ConvTile<TileType::Mat, <ctype>, <BufferSize>, pto::Layout::<X>, ConvTileShape<...>>`` for it
-(and keep emitting ``Tile<...>`` for every other tile). Tiles are declared at their allocation
-site as ``SyncedTile<PtoTile, N>``, so the ConvTile is the synced tile's underlying type and its
-instance passes no 2-D ``(rows, cols)`` constructor arguments. These read the generated C++
-directly, so they need no device and no bisheng.
+``ConvTile<TileType::Mat, <ctype>, <BufferSize>, pto::Layout::<X>, ConvTileShape<...>,
+ConvTileShape<...>>`` for it (the 6th ValidShape_ parameter is always present: the IR
+constructor normalizes an omitted valid_shape to all -1 / DYNAMIC, so every conv tile is
+runtime-settable unless a static dim is declared) and keep emitting ``Tile<...>`` for every
+other tile. Tiles are declared at their allocation site as ``SyncedTile<PtoTile, N>``, so
+the ConvTile is the synced tile's underlying type and its instance passes no 2-D
+``(rows, cols)`` constructor arguments. These read the generated C++ directly, so they need
+no device and no bisheng.
 """
 
 import os
@@ -114,18 +117,63 @@ def _weight3d_kernel(x: pl.Tensor[[64], pl.DT_FP16]):
     _ = g.next()
 
 
+@pl.jit(auto_mutex=True)
+def _fmap_valid_kernel(x: pl.Tensor[[64], pl.DT_FP16]):
+    tt = pl.TileType(
+        shape=[1, 4, 8, 8, 16],
+        dtype=pl.DT_FP16,
+        target_memory=pl.MemorySpace.Mat,
+        layout=pl.Layout.NC1HWC0,
+        valid_shape=[-1, -1, -1, -1, -1],
+    )
+    g = pl.make_tile_group(type=tt, addrs=0, depth=1, mutex_ids=[0])
+    _ = g.next()
+
+
+@pl.jit(auto_mutex=True)
+def _weight_valid_mixed_kernel(x: pl.Tensor[[64], pl.DT_FP16]):
+    tt = pl.TileType(
+        shape=[64, 4, 16, 16],
+        dtype=pl.DT_FP16,
+        target_memory=pl.MemorySpace.Mat,
+        layout=pl.Layout.FRACTAL_Z,
+        valid_shape=[-1, -1, 16, 16],
+    )
+    g = pl.make_tile_group(type=tt, addrs=0, depth=1, mutex_ids=[0])
+    _ = g.next()
+
+
+@pl.jit(auto_mutex=True)
+def _fmap_set_validshape_kernel(x: pl.Tensor[[64], pl.DT_FP16]):
+    tt = pl.TileType(
+        shape=[1, 4, 8, 8, 16],
+        dtype=pl.DT_FP16,
+        target_memory=pl.MemorySpace.Mat,
+        layout=pl.Layout.NC1HWC0,
+        valid_shape=[-1, -1, -1, -1, -1],
+    )
+    g = pl.make_tile_group(type=tt, addrs=0, depth=1, mutex_ids=[0])
+    pl.set_validshape(g.next(), [1, 4, 4, 4, 16])
+
+
 def test_conv_nc1hwc0_lowers_to_conv_tile():
     # BufferSize = 1*4*8*8*16 = 4096 elements; C0 = 16 for FP16.
     src = _source_golden(_fmap_kernel, "fmap_nc1hwc0")
     alias = _conv_tile_alias(src, "g")
-    assert alias == ("ConvTile<TileType::Mat, half, 4096, pto::Layout::NC1HWC0, ConvTileShape<1, 4, 8, 8, 16>>")
+    assert alias == (
+        "ConvTile<TileType::Mat, half, 4096, pto::Layout::NC1HWC0, ConvTileShape<1, 4, 8, 8, 16>, "
+        "ConvTileShape<-1, -1, -1, -1, -1>>"
+    )
 
 
 def test_conv_fractal_z_lowers_to_conv_tile():
     # BufferSize = 64*4*16*16 = 65536 elements.
     src = _source_golden(_weight_kernel, "weight_fractal_z")
     alias = _conv_tile_alias(src, "g")
-    assert alias == ("ConvTile<TileType::Mat, half, 65536, pto::Layout::FRACTAL_Z, ConvTileShape<64, 4, 16, 16>>")
+    assert alias == (
+        "ConvTile<TileType::Mat, half, 65536, pto::Layout::FRACTAL_Z, ConvTileShape<64, 4, 16, 16>, "
+        "ConvTileShape<-1, -1, -1, -1>>"
+    )
 
 
 def test_conv_ndc1hwc0_lowers_to_conv_tile():
@@ -133,7 +181,8 @@ def test_conv_ndc1hwc0_lowers_to_conv_tile():
     src = _source_golden(_fmap3d_kernel, "fmap3d_ndc1hwc0")
     alias = _conv_tile_alias(src, "g")
     assert alias == (
-        "ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>>"
+        "ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>, "
+        "ConvTileShape<-1, -1, -1, -1, -1, -1>>"
     )
 
 
@@ -142,7 +191,8 @@ def test_conv_fractal_z_3d_lowers_to_conv_tile():
     src = _source_golden(_weight3d_kernel, "wgt3d_fractal_z_3d")
     alias = _conv_tile_alias(src, "g")
     assert alias == (
-        "ConvTile<TileType::Mat, half, 65536, pto::Layout::FRACTAL_Z_3D, ConvTileShape<64, 4, 16, 16>>"
+        "ConvTile<TileType::Mat, half, 65536, pto::Layout::FRACTAL_Z_3D, ConvTileShape<64, 4, 16, 16>, "
+        "ConvTileShape<-1, -1, -1, -1>>"
     )
 
 
@@ -169,3 +219,34 @@ def test_conv_tile_declared_without_2d_ctor_args():
         (_weight3d_kernel, "wgt3d_fractal_z_3d"),
     ):
         assert _conv_tile_decl_args(_source_golden(kernel, golden), "g") == ""
+
+
+def test_conv_all_dynamic_valid_shape_emits_sixth_template_param():
+    # An all-dynamic valid_shape lowers to the ValidShape_ template parameter with every dim
+    # at -1 (DYNAMIC); the declaration is what makes each dim runtime-settable.
+    src = _source_golden(_fmap_valid_kernel, "fmap_valid_all_dynamic")
+    alias = _conv_tile_alias(src, "g")
+    assert alias == (
+        "ConvTile<TileType::Mat, half, 4096, pto::Layout::NC1HWC0, ConvTileShape<1, 4, 8, 8, 16>, "
+        "ConvTileShape<-1, -1, -1, -1, -1>>"
+    )
+
+
+def test_conv_mixed_valid_shape_emits_static_constants():
+    # A static valid dim keeps its compile-time value in the template; -1 dims stay dynamic.
+    src = _source_golden(_weight_valid_mixed_kernel, "wgt_valid_mixed_fractal_z")
+    alias = _conv_tile_alias(src, "g")
+    assert alias == (
+        "ConvTile<TileType::Mat, half, 65536, pto::Layout::FRACTAL_Z, ConvTileShape<64, 4, 16, 16>, "
+        "ConvTileShape<-1, -1, 16, 16>>"
+    )
+
+
+def test_conv_set_validshape_emits_one_value_per_dim():
+    # The 2-D form passes (row, col); a conv tile passes one value per shape dim, which is what
+    # pto::ConvTile::SetValidShape expects (argument count == the dynamic dim count), with
+    # every value cast to int64_t (bare literals deduce int and fail the template's
+    # static_assert).
+    src = _source_golden(_fmap_set_validshape_kernel, "fmap_set_validshape")
+    assert re.search(r"\.SetValidShape\(\n?\s*static_cast<int64_t>\(1\), ", src) is not None
+    assert re.search(r"static_cast<int64_t>\(16\)\n?\s*\);", src) is not None

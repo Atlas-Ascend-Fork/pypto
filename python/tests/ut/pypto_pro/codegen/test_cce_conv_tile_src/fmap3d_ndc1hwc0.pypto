@@ -13,10 +13,10 @@ __aicore__ inline void _fmap3d_kernel_impl_cube(__gm__ half* x_0_ptr)
 {
 
     int64_t _tuple_anchor_0_0[] = {static_cast<int64_t>(0)};
-    using _tg_g_tiles_0_0_Type = SyncedTile<ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>>, 1>;
+    using _tg_g_tiles_0_0_Type = SyncedTile<ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>, ConvTileShape<-1, -1, -1, -1, -1, -1>>, 1>;
     _tg_g_tiles_0_0_Type _tg_g_tiles_0_0{_tg_g_tiles_0_0_Type::PtoTile(), {0}};
     TASSIGN(_tg_g_tiles_0_0.tile, 0x0);
-    SyncedTile<ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>>, 1> _tg_g_tiles_0[] = {static_cast<SyncedTile<ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>>, 1>>(_tg_g_tiles_0_0)};
+    SyncedTile<ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>, ConvTileShape<-1, -1, -1, -1, -1, -1>>, 1> _tg_g_tiles_0[] = {static_cast<SyncedTile<ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>, ConvTileShape<-1, -1, -1, -1, -1, -1>>, 1>>(_tg_g_tiles_0_0)};
     return;
 }
 #endif
@@ -36,10 +36,10 @@ __aicore__ inline void _fmap3d_kernel_impl_vector(__gm__ half* x_0_ptr)
 {
 
     int64_t _tuple_anchor_0_0[] = {static_cast<int64_t>(0)};
-    using _tg_g_tiles_0_0_Type = SyncedTile<ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>>, 0>;
+    using _tg_g_tiles_0_0_Type = SyncedTile<ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>, ConvTileShape<-1, -1, -1, -1, -1, -1>>, 0>;
     _tg_g_tiles_0_0_Type _tg_g_tiles_0_0{_tg_g_tiles_0_0_Type::PtoTile(), {}};
     TASSIGN(_tg_g_tiles_0_0.tile, 0x0);
-    SyncedTile<ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>>, 0> _tg_g_tiles_0[] = {static_cast<SyncedTile<ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>>, 0>>(_tg_g_tiles_0_0)};
+    SyncedTile<ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>, ConvTileShape<-1, -1, -1, -1, -1, -1>>, 0> _tg_g_tiles_0[] = {static_cast<SyncedTile<ConvTile<TileType::Mat, half, 8192, pto::Layout::NDC1HWC0, ConvTileShape<1, 2, 4, 8, 8, 16>, ConvTileShape<-1, -1, -1, -1, -1, -1>>, 0>>(_tg_g_tiles_0_0)};
     return;
 }
 #endif

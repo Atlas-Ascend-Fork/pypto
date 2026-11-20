@@ -506,9 +506,9 @@ def test_set_validshape_rejects_static_declared_valid_shape():
 
 
 @pytest.mark.parametrize("row,error,match", [
-    (-1, InvalidVal, "set_validshape row must be at least 0"),
-    (65, InvalidVal, "set_validshape row must be at most 64"),
-    (1.5, InvalidType, "set_validshape row must be an integer scalar"),
+    (-1, InvalidVal, r"set_validshape dim\[0\] must be at least 0"),
+    (65, InvalidVal, r"set_validshape dim\[0\] must be at most 64"),
+    (1.5, InvalidType, r"set_validshape dim\[0\] must be an integer scalar"),
 ])
 def test_set_validshape_checks_integer_dimensions(row, error, match):
     from pypto_pro.ir.op.block_ops import _ir_set_validshape

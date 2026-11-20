@@ -131,6 +131,39 @@ TEST_F(IoTextDumpRoundTripTest, ConvTileTypePreservesConvLayout)
     EXPECT_EQ(TextDumpType(plain_loaded), plain_text);
 }
 
+TEST_F(IoTextDumpRoundTripTest, ConvTileTypePreservesValidShape)
+{
+    // A conv tile with a declared valid_shape round-trips the N-dim tile_view (each dim a
+    // constant or -1/DYNAMIC); codegen lowers it to the optional ValidShape_ template param.
+    const auto shape = std::vector<ExprPtr>{
+        std::make_shared<ConstInt>(1, DataType::INT64, Sp()), std::make_shared<ConstInt>(4, DataType::INT64, Sp()),
+        std::make_shared<ConstInt>(8, DataType::INT64, Sp()), std::make_shared<ConstInt>(8, DataType::INT64, Sp()),
+        std::make_shared<ConstInt>(16, DataType::INT64, Sp())};
+    const auto valid = std::vector<ExprPtr>{
+        std::make_shared<ConstInt>(-1, DataType::INT64, Sp()), std::make_shared<ConstInt>(-1, DataType::INT64, Sp()),
+        std::make_shared<ConstInt>(-1, DataType::INT64, Sp()), std::make_shared<ConstInt>(-1, DataType::INT64, Sp()),
+        std::make_shared<ConstInt>(-1, DataType::INT64, Sp())};
+    HardwareInfo hw;
+    hw.convLayout = static_cast<int>(Layout::NC1HWC0);
+    auto type = std::make_shared<TileType>(shape, DataType::FP16, std::nullopt, TileView(valid), hw);
+    std::string error;
+    const auto text = TextDumpType(type);
+    EXPECT_NE(text.find("tile_view<-1 x -1 x -1 x -1 x -1>"), std::string::npos) << text;
+    auto loaded = TextLoadType(text, error);
+    ASSERT_TRUE(error.empty()) << error;
+    ASSERT_NE(loaded, nullptr);
+    EXPECT_EQ(TextDumpType(loaded), text);
+    auto loaded_tile = std::dynamic_pointer_cast<const TileType>(loaded);
+    ASSERT_NE(loaded_tile, nullptr);
+    ASSERT_TRUE(loaded_tile->tileView_.has_value());
+    ASSERT_EQ(loaded_tile->tileView_->validShape.size(), 5U);
+    for (const auto& dim : loaded_tile->tileView_->validShape) {
+        auto value = std::dynamic_pointer_cast<const ConstInt>(dim);
+        ASSERT_NE(value, nullptr);
+        EXPECT_EQ(value->value_, -1);
+    }
+}
+
 TEST_F(IoTextDumpRoundTripTest, RejectsInvalidConvLayoutName)
 {
     // The 6th hw_info field's domain is exactly the conv layouts: an unknown name must be

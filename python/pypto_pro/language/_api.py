@@ -1445,6 +1445,11 @@ def set_validshape(tile: "Tile | TileGroup", /, shape: Shape) -> None:
     """Set the valid shape of a Tile or tile_group (for partial-tile / tail-block operations).
 
     When a tile_group is passed, valid_shape is set on all tiles in the group.
+
+    A conv-layout tile takes one value per shape dimension. Its TileType
+    must carry an all-dynamic valid shape (``[-1, ..., -1]`` -- the default
+    when valid_shape is omitted), and every value must be within ``(0, dim]``
+    per dimension -- a conv tile has no 0-width empty region.
     """
 
 @_api_decl

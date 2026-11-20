@@ -1167,10 +1167,10 @@ def test_every_shape_a_dump_is_written_in_is_accepted():
 
 
 @pytest.mark.parametrize("keyword", [False, True])
-@pytest.mark.parametrize("dimension", ["row", "col"])
+@pytest.mark.parametrize("dimension", ["dim[0]", "dim[1]"])
 def test_validshape_bounds_report_the_dimension_at_the_call(keyword, dimension):
-    row_value = 17 if dimension == "row" else 16
-    col_value = 17 if dimension == "col" else 16
+    row_value = 17 if dimension == "dim[0]" else 16
+    col_value = 17 if dimension == "dim[1]" else 16
 
     @pl.jit(arch="3510", auto_mutex=False)
     def kernel(x: pl.Tensor[[1], pl.DT_FP16]):

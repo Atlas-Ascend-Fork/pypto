@@ -83,6 +83,14 @@ ir::TypePtr MakeTileType(std::vector<int64_t> shape = {16, 16}, ir::DataType dty
     return std::make_shared<const ir::MutexTileType>(ir::TileType(shape, dtype, memref, std::nullopt, hw), 0);
 }
 
+ir::TypePtr MakeConvTileType(const std::vector<int64_t>& shape, ir::Layout layout = ir::Layout::NC1HWC0,
+                             ir::DataType dtype = ir::DataType::FP16)
+{
+    ir::HardwareInfo hw;
+    hw.convLayout = static_cast<int>(layout);
+    return std::make_shared<const ir::MutexTileType>(ir::TileType(shape, dtype, std::nullopt, std::nullopt, hw), 0);
+}
+
 ir::TypePtr MakeTensorType(std::vector<int64_t> shape = {32, 32}, ir::DataType dtype = ir::DataType::FP16)
 {
     return std::make_shared<const ir::TensorType>(shape, dtype, std::nullopt);
@@ -734,7 +742,33 @@ TEST(BackendCCEBlockOutOps, SetValidShape)
     auto tile = MakeTileType();
     auto call = MakeCall("block.set_validshape", {MakeVar("tile", tile), MakeConstInt(16), MakeConstInt(8)});
     auto code = RunCodegen("block.set_validshape", call);
-    EXPECT_CONTAINS(code, "tile.tile.SetValidShape(16, 8);");
+    EXPECT_CONTAINS(code, "tile.tile.SetValidShape(static_cast<int64_t>(16), static_cast<int64_t>(8));");
+}
+
+TEST(BackendCCEBlockOutOps, SetValidShapeConvTileEmitsOneValuePerDim)
+{
+    // A conv tile passes one value per shape dim; pto::ConvTile::SetValidShape is variadic
+    // and takes exactly the DYNAMIC-dim count of ValidShape_, with every argument cast to
+    // int64_t (bare literals would deduce int and fail the template's static_assert).
+    auto conv = MakeConvTileType({1, 4, 8, 8, 16});
+    auto call = MakeCall("block.set_validshape", {MakeVar("tile", conv), MakeConstInt(1), MakeConstInt(4),
+                                                  MakeConstInt(4), MakeConstInt(4), MakeConstInt(16)});
+    auto code = RunCodegen("block.set_validshape", call);
+    EXPECT_CONTAINS(code, "tile.tile.SetValidShape(static_cast<int64_t>(1), static_cast<int64_t>(4), "
+                          "static_cast<int64_t>(4), static_cast<int64_t>(4), static_cast<int64_t>(16));");
+}
+
+TEST(BackendCCEBlockOutOps, SetValidShapeRejectsArgCountMismatch)
+{
+    // Two values for a rank-5 conv tile (and vice versa: five values for a 2-D tile) are
+    // rejected at codegen instead of reaching bisheng as a pto static_assert.
+    auto conv = MakeConvTileType({1, 4, 8, 8, 16});
+    auto short_call = MakeCall("block.set_validshape", {MakeVar("tile", conv), MakeConstInt(1), MakeConstInt(4)});
+    EXPECT_ANY_THROW((void)RunCodegen("block.set_validshape", short_call));
+    auto tile = MakeTileType();
+    auto long_call = MakeCall("block.set_validshape", {MakeVar("tile", tile), MakeConstInt(1), MakeConstInt(4),
+                                                       MakeConstInt(4), MakeConstInt(4), MakeConstInt(16)});
+    EXPECT_ANY_THROW((void)RunCodegen("block.set_validshape", long_call));
 }
 
 // ---------------------------------------------------------------------------
