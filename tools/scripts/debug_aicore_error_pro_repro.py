@@ -1103,8 +1103,12 @@ def main():
     os.makedirs(args.out, exist_ok=True)
     logging.info(f"output dir = {args.out}")
 
+    # ADDITIONAL mode can also write native exception_info.* files.
+    dump_names = sorted(os.listdir(dump_dir))
+    dump_names.sort(key=lambda name: not os.path.isfile(
+        os.path.join(dump_dir, name.split(".")[0] + "_launch_args.json")))
     dump_file = None
-    for fname in sorted(os.listdir(dump_dir)):
+    for fname in dump_names:
         fpath = os.path.join(dump_dir, fname)
         if os.path.isfile(fpath) and not fname.endswith(("_host.o", "_debug.o", ".so", ".cpp", ".h", ".json")):
             dump_file = fpath

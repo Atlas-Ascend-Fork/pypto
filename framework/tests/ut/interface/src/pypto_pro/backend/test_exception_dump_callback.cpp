@@ -35,7 +35,8 @@ int32_t pro_test_exception_dump_callback_with_runtime_info(const char* kernelNam
                                                            void* bin, void** outArgAddr, uint32_t* outArgSize,
                                                            void** outBin, char* outKernelName,
                                                            uint32_t kernelNameBufSize, uint32_t* outExtraTensorNum,
-                                                           uint32_t* outMode);
+                                                           uint32_t* outMode, uint32_t dumpCapacity = 1U,
+                                                           uint32_t* outRealSize = nullptr);
 }
 
 namespace {
@@ -173,12 +174,57 @@ TEST(ExceptionDumpCallbackTest, CallbackReconstructsDynamicTensorFromRegisteredS
                   outKernelName, sizeof(outKernelName), &extraTensorNum, &mode),
               0);
 
-    EXPECT_EQ(outArgAddr, launchArgs);
-    EXPECT_EQ(outArgSize, sizeof(launchArgs));
-    EXPECT_EQ(outBin, kernelBinary);
+    EXPECT_EQ(outArgAddr, nullptr);
+    EXPECT_EQ(outArgSize, 0U);
+    EXPECT_EQ(outBin, nullptr);
     EXPECT_STREQ(outKernelName, kernelName);
     EXPECT_EQ(extraTensorNum, 2U);
-    EXPECT_EQ(mode, 1U);
+    EXPECT_EQ(mode, 2U); // ADDITIONAL retains CANN's native all-core diagnostics.
+}
+
+TEST(ExceptionDumpCallbackTest, MultiCoreCapacitySupplementsNativeDiagnosticsAndRebuildsOnlyOnce)
+{
+    const std::string workPath = testing::TempDir();
+    const std::string markerPath = workPath + "/pypto_exception_rebuild_count";
+    std::remove(markerPath.c_str());
+    const char kernelName[] = "PyPTO_MultiCoreSnapshotKernel";
+    const std::string debugCmd = "printf x >> '" + markerPath + "'";
+    RegisterDynamicSchema(kernelName, debugCmd.c_str());
+    uint64_t launchArgs[] = {0x1000U, 17U, 0x2000U, 8U};
+    uint8_t kernelBinary[64] = {};
+
+    for (uint32_t capacity : {0U, 56U, 1U}) {
+        uint32_t realSize = 99U;
+        uint32_t extraTensorNum = 99U;
+        uint32_t mode = 99U;
+        void* outArgAddr = launchArgs;
+        uint32_t outArgSize = sizeof(launchArgs);
+        void* outBin = kernelBinary;
+        ASSERT_EQ(pro_test_exception_dump_callback_with_runtime_info(
+                      kernelName, launchArgs, sizeof(launchArgs), kernelBinary, &outArgAddr, &outArgSize, &outBin,
+                      nullptr, 0, &extraTensorNum, &mode, capacity, &realSize),
+                  0);
+        EXPECT_EQ(realSize, capacity == 0U ? 0U : 1U);
+        EXPECT_EQ(extraTensorNum, capacity == 0U ? 0U : 2U);
+        EXPECT_EQ(mode, capacity == 0U ? 0U : 2U);
+        EXPECT_EQ(outArgAddr, nullptr);
+        EXPECT_EQ(outArgSize, 0U);
+        EXPECT_EQ(outBin, nullptr);
+        if (capacity == 0U) {
+            FILE* marker = std::fopen(markerPath.c_str(), "rb");
+            EXPECT_EQ(marker, nullptr);
+            if (marker != nullptr) {
+                std::fclose(marker);
+            }
+        }
+    }
+    FILE* marker = std::fopen(markerPath.c_str(), "rb");
+    ASSERT_NE(marker, nullptr);
+    EXPECT_EQ(std::fgetc(marker), 'x');
+    EXPECT_EQ(std::fgetc(marker), EOF);
+    std::fclose(marker);
+    std::remove(markerPath.c_str());
+    EXPECT_EQ(pro_unregister_dump_schema(kernelName), 0);
 }
 
 TEST(ExceptionDumpCallbackTest, CallbackRejectsInvalidRuntimeArgumentsAndTensorExtents)
@@ -200,17 +246,17 @@ TEST(ExceptionDumpCallbackTest, CallbackRejectsInvalidRuntimeArgumentsAndTensorE
     check(launchArgs, 0U, 0U, 0U);
     check(launchArgs, 7U, 0U, 0U);
     check(launchArgs, 1024U * 1024U + 8U, 0U, 0U);
-    check(launchArgs, sizeof(launchArgs) - sizeof(uint64_t), 1U, 1U); // Missing dynamic extent.
-    check(launchArgs, 2U * sizeof(uint64_t), 0U, 1U);                 // Both Tensor and Ptr slots are incomplete.
+    check(launchArgs, sizeof(launchArgs) - sizeof(uint64_t), 1U, 2U); // Missing dynamic extent.
+    check(launchArgs, 2U * sizeof(uint64_t), 0U, 2U);                 // Both Tensor and Ptr slots are incomplete.
     launchArgs[3] = 0U;
-    check(launchArgs, sizeof(launchArgs), 1U, 1U);
+    check(launchArgs, sizeof(launchArgs), 1U, 2U);
     launchArgs[3] = static_cast<uint64_t>(INT64_MAX);
-    check(launchArgs, sizeof(launchArgs), 1U, 1U); // 4 * extent overflows uint64_t.
+    check(launchArgs, sizeof(launchArgs), 1U, 2U); // 4 * extent overflows uint64_t.
     launchArgs[3] = 8U;
     launchArgs[0] = 0U;
-    check(launchArgs, sizeof(launchArgs), 1U, 1U);
+    check(launchArgs, sizeof(launchArgs), 1U, 2U);
     launchArgs[2] = 0U;
-    check(launchArgs, sizeof(launchArgs), 0U, 1U);
+    check(launchArgs, sizeof(launchArgs), 0U, 2U);
     EXPECT_EQ(pro_unregister_dump_schema(kernelName), 0);
 }
 
@@ -229,7 +275,7 @@ TEST(ExceptionDumpCallbackTest, CallbackMatchesMangledKernelName)
               0);
     EXPECT_STREQ(outKernelName, kernelName);
     EXPECT_EQ(extraTensorNum, 2U);
-    EXPECT_EQ(mode, 1U);
+    EXPECT_EQ(mode, 2U);
 }
 
 TEST(ExceptionDumpCallbackTest, CallbackWritesLaunchMetadataFromRuntimeArguments)
@@ -255,10 +301,10 @@ TEST(ExceptionDumpCallbackTest, CallbackWritesLaunchMetadataFromRuntimeArguments
                                                                  &outArgAddr, &outArgSize, nullptr, nullptr, 0,
                                                                  &extraTensorNum, &mode),
               0);
-    EXPECT_EQ(outArgAddr, launchArgs);
-    EXPECT_EQ(outArgSize, sizeof(launchArgs));
+    EXPECT_EQ(outArgAddr, nullptr);
+    EXPECT_EQ(outArgSize, 0U);
     EXPECT_EQ(extraTensorNum, 2U);
-    EXPECT_EQ(mode, 1U);
+    EXPECT_EQ(mode, 2U);
 
     const std::string metaPath = dumpDir + "/PyPTO_MetadataKernel_launch_args.json";
     FILE* file = std::fopen(metaPath.c_str(), "rb");

@@ -37,7 +37,6 @@ struct ExceptionLaunchInfo {
     std::string kernelName;
     void* argAddr = nullptr;
     uint32_t argsize = 0U;
-    void* bin = nullptr;
 };
 
 // ACL exposes exception arguments through accessors, so this library does not
@@ -46,13 +45,11 @@ struct AclExceptionApi {
     using GetArgs = int32_t (*)(const void*, void**, uint32_t*);
     using GetFuncHandle = int32_t (*)(const void*, void**);
     using GetFunctionName = int32_t (*)(void*, uint32_t, char*);
-    using FunctionGetBinary = int32_t (*)(void*, void**);
     using Memcpy = int32_t (*)(void*, size_t, const void*, size_t, int32_t);
 
     GetArgs getArgs = nullptr;
     GetFuncHandle getFuncHandle = nullptr;
     GetFunctionName getFunctionName = nullptr;
-    FunctionGetBinary functionGetBinary = nullptr;
     Memcpy memcpy = nullptr;
 };
 
@@ -69,8 +66,6 @@ static const AclExceptionApi& GetAclExceptionApi()
             dlsym(handle, "aclrtGetFuncHandleFromExceptionInfo"));
         result.getFunctionName = reinterpret_cast<AclExceptionApi::GetFunctionName>(
             dlsym(handle, "aclrtGetFunctionName"));
-        result.functionGetBinary = reinterpret_cast<AclExceptionApi::FunctionGetBinary>(
-            dlsym(handle, "aclrtFunctionGetBinary"));
         result.memcpy = reinterpret_cast<AclExceptionApi::Memcpy>(dlsym(RTLD_DEFAULT, "aclrtMemcpy"));
         if (result.memcpy == nullptr) {
             result.memcpy = reinterpret_cast<AclExceptionApi::Memcpy>(dlsym(handle, "aclrtMemcpy"));
@@ -84,15 +79,14 @@ static bool GetKernelExceptionArgs(const void* exceptionInfo, ExceptionLaunchInf
 {
     const auto& api = GetAclExceptionApi();
     if (exceptionInfo == nullptr || api.getArgs == nullptr || api.getFuncHandle == nullptr ||
-        api.getFunctionName == nullptr || api.functionGetBinary == nullptr) {
+        api.getFunctionName == nullptr) {
         return false;
     }
     void* funcHandle = nullptr;
     char kernelName[MAX_KERNEL_BUF_LEN] = {};
     if (api.getArgs(exceptionInfo, &info.argAddr, &info.argsize) != 0 ||
         api.getFuncHandle(exceptionInfo, &funcHandle) != 0 || funcHandle == nullptr ||
-        api.getFunctionName(funcHandle, MAX_KERNEL_BUF_LEN - 1U, kernelName) != 0 || kernelName[0] == '\0' ||
-        api.functionGetBinary(funcHandle, &info.bin) != 0) {
+        api.getFunctionName(funcHandle, MAX_KERNEL_BUF_LEN - 1U, kernelName) != 0 || kernelName[0] == '\0') {
         return false;
     }
     info.kernelName = kernelName;
@@ -403,8 +397,7 @@ static bool ValidateRuntimeArgs(const ExceptionLaunchInfo& runtimeArgs)
 
 static int32_t ProExceptionDumpCallbackImpl(const ExceptionLaunchInfo& runtimeArgs, const uint64_t* runtimeArgSlots,
                                             uint32_t runtimeArgSlotCount, AdxExceptionDumpInfo* exceptionDumpInfo,
-                                            uint32_t exceptionDumpSize, uint32_t* exceptionDumpRealSize,
-                                            AdxExceptionDumpMode* mode)
+                                            uint32_t* exceptionDumpRealSize, AdxExceptionDumpMode* mode)
 {
     *mode = AdxExceptionDumpMode::ADX_DUMP_MODE_NONE;
     *exceptionDumpRealSize = 0U;
@@ -428,32 +421,32 @@ static int32_t ProExceptionDumpCallbackImpl(const ExceptionLaunchInfo& runtimeAr
         }
     }
 
-    *mode = AdxExceptionDumpMode::ADX_DUMP_MODE_OVERWRITE;
+    // Supplement the native exception dump rather than replacing it: CANN's
+    // default path reads the original binary and locates ALL faulting cores.
+    *mode = AdxExceptionDumpMode::ADX_DUMP_MODE_ADDITIONAL;
 
-    for (uint32_t i = 0U; i < exceptionDumpSize; i++) {
-        exceptionDumpInfo[i].coreId = 0U;
-        exceptionDumpInfo[i].coreType = 0;
-        exceptionDumpInfo[i].argAddr = runtimeArgs.argAddr;
-        exceptionDumpInfo[i].argssize = runtimeArgs.argsize;
-        exceptionDumpInfo[i].bin = runtimeArgs.bin;
-        snprintf(exceptionDumpInfo[i].kernelName, MAX_KERNEL_BUF_LEN, "%s", kernelName.c_str());
-        snprintf(exceptionDumpInfo[i].kernelDisplayName, MAX_KERNEL_BUF_LEN, "%s", kernelName.c_str());
-
-        uint32_t idx = 0U;
-        for (const auto& param : schema.params) {
-            if (idx >= MAX_TENSOR_NUM) {
-                break;
-            }
-            if (param.kind != KernelParamKind::SCALAR && param.kind != KernelParamKind::WINDOW &&
-                ResolveSchemaTensor(param, runtimeArgSlots, runtimeArgSlotCount,
-                                    exceptionDumpInfo[i].tensorInfo[idx])) {
-                idx++;
-            }
+    // The capacity is based on the number of faulting cores, but these tensors
+    // describe one launch and are identical across cores. Dump them only once.
+    auto& dumpInfo = exceptionDumpInfo[0];
+    dumpInfo = {};
+    // Keep native ABI/binary fields empty in this supplemental record. CANN
+    // handles them once through its default path, with the real core IDs/types;
+    // repeating them here would run a second diagnostic on the fake core 0/0.
+    snprintf(dumpInfo.kernelName, MAX_KERNEL_BUF_LEN, "%s", kernelName.c_str());
+    snprintf(dumpInfo.kernelDisplayName, MAX_KERNEL_BUF_LEN, "%s", kernelName.c_str());
+    uint32_t idx = 0U;
+    for (const auto& param : schema.params) {
+        if (idx >= MAX_TENSOR_NUM) {
+            break;
         }
-        exceptionDumpInfo[i].extraTensorNum = idx;
+        if (param.kind != KernelParamKind::SCALAR && param.kind != KernelParamKind::WINDOW &&
+            ResolveSchemaTensor(param, runtimeArgSlots, runtimeArgSlotCount, dumpInfo.tensorInfo[idx])) {
+            idx++;
+        }
     }
+    dumpInfo.extraTensorNum = idx;
 
-    *exceptionDumpRealSize = exceptionDumpSize;
+    *exceptionDumpRealSize = 1U;
 
     const std::string launchMeta = BuildSchemaLaunchMeta(kernelName.c_str(), schema, runtimeArgSlots,
                                                          runtimeArgSlotCount);
@@ -476,15 +469,16 @@ static int32_t ProExceptionDumpCallback(void* exceptionInfo, AdxExceptionDumpInf
     if (exceptionDumpInfo == nullptr || exceptionDumpRealSize == nullptr || mode == nullptr) {
         return 1;
     }
+    *mode = AdxExceptionDumpMode::ADX_DUMP_MODE_NONE;
+    *exceptionDumpRealSize = 0U;
+    if (exceptionDumpSize == 0U) {
+        return 0;
+    }
     ExceptionLaunchInfo runtimeArgs;
     if (!GetKernelExceptionArgs(exceptionInfo, runtimeArgs)) {
-        *mode = AdxExceptionDumpMode::ADX_DUMP_MODE_NONE;
-        *exceptionDumpRealSize = 0U;
         IR_LOGW() << "ProExceptionDumpCallback: ACL could not resolve exception launch arguments; PyPTO dump skipped";
         return 0;
     }
-    *mode = AdxExceptionDumpMode::ADX_DUMP_MODE_NONE;
-    *exceptionDumpRealSize = 0U;
     if (!ValidateRuntimeArgs(runtimeArgs)) {
         return 0;
     }
@@ -500,7 +494,7 @@ static int32_t ProExceptionDumpCallback(void* exceptionInfo, AdxExceptionDumpInf
     }
     return ProExceptionDumpCallbackImpl(runtimeArgs, runtimeArgStorage.data(),
                                         static_cast<uint32_t>(runtimeArgStorage.size()), exceptionDumpInfo,
-                                        exceptionDumpSize, exceptionDumpRealSize, mode);
+                                        exceptionDumpRealSize, mode);
 }
 
 extern "C" {
@@ -627,19 +621,26 @@ extern "C" int32_t pro_test_exception_dump_callback_with_runtime_info(const char
                                                                       uint32_t argsSize, void* bin, void** outArgAddr,
                                                                       uint32_t* outArgSize, void** outBin,
                                                                       char* outKernelName, uint32_t kernelNameBufSize,
-                                                                      uint32_t* outExtraTensorNum, uint32_t* outMode)
+                                                                      uint32_t* outExtraTensorNum, uint32_t* outMode,
+                                                                      uint32_t dumpCapacity, uint32_t* outRealSize)
 {
-    AdxExceptionDumpInfo dumpInfo = {};
+    std::vector<AdxExceptionDumpInfo> dumpInfos(dumpCapacity == 0U ? 1U : dumpCapacity);
+    auto& dumpInfo = dumpInfos[0];
     AdxExceptionDumpMode dumpMode = AdxExceptionDumpMode::ADX_DUMP_MODE_NONE;
     uint32_t realDumpSize = 0;
-    ExceptionLaunchInfo runtimeArgs{kernelName == nullptr ? "" : kernelName, argAddr, argsSize, bin};
+    ExceptionLaunchInfo runtimeArgs{kernelName == nullptr ? "" : kernelName, argAddr, argsSize};
     int32_t ret = 0;
-    if (ValidateRuntimeArgs(runtimeArgs)) {
+    if (dumpCapacity == 0U) {
+        ret = ProExceptionDumpCallback(nullptr, dumpInfos.data(), dumpCapacity, &realDumpSize, &dumpMode);
+    } else if (ValidateRuntimeArgs(runtimeArgs)) {
+        dumpInfo.argAddr = argAddr;
+        dumpInfo.argssize = argsSize;
+        dumpInfo.bin = bin;
         std::vector<uint64_t> runtimeArgStorage(argsSize / sizeof(uint64_t));
         std::memcpy(runtimeArgStorage.data(), argAddr, argsSize);
         ret = ProExceptionDumpCallbackImpl(runtimeArgs, runtimeArgStorage.data(),
-                                           static_cast<uint32_t>(runtimeArgStorage.size()), &dumpInfo, 1, &realDumpSize,
-                                           &dumpMode);
+                                           static_cast<uint32_t>(runtimeArgStorage.size()), dumpInfos.data(),
+                                           &realDumpSize, &dumpMode);
     }
     if (outArgAddr != nullptr) {
         *outArgAddr = dumpInfo.argAddr;
@@ -658,6 +659,9 @@ extern "C" int32_t pro_test_exception_dump_callback_with_runtime_info(const char
     }
     if (outMode != nullptr) {
         *outMode = static_cast<uint32_t>(dumpMode);
+    }
+    if (outRealSize != nullptr) {
+        *outRealSize = realDumpSize;
     }
     return ret;
 }
