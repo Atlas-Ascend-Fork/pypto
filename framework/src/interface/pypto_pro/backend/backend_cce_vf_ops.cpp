@@ -6417,6 +6417,51 @@ REGISTER_BACKEND_OP(BackendCCE, VF_GET_MASK_SPR)
     });
 
 // ============================================================================
+// Half log2/log10 — mirrors AscendC LogXImpl: widen half to fp32, compute
+// vln * reciprocal in fp32, then narrow back to half with a single rounding.
+// ============================================================================
+
+static void EmitHalfLogX(codegen::CCECodegen& codegen, const std::string& dst, const std::string& src,
+                         const std::string& mask, const std::string& mode, const std::string& reciprocal)
+{
+    const std::string p = dst + "_logx_";
+    const std::string maskLow = p + "mlo_";
+    const std::string maskHigh = p + "mhi_";
+    const std::string maskAll = p + "mall_";
+    const std::string maskSel = p + "msel_";
+    const std::string f16Low = p + "hlo_";
+    const std::string f16High = p + "hhi_";
+    const std::string f16Tmp = p + "htmp_";
+    const std::string f32Low = p + "flo_";
+    const std::string f32High = p + "fhi_";
+    codegen.Emit("MaskReg " + maskLow + ";");
+    codegen.Emit("MaskReg " + maskHigh + ";");
+    codegen.Emit("MaskReg " + maskAll + " = pset_b32(PAT_ALL);");
+    codegen.Emit("MaskReg " + maskSel + " = pset_b16(PAT_H);");
+    EmitRtWrapDecl(codegen, ir::DataType::FP16, f16Low);
+    EmitRtWrapDecl(codegen, ir::DataType::FP16, f16High);
+    EmitRtWrapDecl(codegen, ir::DataType::FP16, f16Tmp);
+    EmitRtWrapDecl(codegen, ir::DataType::FP32, f32Low);
+    EmitRtWrapDecl(codegen, ir::DataType::FP32, f32High);
+    codegen.Emit("punpack(" + maskLow + ", " + mask + ", LOWER);");
+    codegen.Emit("punpack(" + maskHigh + ", " + mask + ", HIGHER);");
+    codegen.Emit("vintlv(" + f16Low + ", " + f16High + ", " + src + ", " + src + ");");
+    codegen.Emit("vcvt(" + f32Low + ", " + f16Low + ", " + maskAll + ", PART_EVEN, " + mode + ");");
+    codegen.Emit("vcvt(" + f32High + ", " + f16High + ", " + maskAll + ", PART_EVEN, " + mode + ");");
+    codegen.Emit("vln(" + f32Low + ", " + f32Low + ", " + maskAll + ", " + mode + ");");
+    codegen.Emit("vln(" + f32High + ", " + f32High + ", " + maskAll + ", " + mode + ");");
+    codegen.Emit("vmuls(" + f32Low + ", " + f32Low + ", " + reciprocal + ", " + maskAll + ", " + mode + ");");
+    codegen.Emit("vmuls(" + f32High + ", " + f32High + ", " + reciprocal + ", " + maskAll + ", " + mode + ");");
+    codegen.Emit("vcvt(" + f16Low + ", " + f32Low + ", " + maskLow + ", ROUND_R, RS_DISABLE, PART_EVEN, " + mode +
+                 ");");
+    codegen.Emit("vcvt(" + f16High + ", " + f32High + ", " + maskHigh + ", ROUND_R, RS_DISABLE, PART_EVEN, " + mode +
+                 ");");
+    codegen.Emit("vdintlv(" + f16Low + ", " + f16Tmp + ", " + f16Low + ", " + f16Tmp + ");");
+    codegen.Emit("vdintlv(" + f16High + ", " + f16Tmp + ", " + f16Tmp + ", " + f16High + ");");
+    codegen.Emit("vsel(" + dst + ", " + f16Low + ", " + f16High + ", " + maskSel + ");");
+}
+
+// ============================================================================
 // Log2 — composite: vln + vmuls(1/ln2) = ln(x) * 1.4426950408889634
 // ============================================================================
 
@@ -6448,8 +6493,7 @@ static std::string EmitVFLog2(const ir::CallPtr& op, codegen::CodegenBase& codeg
             codegen.Emit("vcmps_lt(" + mc + ", " + sc + ", " + dst + "_thr_.f, " + mask + ");");
             codegen.Emit("vmuls(" + tp + ", " + sc + ", 1024.0f, " + mask + ", " + mode + ");");
             codegen.Emit("vsel(" + sc + ", " + tp + ", " + sc + ", " + mc + ");");
-            codegen.Emit("vln(" + dc + ", " + sc + ", " + mask + ", " + mode + ");");
-            codegen.Emit("vmuls(" + dc + ", " + dc + ", 1.4426950408889634f, " + mask + ", " + mode + ");");
+            EmitHalfLogX(codegen, dc, sc, mask, mode, "1.4426950408889634f");
             codegen.Emit("vadds(" + tp + ", " + dc + ", -10.0f, " + mask + ", " + mode + ");");
             codegen.Emit("vsel(" + dst + ", " + tp + ", " + dc + ", " + mc + ");");
         } else {
@@ -6501,8 +6545,7 @@ static std::string EmitVFLog10(const ir::CallPtr& op, codegen::CodegenBase& code
             codegen.Emit("vcmps_lt(" + mc + ", " + sc + ", " + dst + "_thr_.f, " + mask + ");");
             codegen.Emit("vmuls(" + tp + ", " + sc + ", 1024.0f, " + mask + ", " + mode + ");");
             codegen.Emit("vsel(" + sc + ", " + tp + ", " + sc + ", " + mc + ");");
-            codegen.Emit("vln(" + dc + ", " + sc + ", " + mask + ", " + mode + ");");
-            codegen.Emit("vmuls(" + dc + ", " + dc + ", 0.43429448190325176f, " + mask + ", " + mode + ");");
+            EmitHalfLogX(codegen, dc, sc, mask, mode, "0.43429448190325176f");
             codegen.Emit("vadds(" + tp + ", " + dc + ", -3.01029995663981f, " + mask + ", " + mode + ");");
             codegen.Emit("vsel(" + dst + ", " + tp + ", " + dc + ", " + mc + ");");
         } else {
@@ -6843,6 +6886,11 @@ static std::string EmitVFMove(const ir::CallPtr& op, codegen::CodegenBase& codeg
     } else {
         if (isMaskDst) {
             codegen.Emit("pmov(" + dst + ", " + src + ");");
+        } else if (GetExprDtype(op->args_[base + 1]).GetBit() == 64) {
+            // The legacy intrinsic set has no plain vmov for vector_u64 (u64
+            // only exists in the 2xVL masked form), so copy through the u32
+            // view, mirroring AscendC CopyImpl's unmasked b64 branch.
+            codegen.Emit("vmov((RegTensor<uint32_t>&)" + dst + ", (RegTensor<uint32_t>&)" + src + ");");
         } else {
             codegen.Emit("vmov(" + dst + ", " + src + ");");
         }

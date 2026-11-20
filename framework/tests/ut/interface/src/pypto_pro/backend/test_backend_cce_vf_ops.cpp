@@ -1566,6 +1566,8 @@ TEST(BackendCCEVFOpsTest, EmitsB64SelectCompareAndMiscSequences)
     auto dst64b = MakeVar("dst64b", ir::DataType::INT64);
     auto src64a = MakeRegVar("src64a", ir::DataType::INT64);
     auto src64b = MakeRegVar("src64b", ir::DataType::INT64);
+    auto src64u = MakeRegVar("src64u", ir::DataType::UINT64);
+    auto dst64u = MakeVar("dst64u", ir::DataType::UINT64);
     auto cmp_dst = MakeVar("cmp_dst", ir::DataType::INT64);
     auto mask64 = MakeVar("mask64", ir::DataType::UINT64);
     auto mask = MakeVar("mask", ir::DataType::UINT32);
@@ -1625,6 +1627,11 @@ TEST(BackendCCEVFOpsTest, EmitsB64SelectCompareAndMiscSequences)
         codegen, VF_MOVE,
         {"ppack(dst64_mov_tm_, mask64, LOWER)", "pintlv_b32(dst64_mov_m0_", "vmov((RegTensor<uint32_t>&)dst64"},
         {src64a, mask64}, {}, "dst64");
+    // Move (b64, unmasked): vector_u64 has no plain vmov overload in the legacy
+    // intrinsic set, so the copy also goes through the u32 view (AscendC
+    // CopyImpl's unmasked b64 branch).
+    ExpectInvoke(codegen, VF_MOVE, {"vmov((RegTensor<uint32_t>&)dst64u", "(RegTensor<uint32_t>&)src64u"}, {src64u}, {},
+                 "dst64u", dst64u->GetType());
 }
 
 // Tests for load_align/store_align validation CHECKs
@@ -2520,6 +2527,30 @@ TEST(BackendCCEVFOpsTest, HighPrecisionHalfEmitsHalfTypeRegsAndConstants)
     emitted = Invoke(codegen, VF_EXP, {src, mask}, {{"precision", true}}, "dst");
     ExpectContains(emitted, {"RtWrap<half>"});
     EXPECT_EQ(emitted.find("0x007FFFFF"), std::string::npos) << "FP16 should use 0x03FF, not 0x007FFFFF: " << emitted;
+}
+
+TEST(BackendCCEVFOpsTest, Log2Log10HalfPrecisionWidensToFloat)
+{
+    CapturingCCECodegen codegen(ir::SectionKind::Vector);
+    auto src = MakeVar("src", ir::DataType::FP16);
+    auto mask = MakeVar("mask", ir::DataType::UINT32);
+
+    // High-precision FP16 promotes half to fp32 (vintlv + 2x vcvt), runs
+    // vln/vmuls in fp32, then narrows back with a single CAST_RINT rounding
+    // (punpack + 2x vcvt + 2x vdintlv + vsel), mirroring AscendC LogXImpl.
+    const std::vector<std::string> widen = {"punpack(", "vintlv(", "RtWrap<float>", "vcvt(",    "vln(",
+                                            "vmuls(",   "ROUND_R", "RS_DISABLE",    "vdintlv(", "vsel("};
+    const auto fp16 = ScalarType(ir::DataType::FP16);
+    ExpectContains(Invoke(codegen, VF_LOG2, {src, mask}, {{"precision", true}}, "dst", fp16), widen);
+    ExpectContains(Invoke(codegen, VF_LOG10, {src, mask}, {{"precision", true}}, "dst", fp16), widen);
+
+    // Standard FP16 keeps the single-instruction vln path (FTZ on subnormals).
+    auto log2Std = Invoke(codegen, VF_LOG2, {src, mask}, {}, "dst", fp16);
+    ExpectContains(log2Std, {"vln(", "1.4426950408889634f"});
+    EXPECT_EQ(log2Std.find("vintlv("), std::string::npos) << log2Std;
+    auto log10Std = Invoke(codegen, VF_LOG10, {src, mask}, {}, "dst", fp16);
+    ExpectContains(log10Std, {"vln(", "0.4342944819032518f"});
+    EXPECT_EQ(log10Std.find("vintlv("), std::string::npos) << log10Std;
 }
 
 TEST(BackendCCEVFOpsTest, CompareRejectsMixedDtypeSources)
