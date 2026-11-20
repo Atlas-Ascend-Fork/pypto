@@ -1135,6 +1135,91 @@ bool ShouldKeepGatherL1Alias(const LogicalTensorPtr& output)
     return completeRows || blockGather;
 }
 
+bool IsFullShapeZeroOffsetView(Operation& op)
+{
+    const auto& input = op.GetIOperands().front();
+    const auto& output = op.GetOOperands().front();
+    auto attr = std::dynamic_pointer_cast<ViewOpAttribute>(op.GetOpAttribute());
+    return input->GetShape() == output->GetShape() && !output->GetConsumers().empty() && attr != nullptr &&
+           std::all_of(attr->GetFromOffset().begin(), attr->GetFromOffset().end(),
+                       [](int64_t offset) { return offset == 0; }) &&
+           std::all_of(attr->GetFromDynOffset().begin(), attr->GetFromDynOffset().end(),
+                       [](const SymbolicScalar& offset) {
+                           auto simplified = offset.Simplify();
+                           return simplified.ConcreteValid() && simplified.Concrete() == 0;
+                       });
+}
+
+// 从候选 Cube 的输出侧搜索数据后继，共用访问记录。遇到另一候选 Cube 即存在依赖。
+bool AreCubeConsumersIndependent(const std::unordered_set<const Operation*>& cubes)
+{
+    if (cubes.size() <= 1) {
+        return true;
+    }
+    std::vector<const Operation*> pending(cubes.begin(), cubes.end());
+    std::unordered_set<const Operation*> visited(cubes.begin(), cubes.end());
+    while (!pending.empty()) {
+        const auto* current = pending.back();
+        pending.pop_back();
+        for (const auto* consumer : current->ConsumerOps()) {
+            // 原地读写同一个 Tensor 的算子可以产生自边。
+            if (consumer == current) {
+                continue;
+            }
+            if (cubes.count(consumer) != 0) {
+                return false;
+            }
+            if (!consumer->IsDeleted() && visited.insert(consumer).second) {
+                pending.emplace_back(consumer);
+            }
+        }
+    }
+    return true;
+}
+
+// 保留多路 Cube 读取各自指定有效形状的 VIEW，让后续拆分按原 Assemble 区域合并读偏移。
+bool HasOnlyIndependentGatherCubeViews(const LogicalTensorPtr& output)
+{
+    std::unordered_set<const Operation*> cubes;
+    for (auto* consumer : output->GetConsumers()) {
+        if (consumer->GetOpcode() != Opcode::OP_VIEW || !IsDdrAlias(consumer) ||
+            !IsFullShapeZeroOffsetView(*consumer)) {
+            return false;
+        }
+        auto attr = std::static_pointer_cast<ViewOpAttribute>(consumer->GetOpAttribute());
+        const auto& viewOutput = consumer->GetOOperands().front();
+        if (attr->GetToDynValidShape().size() != viewOutput->GetShape().size() ||
+            viewOutput->GetConsumers().size() != 1) {
+            return false;
+        }
+        const auto* cube = *viewOutput->GetConsumers().begin();
+        if (!IsMatmulOpcode(cube->GetOpcode()) || !cube->tokens_.empty() || !cube->result_token_.empty()) {
+            return false;
+        }
+        cubes.insert(cube);
+    }
+    return AreCubeConsumersIndependent(cubes);
+}
+
+// 保留可安全共享的多路 Gather 读路径。
+void TryPreserveIndependentGatherCubeViews(Function& function, const LogicalTensorPtr& output,
+                                           std::unordered_set<Operation*>& skipOps,
+                                           std::unordered_set<LogicalTensor*>& incastGatherOutputs)
+{
+    if (!HasOnlyIndependentGatherCubeViews(output)) {
+        return;
+    }
+    std::unordered_set<Operation*> gatherOps;
+    if (!CollectIncastGatherWriters(function, output, gatherOps) || !ShouldKeepGatherL1Alias(output)) {
+        return;
+    }
+    skipOps.insert(gatherOps.begin(), gatherOps.end());
+    for (auto* view : output->GetConsumers()) {
+        skipOps.insert(view);
+        incastGatherOutputs.insert(view->GetOOperands().front().get());
+    }
+}
+
 void CollectAssembledIncastGatherOps(Function& function, const std::vector<OperationPtr>& tensorOperations,
                                      std::unordered_set<Operation*>& skipOps,
                                      std::unordered_set<LogicalTensor*>& incastGatherOutputs)
@@ -1145,10 +1230,12 @@ void CollectAssembledIncastGatherOps(Function& function, const std::vector<Opera
             continue;
         }
         const auto& output = opPtr->GetOOperands().front();
-        // A shared L1 assembly would bind all cube consumers into one supernode,
-        // even when a vector dependency separates those consumers.
         if (output == nullptr || !visitedOutputs.insert(output.get()).second || function.IsFromOutCast(output) ||
-            function.IsFromInCast(output) || output->GetConsumers().size() != 1) {
+            function.IsFromInCast(output) || output->GetConsumers().empty()) {
+            continue;
+        }
+        if (output->GetConsumers().size() > 1) {
+            TryPreserveIndependentGatherCubeViews(function, output, skipOps, incastGatherOutputs);
             continue;
         }
         bool eligible = true;
@@ -1188,21 +1275,6 @@ void CollectDynamicIncastViews(Function& function, const std::vector<OperationPt
             skipOps.insert(opPtr.get());
         }
     }
-}
-
-bool IsFullShapeZeroOffsetView(Operation& op)
-{
-    const auto& input = op.GetIOperands().front();
-    const auto& output = op.GetOOperands().front();
-    auto attr = std::dynamic_pointer_cast<ViewOpAttribute>(op.GetOpAttribute());
-    return input->GetShape() == output->GetShape() && !output->GetConsumers().empty() && attr != nullptr &&
-           std::all_of(attr->GetFromOffset().begin(), attr->GetFromOffset().end(),
-                       [](int64_t offset) { return offset == 0; }) &&
-           std::all_of(attr->GetFromDynOffset().begin(), attr->GetFromDynOffset().end(),
-                       [](const SymbolicScalar& offset) {
-                           auto simplified = offset.Simplify();
-                           return simplified.ConcreteValid() && simplified.Concrete() == 0;
-                       });
 }
 
 bool CollectCubeAliasConsumers(const LogicalTensorPtr& output, std::unordered_set<Operation*>& seenConsumers)

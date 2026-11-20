@@ -1623,6 +1623,187 @@ TEST_F(TestExpandFunctionPass, IncastGatherPreservedWhileMatmulExpands)
     }
 }
 
+TEST_F(TestExpandFunctionPass, IncastGatherRetainsFullShapeViewsOnlyForIndependentCubeReads)
+{
+    for (const std::string name : {"GatherCubeViews", "GatherMixedReads", "GatherCubeSelfConsumer"}) {
+        SCOPED_TRACE(name);
+        const bool mixedReads = name == "GatherMixedReads";
+        const bool cubeSelfConsumer = name == "GatherCubeSelfConsumer";
+        auto function = std::make_shared<Function>(Program::GetInstance(), name, name, nullptr);
+        Program::GetInstance().InsertFuncToFunctionMap(name, function);
+        function->SetGraphType(GraphType::TENSOR_GRAPH);
+        TileShape::Current().SetVecTile(32, 32);
+        TileShape::Current().SetCubeTile({32, 32}, {32, 32, 32}, {32, 32});
+        const std::vector<int64_t> shape{64, 64};
+        const std::vector<int64_t> pieceShape{32, 64};
+        const std::vector<int64_t> sourceShape{128, 64};
+        IRBuilder builder;
+        auto source = builder.CreateTensorVar(DT_FP32, sourceShape, SymbolicScalar::FromConcrete(sourceShape));
+        auto lhs = builder.CreateTensorVar(DT_FP32, shape, SymbolicScalar::FromConcrete(shape));
+        auto gather = builder.CreateTensorVar(DT_FP32, shape, SymbolicScalar::FromConcrete(shape));
+        function->inCasts_ = {source, lhs};
+        std::vector<Operation*> writers;
+        for (int64_t row : {0, 32}) {
+            auto piece = builder.CreateTensorVar(DT_FP32, pieceShape, SymbolicScalar::FromConcrete(pieceShape));
+            auto& read = PassOperationUtils::AddOperation(*function, Opcode::OP_VIEW, {source}, {piece});
+            read.SetOpAttribute(std::make_shared<ViewOpAttribute>(
+                Offset{row, 0}, std::vector<SymbolicScalar>{CreateTestScalarVar("gather_row") + row, 0},
+                SymbolicScalar::FromConcrete(pieceShape)));
+            read.tileShape_.SetVecTile(32, 32);
+            auto& write = PassOperationUtils::AddOperation(*function, Opcode::OP_ASSEMBLE, {piece}, {gather});
+            write.SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{row, 0}));
+            write.tileShape_.SetVecTile(32, 32);
+            writers.push_back(&write);
+        }
+        std::vector<LogicalTensorPtr> aliases;
+        std::vector<std::shared_ptr<ViewOpAttribute>> viewAttrs;
+        for (int branch : {0, 1}) {
+            auto rhs = gather;
+            if (!mixedReads || branch == 0) {
+                std::vector<SymbolicScalar> validShape{CreateTestScalarVar("valid_rows") - branch, 64};
+                rhs = builder.CreateTensorVar(DT_FP32, shape, validShape);
+                auto& view = PassOperationUtils::AddOperation(*function, Opcode::OP_VIEW, {gather}, {rhs});
+                viewAttrs.push_back(
+                    std::make_shared<ViewOpAttribute>(Offset{0, 0}, std::vector<SymbolicScalar>{0, 0}, validShape));
+                view.SetOpAttribute(viewAttrs.back());
+                view.tileShape_.SetVecTile(32, 32);
+                aliases.push_back(rhs);
+            }
+            auto out = builder.CreateTensorVar(DT_FP32, shape, SymbolicScalar::FromConcrete(shape));
+            auto& matmul = cubeSelfConsumer && branch == 0 ?
+                               builder.CreateTensorOpStmt(*function, Opcode::OP_A_MULACC_B, {lhs, rhs, out}, {out}) :
+                               PassOperationUtils::AddOperation(*function, Opcode::OP_A_MUL_B, {lhs, rhs}, {out});
+            matmul.tileShape_.SetCubeTile({32, 32}, {32, 32, 32}, {32, 32});
+            function->outCasts_.push_back(out);
+        }
+
+        ExpandFunction expand;
+        std::unordered_set<LogicalTensor*> gatherOutputs;
+        auto skipOps = expand.CollectSkipExpandOps(*function, function->Operations().operations_, gatherOutputs);
+        for (auto* writer : writers) {
+            EXPECT_EQ(skipOps.count(writer), mixedReads ? 0U : 1U);
+        }
+        if (mixedReads) {
+            EXPECT_EQ(gatherOutputs.count(aliases.front().get()), 0U);
+            continue;
+        }
+        for (const auto& alias : aliases) {
+            EXPECT_EQ(gatherOutputs.count(alias.get()), 1U);
+        }
+        if (cubeSelfConsumer) {
+            continue;
+        }
+        ASSERT_EQ(expand.RunOnFunction(*function), SUCCESS);
+        for (size_t i = 0; i < aliases.size(); ++i) {
+            const auto& alias = aliases[i];
+            ASSERT_EQ(alias->GetProducers().size(), 1);
+            const auto* view = *alias->GetProducers().begin();
+            ASSERT_EQ(view->GetOpcode(), Opcode::OP_VIEW);
+            EXPECT_EQ(view->GetIOperands().front(), gather);
+            EXPECT_EQ(view->GetOpAttribute(), viewAttrs[i]);
+            ASSERT_FALSE(alias->GetConsumers().empty());
+            for (const auto* read : alias->GetConsumers()) {
+                ASSERT_EQ(read->GetOpcode(), Opcode::OP_VIEW);
+                auto attr = std::dynamic_pointer_cast<ViewOpAttribute>(read->GetOpAttribute());
+                ASSERT_NE(attr, nullptr);
+                EXPECT_EQ(attr->GetTo(), MemoryType::MEM_L1);
+            }
+        }
+    }
+}
+
+TEST_F(TestExpandFunctionPass, IncastGatherRejectsUnsafeCubeReadFanout)
+{
+    enum class RejectionCase {
+        DIRECT_GATHER_READ,
+        MISSING_VALID_SHAPE,
+        CUBE_TOKEN,
+        VIEW_OUTPUT_FANOUT,
+        CUBE_DATA_DEPENDENCY,
+    };
+    const std::vector<RejectionCase> rejectionCases = {
+        RejectionCase::DIRECT_GATHER_READ, RejectionCase::MISSING_VALID_SHAPE,  RejectionCase::CUBE_TOKEN,
+        RejectionCase::VIEW_OUTPUT_FANOUT, RejectionCase::CUBE_DATA_DEPENDENCY,
+    };
+    for (const auto rejection : rejectionCases) {
+        SCOPED_TRACE(static_cast<int>(rejection));
+        const auto name = "RejectUnsafeGatherCubeRead" + std::to_string(static_cast<int>(rejection));
+        auto function = std::make_shared<Function>(Program::GetInstance(), name, name, nullptr);
+        Program::GetInstance().InsertFuncToFunctionMap(name, function);
+        function->SetGraphType(GraphType::TENSOR_GRAPH);
+        TileShape::Current().SetVecTile(32, 32);
+        TileShape::Current().SetCubeTile({32, 32}, {32, 32, 32}, {32, 32});
+        const std::vector<int64_t> shape{64, 64};
+        const std::vector<int64_t> pieceShape{32, 64};
+        const std::vector<int64_t> sourceShape{128, 64};
+        IRBuilder builder;
+        auto source = builder.CreateTensorVar(DT_FP32, sourceShape, SymbolicScalar::FromConcrete(sourceShape));
+        auto lhs = builder.CreateTensorVar(DT_FP32, shape, SymbolicScalar::FromConcrete(shape));
+        auto gather = builder.CreateTensorVar(DT_FP32, shape, SymbolicScalar::FromConcrete(shape));
+        function->inCasts_ = {source, lhs};
+        std::vector<Operation*> writers;
+        for (int64_t row : {0, 32}) {
+            auto piece = builder.CreateTensorVar(DT_FP32, pieceShape, SymbolicScalar::FromConcrete(pieceShape));
+            auto& read = PassOperationUtils::AddOperation(*function, Opcode::OP_VIEW, {source}, {piece});
+            read.SetOpAttribute(std::make_shared<ViewOpAttribute>(
+                Offset{row, 0}, std::vector<SymbolicScalar>{CreateTestScalarVar("gather_row") + row, 0},
+                SymbolicScalar::FromConcrete(pieceShape)));
+            read.tileShape_.SetVecTile(32, 32);
+            auto& write = PassOperationUtils::AddOperation(*function, Opcode::OP_ASSEMBLE, {piece}, {gather});
+            write.SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{row, 0}));
+            write.tileShape_.SetVecTile(32, 32);
+            writers.push_back(&write);
+        }
+
+        LogicalTensorPtr firstCubeOutput;
+        for (int branch : {0, 1}) {
+            auto rhs = gather;
+            const bool directGatherRead = rejection == RejectionCase::DIRECT_GATHER_READ && branch == 1;
+            if (!directGatherRead) {
+                std::vector<SymbolicScalar> validShape{CreateTestScalarVar("valid_rows") - branch, 64};
+                if (rejection == RejectionCase::MISSING_VALID_SHAPE && branch == 1) {
+                    validShape.clear();
+                }
+                rhs = builder.CreateTensorVar(DT_FP32, shape, validShape);
+                auto& view = PassOperationUtils::AddOperation(*function, Opcode::OP_VIEW, {gather}, {rhs});
+                view.SetOpAttribute(
+                    std::make_shared<ViewOpAttribute>(Offset{0, 0}, std::vector<SymbolicScalar>{0, 0}, validShape));
+                view.tileShape_.SetVecTile(32, 32);
+                if (rejection == RejectionCase::VIEW_OUTPUT_FANOUT && branch == 1) {
+                    auto sideOutput = builder.CreateTensorVar(DT_FP32, shape, SymbolicScalar::FromConcrete(shape));
+                    PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {rhs}, {sideOutput});
+                }
+            }
+
+            auto lhsForBranch = lhs;
+            if (rejection == RejectionCase::CUBE_DATA_DEPENDENCY && branch == 1) {
+                auto dependency = builder.CreateTensorVar(DT_FP32, shape, SymbolicScalar::FromConcrete(shape));
+                PassOperationUtils::AddOperation(*function, Opcode::OP_EXP, {firstCubeOutput}, {dependency});
+                lhsForBranch = dependency;
+            }
+            auto out = builder.CreateTensorVar(DT_FP32, shape, SymbolicScalar::FromConcrete(shape));
+            auto& matmul = PassOperationUtils::AddOperation(*function, Opcode::OP_A_MUL_B, {lhsForBranch, rhs}, {out});
+            matmul.tileShape_.SetCubeTile({32, 32}, {32, 32, 32}, {32, 32});
+            if (rejection == RejectionCase::CUBE_TOKEN && branch == 1) {
+                matmul.tokens_ = {
+                    IRContext::Get().MakeSemanticToken("gather_cube_read", ir::TokenKind::READ, ir::Span::Unknown())};
+            }
+            function->outCasts_.push_back(out);
+            if (branch == 0) {
+                firstCubeOutput = out;
+            }
+        }
+
+        ExpandFunction expand;
+        std::unordered_set<LogicalTensor*> gatherOutputs;
+        const auto skipOps = expand.CollectSkipExpandOps(*function, function->Operations().operations_, gatherOutputs);
+        for (auto* writer : writers) {
+            EXPECT_EQ(skipOps.count(writer), 0U);
+        }
+        EXPECT_TRUE(gatherOutputs.empty());
+    }
+}
+
 TEST_F(TestExpandFunctionPass, StandaloneSymbolicIncastViewFanoutPreservedAndTokenRejected)
 {
     auto func = std::make_shared<Function>(Program::GetInstance(), "StandaloneSymbolicView", "StandaloneSymbolicView",
