@@ -20,9 +20,15 @@ ops-transformer custom package. Its contract (aicpu kernel mode):
 * Scalars with a Python default are optional (default pre-assigned, then
   ``GetAttrValueOpt``); scalars without one are required (``GetAttrValue``,
   missing attr -> ``kStatusParamInvalid``).
+* The ``REGISTER_CPU_KERNEL`` pair sits in an anonymous namespace, matching the
+  handwritten convention, so the shared ``kernelType`` identifier stays TU-local.
 """
 
 from importlib import import_module
+import os
+from pathlib import Path
+import shutil
+import subprocess
 
 import pytest
 
@@ -49,8 +55,8 @@ def _spec_scalar(name, dtype):
     return ParamSpec(name, ParamKind.SCALAR, dtype, None)
 
 
-def _generate(param_specs, param_names, defaults, cce_body="// body\n"):
-    return opc_codegen.generate_cpu_kernel_sources(cce_body, param_specs, "probe_op", "ProbeOp", param_names, defaults)
+def _generate(param_specs, param_names, defaults, cce_body="// body\n", op_type="ProbeOp"):
+    return opc_codegen.generate_cpu_kernel_sources(cce_body, param_specs, "probe_op", op_type, param_names, defaults)
 
 
 class TestTensorPtrUnifiedExtraction:
@@ -238,3 +244,117 @@ class TestEndToEndAicpuKernel:
         assert "return status == 0 ? kStatusOk : kStatusParamInvalid;" in src
         assert "    return kStatusOk;" not in src
         assert result.kernel_cpp_path.endswith("offline_adapter_probe_aicpu_kernel.cpp")
+
+
+# The registry stub stands in for libaicpu_context.a: the link under test is about
+# the generated TUs' own symbols, not about the runtime registry implementation.
+_REGIST_STUB = r"""
+#include <functional>
+#include <memory>
+#include <string>
+#include "cpu_kernel.h"
+namespace aicpu {
+bool RegistCpuKernel(const std::string& type, const KERNEL_CREATOR_FUN& fun) { return true; }
+}
+"""
+
+
+def _aicpu_include_dirs():
+    """The dir providing cpu_kernel.h; empty when no CANN install is reachable.
+
+    ``ASCEND_HOME_PATH`` wins (the repo convention); the standard install prefix is
+    the fallback for hosts that ship the headers without exporting the env var.
+    """
+    roots = []
+    home = os.environ.get("ASCEND_HOME_PATH")
+    if home:
+        roots.append(Path(home))
+    roots.extend(sorted(Path("/usr/local/Ascend").glob("cann-*/*-linux"), reverse=True))
+    for root in roots:
+        for rel in (("include", "aicpu"), ("pkg_inc", "aicpu", "cpu_kernels")):
+            candidate = root.joinpath(*rel)
+            if (candidate / "cpu_kernel.h").is_file():
+                return [str(candidate)]
+    return []
+
+
+def _write_generated_tu(tmp_path, op_name, op_type, unwrap=False):
+    """Emit one generated adapter TU (+ Args header) shaped like the CMake chain's."""
+    specs = [_spec_tensor("data", _D.FP32, [])]
+    impl = opc_codegen._impl_name(op_name)
+    body = f"uint32_t {impl}(float* data) {{ (void)data; return 0; }}\n"
+    sources = opc_codegen.generate_cpu_kernel_sources(body, specs, op_name, op_type, ["data"], {})
+    lines = sources["kernel_source"].splitlines()
+    if unwrap:
+        lines = [ln for ln in lines if ln not in ("namespace {", "} // namespace")]
+    (tmp_path / f"{op_name}_aicpu_kernel.cpp").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (tmp_path / f"{op_name}_aicpu_args.h").write_text(sources["args_header"], encoding="utf-8")
+    return tmp_path / f"{op_name}_aicpu_kernel.cpp"
+
+
+def _link_two_tus(tmp_path, unwrap):
+    """Compile two generated TUs and link them into one .so, like gen_aicpu_kernel_symbol."""
+    includes = _aicpu_include_dirs()
+    if not shutil.which("g++") or not includes:
+        pytest.skip("g++ and CANN aicpu headers required to link the generated adapters")
+    stub = tmp_path / "regist_stub.cpp"
+    stub.write_text(_REGIST_STUB, encoding="utf-8")
+    tus = [
+        _write_generated_tu(tmp_path, "probe_alpha", "ProbeAlpha", unwrap),
+        _write_generated_tu(tmp_path, "probe_beta", "ProbeBeta", unwrap),
+    ]
+    flags = ["g++", "-std=c++17", "-fPIC", f"-I{tmp_path}", *(f"-I{d}" for d in includes)]
+    objects = []
+    for src in (stub, *tus):
+        obj = src.with_suffix(".o")
+        subprocess.run([*flags, "-c", str(src), "-o", str(obj)], check=True, capture_output=True, text=True)
+        objects.append(str(obj))
+    return subprocess.run(
+        ["g++", "-shared", "-o", str(tmp_path / "libprobe.so"), *objects], capture_output=True, text=True
+    )
+
+
+class TestRegistrationLinkage:
+    """REGISTER_CPU_KERNEL pastes the ``kernelType`` token into external symbol names.
+
+    The macro emits ``Creator_##type##_Kernel()`` and ``g_##type##_Kernel_Creator``
+    with external linkage, so every TU registering through the shared ``kernelType``
+    identifier exports the same symbols. Handwritten ops keep them TU-local with an
+    anonymous namespace (e.g. ``dense_lightning_indexer_kl_loss_grad_metadata_aicpu.cpp``
+    declares the class at ``namespace aicpu`` scope and wraps only the registration
+    pair); the generated adapter must match, or two generated objects collide once
+    ``gen_aicpu_kernel_symbol`` merges them into ``libtransformer_aicpu_kernels.so``.
+    Only the op_type string has to be globally unique -- it is the registry key.
+    """
+
+    def _source(self, op_type="ProbeOp"):
+        return _generate([_spec_tensor("data", _D.FP32, [])], ["data"], {}, op_type=op_type)["kernel_source"]
+
+    def test_registration_pair_is_wrapped_in_anonymous_namespace(self):
+        src = self._source()
+        assert (
+            "namespace {\n"
+            'static const char* kernelType = "ProbeOp";\n'
+            "REGISTER_CPU_KERNEL(kernelType, ProbeOpCpuKernel);\n"
+            "} // namespace\n"
+        ) in src
+
+    def test_registry_key_is_the_op_type_not_the_identifier(self):
+        # The identifier is fixed by the template; the string is the per-op registry
+        # key and must track op_type (it also keys the opInfo json).
+        src = self._source("MixedQuantSparseFlashMlaPyptoMetadata")
+        assert 'static const char* kernelType = "MixedQuantSparseFlashMlaPyptoMetadata";' in src
+        assert "REGISTER_CPU_KERNEL(kernelType," in src
+
+    def test_two_generated_tus_link_into_one_shared_object(self, tmp_path):
+        result = _link_two_tus(tmp_path, unwrap=False)
+        assert result.returncode == 0, result.stderr
+        assert "multiple definition" not in result.stderr
+
+    def test_unwrapped_registration_would_collide(self, tmp_path):
+        # Negative control: dropping the anonymous namespace reproduces the exact
+        # duplicate-symbol failure the wrapper prevents, so the test above is sensitive.
+        result = _link_two_tus(tmp_path, unwrap=True)
+        assert result.returncode != 0
+        assert "multiple definition of `aicpu::Creator_kernelType_Kernel()'" in result.stderr
+        assert "multiple definition of `aicpu::g_kernelType_Kernel_Creator'" in result.stderr

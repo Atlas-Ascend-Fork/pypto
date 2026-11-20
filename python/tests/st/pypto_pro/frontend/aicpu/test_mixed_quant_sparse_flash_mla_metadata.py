@@ -417,7 +417,7 @@ def _first_diff(got, expected):
 
 
 def test_uniform_plan_matches_host_reference():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_uniform_plan_matches_host_reference: NPU device not available")
         return
@@ -430,7 +430,7 @@ def test_uniform_plan_matches_host_reference():
 
 
 def test_selective_fd_72_plan_matches_host_reference():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_selective_fd_72_plan_matches_host_reference: NPU device not available")
         return
@@ -443,7 +443,7 @@ def test_selective_fd_72_plan_matches_host_reference():
 
 
 def test_general_fd_plan_matches_host_reference():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_general_fd_plan_matches_host_reference: NPU device not available")
         return
@@ -460,7 +460,7 @@ def test_general_fd_plan_matches_host_reference():
 
 
 def test_short_rows_fall_back_to_uniform():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_short_rows_fall_back_to_uniform: NPU device not available")
         return
@@ -473,7 +473,7 @@ def test_short_rows_fall_back_to_uniform():
 
 
 def test_support_fd_2_non_eligible_falls_back_to_uniform():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_support_fd_2_non_eligible_falls_back_to_uniform: NPU device not available")
         return
@@ -515,7 +515,7 @@ def _assert_kernel_failure_sensed(case_name):
 
 
 def test_invalid_blocks_senses_kernel_failure():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_invalid_blocks_senses_kernel_failure: NPU device not available")
         return
@@ -528,7 +528,7 @@ def test_invalid_blocks_senses_kernel_failure():
 
 def _child_main() -> int:
     case = os.environ[_CHILD_ENV_VAR]
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     try:
         _FAILURE_LAUNCHERS[case]()
         torch.npu.synchronize()

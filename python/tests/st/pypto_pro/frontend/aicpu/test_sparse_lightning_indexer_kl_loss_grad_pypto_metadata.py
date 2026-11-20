@@ -359,7 +359,7 @@ def _launch(cu_q, cu_k, metadata, **kwargs):
 
 
 def test_full_inputs_tnd_mixed_kinds():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_full_inputs_tnd_mixed_kinds: NPU device not available")
         return
@@ -382,7 +382,7 @@ def test_full_inputs_tnd_mixed_kinds():
 
 
 def test_all_optionals_omitted_tnd():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_all_optionals_omitted_tnd: NPU device not available")
         return
@@ -396,7 +396,7 @@ def test_all_optionals_omitted_tnd():
 
 
 def test_seqused_q_tensor_only_drives_batch():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_seqused_q_tensor_only_drives_batch: NPU device not available")
         return
@@ -413,7 +413,7 @@ def test_seqused_q_tensor_only_drives_batch():
 
 
 def test_seqused_k_ptr_only_view_reads():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_seqused_k_ptr_only_view_reads: NPU device not available")
         return
@@ -428,7 +428,7 @@ def test_seqused_k_ptr_only_view_reads():
 
 
 def test_bsnd_attr_batch_all_optionals_omitted():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_bsnd_attr_batch_all_optionals_omitted: NPU device not available")
         return
@@ -444,7 +444,7 @@ def test_bsnd_attr_batch_all_optionals_omitted():
 
 
 def test_required_tensors_passed_null_bsnd_attr_batch():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_required_tensors_passed_null_bsnd_attr_batch: NPU device not available")
         return
@@ -458,7 +458,7 @@ def test_required_tensors_passed_null_bsnd_attr_batch():
 
 
 def test_zero_batch_int32_wraparound_contract():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_zero_batch_int32_wraparound_contract: NPU device not available")
         return
@@ -543,7 +543,7 @@ def _assert_kernel_failure_sensed(case_name):
 
 
 def test_seqused_k_negative_value_via_ptr_guard():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_seqused_k_negative_value_via_ptr_guard: NPU device not available")
         return
@@ -554,7 +554,7 @@ def test_seqused_k_negative_value_via_ptr_guard():
 
 
 def test_cmp_residual_k_negative_value_via_ptr_guard():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_cmp_residual_k_negative_value_via_ptr_guard: NPU device not available")
         return
@@ -563,7 +563,7 @@ def test_cmp_residual_k_negative_value_via_ptr_guard():
 
 
 def test_seqused_q_negative_value_tensor_guard():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_seqused_q_negative_value_tensor_guard: NPU device not available")
         return
@@ -574,7 +574,7 @@ def test_seqused_q_negative_value_tensor_guard():
 
 
 def test_cu_q_not_ascending_guard():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_cu_q_not_ascending_guard: NPU device not available")
         return
@@ -584,7 +584,7 @@ def test_cu_q_not_ascending_guard():
 
 
 def test_seqused_batch_exceeds_cu_extent_guard():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_seqused_batch_exceeds_cu_extent_guard: NPU device not available")
         return
@@ -600,7 +600,7 @@ def test_seqused_batch_exceeds_cu_extent_guard():
 
 
 def test_metadata_null_output_guard():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_metadata_null_output_guard: NPU device not available")
         return
@@ -618,7 +618,7 @@ def test_metadata_null_output_guard():
 
 
 def test_missing_required_scalar_rejected():
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     if not torch.npu.is_available():
         print("[SKIP] test_missing_required_scalar_rejected: NPU device not available")
         return
@@ -647,7 +647,7 @@ def test_missing_required_scalar_rejected():
 
 def _child_main() -> int:
     case = os.environ[_CHILD_ENV_VAR]
-    torch.npu.set_device(1)
+    torch.npu.set_device(0)
     try:
         _FAILURE_LAUNCHERS[case]()
         torch.npu.synchronize()
