@@ -1385,6 +1385,40 @@ del _member
 # ``compile_config``, which imports it locally (this module imports that one).
 EARLY_START_MASK: SkCap = SkCap.CAP_1_EARLY_START_WAIT | SkCap.CAP_2_EARLY_START_SET
 
+# Generated text each early-start interface emits (see backend_cce_ops.cpp). The source
+# is the source of truth for whether SK_BIND may advertise the matching capability bit.
+_EARLY_START_CALL_TOKENS = (
+    (SkCap.CAP_1_EARLY_START_WAIT, "AscendC::WaitPreTaskEnd"),
+    (SkCap.CAP_2_EARLY_START_SET, "AscendC::SetNextTaskStart"),
+)
+
+# Global core synchronization emitted by system.sync_all (see backend_cce_ops.cpp):
+# MIX/AIV use AscendC::SyncAll, AIC-only keeps the PTO SYNCALL spelling.
+_GLOBAL_SYNC_TOKENS = ("AscendC::SyncAll", "SYNCALL<")
+
+
+def _uses_global_sync(content: str) -> bool:
+    """Return whether the generated kernel calls the global core synchronization."""
+    return any(token in content for token in _GLOBAL_SYNC_TOKENS)
+
+
+def _effective_sk_cap(sk_cap: SkCap | None, content: str) -> SkCap | None:
+    """Drop early-start bits the generated kernel never calls.
+
+    ``SK_BIND``'s cap is a contract the SuperKernel framework trusts when pairing
+    SET/WAIT between adjacent sub-kernels: declaring a bit without the matching call
+    leaves a neighbour waiting for a flag that is never set. The CCE backend emits the
+    call text only when the IR contains the corresponding system op, so the generated
+    source decides which declared bits survive.
+    """
+    if sk_cap is None:
+        return None
+    mask = int(sk_cap)
+    for bit, token in _EARLY_START_CALL_TOKENS:
+        if mask & int(bit) and token not in content:
+            mask &= ~int(bit)
+    return SkCap(mask)
+
 
 def _resolve_sk_cap(sk_cap: SkCap | None) -> SkCap | None:
     """Validate ``pl.jit``'s ``sk_cap``: None = no entry, 0 = SK binding only.
@@ -1914,7 +1948,6 @@ def _codegen(
     bound_signature=None,
     static_signature: tuple[tuple[int, int, int], ...] = (),
     sanitizer: bool = False,
-    sk_cap: SkCap | None = None,
 ) -> CodegenResult | None:
     """Codegen: parse + generate the kernel source for one concrete tilingkey.
 
@@ -2388,7 +2421,7 @@ def jit(
     mode: str | None = None,
     max_threads: int | None = None,
     sk_cap: SkCap | None = None,
-    schedmode: int = 0,
+    schedmode: int | None = None,
     **kwargs,
 ):
     """Mark a function for JIT compilation.
@@ -2426,13 +2459,14 @@ def jit(
             ``CAP_0_SK_ONLY`` for an SK binding with no capability bits.
         schedmode: Kernel launch scheduling mode emitted as the ``__schedmode__(mode)``
             qualifier on the ``__global__`` entry (``0`` = normal/default, ``1`` = batch).
-            Valid for both SIMT and Tile kernels. In SuperKernel fusion, ``schedmode=1``
-            triggers the framework's ``__schedmode__`` check on the sub-kernel — pair it
-            with ``sk_cap`` containing ``8`` (disable_batchmode_check) so the kernel can
-            still participate in fusion. ``schedmode=1`` is recommended when the kernel
-            uses ``pl.system.sync_all()`` under multi-stream concurrency (batch dispatch
-            avoids deadlock). No warning is emitted for ``schedmode=1`` without
-            ``sync_all`` (matching AscendC behavior).
+            ``None`` (the default) selects automatically: ``1`` when the generated kernel
+            calls ``pl.system.sync_all()`` (batch dispatch avoids the multi-stream
+            deadlock), otherwise ``0``. An explicit ``0`` or ``1`` always wins; an
+            explicit ``0`` on a kernel that calls ``sync_all`` keeps the normal mode and
+            logs a warning. In SuperKernel fusion, ``schedmode=1`` triggers the
+            framework's ``__schedmode__`` check on the sub-kernel — pair it with
+            ``sk_cap`` containing ``8`` (disable_batchmode_check) so the kernel can still
+            participate in fusion.
 
     Usage (Tile-programming kernel with bracket-launch)::
 
@@ -2472,8 +2506,12 @@ def jit(
     if not isinstance(auto_mutex, bool):
         raise TypeError(f"auto_mutex must be a bool, got {type(auto_mutex).__name__}")
     sk_cap = _resolve_sk_cap(sk_cap)
-    if not isinstance(schedmode, int) or isinstance(schedmode, bool) or schedmode not in (0, 1):
-        raise ValueError(f"schedmode must be 0 (normal) or 1 (batch), got {schedmode}")
+    if schedmode is not None and (
+        not isinstance(schedmode, int) or isinstance(schedmode, bool) or schedmode not in (0, 1)
+    ):
+        raise ValueError(
+            f"schedmode must be None (auto), 0 (normal) or 1 (batch), got {schedmode!r}"
+        )
 
     if arch is not None:
         arch = normalize_arch(arch)
@@ -2618,7 +2656,7 @@ class _TileJitKernel:
         func_type=ir.FunctionType.Opaque,
         max_threads=None,
         sk_cap=None,
-        schedmode=0,
+        schedmode=None,
     ):
         self._func = func
         self._arch = arch
@@ -3002,10 +3040,42 @@ class _TileJitKernel:
             bound_signature=bound_signature,
             static_signature=static_signature,
             sanitizer=self._sanitizer,
-            sk_cap=self._sk_cap,
         )
         if cg is None:
             raise RuntimeFailure(f"Failed to generate code for kernel '{self.__name__}'")
+
+        # ``sk_cap`` declares which early-start interfaces the kernel uses, but the
+        # framework pairs SET/WAIT from SK_BIND alone: an unbacked bit would leave the
+        # neighbour waiting for a flag that never arrives. Calibrate the declared mask
+        # against the generated source once per kernel (all TilingKey branches must use
+        # the same interfaces) and use the effective mask everywhere below.
+        if self._sk_cap is not None and (self._sk_cap & EARLY_START_MASK):
+            effective_sk_cap = _effective_sk_cap(self._sk_cap, cg.content)
+            if effective_sk_cap != self._sk_cap:
+                logging.warning(
+                    "kernel '%s' declares sk_cap=%d but the generated source does not call the "
+                    "matching early-start interface; dropping the unbacked bits -> %d",
+                    self.__name__, int(self._sk_cap), int(effective_sk_cap),
+                )
+                self._sk_cap = effective_sk_cap
+
+        # sync_all needs batch dispatch to avoid multi-stream deadlock; auto is resolved per variant.
+        uses_global_sync = _uses_global_sync(cg.content)
+        if self._schedmode is None:
+            effective_schedmode = 1 if uses_global_sync else 0
+            if effective_schedmode == 1:
+                logging.info(
+                    "kernel '%s' calls sync_all; enabling schedmode=1 automatically",
+                    self.__name__,
+                )
+        else:
+            effective_schedmode = self._schedmode
+            if effective_schedmode == 0 and uses_global_sync:
+                logging.warning(
+                    "kernel '%s' calls sync_all but schedmode=0 was requested explicitly; "
+                    "keep schedmode=1 to avoid deadlock under multi-stream concurrency",
+                    self.__name__,
+                )
 
         # Resolve once for compiler flags, the native block-budget check and debug
         # recompilation. Every consumer must use this binary's same core geometry.
@@ -3026,7 +3096,7 @@ class _TileJitKernel:
             compile_timeout=compile_timeout,
             target=target,
             sk_cap=self._sk_cap,
-            schedmode=self._schedmode,
+            schedmode=effective_schedmode,
         )
         if lib_path is None:
             raise RuntimeFailure(f"Failed to compile kernel '{self.__name__}'")

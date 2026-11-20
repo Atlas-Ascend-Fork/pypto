@@ -20,10 +20,12 @@ import pypto_pro.language as pl
 from pypto_pro.runtime.compile_config import get_jit_compile_config
 from pypto_pro.runtime.jit import (
     CodegenResult,
+    _effective_sk_cap,
     _make_global_entry,
     _make_sk_bind_block,
     _make_sk_caller_parts,
     _resolve_sk_cap,
+    _uses_global_sync,
 )
 from pypto_pro.runtime.platform import NpuArch
 import pytest
@@ -124,6 +126,48 @@ def test_out_of_range_bits_are_rejected(value):
     """IntFlag builds pseudo-members for unknown values; the mask check rejects them."""
     with pytest.raises(ValueError, match="unknown capability bits"):
         _resolve_sk_cap(pl.SkCap(value))
+
+
+# ---------------------------------------------------------------------------
+# Effective mask: unbacked early-start bits are dropped
+# ---------------------------------------------------------------------------
+def test_effective_sk_cap_keeps_none():
+    assert _effective_sk_cap(None, "anything") is None
+
+
+@pytest.mark.parametrize(
+    "sk_cap, content, expected",
+    [
+        (pl.SkCap.CAP_1_EARLY_START_WAIT, "", 0),
+        (pl.SkCap.CAP_2_EARLY_START_SET, "", 0),
+        (pl.SkCap.CAP_1_EARLY_START_WAIT, "AscendC::WaitPreTaskEnd<true>();",
+         pl.SkCap.CAP_1_EARLY_START_WAIT),
+        (pl.SkCap.CAP_2_EARLY_START_SET, "AscendC::SetNextTaskStart();",
+         pl.SkCap.CAP_2_EARLY_START_SET),
+        (pl.SkCap.CAP_1_EARLY_START_WAIT | pl.SkCap.CAP_2_EARLY_START_SET,
+         "AscendC::WaitPreTaskEnd();", pl.SkCap.CAP_1_EARLY_START_WAIT),
+        (pl.SkCap.CAP_1_EARLY_START_WAIT | pl.SkCap.CAP_4_DISABLE_DCCI_ALL,
+         "AscendC::WaitPreTaskEnd();",
+         pl.SkCap.CAP_1_EARLY_START_WAIT | pl.SkCap.CAP_4_DISABLE_DCCI_ALL),
+        (pl.SkCap.CAP_4_DISABLE_DCCI_ALL, "", pl.SkCap.CAP_4_DISABLE_DCCI_ALL),
+    ],
+)
+def test_effective_sk_cap_drops_unbacked_bits(sk_cap, content, expected):
+    assert _effective_sk_cap(sk_cap, content) == expected
+
+
+@pytest.mark.parametrize(
+    "content, expected",
+    [
+        ("AscendC::SyncAll();", True),
+        ("AscendC::SyncAll<false>();", True),
+        ("SYNCALL<SyncCoreType::AICOnly>();", True),
+        ("AscendC::WaitPreTaskEnd();", False),
+        ("", False),
+    ],
+)
+def test_uses_global_sync_detects_emitted_spellings(content, expected):
+    assert _uses_global_sync(content) is expected
 
 
 # ---------------------------------------------------------------------------

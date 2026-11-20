@@ -22,7 +22,6 @@ import pypto_pro
 import pypto_pro.language as pl
 from pypto_pro.runtime.jit import KERNEL_HEADER_SINGLE, _codegen
 from pypto_pro.runtime.platform import NpuArch
-import pytest
 
 
 @pl.vector_function(mode="simt", max_threads=128)
@@ -92,10 +91,9 @@ def test_block_meta_header_carries_both_implementations():
     assert "__BLOCK_LOCAL__ uint32_t" not in text
 
 
-@pytest.mark.parametrize("sk_cap", [0, 4])
-def test_simt_kernel_with_sk_cap_compiles(tmp_path, sk_cap):
+def test_simt_kernel_with_sk_cap_compiles(tmp_path):
     """Adapted SIMT VF may carry sk_cap; the outer SIMD entry supplies block values."""
-    result = _codegen(_simt_sk_kernel.to_kernel_def(), NpuArch.DAV_3510, False, out_dir=str(tmp_path), sk_cap=sk_cap)
+    result = _codegen(_simt_sk_kernel.to_kernel_def(), NpuArch.DAV_3510, False, out_dir=str(tmp_path))
     assert result is not None
     assert "gridDim" not in result.content
     assert "__pypto_block_num_value()" in result.content
@@ -107,7 +105,6 @@ def test_simt_kernel_without_sk_cap_compiles(tmp_path):
     assert result is not None
 
 
-@pytest.mark.parametrize("sk_cap", [0, 4])
-def test_simd_kernel_with_sk_cap_still_compiles(tmp_path, sk_cap):
-    result = _codegen(_simd_sk_kernel.to_kernel_def(), NpuArch.DAV_3510, False, out_dir=str(tmp_path), sk_cap=sk_cap)
+def test_simd_kernel_with_sk_cap_still_compiles(tmp_path):
+    result = _codegen(_simd_sk_kernel.to_kernel_def(), NpuArch.DAV_3510, False, out_dir=str(tmp_path))
     assert result is not None

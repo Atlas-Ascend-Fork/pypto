@@ -93,7 +93,7 @@ JIT复用范围限于当前Python进程。重新启动进程后会重新执行�
 | compile_timeout | int                                        | 设置当前Kernel的编译超时时间，单位为秒。                                                                                                                                                                                                                                                                                                                                                                                   | None（基础默认值为600秒） |
 | max_threads     | int或None                                  | SIMT kernel每个Thread Block允许的最大线程数，取值为[1, 2048]，SIMT模式必填，SIMD模式不接受该参数。                                                                                                                                                                                                                                                                                                                         | None                      |
 | sk_cap          | pypto_pro.language.SkCap                   | SuperKernel能力位。设置后除`__global__`入口外，额外生成`__sk__`入口和`SK_BIND`记录，Kernel可被图编译侧融合；按位或组合`CAP_0_SK_ONLY`、`CAP_1_EARLY_START_WAIT`、`CAP_2_EARLY_START_SET`、`CAP_4_DISABLE_DCCI_ALL`、`CAP_8_DISABLE_BATCHMODE_CHECK`、`CAP_16_BLOCKDIM_SCALE_UP`。`None`表示不生成SK入口，`CAP_0_SK_ONLY`表示只生成SK绑定、不启用其他特性。只接受pypto_pro.language.SkCap成员及其按位或组合，不接受裸整数。 | None                      |
-| schedmode       | int                                        | Kernel调度模式，写入`__global__`入口的`__schedmode__(mode)`限定符：0为普通模式，1为batch模式。                                                                                                                                                                                                                                                                                                                             | 0                         |
+| schedmode       | int或None                                  | Kernel调度模式，写入`__global__`入口的`__schedmode__(mode)`限定符：0为普通模式，1为batch模式。默认`None`表示自动：JIT检测到Kernel调用`pypto_pro.language.system.sync_all()`时为1，否则为0；显式设置0/1时以显式配置为准。                                                                                                                                                                                                     | None（自动）              |
 
 设置`name`后，编译产物和profiling中的算子名均使用该名称。指定名称和默认函数名均须为合法的ASCII C++标识符，不能使用C++关键字、保留前缀`__`或`_`后接大写字母，以及`call_kernel`、`AICORE`、`SK_BIND`等保留名称。
 
@@ -126,7 +126,7 @@ def add_kernel(x, y, out):
 
 `sk_cap`只声明Kernel可被融合，是否融合由图层决定；未融合时按普通Kernel执行，早启接口不产生效果。早启位需与配对子核中的接口配合使用（前序子核set、后序子核wait），且每个核、每个TilingKey分支只调用一次。
 
-`schedmode`只影响Kernel的下发方式：`0`为普通模式，`1`为batch模式，JIT据此在入口上生成`__schedmode__`限定符。Kernel内使用pypto_pro.language.system.sync_all()且存在多流并发时建议设置为`1`，以降低死锁风险。
+`schedmode`只影响Kernel的下发方式：`0`为普通模式，`1`为batch模式，JIT据此在入口上生成`__schedmode__`限定符。缺省为`None`，JIT会检测Kernel是否调用`pypto_pro.language.system.sync_all()`：调用了则自动按`1`生成，未调用则为`0`，从而避免因漏配`schedmode=1`在多流并发下卡死。显式设置`0/1`时以显式配置为准；显式`0`且调用了全核同步时保留`0`并打印告警。`schedmode=1`且需要和启动核数更大的算子融合时，需要设置`CAP_8_DISABLE_BATCHMODE_CHECK`跳过`__schedmode__`校验。
 
 ## Kernel下发与同步
 

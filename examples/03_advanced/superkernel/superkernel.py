@@ -62,7 +62,28 @@ if not supports_sk_cap:
     raise SystemExit(0)
 
 import torch
-import torch_npu
+
+try:
+    import torch_npu
+except ImportError as exc:
+    print(f"SKIP: torch_npu is not available in this environment ({exc})")
+    raise SystemExit(0)
+
+# SuperKernel binding is only available on the Ascend 950 series; other devices
+# cannot run this sample, so skip instead of failing during JIT compilation.
+SUPPORTED_DEVICE = "Ascend950"
+
+
+def unsupported_device_reason(device_id: int) -> str | None:
+    """Return why SuperKernel cannot run on this device, or None when supported."""
+    try:
+        name = torch_npu.npu.get_device_name(device_id)
+    except Exception as exc:  # no NPU, driver mismatch, invalid device id, ...
+        return f"cannot query NPU device {device_id}: {exc}"
+    if SUPPORTED_DEVICE not in name:
+        return f"SuperKernel requires an {SUPPORTED_DEVICE} series device, got {name!r}"
+    return None
+
 
 SHAPE = (1024, 512)
 TILE_ROWS = 16
@@ -246,6 +267,10 @@ Examples:
 
     device_id = get_device_id()
     if device_id is None:
+        return
+    reason = unsupported_device_reason(device_id)
+    if reason is not None:
+        print(f"SKIP: {os.path.basename(__file__)}: {reason}")
         return
     torch_npu.npu.set_device(device_id)
 
