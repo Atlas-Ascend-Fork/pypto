@@ -95,6 +95,8 @@ Status IntraSubgraphAdapter::RunOnFunction(Function& function)
         return FAILED;
     }
     if (AdaptBoundaryTensors(function) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Failed to adapt boundary tensors after token-aware partition finalization.");
         return FAILED;
     }
     if (function.GetFunctionType() != FunctionType::DYNAMIC_LOOP_PATH || function.GetTotalSubGraphCount() == 0U ||
@@ -514,6 +516,32 @@ Status IntraSubgraphAdapter::AdapteTensorConsumers(Function& function, LogicalTe
     return SUCCESS;
 }
 
+// A5 stores UB-origin L1 boundaries in ND before loading DDR directly into L1.
+// Keeping the source view preserves both the layout and slice offsets.
+static LogicalTensorPtr CreateUbBoundaryView(Function& function, Operation& op, const LogicalTensorPtr& tensor)
+{
+    if (Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510 || tensor->GetMemoryTypeOriginal() != MEM_L1 ||
+        tensor->Format() != TileOpFormat::TILEOP_ND || op.GetOpcode() != config::GetSliceOpcode() ||
+        op.GetIOperands().size() != 1) {
+        return nullptr;
+    }
+    const auto& source = op.GetIOperands().front();
+    auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(op.GetOpAttribute());
+    if (source->GetMemoryTypeOriginal() != MEM_UB || source->Format() != TileOpFormat::TILEOP_ND ||
+        viewAttr == nullptr) {
+        return nullptr;
+    }
+    viewAttr = std::static_pointer_cast<ViewOpAttribute>(viewAttr->Clone());
+    auto view = source->View(function, tensor->GetShape(), viewAttr->GetFromOffset());
+    auto [viewOffset, viewDynOffset] = TensorOffset::Add(source->GetOffset(), source->GetDynOffset(),
+                                                         viewAttr->GetFromOffset(), viewAttr->GetFromDynOffset());
+    view->UpdateOffset(TensorOffset(viewOffset, viewDynOffset));
+    view->SetMemoryTypeBoth(MEM_UB, true);
+    viewAttr->SetToType(MEM_UB);
+    op.SetOpAttribute(viewAttr);
+    return view;
+}
+
 // For Contract
 LogicalTensorPtr IntraSubgraphAdapter::InsertOpBetween(Function& function, Opcode opcode, Operation& op,
                                                        LogicalTensorPtr tensor)
@@ -522,12 +550,15 @@ LogicalTensorPtr IntraSubgraphAdapter::InsertOpBetween(Function& function, Opcod
                       OpcodeManager::Inst().GetOpcodeStr(opcode).c_str());
     ASSERT(opcode == config::GetContractOpcode()) << "[IntraSubgraphAdapter][Operation][ERROR]: Opcode for "
                                                      "IntraSubgraphAdapter::InsertOpBetween is invalid.";
-    auto newRawTensor = std::make_shared<RawTensor>(tensor->Datatype(), tensor->GetRawTensor()->rawshape,
-                                                    tensor->Format());
-    LogicalTensorPtr newTensor = irBuilder_.CreateTensorVar(newRawTensor, tensor->GetOffset(), tensor->GetShape(),
-                                                            std::vector<SymbolicScalar>{});
+    auto newTensor = CreateUbBoundaryView(function, op, tensor);
+    if (newTensor == nullptr) {
+        auto newRawTensor = std::make_shared<RawTensor>(tensor->Datatype(), tensor->GetRawTensor()->rawshape,
+                                                        tensor->Format());
+        newTensor = irBuilder_.CreateTensorVar(newRawTensor, tensor->GetOffset(), tensor->GetShape(),
+                                               std::vector<SymbolicScalar>{});
+        newTensor->SetMemoryTypeBoth(tensor->GetMemoryTypeOriginal(), true);
+    }
     GraphUtils::CopyDynStatus(newTensor, tensor);
-    newTensor->SetMemoryTypeBoth(tensor->GetMemoryTypeOriginal(), true);
     op.ReplaceOutputOperand(tensor, newTensor);
     APASS_LOG_DEBUG_F(Elements::Tensor, "Compare Ori: %s", tensor->Dump().c_str());
     APASS_LOG_DEBUG_F(Elements::Tensor, "Compare New: %s", newTensor->Dump().c_str());

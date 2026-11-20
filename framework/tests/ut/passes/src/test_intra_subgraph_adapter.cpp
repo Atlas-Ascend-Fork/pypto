@@ -111,6 +111,45 @@ TEST_F(IntraSubgraphAdapterTest, FinalizesTokenAwarePartitionBeforeMaterializing
     EXPECT_EQ(graph.GetFunction()->GetTotalSubGraphCount(), 1U);
 }
 
+TEST_F(IntraSubgraphAdapterTest, A5FinalizesTokenCycleWithoutMaterializingLocalBoundaries)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {16, 16}, {"input", "producer_out", "middle_out", "output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ABS, {"input"}, {"producer_out"}, "producer"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"producer_out"}, {"middle_out"}, "middle"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_NEG, {"middle_out"}, {"output"}, "consumer"));
+    for (const auto& tensorName : {"input", "producer_out", "middle_out", "output"}) {
+        graph.GetTensor(tensorName)->SetMemoryTypeBoth(MemoryType::MEM_UB);
+    }
+
+    auto* producer = graph.GetOp("producer");
+    auto* middle = graph.GetOp("middle");
+    auto* consumer = graph.GetOp("consumer");
+    producer->UpdateSubgraphID(0);
+    middle->UpdateSubgraphID(1);
+    consumer->UpdateSubgraphID(0);
+    graph.GetFunction()->SetTotalSubGraphCount(2);
+    auto token = IRBuilder().CreateTokenVar(ir::Span::Unknown());
+    auto producerStmt = std::static_pointer_cast<const ir::Stmt>(producer->shared_from_this());
+    auto consumerStmt = std::static_pointer_cast<const ir::Stmt>(consumer->shared_from_this());
+    producer->result_token_ = {token};
+    consumer->tokens_.push_back(token);
+    graph.GetFunction()->GetVarDependency().AddProducer(token, producerStmt);
+    graph.GetFunction()->GetVarDependency().AddConsumer(token, consumerStmt);
+
+    IntraSubgraphAdapter adapter;
+    ASSERT_EQ(adapter.RunOnFunction(*graph.GetFunction()), SUCCESS);
+
+    EXPECT_EQ(producer->GetSubgraphID(), middle->GetSubgraphID());
+    EXPECT_EQ(middle->GetSubgraphID(), consumer->GetSubgraphID());
+    EXPECT_EQ(graph.GetFunction()->GetTotalSubGraphCount(), 1U);
+    EXPECT_EQ(graph.GetFunction()->GetOperationSize(), 3U);
+    EXPECT_EQ(graph.GetTensor("producer_out")->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(graph.GetTensor("middle_out")->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(adapter.PostCheck(*graph.GetFunction()), SUCCESS);
+}
+
 TEST_F(IntraSubgraphAdapterTest, AdaptsBoundaryCreatedByDynamicPostLoweringSplit)
 {
     ComputationalGraphBuilder graph;
@@ -621,6 +660,114 @@ TEST_F(IntraSubgraphAdapterTest, SiblingDdrRoutingAdaptsProducerAndConsumerWhenE
     auto adapterOp = *consumerInput->GetProducers().begin();
     EXPECT_EQ(adapterOp->GetOpcode(), Opcode::OP_SLICE);
     EXPECT_EQ(adapterOp->GetIOperands().front(), sibling);
+}
+
+TEST_F(IntraSubgraphAdapterTest, A5UbOriginL1BoundaryPreservesNdStorageAndSliceOffset)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_BF16, {128, 128}, {MemoryType::MEM_UB, MemoryType::MEM_UB},
+                                 {"input", "source"}, 0));
+    ASSERT_TRUE(graph.AddTensor(DataType::DT_BF16, {64, 128}, MemoryType::MEM_L1, "boundary", 0));
+    ASSERT_TRUE(graph.AddTensor(DataType::DT_BF16, {64, 128}, MemoryType::MEM_L0A, "output", 1));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"input"}, {"source"}, "producer"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_SLICE, {"source"}, {"boundary"}, "slice"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_L1_TO_L0A, {"boundary"}, {"output"}, "consumer"));
+    graph.GetOp("producer")->UpdateSubgraphID(0);
+    auto* slice = graph.GetOp("slice");
+    slice->UpdateSubgraphID(0);
+    slice->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{64, 0}, MemoryType::MEM_L1));
+    graph.GetOp("consumer")->UpdateSubgraphID(1);
+    graph.GetFunction()->SetTotalSubGraphCount(2);
+    IntraSubgraphAdapter adapter;
+    ASSERT_EQ(adapter.RunOnFunction(*graph.GetFunction()), SUCCESS);
+    ASSERT_EQ(adapter.PostCheck(*graph.GetFunction()), SUCCESS);
+    auto local = slice->GetOOperands().front();
+    EXPECT_EQ(local->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(local->GetRawTensor(), graph.GetTensor("source")->GetRawTensor());
+    EXPECT_EQ(local->GetOffset(), (Offset{64, 0}));
+    EXPECT_EQ(local->GetShape(), (Shape{64, 128}));
+    EXPECT_EQ(graph.GetTensor("boundary")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    ASSERT_EQ(local->GetConsumers().size(), 1U);
+    EXPECT_EQ((*local->GetConsumers().begin())->GetOpcode(), Opcode::OP_CONTRACT);
+}
+
+TEST_F(IntraSubgraphAdapterTest, A5UbOriginL1BoundaryPreservesDynamicSourceAndSliceOffsets)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_BF16, {128, 128}, {MemoryType::MEM_UB, MemoryType::MEM_UB},
+                                 {"input", "source"}, 0));
+    ASSERT_TRUE(graph.AddTensor(DataType::DT_BF16, {64, 128}, MemoryType::MEM_L1, "boundary", 0));
+    ASSERT_TRUE(graph.AddTensor(DataType::DT_BF16, {64, 128}, MemoryType::MEM_L0A, "output", 1));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"input"}, {"source"}, "producer"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_SLICE, {"source"}, {"boundary"}, "slice"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_L1_TO_L0A, {"boundary"}, {"output"}, "consumer"));
+    graph.GetOp("producer")->UpdateSubgraphID(0);
+    auto* slice = graph.GetOp("slice");
+    slice->UpdateSubgraphID(0);
+    slice->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{64, 0}, MemoryType::MEM_L1));
+    graph.GetOp("consumer")->UpdateSubgraphID(1);
+    graph.GetFunction()->SetTotalSubGraphCount(2);
+    auto source = graph.GetTensor("source");
+    source->GetRawTensor()->rawshape = {256, 128};
+    const SymbolicScalar sourceOffset("source_offset");
+    const SymbolicScalar sliceOffset("slice_offset");
+    const SymbolicScalar validRows("valid_rows");
+    source->UpdateOffset(TensorOffset({16, 0}, {sourceOffset, SymbolicScalar(0)}));
+    graph.GetTensor("boundary")->UpdateDynValidShape({validRows, SymbolicScalar(128)});
+    slice->SetOpAttribute(std::make_shared<ViewOpAttribute>(
+        Offset{64, 0}, MemoryType::MEM_L1, std::vector<SymbolicScalar>{sliceOffset, SymbolicScalar(0)}));
+    IntraSubgraphAdapter adapter;
+    ASSERT_EQ(adapter.RunOnFunction(*graph.GetFunction()), SUCCESS);
+    ASSERT_EQ(adapter.PostCheck(*graph.GetFunction()), SUCCESS);
+    auto local = slice->GetOOperands().front();
+    EXPECT_EQ(local->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
+    EXPECT_EQ(local->GetRawTensor(), graph.GetTensor("source")->GetRawTensor());
+    EXPECT_EQ(local->GetOffset(), (Offset{80, 0}));
+    ASSERT_EQ(local->GetDynOffset().size(), 2U);
+    EXPECT_EQ(local->GetDynOffset()[0].Dump(), (sourceOffset + sliceOffset).Dump());
+    EXPECT_EQ(local->GetDynValidShape()[0].Dump(), validRows.Dump());
+    EXPECT_EQ(local->Format(), TileOpFormat::TILEOP_ND);
+    EXPECT_EQ(local->GetShape(), (Shape{64, 128}));
+    EXPECT_EQ(graph.GetTensor("boundary")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    ASSERT_EQ(local->GetConsumers().size(), 1U);
+    EXPECT_EQ((*local->GetConsumers().begin())->GetOpcode(), Opcode::OP_CONTRACT);
+}
+
+TEST_F(IntraSubgraphAdapterTest, A5UbOriginNzBoundaryKeepsSeparateStorage)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_BF16, {128, 128}, {MemoryType::MEM_UB, MemoryType::MEM_UB},
+                                 {"input", "source"}, 0));
+    ASSERT_TRUE(graph.AddTensor(DataType::DT_BF16, {64, 128}, MemoryType::MEM_L1, "boundary", 0));
+    ASSERT_TRUE(graph.AddTensor(DataType::DT_BF16, {64, 128}, MemoryType::MEM_L0A, "output", 1));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"input"}, {"source"}, "producer"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_SLICE, {"source"}, {"boundary"}, "slice"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_L1_TO_L0A, {"boundary"}, {"output"}, "consumer"));
+    graph.GetOp("producer")->UpdateSubgraphID(0);
+    auto* slice = graph.GetOp("slice");
+    slice->UpdateSubgraphID(0);
+    slice->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{64, 0}, MemoryType::MEM_L1));
+    graph.GetOp("consumer")->UpdateSubgraphID(1);
+    graph.GetFunction()->SetTotalSubGraphCount(2);
+    graph.GetTensor("boundary")->GetRawTensor()->format = TileOpFormat::TILEOP_NZ;
+    IntraSubgraphAdapter adapter;
+    ASSERT_EQ(adapter.RunOnFunction(*graph.GetFunction()), SUCCESS);
+    ASSERT_EQ(adapter.PostCheck(*graph.GetFunction()), SUCCESS);
+    auto local = slice->GetOOperands().front();
+    EXPECT_EQ(local->GetMemoryTypeOriginal(), MemoryType::MEM_L1);
+    EXPECT_NE(local->GetRawTensor(), graph.GetTensor("source")->GetRawTensor());
+    EXPECT_EQ(local->Format(), TileOpFormat::TILEOP_NZ);
+    EXPECT_EQ(local->GetOffset(), (Offset{0, 0}));
+    EXPECT_EQ(local->GetShape(), (Shape{64, 128}));
+    EXPECT_EQ(graph.GetTensor("boundary")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
+    ASSERT_EQ(local->GetConsumers().size(), 1U);
+    EXPECT_EQ((*local->GetConsumers().begin())->GetOpcode(), Opcode::OP_CONTRACT);
 }
 
 TEST_F(IntraSubgraphAdapterTest, TestL1BoundaryNoDirectPathToDDR)
