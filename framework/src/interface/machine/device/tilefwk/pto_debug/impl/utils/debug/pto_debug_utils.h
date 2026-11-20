@@ -15,7 +15,7 @@
 #ifndef IMPL_UTILS_DEBUG_PTO_DEBUG_UTILS_H
 #define IMPL_UTILS_DEBUG_PTO_DEBUG_UTILS_H
 
-#if !defined(IMPL_UTILS_DEBUG_PTO_DEBUG_UTILS_INNER_H)
+#if !defined(IMPL_UTILS_DEBUG_ASC_DEBUG_UTILS_H)
 inline __gm__ uint8_t* __gm__ g_sysPrintFifoSpace = nullptr;
 #endif
 

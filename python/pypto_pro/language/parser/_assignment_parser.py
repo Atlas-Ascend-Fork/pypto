@@ -151,8 +151,8 @@ class AssignmentParserMixin:
                 hint="Functions used as expressions must return a value",
                 parser_retry=True,
             )
-        from ...ir.op.dist_ops import _ChannelCreate
-        from ..distribute import Channel
+        from ...ir.op.dist_ops import _BufferChannelCreate, _ChannelCreate
+        from ..distribute import BufferChannel, Channel
 
         if isinstance(value_expr, _ChannelCreate):
             # pld.channel defers the binding until the target name is known: emit the
@@ -161,6 +161,16 @@ class AssignmentParserMixin:
             self.scope_manager.define_var(
                 var_name,
                 Channel(value_expr.window, value_expr.ub_addr, token),
+                span=span,
+            )
+            return
+        if isinstance(value_expr, _BufferChannelCreate):
+            # Same deferral for pld.buffer_channel: bind the derived token, keep the
+            # base channel handle for token-level queries.
+            token = self.builder.let(var_name, value_expr.call, span=span)
+            self.scope_manager.define_var(
+                var_name,
+                BufferChannel(value_expr.base, value_expr.buf_addr, value_expr.buf_bytes, token),
                 span=span,
             )
             return

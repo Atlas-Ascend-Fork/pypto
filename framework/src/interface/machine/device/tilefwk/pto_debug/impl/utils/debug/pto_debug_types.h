@@ -22,7 +22,7 @@
 
 #define PTO_SIMD_VF_MAGIC_NUMBER 0xF0A00B0F
 
-#if !defined(IMPL_UTILS_DEBUG_PTO_DEBUG_TYPES_INNER_H)
+#if !defined(IMPL_UTILS_DEBUG_ASC_DEBUG_TYPES_H)
 struct BlockVFBufInfo {
     enum class AssertState : uint8_t {
         IDLE = 0U,

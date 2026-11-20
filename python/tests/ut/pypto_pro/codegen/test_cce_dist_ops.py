@@ -52,31 +52,50 @@ def _dist_pointer_codegen_kernel(
         a64 = pl.make_tensor(pl.addptr(rptr, 0), [1], dtype=pl.DT_INT64)
         out2[0] = pl.atomic_add(a64, 0, 1)
 
-        # Signals are plain user memory: the caller offsets the slot and the pointer
-        # determines whether the write is local or remote.
-        local_slot = pl.addptr(pl.make_ptr(sig), me)
-        pld.notify(local_slot, 1)
-        pld.wait(local_slot, 1, cmp=pld.Cmp.GE)
-        # The signal word width follows the pointer's element type.
-        pld.notify(pl.make_ptr(sig32), 1)
-        pld.wait(sig32, 1)
+        # Signals are plain user memory: a one-element view over the slot is what the
+        # frontend atomics address, and the pointer decides local vs remote.
+        local_slot = pl.make_tensor(pl.addptr(pl.make_ptr(sig), me), [1], dtype=pl.DT_INT64)
+        pl.atomic_exch(local_slot, 0, 1)
+        while True:
+            if local_slot[0] >= 1:
+                break
+        # The signal word width follows the view's element type.
+        sig32_slot = pl.make_tensor(pl.make_ptr(sig32), [1], dtype=pl.DT_INT32)
+        pl.atomic_exch(sig32_slot, 0, 1)
+        while True:
+            if sig32_slot[0] >= 1:
+                break
 
         it = pl.make_tile(pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec), addr=0x1000)
         pl.load(it, idx, [0, 0])
         ch = pld.channel(win, 0x2000, peer=peer)
         wptr = ch.remote_ptr(ws)
         sig_rptr = ch.remote_ptr(sig)
-        pld.notify(pl.addptr(sig_rptr, me), 1, op=pld.NotifyOp.ATOMIC_ADD)
+        sig_peer = pl.make_tensor(pl.addptr(sig_rptr, me), [1], dtype=pl.DT_INT64)
+        pl.atomic_add(sig_peer, 0, 1)
+        ch.lock()
         ch.write(wptr, src, submit=False)
         ch.submit()
         ch.write(pl.make_ptr(pl.addptr(wptr, 64), pl.DT_INT64), 7)
         ch.write_notify(wptr, src, pl.addptr(sig_rptr, me), me + 1)
+        ch.unlock()
         ch.write_indexed(pl.addptr(wptr, 128), src, src_indices=it, count=8)
         ch.read(out, pl.addptr(wptr, 512))
         ch.write_reduce(pl.make_ptr(pl.addptr(wptr, 768), pl.DT_FP32), out2f, op=pld.ReduceOp.SUM)
         ch.atomic_fetch_add(pl.make_ptr(pl.addptr(wptr, 1024), pl.DT_INT64), out2, 1)
         ch.atomic_cas(pl.make_ptr(pl.addptr(wptr, 1032), pl.DT_INT64), out2, 0, 1)
         ch.drain()
+        bch = pld.buffer_channel(ch, 0x4000, 256)
+        bch.write(wptr, src)
+        bch.write(pl.make_ptr(pl.addptr(wptr, 64), pl.DT_INT64), 7)
+        bch.write_notify(wptr, src, pl.addptr(sig_rptr, me), me + 1)
+        bch.submit()
+        bch.read(out, pl.addptr(wptr, 512))
+        bch.atomic_fetch_add(pl.make_ptr(pl.addptr(wptr, 1024), pl.DT_INT64), out2, 1)
+        bch.write_reduce(pl.make_ptr(pl.addptr(wptr, 768), pl.DT_FP32), out2f, op=pld.ReduceOp.SUM)
+        bch.atomic_cas(pl.make_ptr(pl.addptr(wptr, 1032), pl.DT_INT64), out2, 0, 1)
+        bch.submit()
+        bch.drain()
         ch2 = pld.channel(win, 0x3000, peer=peer)
         ch2.write(pl.addptr(ch2.remote_ptr(ws), 256), src, option=pld.UrmaOption.CQE)
         ch2.drain()

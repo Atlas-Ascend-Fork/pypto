@@ -16,7 +16,7 @@
 
 数据同步屏障（Data Synchronization Barrier）。对本核已发出的、`scope` 范围内的访存操作进行排序：屏障前的访问全部完成后，屏障后的访问才会开始。
 
-它只排序本核自身的访存，不同步其他核，也不等待MTE等异步pipe上尚未完成的传输——异步pipe上的posted store需要先由事件同步（sync_src/sync_dst，或pld.notify/pld.barrier内建的set_flag/wait_flag对）拉入当前pipe，再由dsb排序。典型场景：MTE3写GM完成后、写核间信号或调用sync_all之前，插入`pl.system.dsb(scope=pl.MemDsb.DDR)`保证写入先于信号到达内存系统。
+它只排序本核自身的访存，不同步其他核，也不等待MTE等异步pipe上尚未完成的传输——异步pipe上的posted store需要先由事件同步（sync_src/sync_dst，或pld.barrier内建的set_flag/wait_flag对）拉入当前pipe，再由dsb排序。典型场景：MTE3写GM完成后、写核间信号或调用sync_all之前，插入`pl.system.dsb(scope=pl.MemDsb.DDR)`保证写入先于信号到达内存系统。
 
 ## 函数原型
 
@@ -67,4 +67,4 @@ def dsb_kernel(
     pl.system.dsb(scope=pl.MemDsb.DDR)
 ```
 
-该示例在store之后用MTE3→S事件对排空MTE3队列，随后dsb(DDR)保证本核后续访存（示例中未画出的信号写入，参见pypto_distribute.h的notify实现）排在GM写入之后。
+该示例在store之后用MTE3→S事件对排空MTE3队列，随后dsb(DDR)保证本核后续访存（示例中未画出的信号写入，例如前端的 pl.atomic_add）排在GM写入之后。

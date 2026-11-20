@@ -1704,70 +1704,6 @@ REGISTER_BACKEND_OP(BackendCCE, "dist.barrier")
         return MakeDistBarrierCodegenCCE(op, codegen);
     });
 
-static std::string MakeDistNotifyCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
-{
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
-        << "dist.notify requires 2 arguments, but got " << op->args_.size();
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
-        << "dist.notify requires the Vector target (the signal helpers run in the vector section)";
-
-    const int notifyOp = op->HasKwarg("notify_op") ? op->GetKwarg<int>("notify_op") : 0;
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, notifyOp == 0 || notifyOp == 1)
-        << "dist.notify notify_op must be 0 (SET) or 1 (ATOMIC_ADD), but got " << notifyOp;
-    const bool flushStore = !op->HasKwarg("flush_store") || op->GetKwarg<bool>("flush_store");
-
-    auto ptrType = ir::As<ir::PtrType>(op->args_[0]->GetType());
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, ptrType)
-        << "dist.notify signal address must have PtrType";
-    const std::string dtypeStr = codegen.GetTypeString(ptrType->dtype_);
-
-    const std::string addr = cce::GetOperandAsCode(codegen, op->args_[0]);
-    const std::string val = codegen.GetExprAsCode(op->args_[1]);
-    codegen.Emit("pypto::dist::Notify<" + dtypeStr + ", " + std::to_string(notifyOp) + ", " +
-                 (flushStore ? "true" : "false") + ">(" + addr + ", static_cast<int64_t>(" + val + "));");
-    return "";
-}
-
-static std::string MakeDistWaitCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
-{
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
-        << "dist.wait requires 2 arguments, but got " << op->args_.size();
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
-        << "dist.wait requires the Vector target (the wait helper spins on the vector pipe)";
-
-    const int cmp = op->HasKwarg("cmp") ? op->GetKwarg<int>("cmp") : 0;
-    PRO_CODEGEN_CHECK(ExternalError::OUT_OF_RANGE, cmp >= 0 && cmp <= 5)
-        << "dist.wait cmp must be a CmpMode member (0-5), but got " << cmp;
-    const int64_t timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, timeoutCycles >= 0)
-        << "dist.wait timeout_cycles must be >= 0 (0 = wait forever), but got " << timeoutCycles;
-
-    auto ptrType = ir::As<ir::PtrType>(op->args_[0]->GetType());
-    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, ptrType)
-        << "dist.wait signal address must have PtrType";
-    const std::string dtypeStr = codegen.GetTypeString(ptrType->dtype_);
-
-    const std::string addr = cce::GetOperandAsCode(codegen, op->args_[0]);
-    const std::string val = codegen.GetExprAsCode(op->args_[1]);
-    codegen.Emit("pypto::dist::Wait<" + dtypeStr + ", " + std::to_string(cmp) + ">(" + addr +
-                 ", static_cast<int64_t>(" + val + "), " + std::to_string(timeoutCycles) + "LL);");
-    return "";
-}
-
-REGISTER_BACKEND_OP(BackendCCE, "dist.notify")
-    .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistNotifyCodegenCCE(op, codegen);
-    });
-
-REGISTER_BACKEND_OP(BackendCCE, "dist.wait")
-    .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistWaitCodegenCCE(op, codegen);
-    });
-
 static std::string DistUbAddrLiteral(int64_t ubAddr)
 {
     return "static_cast<uint64_t>(" + std::to_string(ubAddr) + "ULL)";
@@ -1797,6 +1733,242 @@ static std::string MakeDistCreateChannelCodegenCCE(const ir::CallPtr& op, codege
     codegen.Emit("auto " + target + " = pypto::dist::Channel(reinterpret_cast<__gm__ pypto::dist::Window*>(" +
                  windowPtr + "), reinterpret_cast<__ubuf__ uint8_t*>(" + DistUbAddrLiteral(ubAddr) +
                  "), static_cast<int32_t>(" + codegen.GetExprAsCode(op->args_[1]) + "));");
+    return "";
+}
+
+static std::string MakeDistCreateBufferChannelCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
+        << "dist.buffer_channel requires 1 argument [channel], but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "dist.buffer_channel requires the Vector target (the write engine runs on the AIV)";
+
+    const int64_t bufAddr = op->HasKwarg("buf_addr") ? op->GetKwarg<int>("buf_addr") : 0;
+    const int64_t bufBytes = op->HasKwarg("buf_bytes") ? op->GetKwarg<int>("buf_bytes") : 0;
+    const std::string target = codegen.GetCurrentResultTarget();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, !target.empty())
+        << "dist.buffer_channel must be the RHS of an assignment";
+
+    // Composition: the buffer channel holds a pointer to the base channel object.
+    const std::string channel = codegen.GetExprAsCode(op->args_[0]);
+    codegen.Emit("auto " + target + " = pypto::dist::BufferChannel(&(" + channel +
+                 "), reinterpret_cast<__ubuf__ uint8_t*>(" + DistUbAddrLiteral(bufAddr) + "), static_cast<uint32_t>(" +
+                 std::to_string(bufBytes) + "U));");
+    return "";
+}
+
+static std::string MakeDistBufferChannelWriteCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
+        << "buffer_channel.write requires 4 arguments [channel, dst_ptr, num_bytes, tensor], but got "
+        << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "buffer_channel.write requires the Vector target (the write engine runs on the AIV)";
+
+    auto sourceVar = ir::As<ir::Var>(op->args_[3]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, sourceVar)
+        << "buffer_channel.write source must be a tensor Var";
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
+                               ir::As<ir::TensorType>(sourceVar->GetType()))
+        << "buffer_channel.write source must have TensorType";
+
+    const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x0D;
+    const std::string channel = codegen.GetExprAsCode(op->args_[0]);
+    const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
+    const std::string sourcePtr = codegen.GetPointer(codegen.GetVarName(sourceVar));
+    codegen.Emit(channel + ".Write<" + std::to_string(option) + ">(reinterpret_cast<GM_ADDR>(" + dstPtr +
+                 "), reinterpret_cast<__gm__ uint8_t*>(" + sourcePtr + "), static_cast<int64_t>(" +
+                 codegen.GetExprAsCode(op->args_[2]) + "));");
+    return "";
+}
+
+static std::string MakeDistBufferChannelWriteValueCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
+        << "buffer_channel.write_value requires 3 arguments [channel, dst_ptr, value], but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "buffer_channel.write_value requires the Vector target (the write engine runs on the AIV)";
+
+    const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x0D;
+    auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
+        << "buffer_channel.write_value destination must be a pointer";
+    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
+
+    const std::string channel = codegen.GetExprAsCode(op->args_[0]);
+    const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
+    codegen.Emit(channel + ".WriteValue<" + std::to_string(option) + ", " + dtypeStr + ">(reinterpret_cast<GM_ADDR>(" +
+                 dstPtr + "), static_cast<" + dtypeStr + ">(" + codegen.GetExprAsCode(op->args_[2]) + "));");
+    return "";
+}
+
+static std::string MakeDistBufferChannelSubmitCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
+        << "buffer_channel.submit requires 1 argument, but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "buffer_channel.submit requires the Vector target";
+
+    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
+    codegen.Emit(codegen.GetExprAsCode(op->args_[0]) + ".Submit<" + DistTimeoutLiteral(timeoutCycles) + ">();");
+    return "";
+}
+
+static std::string MakeDistBufferChannelReadCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
+        << "buffer_channel.read requires 4 arguments [channel, src_ptr, num_bytes, tensor], but got "
+        << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "buffer_channel.read requires the Vector target (the write engine runs on the AIV)";
+
+    auto dstVar = ir::As<ir::Var>(op->args_[3]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstVar)
+        << "buffer_channel.read destination must be a tensor Var";
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
+                               ir::As<ir::TensorType>(dstVar->GetType()))
+        << "buffer_channel.read destination must have TensorType";
+
+    const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x0D;
+    const std::string channel = codegen.GetExprAsCode(op->args_[0]);
+    const std::string srcPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
+    const std::string dstPtr = codegen.GetPointer(codegen.GetVarName(dstVar));
+    codegen.Emit(channel + ".Read<" + std::to_string(option) + ">(reinterpret_cast<GM_ADDR>(" + srcPtr +
+                 "), reinterpret_cast<__gm__ uint8_t*>(" + dstPtr + "), static_cast<int64_t>(" +
+                 codegen.GetExprAsCode(op->args_[2]) + "));");
+    return "";
+}
+
+static std::string MakeDistBufferChannelWriteReduceCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
+        << "buffer_channel.write_reduce requires 4 arguments [channel, dst_ptr, num_bytes, tensor], but got "
+        << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "buffer_channel.write_reduce requires the Vector target (the write engine runs on the AIV)";
+
+    auto sourceVar = ir::As<ir::Var>(op->args_[3]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, sourceVar)
+        << "buffer_channel.write_reduce source must be a tensor Var";
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
+                               ir::As<ir::TensorType>(sourceVar->GetType()))
+        << "buffer_channel.write_reduce source must have TensorType";
+
+    const int reduceOp = op->HasKwarg("reduce_op") ? op->GetKwarg<int>("reduce_op") : 0;
+    const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x0D;
+
+    auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
+        << "buffer_channel.write_reduce destination must be a pointer";
+    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
+
+    const std::string channel = codegen.GetExprAsCode(op->args_[0]);
+    const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
+    const std::string sourcePtr = codegen.GetPointer(codegen.GetVarName(sourceVar));
+    codegen.Emit(channel + ".WriteReduce<" + std::to_string(option) + ", " + dtypeStr + ", " +
+                 std::to_string(reduceOp) + "U>(reinterpret_cast<GM_ADDR>(" + dstPtr +
+                 "), reinterpret_cast<__gm__ uint8_t*>(" + sourcePtr + "), static_cast<int64_t>(" +
+                 codegen.GetExprAsCode(op->args_[2]) + "));");
+    return "";
+}
+
+static std::string MakeDistBufferChannelWriteNotifyCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 6)
+        << "buffer_channel.write_notify requires 6 arguments [channel, dst_ptr, num_bytes, tensor, signal_ptr, val], "
+           "but got "
+        << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "buffer_channel.write_notify requires the Vector target (the write engine runs on the AIV)";
+
+    auto sourceVar = ir::As<ir::Var>(op->args_[3]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, sourceVar)
+        << "buffer_channel.write_notify source must be a tensor Var";
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
+                               ir::As<ir::TensorType>(sourceVar->GetType()))
+        << "buffer_channel.write_notify source must have TensorType";
+
+    const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x0D;
+    const std::string channel = codegen.GetExprAsCode(op->args_[0]);
+    const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
+    const std::string sourcePtr = codegen.GetPointer(codegen.GetVarName(sourceVar));
+    const std::string signalPtr = cce::GetOperandAsCode(codegen, op->args_[4]);
+    codegen.Emit(channel + ".WriteNotify<" + std::to_string(option) + ">(reinterpret_cast<GM_ADDR>(" + dstPtr +
+                 "), reinterpret_cast<__gm__ uint8_t*>(" + sourcePtr + "), static_cast<int64_t>(" +
+                 codegen.GetExprAsCode(op->args_[2]) + "), reinterpret_cast<__gm__ uint8_t*>(" + signalPtr +
+                 "), static_cast<uint64_t>(" + codegen.GetExprAsCode(op->args_[5]) + "));");
+    return "";
+}
+
+static std::string MakeDistBufferChannelAtomicFetchAddCodegenCCE(const ir::CallPtr& op,
+                                                                 codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
+        << "buffer_channel.atomic_fetch_add requires 4 arguments [channel, dst_ptr, fetch, val], but got "
+        << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "buffer_channel.atomic_fetch_add requires the Vector target (the write engine runs on the AIV)";
+
+    auto fetchVar = ir::As<ir::Var>(op->args_[2]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, fetchVar)
+        << "buffer_channel.atomic_fetch_add fetch destination must be a tensor Var";
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
+                               ir::As<ir::TensorType>(fetchVar->GetType()))
+        << "buffer_channel.atomic_fetch_add fetch destination must have TensorType";
+
+    const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x0D;
+    auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
+        << "buffer_channel.atomic_fetch_add destination must be a pointer";
+    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
+
+    const std::string channel = codegen.GetExprAsCode(op->args_[0]);
+    const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
+    const std::string fetchPtr = codegen.GetPointer(codegen.GetVarName(fetchVar));
+    codegen.Emit(channel + ".AtomicFetchAdd<" + std::to_string(option) + ", " + dtypeStr +
+                 ">(reinterpret_cast<GM_ADDR>(" + dstPtr + "), reinterpret_cast<__gm__ uint8_t*>(" + fetchPtr +
+                 "), static_cast<" + dtypeStr + ">(" + codegen.GetExprAsCode(op->args_[3]) + "));");
+    return "";
+}
+
+static std::string MakeDistBufferChannelAtomicCasCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 5)
+        << "buffer_channel.atomic_cas requires 5 arguments [channel, dst_ptr, fetch, expected, desired], "
+           "but got "
+        << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "buffer_channel.atomic_cas requires the Vector target (the write engine runs on the AIV)";
+
+    auto fetchVar = ir::As<ir::Var>(op->args_[2]);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, fetchVar)
+        << "buffer_channel.atomic_cas fetch destination must be a tensor Var";
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
+                               ir::As<ir::TensorType>(fetchVar->GetType()))
+        << "buffer_channel.atomic_cas fetch destination must have TensorType";
+
+    const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x0D;
+    auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
+        << "buffer_channel.atomic_cas destination must be a pointer";
+    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
+
+    const std::string channel = codegen.GetExprAsCode(op->args_[0]);
+    const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
+    const std::string fetchPtr = codegen.GetPointer(codegen.GetVarName(fetchVar));
+    codegen.Emit(channel + ".AtomicCas<" + std::to_string(option) + ", " + dtypeStr + ">(reinterpret_cast<GM_ADDR>(" +
+                 dstPtr + "), reinterpret_cast<__gm__ uint8_t*>(" + fetchPtr + "), static_cast<" + dtypeStr + ">(" +
+                 codegen.GetExprAsCode(op->args_[3]) + "), static_cast<" + dtypeStr + ">(" +
+                 codegen.GetExprAsCode(op->args_[4]) + "));");
     return "";
 }
 
@@ -1992,6 +2164,7 @@ static std::string MakeDistChannelWriteNotifyCodegenCCE(const ir::CallPtr& op, c
                                ir::As<ir::TensorType>(sourceVar->GetType()))
         << "channel.write_notify source must have TensorType";
 
+    const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
     const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
     const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x2D;
 
@@ -1999,11 +2172,11 @@ static std::string MakeDistChannelWriteNotifyCodegenCCE(const ir::CallPtr& op, c
     const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
     const std::string sourcePtr = codegen.GetPointer(codegen.GetVarName(sourceVar));
     const std::string signalPtr = cce::GetOperandAsCode(codegen, op->args_[4]);
-    codegen.Emit(channel + ".WriteNotify<" + DistTimeoutLiteral(timeoutCycles) + ", " + std::to_string(option) +
-                 ">(reinterpret_cast<GM_ADDR>(" + dstPtr + "), reinterpret_cast<__gm__ uint8_t*>(" + sourcePtr +
-                 "), static_cast<int64_t>(" + codegen.GetExprAsCode(op->args_[2]) +
-                 "), reinterpret_cast<__gm__ uint8_t*>(" + signalPtr + "), static_cast<uint64_t>(" +
-                 codegen.GetExprAsCode(op->args_[5]) + "));");
+    codegen.Emit(channel + ".WriteNotify<" + DistTimeoutLiteral(timeoutCycles) + ", " + std::to_string(option) + ", " +
+                 (submit ? "true" : "false") + ">(reinterpret_cast<GM_ADDR>(" + dstPtr +
+                 "), reinterpret_cast<__gm__ uint8_t*>(" + sourcePtr + "), static_cast<int64_t>(" +
+                 codegen.GetExprAsCode(op->args_[2]) + "), reinterpret_cast<__gm__ uint8_t*>(" + signalPtr +
+                 "), static_cast<uint64_t>(" + codegen.GetExprAsCode(op->args_[5]) + "));");
     return "";
 }
 
@@ -2087,7 +2260,7 @@ static std::string MakeDistChannelSubmitCodegenCCE(const ir::CallPtr& op, codege
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "channel.submit requires the Vector target";
 
-    codegen.Emit(codegen.GetExprAsCode(op->args_[0]) + ".Submit();");
+    codegen.Emit(codegen.GetExprAsCode(op->args_[0]) + ".jetty_.RingDoorbell();");
     return "";
 }
 
@@ -2101,6 +2274,28 @@ static std::string MakeDistChannelDrainCodegenCCE(const ir::CallPtr& op, codegen
 
     const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
     codegen.Emit(codegen.GetExprAsCode(op->args_[0]) + ".Drain<" + DistTimeoutLiteral(timeoutCycles) + ">();");
+    return "";
+}
+
+static std::string MakeDistChannelLockCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
+        << "channel.lock requires 1 argument, but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "channel.lock requires the Vector target";
+    codegen.Emit(codegen.GetExprAsCode(op->args_[0]) + ".Lock();");
+    return "";
+}
+
+static std::string MakeDistChannelUnlockCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
+        << "channel.unlock requires 1 argument, but got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
+        << "channel.unlock requires the Vector target";
+    codegen.Emit(codegen.GetExprAsCode(op->args_[0]) + ".Unlock();");
     return "";
 }
 
@@ -2118,6 +2313,60 @@ REGISTER_BACKEND_OP(BackendCCE, "dist.channel")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeDistCreateChannelCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "dist.buffer_channel")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistCreateBufferChannelCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "buffer_channel.write")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistBufferChannelWriteCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "buffer_channel.write_value")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistBufferChannelWriteValueCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "buffer_channel.submit")
+    .set_pipe(ir::PipeType::MTE3)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistBufferChannelSubmitCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "buffer_channel.read")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistBufferChannelReadCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "buffer_channel.write_reduce")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistBufferChannelWriteReduceCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "buffer_channel.write_notify")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistBufferChannelWriteNotifyCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "buffer_channel.atomic_fetch_add")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistBufferChannelAtomicFetchAddCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "buffer_channel.atomic_cas")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistBufferChannelAtomicCasCodegenCCE(op, codegen);
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "channel.write")
@@ -2178,6 +2427,18 @@ REGISTER_BACKEND_OP(BackendCCE, "channel.drain")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeDistChannelDrainCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "channel.lock")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistChannelLockCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "channel.unlock")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeDistChannelUnlockCodegenCCE(op, codegen);
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "channel.is_exclusive")

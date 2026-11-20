@@ -1,0 +1,38 @@
+# PyPTO distributed Channel / BufferChannel performance baseline.
+#
+# Hardware: Ascend950PR, 4 ranks (devices 0-3).
+# Software: Python 3.14.10, torch 2.14.0, torch_npu 2.14.0.
+# Measured: 2026-11-19.
+#
+# Unit: AIV cycles per operation (1000 cycles = 1 us at 1 GHz).
+# Results are the median across 4 ranks, each using the minimum of 3 samples.
+#
+# Format: <case>|<cycles per op>[|<noise tolerance>]
+# A case fails if its measured cost exceeds the baseline by more than the
+# specified tolerance (default 10%). Typical noise is ~5%; higher tolerances
+# are reserved for inherently noisy cases (tiny submits, per-op doorbells).
+#
+# Update only after intentional performance changes, remeasuring all cases
+# on an otherwise idle 4-device group.
+
+ch.write (post)|478.00|0.15
+ch.write (submit)|497.00|0.20
+ch.write value|476.00|0.15
+ch.read|546.64|0.15
+ch.write_reduce|547.62|0.15
+ch.write_notify (submit)|520.00|0.15
+ch.write_notify (post)|525.00|0.15
+ch.atomic_fetch_add|556.39
+ch.atomic_cas|554.35
+bch.write 64B| 9.73
+bch.write 2KB| 9.72
+bch.write value| 9.13
+bch.read| 9.77
+bch.write_reduce| 9.77
+bch.write_notify| 18.88
+bch.atomic_fetch_add| 20.11
+bch.atomic_cas| 20.11
+ch.submit|3.86|0.20
+ch.drain|647.05
+bch.submit|2.59|0.15
+bch.drain|235.42

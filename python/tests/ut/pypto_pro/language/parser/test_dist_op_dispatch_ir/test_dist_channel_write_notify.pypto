@@ -3,6 +3,6 @@ function kernel incast( %win_0, tensor<1 x 8, int32_t, tensor_view<-2, ND, %dst_
     ptr<int32_t> %dst_rptr_0 = channel.remote_ptr(%ch_0, ptr.make_ptr(%dst_0));
     ptr<int64_t> %sig_rptr_0 = channel.remote_ptr(%ch_0, ptr.make_ptr(%sig_0));
     ptr<int64_t> %_expr_tmp_0_0 = ptr.addptr(%sig_rptr_0, 2);
-    channel.write_notify(%ch_0, %dst_rptr_0, (((32 mul 1) mul 8) div 8), %src_0, %_expr_tmp_0_0, 5, timeout_cycles=0, option=45);
+    channel.write_notify(%ch_0, %dst_rptr_0, (((32 mul 1) mul 8) div 8), %src_0, %_expr_tmp_0_0, 5, submit=true, timeout_cycles=0, option=45);
     return;
 }

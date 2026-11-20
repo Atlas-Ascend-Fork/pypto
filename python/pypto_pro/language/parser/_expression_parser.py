@@ -1608,7 +1608,7 @@ class ExpressionParserMixin:
 
     _CHANNEL_METHODS = frozenset(
         {"remote_ptr", "write", "read", "write_reduce", "atomic_fetch_add", "atomic_cas", "write_indexed",
-         "write_notify", "submit", "drain", "is_exclusive"}
+         "write_notify", "submit", "drain", "lock", "unlock", "is_exclusive"}
     )
 
     def _route_channel_method(self, node: ast.Call):
@@ -1620,7 +1620,7 @@ class ExpressionParserMixin:
         """
         if not isinstance(node.func, ast.Attribute) or node.func.attr not in self._CHANNEL_METHODS:
             return None
-        from ..distribute import Channel
+        from ..distribute import BufferChannel, Channel
 
         if not isinstance(node.func.value, ast.Name):
             # A channel handle is always a bound variable; any other receiver shape
@@ -1631,7 +1631,8 @@ class ExpressionParserMixin:
         if binding is None:
             return None
         receiver = binding[1]
-        if not isinstance(receiver, Channel):
+        is_buffer = isinstance(receiver, BufferChannel)
+        if not is_buffer and not isinstance(receiver, Channel):
             return None
         span = self.span_tracker.get_span(node)
         if (
@@ -1646,4 +1647,6 @@ class ExpressionParserMixin:
             )
         from ...ir.op import dist_ops
 
+        if is_buffer:
+            return dist_ops.parse_buffer_channel_method(self, receiver, node.func.attr, node)
         return dist_ops.parse_channel_method(self, receiver, node.func.attr, node)

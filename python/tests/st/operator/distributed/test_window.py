@@ -219,6 +219,16 @@ def shift_load_left(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
 _SIG_SLOTS = 16  # 64-bit signal words per rank; slot index is free-form
 
 
+def _wait_equal(tensor, offset, val, timeout):
+    t0 = pl.get_cycle()
+    while True:
+        if pl.atomic_load(tensor, offset) == val:
+            break
+        pl.system.nop(200)
+        if pl.get_cycle() - t0 >= timeout:
+            pl.trap()
+
+
 def _signal_tensor(win):
     """User-registered signal buffer: 64-bit words, one slot per sender/peer."""
     sig = torch.zeros(_SIG_SLOTS, dtype=torch.int64, device='npu')
@@ -387,8 +397,8 @@ def write_submit_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8]
         ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
         ch.write(ch.remote_ptr(ws), src, submit=True)  # publish immediately
         ch.drain()                       # release: data visible before the signal
-        pld.notify(pl.addptr(pld.remote_ptr(win, sig, peer), me), 1, op=pld.NotifyOp.ATOMIC_ADD)
-        pld.wait(pl.addptr(pl.make_ptr(sig), prev), 1, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
+        pl.atomic_add(pld.remote_tensor(win, sig, peer), me, 1)
+        _wait_equal(sig, prev, 1, _WAIT_TIMEOUT)
         local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
         pl.load(t2, local_view, [0, 0])  # the signal already guarantees the payload
         pl.store(out, t2, [0, 0])
@@ -1134,7 +1144,7 @@ def write_signal_composed_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.
         # Phase a: one doorbell for payload + signal.
         ch.write(dst, src, submit=False)
         ch.write(pl.addptr(sig_rptr, me), me + 1)
-        pld.wait(pl.addptr(pl.make_ptr(sig), prev), prev + 1, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
+        _wait_equal(sig, prev, prev + 1, _WAIT_TIMEOUT)
         local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
         pl.load(t2, local_view, [0, 0])                    # my window now holds the previous rank's data
         pl.store(out_a, t2, [0, 0])
@@ -1142,7 +1152,7 @@ def write_signal_composed_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.
         ch.write(pl.addptr(dst, _SHIFT_N * 2), src)
         ch.drain()
         ch.write(pl.addptr(sig_rptr, nr + me), me + 1)
-        pld.wait(pl.addptr(pl.make_ptr(sig), nr + prev), prev + 1, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
+        _wait_equal(sig, nr + prev, prev + 1, _WAIT_TIMEOUT)
         offset_view = pl.make_tensor(pl.addptr(pld.remote_ptr(win, ws, me), _SHIFT_N * 2), [1, _SHIFT_N],
                                      dtype=_SHIFT_DTYPE)
         pl.load(t2, offset_view, [0, 0])
@@ -1201,7 +1211,7 @@ def write_notify_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8]
         # Hardware notifies my slot in the successor's signal buffer on completion.
         ch.write_notify(ch.remote_ptr(ws), src, pl.addptr(ch.remote_ptr(sig), me), me + 1)
         prev = (me + nr - 1) % nr
-        pld.wait(pl.addptr(pl.make_ptr(sig), prev), prev + 1, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
+        _wait_equal(sig, prev, prev + 1, _WAIT_TIMEOUT)
         local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
         pl.load(t2, local_view, [0, 0])                    # my window now holds the previous rank's data
         pl.store(out, t2, [0, 0])
@@ -1232,6 +1242,61 @@ def write_notify_worker(rank, nrank):
 def test_write_notify(world_size: int = 4):
     nprocs = min(world_size, torch.npu.device_count())
     torch.multiprocessing.spawn(write_notify_worker, args=(nprocs,), nprocs=nprocs)
+
+
+_NOTIFY_POST_ITERS = 16
+
+
+@pl.jit(auto_mutex=True)
+def write_notify_post_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                             sig: pl.Tensor[[_SIG_SLOTS], pl.DT_INT64],
+                             src: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE]):
+    """Stage a batch of notify WQEs with submit=False, then publish and drain once.
+
+    Every staged WQE holds two WQEBBs but accounts exactly one completion, so the CQ
+    counters must not be derived from the SQ WQEBB tail.
+    """
+    with pl.section_vector():
+        me, nr = win.rank(), win.nrank()
+        ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
+        dst = ch.remote_ptr(ws)
+        signal = pl.addptr(ch.remote_ptr(sig), me)
+        for _ in pl.range(_NOTIFY_POST_ITERS):
+            ch.write_notify(dst, src, signal, me + 1, submit=False)
+        ch.submit()
+        ch.drain()
+        pld.barrier(win)
+
+
+def write_notify_post_worker(rank, nrank):
+    """Relaunch the deferred notify batch so the SQ/CQ counters carry over.
+
+    A single launch starts from empty queues; only the second launch reuses the head
+    and completion state the first one left, which is where the counters drift.
+    """
+    win, ws, sig, src, _ = _shift_setup(rank, nrank, with_signal=True)
+    prev = (rank - 1) % nrank
+    expected = torch.full((1, _SHIFT_N), float(prev), dtype=torch.bfloat16)
+    for it in range(2):
+        write_notify_post_kernel[None, 1](win, ws, sig, src)
+        torch.npu.synchronize()
+        payload = ws[:_SHIFT_N * 2].view(torch.bfloat16).cpu().view(1, _SHIFT_N)
+        assert torch.equal(payload, expected), (
+            f"[rank {rank}] notify post launch {it} got {payload[0, :3].tolist()}..., "
+            f"expected rank {prev}'s data"
+        )
+        got_sig = sig.cpu()[prev].item()
+        assert got_sig == prev + 1, f"[rank {rank}] launch {it} signal slot got {got_sig}, expected {prev + 1}"
+    print(f"[rank {rank}] write_notify post ok (signal {prev + 1})", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_write_notify_post(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(write_notify_post_worker, args=(nprocs,), nprocs=nprocs)
 
 
 @pl.jit(auto_mutex=True)
@@ -1538,72 +1603,6 @@ def test_channel_exclusive(world_size: int = 4):
     torch.multiprocessing.spawn(channel_exclusive_worker, args=(nprocs,), nprocs=nprocs)
 
 
-@pl.jit
-def notify_wait_kernel(win: pld.Window, sig: pl.Tensor[[_SIG_SLOTS], pl.DT_INT64],
-                       out: pl.Tensor[[2], pl.DT_INT64]):
-    with pl.section_vector():
-        me, nr = win.rank(), win.nrank()
-        pl.printf("rank %d notify_wait: nrank %d\n", me, nr)
-
-        pld.notify(pl.addptr(pld.remote_ptr(win, sig, (me + 1) % nr), 4), 1,
-                   op=pld.NotifyOp.ATOMIC_ADD)
-        pld.wait(pl.addptr(pl.make_ptr(sig), 4), 1, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
-
-        # Same ring without the store flush: there is no prior put to order here.
-        pld.notify(pl.addptr(pld.remote_ptr(win, sig, (me + 1) % nr), 8), 1,
-                   op=pld.NotifyOp.ATOMIC_ADD, flush_store=False)
-        pld.wait(pl.addptr(pl.make_ptr(sig), 8), 1, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
-
-        # Fan-out without the flush: every rank adds 1 to every rank's slot 9.
-        for r in pl.range(nr):
-            pld.notify(pl.addptr(pld.remote_ptr(win, sig, r), 9), 1,
-                       op=pld.NotifyOp.ATOMIC_ADD, flush_store=False)
-        pld.wait(pl.addptr(pl.make_ptr(sig), 9), nr, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
-
-        pld.notify(pl.addptr(pld.remote_ptr(win, sig, 0), 7), 1, op=pld.NotifyOp.ATOMIC_ADD)
-
-        pld.notify(pl.addptr(pl.make_ptr(sig), 5), 5)
-        pld.wait(pl.addptr(pl.make_ptr(sig), 5), 5, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
-
-        cmp_slot = pl.addptr(pl.make_ptr(sig), 6)
-        pld.notify(cmp_slot, 5)
-        pld.wait(cmp_slot, 5, cmp=pld.Cmp.EQ, timeout=_WAIT_TIMEOUT)
-        pld.wait(cmp_slot, 4, cmp=pld.Cmp.NE, timeout=_WAIT_TIMEOUT)
-        pld.wait(cmp_slot, 6, cmp=pld.Cmp.LT, timeout=_WAIT_TIMEOUT)
-        pld.wait(cmp_slot, 5, cmp=pld.Cmp.LE, timeout=_WAIT_TIMEOUT)
-        pld.wait(cmp_slot, 4, cmp=pld.Cmp.GT, timeout=_WAIT_TIMEOUT)
-        pld.wait(cmp_slot, 5, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
-
-        pld.barrier(win)
-        out[0] = 1
-        out[1] = 2
-
-
-def notify_wait_worker(rank, nrank):
-    torch.npu.set_device(rank)
-    group = init_dist(rank, nrank)
-    win = pld.create_window(group)
-    sig = _signal_tensor(win)
-    win.connect()
-    out = torch.full((2,), -1, dtype=torch.int64).npu()
-
-    time.sleep(rank * 0.1)  # slight stagger: the waits must block until peers arrive
-                            # (well under the timeout; 0.5 s/rank used to outlast it)
-    notify_wait_kernel[None, 1](win, sig, out)  # one AIV: the only spinner, no bid guards
-    torch.npu.synchronize()
-    assert out.tolist() == [1, 2], f"[rank {rank}] notify_wait kernel did not complete: {out.tolist()}"
-
-    win.close()
-    dist.destroy_process_group()
-
-
-@pytest.mark.skip(reason="distributed python case")
-@pytest.mark.world_size(4)
-def test_notify_wait(world_size: int = 4):
-    nprocs = min(world_size, torch.npu.device_count())
-    torch.multiprocessing.spawn(notify_wait_worker, args=(nprocs,), nprocs=nprocs)
-
-
 _AG_SHARD = 1024    # per-rank shard (4096 elements over 4 ranks; offsets stay runtime)
 
 
@@ -1623,8 +1622,13 @@ def all_gather_signals_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_
         for r in pl.range(nr):
             put_view = pl.make_tensor(pld.remote_ptr(win, ws, r), [nr, _AG_SHARD], dtype=pl.DT_BF16)
             pl.store(put_view, t, [me, 0])
-            pld.notify(pl.addptr(pld.remote_ptr(win, sig, r), 0), 1, op=pld.NotifyOp.ATOMIC_ADD)
-        pld.wait(pl.addptr(pl.make_ptr(sig), 0), nr, cmp=pld.Cmp.GE, timeout=_WAIT_TIMEOUT)
+        # The payloads are MTE3 stores: drain them into the scalar pipe before signaling.
+        pl.system.sync_src(set_pipe=pl.PipeType.MTE3, wait_pipe=pl.PipeType.S, event_id=0)
+        pl.system.sync_dst(set_pipe=pl.PipeType.MTE3, wait_pipe=pl.PipeType.S, event_id=0)
+        pl.system.dsb(scope=pl.MemDsb.DDR)  # the stores must reach DDR before the signal
+        for r in pl.range(nr):
+            pl.atomic_add(pld.remote_tensor(win, sig, r), 0, 1)
+        _wait_equal(sig, 0, nr, _WAIT_TIMEOUT)
         # Read the shards back the moment every rank's arrival proves they landed:
         # the check must not lean on the kernel-exit synchronization.
         local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [nr, _AG_SHARD], dtype=pl.DT_BF16)
@@ -1998,6 +2002,331 @@ def test_atomics(world_size: int = 4):
     torch.multiprocessing.spawn(atomic_worker, args=(nprocs,), nprocs=nprocs)
 
 
+# --- buffer channel: staged appends, one bulk publish per batch ----------------------
+
+_BCH_UB_ADDR = 0x4000       # buffer-channel staging (channel scratch at 0x2000..0x2100)
+_BCH_BYTES = 512            # 8 WQEBB slots
+_BCH_BATCH = 6              # tensor appends per batch (fits the 8 slots)
+_BCH_SLOT_BYTES = _SHIFT_N * 2  # one bf16 payload = one ws slot
+
+
+@pl.jit(auto_mutex=True)
+def buffer_channel_write_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                                sig: pl.Tensor[[_SIG_SLOTS], pl.DT_INT64],
+                                src: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE],
+                                out: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE]):
+    """Two staged batches of six appends, one submit each, one drain covering both.
+
+    Slots 6/7 stay unwritten so a stale or misplaced WQEBB from either batch shows
+    up against the zeroed workspace."""
+    with pl.section_vector():
+        tile_type = pl.TileType(shape=[1, _SHIFT_N], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec)
+        tg = pl.make_tile_group(type=tile_type, addrs=_SHIFT_N * 2, mutex_ids=[0])
+        t2 = tg.current()
+        me, nr = win.rank(), win.nrank()
+        peer = (me + 1) % nr
+        prev = (me + nr - 1) % nr
+        ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
+        base = ch.remote_ptr(ws)
+        bch = pld.buffer_channel(ch, _BCH_UB_ADDR, _BCH_BYTES)
+        for k in pl.range(_BCH_BATCH):
+            bch.write(pl.addptr(base, k * _BCH_SLOT_BYTES), src)
+        bch.submit()
+        for k in pl.range(_BCH_BATCH):
+            bch.write(pl.addptr(base, (k + 8) * _BCH_SLOT_BYTES), src)
+        bch.submit()
+        bch.drain()
+        pl.atomic_add(pld.remote_tensor(win, sig, peer), me, 1)
+        _wait_equal(sig, prev, 1, _WAIT_TIMEOUT)
+        local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
+        pl.load(t2, local_view, [0, 0])
+        pl.store(out, t2, [0, 0])
+        pld.barrier(win)
+
+
+def buffer_channel_write_worker(rank, nrank):
+    win, ws, sig, src, out = _shift_setup(rank, nrank, with_signal=True)
+    buffer_channel_write_kernel[None, 1](win, ws, sig, src, out)
+    torch.npu.synchronize()
+    prev_val = float((rank - 1) % nrank)
+    expected_slot = torch.full((_SHIFT_N,), prev_val, dtype=torch.bfloat16).npu()
+    expected_gap = torch.zeros(_SHIFT_N, dtype=torch.bfloat16).npu()
+    words = ws.view(torch.bfloat16)
+    for base_slot in (0, 8):
+        for k in range(_BCH_BATCH):
+            s = base_slot + k
+            got = words[s * _SHIFT_N:(s + 1) * _SHIFT_N]
+            assert torch.equal(got, expected_slot), (
+                f"[rank {rank}] buffer_channel write slot {s} stale: {got[0].item()}")
+    for s in (6, 7):
+        gap = words[s * _SHIFT_N:(s + 1) * _SHIFT_N]
+        assert torch.equal(gap, expected_gap), (
+            f"[rank {rank}] buffer_channel gap slot {s} unexpectedly written: {gap[0].item()}")
+    assert torch.equal(out.cpu(), torch.full((1, _SHIFT_N), prev_val, dtype=torch.bfloat16)), (
+        f"[rank {rank}] buffer_channel readback got {out.cpu()[0, :3].tolist()}")
+    print(f"[rank {rank}] buffer_channel_write ok", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_buffer_channel_write(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(buffer_channel_write_worker, args=(nprocs,), nprocs=nprocs)
+
+
+@pl.jit(auto_mutex=True)
+def buffer_channel_value_flush_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                                      fetch: pl.Tensor[[1], pl.DT_INT64]):
+    """Stage three inline scalars plus one atomic into a single batch.
+
+    The atomic is a two-WQEBB append (header + immediate payload), so its publish
+    flags must land on the header, not on the payload; one submit publishes the whole
+    batch and drain accounts exactly one CQE."""
+    with pl.section_vector():
+        me, nr = win.rank(), win.nrank()
+        peer = (me + 1) % nr
+        ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
+        base = ch.remote_ptr(ws)
+        bch = pld.buffer_channel(ch, _BCH_UB_ADDR, _BCH_BYTES)
+        for k in pl.range(3):
+            bch.write(pl.make_ptr(pl.addptr(base, k * 8), pl.DT_INT64), k + 1)
+        bch.atomic_fetch_add(pl.make_ptr(pl.addptr(base, 32), pl.DT_INT64), fetch, 10)
+        bch.submit()  # publishes the scalars and the atomic's two WQEBBs together
+        bch.drain()
+        pld.barrier(win)
+
+
+def buffer_channel_value_flush_worker(rank, nrank):
+    torch.npu.set_device(rank)
+    group = init_dist(rank, nrank)
+    win = pld.create_window(group)
+    ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
+    pld.register_memory(win, ws, "ws", _PROTOCOL)
+    win.connect()
+    fetch = torch.zeros(1, dtype=torch.int64).npu()
+    buffer_channel_value_flush_kernel[None, 1](win, ws, fetch)
+    torch.npu.synchronize()
+    words = ws.view(torch.int64)
+    for k in range(3):
+        assert words[k].item() == k + 1, (
+            f"[rank {rank}] buffer_channel scalar slot {k} got {words[k].item()}, expected {k + 1}")
+    assert words[4].item() == 10, (
+        f"[rank {rank}] buffer_channel flushed counter got {words[4].item()}, expected 10")
+    assert fetch.item() == 0, (
+        f"[rank {rank}] buffer_channel fetch got {fetch.item()}, expected 0")
+    print(f"[rank {rank}] buffer_channel_value_flush ok", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_buffer_channel_value_flush(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(buffer_channel_value_flush_worker, args=(nprocs,), nprocs=nprocs)
+
+
+@pl.jit(auto_mutex=True)
+def buffer_channel_write_notify_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                                       sig: pl.Tensor[[_SIG_SLOTS], pl.DT_INT64],
+                                       src: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE],
+                                       out: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE]):
+    """Stage a write-with-notify (two WQEBBs) and publish it with one submit.
+
+    The signal must fire when the published batch completes, with no drain."""
+    with pl.section_vector():
+        tile_type = pl.TileType(shape=[1, _SHIFT_N], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec)
+        tg = pl.make_tile_group(type=tile_type, addrs=_SHIFT_N * 2, mutex_ids=[0])
+        t2 = tg.current()
+        me, nr = win.rank(), win.nrank()
+        peer = (me + 1) % nr
+        ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
+        bch = pld.buffer_channel(ch, _BCH_UB_ADDR, _BCH_BYTES)
+        bch.write_notify(ch.remote_ptr(ws), src, pl.addptr(ch.remote_ptr(sig), me), me + 1)
+        bch.submit()
+        prev = (me + nr - 1) % nr
+        _wait_equal(sig, prev, prev + 1, _WAIT_TIMEOUT)
+        local_view = pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE)
+        pl.load(t2, local_view, [0, 0])  # my window now holds the previous rank's data
+        pl.store(out, t2, [0, 0])
+        pld.barrier(win)  # all writes completed before any rank exits
+
+
+def buffer_channel_write_notify_worker(rank, nrank):
+    win, ws, sig, src, out = _shift_setup(rank, nrank, with_signal=True)
+    buffer_channel_write_notify_kernel[None, 1](win, ws, sig, src, out)
+    torch.npu.synchronize()
+    expected = torch.full((1, _SHIFT_N), float((rank - 1) % nrank), dtype=torch.bfloat16)
+    assert torch.equal(out.cpu(), expected), (
+        f"[rank {rank}] buffer_channel write_notify got {out.cpu()[0, :3].tolist()}..., "
+        f"expected rank {(rank - 1) % nrank}'s data"
+    )
+    prev = (rank - 1) % nrank
+    got_sig = sig.cpu()[prev].item()
+    assert got_sig == prev + 1, f"[rank {rank}] buffer_channel signal slot got {got_sig}, expected {prev + 1}"
+    print(f"[rank {rank}] buffer_channel_write_notify ok (signal {got_sig})", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_buffer_channel_write_notify(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(buffer_channel_write_notify_worker, args=(nprocs,), nprocs=nprocs)
+
+
+@pl.jit(auto_mutex=True)
+def buffer_channel_read_reduce_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                                      src: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE],
+                                      out: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE],
+                                      fetch: pl.Tensor[[1], pl.DT_INT64]):
+    """Stage an engine read and a reduction in one batch and publish them together.
+
+    Every rank seeds its own window row through the UB_MEM view, then the batch pulls
+    the predecessor's row into ``out`` and reduces this rank's value into the
+    predecessor's second slot. Both results are verified after a barrier."""
+    with pl.section_vector():
+        tile_type = pl.TileType(shape=[1, _SHIFT_N], dtype=_SHIFT_DTYPE, target_memory=pl.MemorySpace.Vec)
+        tg = pl.make_tile_group(type=tile_type, addrs=_SHIFT_N * 2, mutex_ids=[0])
+        t2 = tg.current()
+        me, nr = win.rank(), win.nrank()
+        prev = (me + nr - 1) % nr
+        pl.load(t2, src, [0, 0])
+        pl.store(pl.make_tensor(pld.remote_ptr(win, ws, me), [1, _SHIFT_N], dtype=_SHIFT_DTYPE), t2, [0, 0])
+        pld.barrier(win)  # my seed row is visible to the peers' engines
+        ch = pld.channel(win, _CH_UB_ADDR, peer=prev)
+        bch = pld.buffer_channel(ch, _BCH_UB_ADDR, _BCH_BYTES)
+        peer_ws = ch.remote_ptr(ws)
+        bch.read(out, peer_ws)
+        bch.write_reduce(pl.make_ptr(pl.addptr(peer_ws, _BCH_SLOT_BYTES), _SHIFT_DTYPE), src, op=pld.ReduceOp.SUM)
+        bch.atomic_cas(pl.make_ptr(pl.addptr(peer_ws, 2 * _BCH_SLOT_BYTES), pl.DT_INT64), fetch, 0, me + 1)
+        bch.submit()
+        bch.drain()
+        pld.barrier(win)  # all engine writes complete before any host readback
+
+
+def buffer_channel_read_reduce_worker(rank, nrank):
+    win, ws, src, out = _shift_setup(rank, nrank)
+    fetch = torch.zeros(1, dtype=torch.int64).npu()
+    buffer_channel_read_reduce_kernel[None, 1](win, ws, src, out, fetch)
+    torch.npu.synchronize()
+    got_read = out.cpu()
+    expected_read = torch.full((1, _SHIFT_N), float((rank - 1) % nrank), dtype=torch.bfloat16)
+    assert torch.equal(got_read, expected_read), (
+        f"[rank {rank}] buffer_channel read got {got_read[0, :3].tolist()}..., expected rank "
+        f"{(rank - 1) % nrank}'s row")
+    got_reduce = ws.view(torch.bfloat16)[_SHIFT_N:2 * _SHIFT_N].cpu()
+    expected_reduce = torch.full((_SHIFT_N,), float((rank + 1) % nrank), dtype=torch.bfloat16)
+    assert torch.equal(got_reduce, expected_reduce), (
+        f"[rank {rank}] buffer_channel reduce got {got_reduce[:3].tolist()}..., expected rank "
+        f"{(rank + 1) % nrank}'s value")
+    got_cas = ws.view(torch.int64)[2 * _BCH_SLOT_BYTES // 8].item()
+    expected_cas = (rank + 1) % nrank + 1
+    assert got_cas == expected_cas, (
+        f"[rank {rank}] buffer_channel cas slot got {got_cas}, expected {expected_cas}")
+    assert fetch.item() == 0, f"[rank {rank}] buffer_channel cas fetch got {fetch.item()}, expected 0"
+    print(f"[rank {rank}] buffer_channel_read_reduce ok", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_buffer_channel_read_reduce(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(buffer_channel_read_reduce_worker, args=(nprocs,), nprocs=nprocs)
+
+
+@pl.jit(auto_mutex=True)
+def buffer_channel_atomic32_kernel(win: pld.Window, words: pl.Tensor[[_SIG_SLOTS], pl.DT_INT32],
+                                   fetch: pl.Tensor[[1], pl.DT_INT32]):
+    """Staged 32-bit FAA and CAS: both immediates must survive the payload zero-fill."""
+    with pl.section_vector():
+        me, nr = win.rank(), win.nrank()
+        peer = (me + 1) % nr
+        ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
+        bch = pld.buffer_channel(ch, _BCH_UB_ADDR, _BCH_BYTES)
+        target = ch.remote_ptr(words)
+        bch.atomic_fetch_add(target, fetch, 3)
+        bch.atomic_cas(target, fetch, 4, 7)
+        bch.submit()
+        bch.drain()
+        pld.barrier(win)
+
+
+def buffer_channel_atomic32_worker(rank, nrank):
+    torch.npu.set_device(rank)
+    group = init_dist(rank, nrank)
+    win = pld.create_window(group)
+    words = torch.ones(_SIG_SLOTS, dtype=torch.int32, device='npu')
+    pld.register_memory(win, words, 'atomic32', _PROTOCOL)
+    win.connect()
+    fetch = torch.zeros(1, dtype=torch.int32, device='npu')
+    buffer_channel_atomic32_kernel[None, 1](win, words, fetch)
+    torch.npu.synchronize()
+    got = words.cpu()[0].item()
+    assert got == 7, f"[rank {rank}] staged int32 word got {got}, expected 7"
+    got_fetch = fetch.cpu()[0].item()
+    assert got_fetch == 4, f"[rank {rank}] staged int32 cas fetch got {got_fetch}, expected 4"
+    print(f"[rank {rank}] buffer_channel_atomic32 ok (word 7, fetch 4)", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_buffer_channel_atomic32(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(buffer_channel_atomic32_worker, args=(nprocs,), nprocs=nprocs)
+
+
+@pl.jit(auto_mutex=True)
+def channel_lock_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
+                        src: pl.Tensor[[1, _SHIFT_N], _SHIFT_DTYPE]):
+    """Every AIV of the rank writes one slot of the successor's window under the lock.
+
+    The channel is a per-peer jetty shared by all AIVs, so lock/unlock serialize the SQ
+    producers; the reload at lock and the publish at unlock keep each AIV's cached head
+    in step with the shared counter."""
+    with pl.section_vector():
+        me, nr = win.rank(), win.nrank()
+        peer = (me + 1) % nr
+        aiv = pl.get_block_idx()
+        ch = pld.channel(win, _CH_UB_ADDR, peer=peer)
+        ch.lock()
+        ch.write(pl.addptr(ch.remote_ptr(ws), aiv * _BCH_SLOT_BYTES), src, submit=False)
+        ch.submit()
+        ch.drain()
+        ch.unlock()
+        pld.barrier(win)
+
+
+def channel_lock_worker(rank, nrank):
+    win, ws, src, out = _shift_setup(rank, nrank)
+    channel_lock_kernel[None, 4](win, ws, src)
+    torch.npu.synchronize()
+    words = ws.view(torch.bfloat16)
+    expected = torch.full((_SHIFT_N,), float((rank - 1) % nrank), dtype=torch.bfloat16)
+    for aiv in range(4):
+        got = words[aiv * _SHIFT_N:(aiv + 1) * _SHIFT_N].cpu()
+        assert torch.equal(got, expected), (
+            f"[rank {rank}] lock slot {aiv} got {got[:3].tolist()}..., expected rank "
+            f"{(rank - 1) % nrank}'s value")
+    print(f"[rank {rank}] channel_lock ok (4 AIVs)", flush=True)
+    win.close()
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_channel_lock(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    torch.multiprocessing.spawn(channel_lock_worker, args=(nprocs,), nprocs=nprocs)
+
+
 if __name__ == '__main__':
     test_create_window()
     test_window_probe()
@@ -2016,15 +2345,21 @@ if __name__ == '__main__':
     test_write_indexed_large()
     test_write_value()
     test_two_regions()
-    test_write_notify()
     test_write_signal_composed()
+    test_write_notify()
+    test_write_notify_post()
     test_channel_read_ring()
     test_write_reduce_sum_max_min()
     test_atomic_add_cas_race()
     test_atomic_faa_loop()
     test_channel_exclusive()
-    test_notify_wait()
     test_all_gather_signals()
     test_all_reduce()
     test_remote_ptr()
     test_atomics()
+    test_buffer_channel_write()
+    test_buffer_channel_value_flush()
+    test_buffer_channel_write_notify()
+    test_buffer_channel_read_reduce()
+    test_buffer_channel_atomic32()
+    test_channel_lock()

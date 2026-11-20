@@ -62,7 +62,8 @@ def test_protocol_enum_members():
 def test_urma_option_enum_members():
     assert issubclass(pld.UrmaOption, enum.IntFlag)
     assert set(pld.UrmaOption.__members__) == {
-        "ODR_NONE", "ODR_RELAX", "ODR_STRONG", "ODR_IN_ORDER_COMPLETION", "FENCE", "CQE", "DEFAULT",
+        "ODR_NONE", "ODR_RELAX", "ODR_STRONG", "ODR_IN_ORDER_COMPLETION",
+        "FENCE", "CQE", "DEFAULT",
     }
     assert int(pld.UrmaOption.ODR_NONE) == 0
     assert int(pld.UrmaOption.ODR_RELAX) == 1 << 0
@@ -186,124 +187,6 @@ def test_remote_ptr_rejects_a_non_region_operand():
 # =============================================================================
 
 
-def test_dist_notify_forms():
-    """Remote pointer slot, ATOMIC_ADD mode, and the local-tensor form."""
-
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, sig: pl.Tensor[[16], pl.DT_INT64], peer: pl.DT_INT64):
-        with pl.section_vector():
-            remote = pld.remote_ptr(win, sig, peer)
-            slot = pl.addptr(remote, 3)
-            pld.notify(slot, 7)
-            pld.notify(slot, 8, op=pld.NotifyOp.ATOMIC_ADD)
-            pld.notify(sig, 5)  # local tensor -> its base pointer
-    _assert_ir(kernel, "test_dist_notify_forms")
-
-def test_dist_notify_uint32_pointer():
-    """The signal word follows a 32-bit pointer dtype."""
-
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, sig: pl.Tensor[[16], pl.DT_UINT32]):
-        with pl.section_vector():
-            pld.notify(sig, 1)
-    _assert_ir(kernel, "test_dist_notify_uint32_pointer")
-
-def test_notify_requires_a_pointer_or_tensor():
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window):
-        with pl.section_vector():
-            pld.notify(3, 1)
-
-    with pytest.raises(InvalidType) as caught:
-        _parse(kernel)
-    assert "kernel tensor parameter" in str(caught.value)
-
-def test_notify_rejects_a_non_integer_signal_pointer():
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, sig: pl.Tensor[[16], pl.DT_BF16]):
-        with pl.section_vector():
-            pld.notify(sig, 1)
-
-    with pytest.raises(InvalidType) as caught:
-        _parse(kernel)
-    assert "integer signal words" in str(caught.value)
-
-def test_notify_rejects_an_unknown_op_mode():
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, sig: pl.Tensor[[16], pl.DT_INT64]):
-        with pl.section_vector():
-            pld.notify(sig, 1, op=3)
-
-    with pytest.raises(InvalidVal) as caught:
-        _parse(kernel)
-    assert "op must be NotifyOp.SET or NotifyOp.ATOMIC_ADD" in str(caught.value)
-
-def test_dist_notify_flush_store():
-    """``flush_store=False`` lands on the notify IR attributes."""
-
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, sig: pl.Tensor[[16], pl.DT_INT64]):
-        with pl.section_vector():
-            pld.notify(sig, 7, flush_store=False)
-    _assert_ir(kernel, "test_dist_notify_flush_store")
-
-def test_notify_flush_store_must_be_compile_time():
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, sig: pl.Tensor[[16], pl.DT_INT64], flag: pl.DT_BOOL):
-        with pl.section_vector():
-            pld.notify(sig, 7, flush_store=flag)
-
-    with pytest.raises(InvalidType) as caught:
-        _parse(kernel)
-    assert "'flush_store' must be a compile-time bool" in str(caught.value)
-
-def test_dist_wait_timeout_none():
-    """A local pointer slot with ``cmp=GE`` and ``timeout=None``."""
-
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, sig: pl.Tensor[[16], pl.DT_INT64]):
-        with pl.section_vector():
-            local = pl.addptr(pl.make_ptr(sig), 2)
-            pld.wait(local, 1, cmp=pld.Cmp.GE, timeout=None)
-    _assert_ir(kernel, "test_dist_wait_timeout_none")
-
-def test_dist_wait_cmp_enum():
-    """A variable-bound Cmp enum is accepted."""
-
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, sig: pl.Tensor[[16], pl.DT_INT64]):
-        with pl.section_vector():
-            mode = pld.Cmp.GE
-            pld.wait(sig, 1, cmp=mode)
-    _assert_ir(kernel, "test_dist_wait_cmp_enum")
-
-def test_dist_wait_int32_pointer():
-    """The wait word follows a 32-bit pointer dtype."""
-
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, sig: pl.Tensor[[16], pl.DT_INT32]):
-        with pl.section_vector():
-            pld.wait(sig, 1)
-
-    _assert_ir(kernel, "test_dist_wait_int32_pointer")
-
-
-def test_wait_rejects_a_non_integer_signal_pointer():
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, sig: pl.Tensor[[16], pl.DT_FP32]):
-        with pl.section_vector():
-            pld.wait(sig, 1)
-
-    with pytest.raises(InvalidType) as caught:
-        _parse(kernel)
-    assert "integer signal words" in str(caught.value)
-
-
-# =============================================================================
-# channel — the AST-registered exception (lvalue let-binding)
-# =============================================================================
-
-
 def test_dist_channel_lifecycle():
     """Open, remote address, write, submit, drain on one channel."""
 
@@ -316,7 +199,6 @@ def test_dist_channel_lifecycle():
             ch.write(rptr, src, submit=False)
             ch.submit()
             ch.drain()
-            pld.notify(pl.addptr(pl.make_ptr(sig), 1), 1)
     _assert_ir(kernel, "test_dist_channel_lifecycle")
 
 def test_dist_channel_write_value():
@@ -438,9 +320,9 @@ def test_channel_write_reduce_rejects_bad_op():
             dst_rptr = ch.remote_ptr(dst)
             ch.write_reduce(dst_rptr, src, op=1)
 
-    with pytest.raises(InvalidVal) as caught:
+    with pytest.raises(InvalidType) as caught:
         _parse(kernel)
-    assert "pld.ReduceOp member" in str(caught.value)
+    assert "must be a ReduceOp" in str(caught.value)
 
 def test_dist_channel_atomic_fetch_add():
     """Fetch-and-add takes the previous remote value into a local one-element tensor."""
@@ -543,6 +425,21 @@ def test_dist_channel_write_notify():
             sig_rptr = ch.remote_ptr(sig)
             ch.write_notify(dst_rptr, src, pl.addptr(sig_rptr, 2), 5)
     _assert_ir(kernel, "test_dist_channel_write_notify")
+
+
+def test_dist_channel_write_notify_submit_false():
+    """The fused notify WQE can be staged and published by a later submit."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32], sig: pl.Tensor[[16], pl.DT_INT64]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            dst_rptr = ch.remote_ptr(dst)
+            sig_rptr = ch.remote_ptr(sig)
+            ch.write_notify(dst_rptr, src, pl.addptr(sig_rptr, 2), 5, submit=False)
+    _assert_ir(kernel, "test_dist_channel_write_notify_submit_false")
+
 
 def test_channel_write_notify_rejects_a_32bit_signal_pointer():
     @pl.jit(arch="3510", auto_mutex=False)
@@ -684,3 +581,198 @@ def test_channel_remote_ptr_needs_one_operand():
     with pytest.raises(InvalidArgument) as caught:
         _parse(kernel)
     assert "exactly one tensor or pointer" in str(caught.value)
+
+
+# =============================================================================
+# buffer_channel — batch staging composed on an opened channel
+# =============================================================================
+
+
+def test_dist_channel_lock():
+    """lock/unlock wrap a post sequence on the base channel."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            rptr = ch.remote_ptr(dst)
+            ch.lock()
+            ch.write(rptr, src, submit=False)
+            ch.submit()
+            ch.drain()
+            ch.unlock()
+    _assert_ir(kernel, "test_dist_channel_lock")
+
+
+def test_dist_buffer_channel_lifecycle():
+    """Bind a staging buffer, append two writes, publish once, drain."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            rptr = ch.remote_ptr(dst)
+            bch = pld.buffer_channel(ch, 512, 256)
+            bch.write(rptr, src)
+            bch.write(rptr, src)
+            bch.submit()
+            bch.drain()
+    _assert_ir(kernel, "test_dist_buffer_channel_lifecycle")
+
+
+def test_dist_buffer_channel_value_write():
+    """A scalar append takes its dtype from the destination pointer, like ch.write."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT64]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            rptr = ch.remote_ptr(dst)
+            bch = pld.buffer_channel(ch, 512, 256)
+            bch.write(rptr, 7)
+    _assert_ir(kernel, "test_dist_buffer_channel_value_write")
+
+
+def test_dist_buffer_channel_engine_ops_stage_too():
+    """read/atomics stage into the ring like writes; one submit publishes the batch."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32], fetch: pl.Tensor[[1], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            src_rptr = ch.remote_ptr(src)
+            dst_rptr = ch.remote_ptr(dst)
+            bch = pld.buffer_channel(ch, 512, 512)
+            bch.write(dst_rptr, src)
+            bch.read(dst, src_rptr)
+            bch.write_reduce(dst_rptr, src, op=pld.ReduceOp.SUM)
+            bch.atomic_fetch_add(dst_rptr, fetch, 3)
+            bch.atomic_cas(dst_rptr, fetch, 0, 3)
+            bch.submit()
+            bch.drain()
+    _assert_ir(kernel, "test_dist_buffer_channel_engine_ops_stage_too")
+
+
+def test_buffer_channel_write_rejects_submit():
+    """Appends only stage; submit/timeout do not exist on bch.write."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            rptr = ch.remote_ptr(dst)
+            bch = pld.buffer_channel(ch, 512, 256)
+            bch.write(rptr, src, submit=True)
+
+    with pytest.raises(InvalidArgument) as caught:
+        _parse(kernel)
+    assert "only stages" in str(caught.value)
+
+
+def test_dist_buffer_channel_option():
+    """option= selects the staged body flag byte; DEFAULT's CQE bit is stripped.
+
+    DEFAULT (0x2D) lands as the fence-only body 0x0D: bch.submit adds fence+cqe to
+    the last WQEBB when it publishes, so one completion covers the batch."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            rptr = ch.remote_ptr(dst)
+            bch = pld.buffer_channel(ch, 512, 256)
+            bch.write(rptr, src, option=pld.UrmaOption.DEFAULT)
+            bch.write(rptr, 7)
+            bch.submit()
+            bch.drain()
+    _assert_ir(kernel, "test_dist_buffer_channel_option")
+
+
+def test_dist_buffer_channel_write_notify():
+    """write_notify stages a two-WQEBB append; the signal fires when the batch publishes."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32], sig: pl.Tensor[[16], pl.DT_INT64]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            rptr = ch.remote_ptr(dst)
+            bch = pld.buffer_channel(ch, 512, 256)
+            bch.write(rptr, src)
+            bch.write_notify(rptr, src, pl.addptr(pl.make_ptr(sig), 1), 5)
+            bch.submit()
+            bch.drain()
+    _assert_ir(kernel, "test_dist_buffer_channel_write_notify")
+
+
+def test_buffer_channel_rejects_write_indexed():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
+               src: pl.Tensor[[1, 8], pl.DT_INT32], idx: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            it = pl.make_tile(
+                pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec), addr=0x1000)
+            pl.load(it, idx, [0, 0])
+            ch = pld.channel(win, 64, peer=1)
+            rptr = ch.remote_ptr(dst)
+            bch = pld.buffer_channel(ch, 512, 256)
+            bch.write_indexed(rptr, src, src_indices=it, count=8)
+
+    with pytest.raises(InvalidOperation) as caught:
+        _parse(kernel)
+    assert "no method 'write_indexed'" in str(caught.value)
+
+
+def test_buffer_channel_rejects_remote_ptr_and_is_exclusive():
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32]):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            bch = pld.buffer_channel(ch, 512, 256)
+            bch.remote_ptr(dst)
+
+    with pytest.raises(InvalidOperation) as caught:
+        _parse(kernel)
+    assert "no method 'remote_ptr'" in str(caught.value)
+
+
+def test_buffer_channel_validates_buffer_args():
+    """buf_addr must be 64-B aligned; buf_bytes a 64-B multiple of >= 128."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel_misaligned(win: pld.Window):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            pld.buffer_channel(ch, 544, 256)
+
+    with pytest.raises(InvalidVal) as caught:
+        _parse(kernel_misaligned)
+    assert "64-byte aligned" in str(caught.value)
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel_too_small(win: pld.Window):
+        with pl.section_vector():
+            ch = pld.channel(win, 64, peer=1)
+            pld.buffer_channel(ch, 512, 64)
+
+    with pytest.raises(InvalidVal) as caught:
+        _parse(kernel_too_small)
+    assert "at least 128" in str(caught.value)
+
+
+def test_buffer_channel_requires_channel_handle():
+    """The first argument must be a pld.channel handle, not a window."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window):
+        with pl.section_vector():
+            pld.buffer_channel(win, 512, 256)
+
+    with pytest.raises(InvalidType) as caught:
+        _parse(kernel)
+    assert "pld.channel handle" in str(caught.value)

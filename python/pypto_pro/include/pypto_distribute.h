@@ -16,12 +16,10 @@
 // The CANN device headers must come before pypto_assert.h: both CANN and PyPTO's
 // vendored debug headers define the same debug globals, and only the PyPTO copy defers
 // to the CANN include guards, so CANN has to be seen first.
-#if defined(__DAV_VEC__)
-#if defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
+#if defined(__DAV_VEC__) && defined(__NPU_ARCH__) && (__NPU_ARCH__ == 3510)
 #include "kernel_operator_sys_var_intf.h"
 #include "jetty/hcomm_jetty.h"
 #define PYPTO_DIST_HAVE_JETTY 1
-#endif
 #endif
 
 #include <pypto_assert.h>
@@ -127,70 +125,6 @@ __aicore__ inline void StoreDev(__gm__ T* addr, T value)
     st_dev(value, addr, 0);
 }
 
-template <typename T, int32_t kNotifyOp, bool kFlushStore = true>
-__aicore__ inline void Notify(__gm__ T* addr, int64_t val)
-{
-    static_assert(std::is_integral<T>::value && (sizeof(T) == 4 || sizeof(T) == 8),
-                  "signal words must be 32/64-bit integers");
-    static_assert(kNotifyOp == 0 || kNotifyOp == 1, "notify_op must be 0 (SET) or 1 (ATOMIC_ADD)");
-    if constexpr (kFlushStore) {
-        // Drain this AIV's outstanding MTE3 stores into the scalar pipe before the
-        // signal write. Event id 0 is hardcoded — do not keep an MTE3 event 0 in flight.
-        set_flag(PIPE_MTE3, PIPE_S, 0);
-        wait_flag(PIPE_MTE3, PIPE_S, 0);
-    }
-
-    // Flush the store buffer so prior stores are visible before the signal write.
-    dsb(DSB_DDR);
-
-    if constexpr (kNotifyOp != 0) {
-        (void)atomicAdd(addr, static_cast<T>(val));
-    } else {
-        StoreDev(addr, static_cast<T>(val));
-    }
-}
-
-template <int32_t kCmp>
-__aicore__ inline constexpr bool Cmp(int64_t sig, int64_t val)
-{
-    static_assert(kCmp >= 0 && kCmp <= 5, "Cmp must be a CmpMode value (0..5)");
-    if constexpr (kCmp == 0) {
-        return sig == val;
-    } else if constexpr (kCmp == 1) {
-        return sig != val;
-    } else if constexpr (kCmp == 2) {
-        return sig < val;
-    } else if constexpr (kCmp == 3) {
-        return sig <= val;
-    } else if constexpr (kCmp == 4) {
-        return sig > val;
-    } else {
-        return sig >= val;
-    }
-}
-
-template <typename T, int32_t kCmp>
-__aicore__ inline void Wait(__gm__ T* addr, int64_t val, int64_t timeout_cycles)
-{
-    static_assert(std::is_integral<T>::value && (sizeof(T) == 4 || sizeof(T) == 8),
-                  "signal words must be 32/64-bit integers");
-    static_assert(kCmp >= 0 && kCmp <= 5, "Cmp must be a CmpMode value (0..5)");
-    const int64_t t0 = get_sys_cnt();
-    while (true) {
-        const int64_t sig = static_cast<int64_t>(LoadDev(addr));
-        if (Cmp<kCmp>(sig, val)) {
-            break;
-        }
-        if (timeout_cycles > 0 && get_sys_cnt() - t0 >= timeout_cycles) {
-            pypto_panic("dist.Wait timeout: signal %lld, val %lld, Cmp %d, elapsed %lld cycles, timeout "
-                        "%lld cycles\n",
-                        static_cast<long long>(sig), static_cast<long long>(val), kCmp,
-                        static_cast<long long>(get_sys_cnt() - t0), static_cast<long long>(timeout_cycles));
-        }
-        CpuRelax();
-    }
-}
-
 template <int64_t kTimeoutCycles, bool kSyncLocal = true, bool kFlushStore = true>
 __aicore__ inline void BarrierSync(__gm__ Window* win)
 {
@@ -258,7 +192,18 @@ constexpr uint32_t kDistSqeFlagShift = 16U;
 constexpr uint32_t kDistDefaultSqeOption = 0x2DU; // URMA_DEFAULT_CFG
 constexpr uint64_t kDistSqeBodyFlags = 1ULL << kDistSqeFlagShift;
 constexpr uint64_t kDistSqeFinalFlags = static_cast<uint64_t>(kDistDefaultSqeOption) << kDistSqeFlagShift;
-constexpr uint64_t kDistSqeBase = kDistSqeBodyFlags | (1ULL << 28U) | (1ULL << 29U);
+constexpr uint64_t kDistSqeFixedBits = (1ULL << 28U) | (1ULL << 29U); // tokenEn, rmtJettyType
+constexpr uint64_t kDistSqeBase = kDistSqeBodyFlags | kDistSqeFixedBits;
+// Word-0 fields outside the flag byte; the reduce descriptor lives in word 4.
+constexpr uint32_t kDistSqeOpcodeShift = 40U;
+constexpr uint32_t kDistSqeSgeNumShift = 24U;
+constexpr uint32_t kDistSqeOwnerBit = 31U;
+constexpr uint32_t kDistSqeSeqMask = 0xFFFFU;
+constexpr uint32_t kDistSqeInlineSizeShift = 54U;
+constexpr uint64_t kDistSqeInlineFlag = 0x40ULL; // inlineEn, bit 6 of the flag byte
+constexpr uint32_t kDistWqe4ReduceDataTypeShift = 40U;
+constexpr uint32_t kDistWqe4ReduceOpShift = 44U;
+constexpr uint64_t kDistSqePublishFlags = 0x28ULL << kDistSqeFlagShift;
 
 enum class UrmaOpCode : uint32_t {
     SEND = 0,
@@ -285,6 +230,13 @@ enum class UrmaOpCode : uint32_t {
 // vendor HcommUrmaSqeCtx layout): standalone-final flags 0x2D | 0x80 = 0xAD.
 constexpr uint64_t kDistSqeUdfFlag = 0x80ULL << 16U;
 
+template <uint32_t kSqeOption>
+constexpr uint64_t kSqeFlags = static_cast<uint64_t>(kSqeOption) << kDistSqeFlagShift;
+
+template <typename T>
+constexpr uint64_t kInlineValueBits = (kDistSqeInlineFlag << kDistSqeFlagShift) |
+                                      (static_cast<uint64_t>(sizeof(T)) << kDistSqeInlineSizeShift);
+
 // Engine reduce data-type codes (vendor HCOMM_URMA_REDUCE_DATA_TYPE).
 enum class ReduceDataType : uint32_t {
     INT8 = 0x0,
@@ -298,7 +250,7 @@ enum class ReduceDataType : uint32_t {
 };
 
 template <typename T>
-constexpr ReduceDataType GetReduceDataType()
+__aicore__ constexpr ReduceDataType GetReduceDataType()
 {
     if constexpr (std::is_same_v<T, int8_t>) {
         return ReduceDataType::INT8;
@@ -319,6 +271,13 @@ constexpr ReduceDataType GetReduceDataType()
     }
 }
 
+template <typename T, uint32_t kReduceOp>
+__aicore__ constexpr uint64_t ReduceDescriptorBits()
+{
+    return (static_cast<uint64_t>(GetReduceDataType<T>()) << kDistWqe4ReduceDataTypeShift) |
+           (static_cast<uint64_t>(kReduceOp) << kDistWqe4ReduceOpShift);
+}
+
 // write_indexed builds one single-SGE 64B WQEBB per row directly in the jetty SQ
 // in GM. One lane owns one SQE word, so eight lanes cover one WQEBB; each warp
 // therefore writes four contiguous WQEBBs.
@@ -328,6 +287,103 @@ constexpr uint32_t kDistWqebbWords = kDistWqebbBytes / sizeof(uint64_t);
 constexpr uint32_t kDistSimtRowsPerPass = kDistSimtThreads / kDistWqebbWords;
 constexpr uint32_t kDistSimtMaxChunkWqebbs = 1024U;
 constexpr uint32_t kDistNearFullThreshold = 10U;
+
+// Cross-AIV channel lock word values (the vendor ChannelEntity protocol: free = 0,
+// held = 1) and the contended-retry backoff.
+constexpr uint32_t kDistLockFree = 0U;
+constexpr uint32_t kDistLockHeld = 1U;
+constexpr uint32_t kDistLockBackoff = 800U;
+
+// --- WQE option and operand checks -------------------------------------------
+// Flag byte: odr[2:0], fence[3], se[4], cqe[5]. A standalone post must carry cqe
+// (drain accounts one completion per post); a staged append must not (the batch
+// publish adds fence+cqe to the last staged WQE header).
+template <uint32_t kSqeOption>
+__aicore__ inline void CheckSqeFlagBits()
+{
+    static_assert((kSqeOption & ~0x2FU) == 0U, "WQE option sets unsupported flag bits");
+    static_assert((kSqeOption & 0x3U) != 0x3U, "WQE option cannot set the relaxed and strong order bits together");
+}
+
+template <uint32_t kSqeOption>
+__aicore__ inline void CheckSqeOption()
+{
+    CheckSqeFlagBits<kSqeOption>();
+    static_assert((kSqeOption & 0x20U) != 0U, "dist.channel option must include cqe");
+}
+
+template <uint32_t kSqeOption>
+__aicore__ inline void CheckStagedSqeOption()
+{
+    CheckSqeFlagBits<kSqeOption>();
+    static_assert((kSqeOption & 0x20U) == 0U, "dist.buffer_channel option must not set cqe (submit owns completion)");
+}
+
+// Atomics move one 32/64-bit integer word; reductions accept the element types the
+// wire's reduceDataType field can describe.
+template <typename T>
+__aicore__ inline void CheckAtomicWord()
+{
+    static_assert(std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t> || std::is_same_v<T, int64_t> ||
+                      std::is_same_v<T, uint64_t>,
+                  "atomic operations support 32/64-bit integer words only");
+}
+
+template <typename T, uint32_t kReduceOp>
+__aicore__ inline void CheckReduceType()
+{
+    static_assert(GetReduceDataType<T>() != ReduceDataType::INVALID,
+                  "write_reduce supports int8/int16/int32/uint32/half/float/bfloat16 only");
+    static_assert(kReduceOp == 0x8U || kReduceOp == 0x9U || kReduceOp == 0xAU,
+                  "write_reduce supports ReduceOp.MAX/MIN/SUM only");
+}
+
+// A single WQE carries at most kDistMaxTransferBytes.
+__aicore__ inline void CheckWqeMaxBytes(int64_t num_bytes)
+{
+    pypto_assert(num_bytes > 0 && num_bytes <= static_cast<int64_t>(kDistMaxTransferBytes),
+                 "dist transfer: num_bytes %lld exceeds the 256 MiB single-WQE limit\n",
+                 static_cast<long long>(num_bytes));
+}
+
+// Immutable per-channel peer metadata cache.
+struct PeerInfo {
+    uint32_t sqDepth;
+    uint64_t peerWord1;
+    uint64_t peerEid0;
+    uint64_t peerEid1;
+    uint64_t peerWord4;
+};
+
+// A notify descriptor occupies four words immediately before the data SGE.
+__aicore__ inline void FillNotifyDescriptor(__ubuf__ uint64_t* words, const PeerInfo& peer, GM_ADDR addr,
+                                            uint64_t value)
+{
+    words[0] = ((peer.peerWord1 >> 32U) & 0xFFFFFU) | ((peer.peerWord4 & 0xFFFFFFFFULL) << 32U);
+    words[1] = reinterpret_cast<uint64_t>(addr);
+    words[2] = value;
+    words[3] = 0U;
+}
+
+// Words 0..5 of a one-SGE WQE from the channel's peer snapshot.
+template <UrmaOpCode kOpCode, uint64_t kFlags, uint64_t kExtraWord0, bool kWithSeq, uint64_t kExtraWord4 = 0U>
+__aicore__ inline void FillSqeWords(__ubuf__ uint64_t* w, uint32_t seq, const PeerInfo& peer, uint32_t sgeNum,
+                                    GM_ADDR remote)
+{
+    uint64_t word0 = kFlags | kExtraWord0 | kDistSqeFixedBits | (static_cast<uint64_t>(kOpCode) << kDistSqeOpcodeShift);
+    if constexpr (kWithSeq) {
+        word0 |= static_cast<uint64_t>((seq + 1U) & kDistSqeSeqMask);
+    }
+    if ((seq & peer.sqDepth) == 0U) {
+        word0 |= 1ULL << kDistSqeOwnerBit;
+    }
+    w[0] = word0;
+    w[1] = peer.peerWord1 | (static_cast<uint64_t>(sgeNum) << kDistSqeSgeNumShift);
+    w[2] = peer.peerEid0;
+    w[3] = peer.peerEid1;
+    w[4] = peer.peerWord4 | kExtraWord4;
+    w[5] = reinterpret_cast<uint64_t>(remote);
+}
 
 // Scalar-prepared SQE words 0..4; the worker ORs the per-row owner bit and the
 // final-batch flags into word 0 and fills word 7 (SGE source VA).
@@ -367,8 +423,8 @@ __simt_vf__ __launch_bounds__(kDistSimtThreads) inline void WriteIndexedSimt(__g
 
         if (lane == 0U) {
             // Header word 0 must have owner and final-only flags cleared.
-            word |= static_cast<uint64_t>((seq + 1U) & 0xFFFFU);
-            word |= (seq & args.sq_depth) == 0U ? (1ULL << 31U) : 0ULL;
+            word |= static_cast<uint64_t>((seq + 1U) & kDistSqeSeqMask);
+            word |= (seq & args.sq_depth) == 0U ? (1ULL << kDistSqeOwnerBit) : 0ULL;
             word |= row + 1U == args.count ? kDistSqeFinalFlags : 0ULL;
         } else if (lane == 5U) {
             uint64_t index = static_cast<uint64_t>(row);
@@ -394,20 +450,20 @@ __simt_vf__ __launch_bounds__(kDistSimtThreads) inline void WriteIndexedSimt(__g
 
 struct Channel {
     __gm__ Window* win_;
-    uint32_t jetty_idx_;
+    uint32_t jettyIdx_;
     __ubuf__ AscendC::HcommJettyInfo* info_;
     __ubuf__ uint8_t* stage_;
     AscendC::HcommJetty jetty_;
     AscendC::HcommPeer peer_;
+    PeerInfo peerInfo_;
 
     __aicore__ inline Channel(__gm__ Window* w, __ubuf__ uint8_t* ubuf, int32_t peer)
         : win_(w),
-          jetty_idx_(JettyOf(w, peer)),
+          jettyIdx_(JettyOf(w, peer)),
           info_(JettyInfo(ubuf)),
           stage_(UbufSqe(ubuf)),
-          jetty_(info_, stage_, reinterpret_cast<GM_ADDR>(w->jetty_ptrs), jetty_idx_),
-          peer_(JettyPeerInfo(ubuf), reinterpret_cast<GM_ADDR>(win_->jetty_ptrs), jetty_idx_)
-
+          jetty_(info_, stage_, reinterpret_cast<GM_ADDR>(w->jetty_ptrs), jettyIdx_),
+          peer_(JettyPeerInfo(ubuf), reinterpret_cast<GM_ADDR>(win_->jetty_ptrs), jettyIdx_)
     {
         pypto_assert(peer != -1 || win_->multi_issuer != 0,
                      "dist.channel: window has no per-AIV jetty (multi_issuer == 0); pass peer=\n");
@@ -416,6 +472,12 @@ struct Channel {
             pypto_panic("dist.channel: unsupported jetty (wqebb %u, cqe %u, sqDepth %u, cqDepth %u)\n",
                         info_->numWqebbBytes, info_->numCqeBytes, info_->sqDepth, info_->cqDepth);
         }
+        auto* peer_info = peer_.peerInfo;
+        peerInfo_.sqDepth = info_->sqDepth;
+        peerInfo_.peerWord1 = peer_info->tpIdNumSgesRemoteTokenId;
+        peerInfo_.peerEid0 = peer_info->remoteEid[0];
+        peerInfo_.peerEid1 = peer_info->remoteEid[1];
+        peerInfo_.peerWord4 = peer_info->remoteTokenValueUdf;
     }
 
     // URMA-plane byte pointer to the peer's copy of the byte at `local_ptr` (anywhere inside
@@ -435,165 +497,129 @@ private:
     // one SGE. Words 6/7 (SGE length, local VA) and any opcode payload stay the
     // caller's per-op fill. Declared before its template users: the CCE frontend
     // binds non-template names in member-template bodies at first parse.
-    __aicore__ inline void FillSqeHeader(UrmaOpCode opcode, uint64_t final_flags, GM_ADDR remote)
+    template <UrmaOpCode kOpCode, uint64_t kFinalFlags>
+    __aicore__ inline void FillSqeHeader(GM_ADDR remote)
     {
-        const uint32_t head = static_cast<uint32_t>(info_->packedHead);
-        auto* w = reinterpret_cast<__ubuf__ uint64_t*>(stage_);
-        // The caller's flag byte is authoritative: the base contributes only the fixed
-        // bits 28/29, never the batch-body odr bit (write_indexed sets that itself).
-        w[0] = (final_flags | (kDistSqeBase & ~kDistSqeBodyFlags)) | (static_cast<uint64_t>(opcode) << 40U) |
-               static_cast<uint64_t>((head + 1U) & 0xFFFFU);
-        if ((head & info_->sqDepth) == 0U) {
-            w[0] |= 1ULL << 31U;
-        }
-        w[1] = peer_.peerInfo->tpIdNumSgesRemoteTokenId | (1ULL << 24U);
-        w[2] = peer_.peerInfo->remoteEid[0];
-        w[3] = peer_.peerInfo->remoteEid[1];
-        w[4] = peer_.peerInfo->remoteTokenValueUdf;
-        w[5] = reinterpret_cast<uint64_t>(remote);
+        FillSqeWords<kOpCode, kFinalFlags, 0U, true>(reinterpret_cast<__ubuf__ uint64_t*>(stage_),
+                                                     static_cast<uint32_t>(info_->packedHead), peerInfo_, 1U, remote);
     }
 
-    // Post the WQE staged in stage_: reserve SQ/CQ capacity, MTE3-copy it into the SQ
-    // slot (wrap-aware two-segment copy, the vendor CopyWqeToSq shape), advance the
-    // head, optionally ring the doorbell. The copy lands before the head store:
-    // hardware consumes the SQ only at the doorbell, so the head store must not race
-    // the DMA (same store-then-publish discipline as write_indexed). Event id 0 on
-    // PIPE_S<->PIPE_MTE3, the pair the vendor copy path uses; all uses are sequential
-    // on one scalar thread.
-    template <int64_t kTimeoutCycles, bool kDoorbell>
-    __aicore__ inline void PostStagedWqe(uint32_t numWqebbs)
+    // Wrap-aware two-segment UB->SQ copy (the vendor CopyWqeToSq shape). The caller
+    // owns the head: the publish paths differ in when they advance it, but the copy
+    // and its PIPE_S<->PIPE_MTE3 handshake are common. kWqebbBytes == 0 reads the
+    // per-channel size, non-zero keeps the caller's compile-time constant.
+    template <uint32_t kWqebbBytes>
+    __aicore__ inline void CopyWqesToSq(uint32_t head, uint32_t num_wqebbs, __ubuf__ uint8_t* src)
     {
-        if (!TryReserve<kTimeoutCycles>(numWqebbs, 1U)) {
-            pypto_panic("dist.channel: cannot reserve %u SQ WQEBBs\n", numWqebbs);
-        }
-        const uint32_t slot = static_cast<uint32_t>(info_->packedHead) & (info_->sqDepth - 1U);
-        const uint32_t first = numWqebbs < info_->sqDepth - slot ? numWqebbs : info_->sqDepth - slot;
+        const uint32_t wqebb_bytes = kWqebbBytes != 0U ? kWqebbBytes : info_->numWqebbBytes;
+        const uint32_t sq_idx = head & (info_->sqDepth - 1U);
+        const uint32_t first = num_wqebbs < info_->sqDepth - sq_idx ? num_wqebbs : info_->sqDepth - sq_idx;
         set_flag(PIPE_S, PIPE_MTE3, 0);
         wait_flag(PIPE_S, PIPE_MTE3, 0);
         asc_copy_ub2gm_align(
-            reinterpret_cast<__gm__ uint8_t*>(info_->sqBaseAddr + static_cast<uint64_t>(slot) * kDistWqebbBytes),
-            stage_, 1U, kDistWqebbBytes * first, asc_store_l2_cache_mode::NOTALLOC_CLEAN, 0, 0);
-        if (first < numWqebbs) {
-            asc_copy_ub2gm_align(reinterpret_cast<__gm__ uint8_t*>(info_->sqBaseAddr), stage_ + kDistWqebbBytes * first,
-                                 1U, kDistWqebbBytes * (numWqebbs - first), asc_store_l2_cache_mode::NOTALLOC_CLEAN, 0,
-                                 0);
+            reinterpret_cast<__gm__ uint8_t*>(info_->sqBaseAddr + static_cast<uint64_t>(wqebb_bytes) * sq_idx), src, 1,
+            wqebb_bytes * first, asc_store_l2_cache_mode::NOTALLOC_CLEAN, 0, 0);
+        if (first < num_wqebbs) {
+            asc_copy_ub2gm_align(reinterpret_cast<__gm__ uint8_t*>(info_->sqBaseAddr),
+                                 src + static_cast<uint64_t>(wqebb_bytes) * first, 1,
+                                 wqebb_bytes * (num_wqebbs - first), asc_store_l2_cache_mode::NOTALLOC_CLEAN, 0, 0);
         }
         set_flag(PIPE_MTE3, PIPE_S, 0);
         wait_flag(PIPE_MTE3, PIPE_S, 0);
-        jetty_.AdvanceSq(numWqebbs);
-        if constexpr (kDoorbell) {
-            Submit();
-        }
     }
 
-    // WQE flag byte: odr[2:0], fence[3], cqe[5]. cqe is required because drain
-    // accounts for one completion per posted WQE.
-    template <uint32_t kSqeOption>
-    __aicore__ inline static void CheckSqeOption()
+    // The channel's cross-AIV lock word lives at the default CQ context's ubJfc.headAddr.
+    // Resolve it the way hcomm does: cqContextAddr shares a cache line with the channel
+    // counters, so read it bypassing the DCache — a cached entity field would hand back a
+    // stale lock address before the lock is even acquired.
+    __aicore__ inline __gm__ uint32_t* LockWord() const
     {
-        static_assert((kSqeOption & ~0x2FU) == 0U, "dist.channel option sets unsupported WQE flag bits");
-        static_assert((kSqeOption & 0x20U) != 0U, "dist.channel option must include cqe");
-        static_assert((kSqeOption & 0x3U) != 0x3U,
-                      "dist.channel option cannot set the relaxed and strong order bits together");
+        const uint64_t entry = reinterpret_cast<__gm__ uint64_t*>(win_->jetty_ptrs)[jettyIdx_];
+        pypto_assert(entry != 0U, "dist.channel: jetty table entry %u is null\n", jettyIdx_);
+        auto* entity = reinterpret_cast<__gm__ AscendC::ChannelEntity*>(entry);
+        __gm__ uint64_t* cqContextsAddrField = reinterpret_cast<__gm__ uint64_t*>(
+            reinterpret_cast<__gm__ uint8_t*>(entity) + offsetof(AscendC::ChannelEntity, cqContextAddr));
+        const uint64_t cqContextsAddr = AscendC::ReadGmBypassDCache<uint64_t>(cqContextsAddrField);
+        auto* cqContext = reinterpret_cast<__gm__ AscendC::CqContext*>(cqContextsAddr);
+        return reinterpret_cast<__gm__ uint32_t*>(cqContext->contextInfo.ubJfc.headAddr);
+    }
+
+    // Post a staged WQE to the SQ, optionally ringing the doorbell.
+    // ReserveOrWait ensures SQ/CQ capacity (one CQE per WQE, regardless of WQEBBs)
+    // and submits pending WQEs when space must be reclaimed, preventing deadlock
+    // with submit=false. Copy the WQE from UB to SQ before advancing the head,
+    // using PIPE_S <-> PIPE_MTE3 synchronization to ensure DMA completion.
+    template <int64_t kTimeoutCycles, bool kSubmit>
+    __aicore__ inline void PostSqe(uint32_t numWqebbs)
+    {
+        ReserveOrWait<kTimeoutCycles>(numWqebbs, 1U);
+        const uint32_t head = static_cast<uint32_t>(info_->packedHead);
+        CopySqeToSq(head, numWqebbs, stage_);
+        jetty_.AdvanceSq(numWqebbs);
+        if constexpr (kSubmit) {
+            jetty_.RingDoorbell();
+        }
     }
 
 public:
     template <int64_t kTimeoutCycles, bool kSubmit, uint32_t kSqeOption>
     __aicore__ inline void Write(GM_ADDR dst, __gm__ uint8_t* src, int64_t num_bytes)
     {
-        constexpr int64_t kMaxChunkBytes = static_cast<int64_t>(kDistMaxTransferBytes);
-
-        for (int64_t offset = 0; offset < num_bytes;) {
-            int64_t bytes = num_bytes - offset;
-            if (bytes > kMaxChunkBytes) {
-                bytes = kMaxChunkBytes;
-            }
-            BuildWriteSqe<kSqeOption, false>(dst + offset, src + offset, static_cast<uint64_t>(bytes), nullptr, 0);
-            PostSqe<kTimeoutCycles, false>(1U);
-            offset += bytes;
-        }
-        if constexpr (kSubmit) {
-            Submit();
-        }
+        CheckWqeMaxBytes(num_bytes);
+        BuildWriteSqe<kSqeOption, false>(dst, src, static_cast<uint64_t>(num_bytes), nullptr, 0);
+        PostSqe<kTimeoutCycles, kSubmit>(1U);
     }
 
     template <int64_t kTimeoutCycles, typename T, bool kSubmit, uint32_t kSqeOption>
     __aicore__ inline void WriteValue(GM_ADDR dst, T value)
     {
         BuildWriteValueSqe<kSqeOption, T>(dst, value);
-        PostSqe<kTimeoutCycles, false>(1U);
-        if constexpr (kSubmit) {
-            Submit();
-        }
+        PostSqe<kTimeoutCycles, kSubmit>(1U);
     }
 
-    // Engine read: pull the remote source into the local GM destination, at most
-    // 256 MiB per WQE (chunked like Write). The data is engine-written, so it is
-    // readable only after Drain().
+    // Engine read: pull the remote source into the local GM destination (at most
+    // 256 MiB; larger transfers must be split by the caller). The data is
+    // engine-written, so it is readable only after Drain().
     template <int64_t kTimeoutCycles, bool kSubmit, uint32_t kSqeOption>
     __aicore__ inline void Read(GM_ADDR src, __gm__ uint8_t* dst, int64_t num_bytes)
     {
         CheckSqeOption<kSqeOption>();
-        constexpr int64_t kMaxChunkBytes = static_cast<int64_t>(kDistMaxTransferBytes);
-
-        for (int64_t offset = 0; offset < num_bytes;) {
-            int64_t bytes = num_bytes - offset;
-            if (bytes > kMaxChunkBytes) {
-                bytes = kMaxChunkBytes;
-            }
-            FillSqeHeader(UrmaOpCode::READ, static_cast<uint64_t>(kSqeOption) << kDistSqeFlagShift, src + offset);
-            auto* w = reinterpret_cast<__ubuf__ uint64_t*>(stage_);
-            w[6] = static_cast<uint64_t>(bytes);             // SGE length
-            w[7] = reinterpret_cast<uint64_t>(dst + offset); // SGE local VA
-            PostStagedWqe<kTimeoutCycles, false>(1U);
-            offset += bytes;
-        }
-        if constexpr (kSubmit) {
-            Submit();
-        }
+        CheckWqeMaxBytes(num_bytes);
+        FillSqeHeader<UrmaOpCode::READ, kSqeFlags<kSqeOption>>(src);
+        auto* w = reinterpret_cast<__ubuf__ uint64_t*>(stage_);
+        w[6] = static_cast<uint64_t>(num_bytes); // SGE length
+        w[7] = reinterpret_cast<uint64_t>(dst);  // SGE local VA
+        PostSqe<kTimeoutCycles, kSubmit>(1U);
     }
 
     // Engine-side reduction of the local GM source into the remote destination,
-    // element-wise in T (at most 256 MiB per WQE, chunked like Write). Concurrent
-    // reduces from several ranks into one target are hardware-serialized; the
-    // result is not ordered against other engine ops — Drain() first.
+    // element-wise in T (at most 256 MiB; larger transfers must be split by the
+    // caller). Concurrent reduces from several ranks into one target are
+    // hardware-serialized; the result is not ordered against other engine ops —
+    // Drain() first.
     template <int64_t kTimeoutCycles, typename T, uint32_t kReduceOp, bool kSubmit, uint32_t kSqeOption>
     __aicore__ inline void WriteReduce(GM_ADDR dst, __gm__ uint8_t* src, int64_t num_bytes)
     {
         CheckSqeOption<kSqeOption>();
-        static_assert(GetReduceDataType<T>() != ReduceDataType::INVALID,
-                      "write_reduce supports int8/int16/int32/uint32/half/float/bfloat16 only");
-        static_assert(kReduceOp == 0x8U || kReduceOp == 0x9U || kReduceOp == 0xAU,
-                      "write_reduce supports ReduceOp.MAX/MIN/SUM only");
-        constexpr int64_t kMaxChunkBytes = static_cast<int64_t>(kDistMaxTransferBytes);
-
-        for (int64_t offset = 0; offset < num_bytes;) {
-            int64_t bytes = num_bytes - offset;
-            if (bytes > kMaxChunkBytes) {
-                bytes = kMaxChunkBytes;
-            }
-            // udfEn rides above the caller's option: the reduce fields in SQE word 4
-            // only take effect when the UDF flag byte bit is set.
-            FillSqeHeader(UrmaOpCode::WRITE, kDistSqeUdfFlag | (static_cast<uint64_t>(kSqeOption) << kDistSqeFlagShift),
-                          dst + offset);
-            auto* w = reinterpret_cast<__ubuf__ uint64_t*>(stage_);
-            w[4] |= (static_cast<uint64_t>(GetReduceDataType<T>()) << 40U) | (static_cast<uint64_t>(kReduceOp) << 44U);
-            w[6] = static_cast<uint64_t>(bytes);             // SGE length (bytes)
-            w[7] = reinterpret_cast<uint64_t>(src + offset); // SGE local VA
-            PostStagedWqe<kTimeoutCycles, false>(1U);
-            offset += bytes;
-        }
-        if constexpr (kSubmit) {
-            Submit();
-        }
+        CheckReduceType<T, kReduceOp>();
+        CheckWqeMaxBytes(num_bytes);
+        // udfEn rides above the caller's option: the reduce fields in SQE word 4
+        // only take effect when the UDF flag byte bit is set.
+        FillSqeHeader<UrmaOpCode::WRITE, kDistSqeUdfFlag | kSqeFlags<kSqeOption>>(dst);
+        auto* w = reinterpret_cast<__ubuf__ uint64_t*>(stage_);
+        w[4] |= ReduceDescriptorBits<T, kReduceOp>();
+        w[6] = static_cast<uint64_t>(num_bytes); // SGE length (bytes)
+        w[7] = reinterpret_cast<uint64_t>(src);  // SGE local VA
+        PostSqe<kTimeoutCycles, kSubmit>(1U);
     }
 
-    template <int64_t kTimeoutCycles, uint32_t kSqeOption>
+    template <int64_t kTimeoutCycles, uint32_t kSqeOption, bool kSubmit = true>
     __aicore__ inline void WriteNotify(GM_ADDR dst, __gm__ uint8_t* src, int64_t num_bytes, __gm__ uint8_t* notify_addr,
                                        uint64_t val)
     {
+        CheckWqeMaxBytes(num_bytes);
         BuildWriteSqe<kSqeOption, true>(dst, src, static_cast<uint64_t>(num_bytes), notify_addr, val);
-        PostSqe<kTimeoutCycles, true>(2U);
+        PostSqe<kTimeoutCycles, kSubmit>(2U);
     }
 
     // Remote fetch-and-add of one aligned 32/64-bit integer word: the engine adds
@@ -603,15 +629,13 @@ public:
     __aicore__ inline void AtomicFetchAdd(GM_ADDR dst, __gm__ uint8_t* fetch, T value)
     {
         CheckSqeOption<kSqeOption>();
-        static_assert(std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t> || std::is_same_v<T, int64_t> ||
-                          std::is_same_v<T, uint64_t>,
-                      "atomic_fetch_add supports 32/64-bit integer words only");
+        CheckAtomicWord<T>();
         if (reinterpret_cast<uint64_t>(dst) % sizeof(T) != 0U) {
             pypto_panic("dist.channel.atomic_fetch_add: destination 0x%llx is not %u-byte aligned\n",
                         static_cast<unsigned long long>(reinterpret_cast<uint64_t>(dst)),
                         static_cast<unsigned>(sizeof(T)));
         }
-        FillSqeHeader(UrmaOpCode::ATOMIC_FADD, static_cast<uint64_t>(kSqeOption) << kDistSqeFlagShift, dst);
+        FillSqeHeader<UrmaOpCode::ATOMIC_FADD, kSqeFlags<kSqeOption>>(dst);
         auto* w = reinterpret_cast<__ubuf__ uint64_t*>(stage_);
         w[6] = sizeof(T);                         // SGE length
         w[7] = reinterpret_cast<uint64_t>(fetch); // SGE local VA (fetch destination)
@@ -619,7 +643,7 @@ public:
         for (uint32_t i = kDistWqebbBytes + sizeof(T); i < 2U * kDistWqebbBytes; i += 4U) {
             *reinterpret_cast<__ubuf__ uint32_t*>(stage_ + i) = 0U;
         }
-        PostStagedWqe<kTimeoutCycles, kSubmit>(2U);
+        PostSqe<kTimeoutCycles, kSubmit>(2U);
     }
 
     // Remote compare-and-swap of one aligned word: swaps `desired` in when the
@@ -630,15 +654,13 @@ public:
     __aicore__ inline void AtomicCas(GM_ADDR dst, __gm__ uint8_t* fetch, T expected, T desired)
     {
         CheckSqeOption<kSqeOption>();
-        static_assert(std::is_same_v<T, int32_t> || std::is_same_v<T, uint32_t> || std::is_same_v<T, int64_t> ||
-                          std::is_same_v<T, uint64_t>,
-                      "atomic_cas supports 32/64-bit integer words only");
+        CheckAtomicWord<T>();
         if (reinterpret_cast<uint64_t>(dst) % sizeof(T) != 0U) {
             pypto_panic("dist.channel.atomic_cas: destination 0x%llx is not %u-byte aligned\n",
                         static_cast<unsigned long long>(reinterpret_cast<uint64_t>(dst)),
                         static_cast<unsigned>(sizeof(T)));
         }
-        FillSqeHeader(UrmaOpCode::ATOMIC_CAS, static_cast<uint64_t>(kSqeOption) << kDistSqeFlagShift, dst);
+        FillSqeHeader<UrmaOpCode::ATOMIC_CAS, kSqeFlags<kSqeOption>>(dst);
         auto* w = reinterpret_cast<__ubuf__ uint64_t*>(stage_);
         w[6] = sizeof(T);                         // SGE length
         w[7] = reinterpret_cast<uint64_t>(fetch); // SGE local VA (fetch destination)
@@ -647,7 +669,7 @@ public:
         for (uint32_t i = kDistWqebbBytes + 2U * sizeof(T); i < 2U * kDistWqebbBytes; i += 4U) {
             *reinterpret_cast<__ubuf__ uint32_t*>(stage_ + i) = 0U;
         }
-        PostStagedWqe<kTimeoutCycles, kSubmit>(2U);
+        PostSqe<kTimeoutCycles, kSubmit>(2U);
     }
 
     template <typename IndexT, bool kHasSrcIndex, bool kHasDstIndex, int64_t kTimeoutCycles, bool kSubmit>
@@ -692,16 +714,9 @@ public:
             }
         }
 
-        WriteIndexedSimt<IndexT, kHasSrcIndex, kHasDstIndex, kTimeoutCycles, kSubmit>(
+        PostIndexedChunks<IndexT, kHasSrcIndex, kHasDstIndex, kTimeoutCycles, kSubmit>(
             src_base, dst_base, src_indices, dst_indices, row_bytes, src_stride, dst_stride,
             static_cast<uint32_t>(count));
-    }
-
-    // Publish is a release fence: the doorbell store must be visible before the next op.
-    __aicore__ inline void Submit()
-    {
-        jetty_.RingDoorbell();
-        dsb(DSB_DDR);
     }
 
     template <int64_t kTimeoutCycles>
@@ -710,7 +725,42 @@ public:
         PollCqUntil<kTimeoutCycles>(static_cast<uint32_t>(info_->packedHead >> 32U));
     }
 
+    // Cross-AIV exclusion over the channel's shared queue state. A multi-issuer channel
+    // rides the calling AIV's own jetty, so there is nothing to exclude and both calls are
+    // free. Otherwise the GM counters are authoritative while info_->packedHead is only a
+    // per-AIV cache: Lock refreshes it after acquiring, Unlock publishes it before
+    // releasing (the vendor ChannelEntity Lock/Unlock protocol).
+    __aicore__ inline void Lock()
+    {
+        if (IsExclusive()) {
+            return;
+        }
+        __gm__ uint32_t* lock = LockWord();
+        while (atomicCAS(lock, kDistLockFree, kDistLockHeld) != kDistLockFree) {
+            AscendC::Nop<kDistLockBackoff>(); // vendor backoff: reduce atomic contention
+        }
+        // from GM rather than from this AIV's stale copy (the vendor does the same).
+        info_->packedHead = AscendC::ReadGmBypassDCache(reinterpret_cast<__gm__ uint64_t*>(info_->sqHeadAddr));
+    }
+
+    __aicore__ inline void Unlock()
+    {
+        if (IsExclusive()) {
+            return;
+        }
+        // Hand the cached producer state (head + expected CQEs) over before the next AIV
+        // can read it. The store bypasses the DCache, which is what the vendor's
+        // CacheWriteThrough flush achieves for its cached counters; no extra fence.
+        AscendC::WriteGmBypassDCache(reinterpret_cast<__gm__ uint64_t*>(info_->sqHeadAddr), info_->packedHead);
+        (void)atomicCAS(LockWord(), kDistLockHeld, kDistLockFree);
+    }
+
     __aicore__ inline bool IsExclusive() const { return win_->multi_issuer != 0; }
+
+    // Narrow view for BufferChannel, which composes on this channel: it needs the head,
+    // the SQ depth, the peer metadata and the head advance, not the transport objects.
+    __aicore__ inline uint32_t PackedHead() const { return static_cast<uint32_t>(info_->packedHead); }
+    __aicore__ inline void AdvanceSq(uint32_t num_wqebbs) { jetty_.AdvanceSq(num_wqebbs); }
 
 private:
     // Stage the inline-value WQE (one WQEBB) with the caller's flag byte; inlineEn is
@@ -719,21 +769,10 @@ private:
     __aicore__ inline void BuildWriteValueSqe(GM_ADDR dst, T value)
     {
         CheckSqeOption<kSqeOption>();
-        auto* peer_info = peer_.peerInfo;
-        constexpr uint64_t kInlineFlag = 0x40U;                  // inlineEn
-        constexpr uint64_t kValueOffset = 6U * sizeof(uint64_t); // after the SQE header
-        const uint32_t owner = (static_cast<uint32_t>(info_->packedHead) & info_->sqDepth) == 0U ? 1U : 0U;
-
-        __ubuf__ uint64_t* words = reinterpret_cast<__ubuf__ uint64_t*>(stage_);
-        words[0] = ((static_cast<uint64_t>(kSqeOption) | kInlineFlag) << kDistSqeFlagShift) | (1ULL << 28U) |
-                   (1ULL << 29U) | (static_cast<uint64_t>(owner) << 31U) |
-                   (static_cast<uint64_t>(UrmaOpCode::WRITE) << 40U) | (static_cast<uint64_t>(sizeof(T)) << 54U);
-        words[1] = peer_info->tpIdNumSgesRemoteTokenId;
-        words[2] = peer_info->remoteEid[0];
-        words[3] = peer_info->remoteEid[1];
-        words[4] = peer_info->remoteTokenValueUdf;
-        words[5] = reinterpret_cast<uint64_t>(dst);
-        *reinterpret_cast<__ubuf__ T*>(stage_ + kValueOffset) = value;
+        auto* words = reinterpret_cast<__ubuf__ uint64_t*>(stage_);
+        FillSqeWords<UrmaOpCode::WRITE, kSqeFlags<kSqeOption>, kInlineValueBits<T>, false>(
+            words, static_cast<uint32_t>(info_->packedHead), peerInfo_, 0U, dst);
+        *reinterpret_cast<__ubuf__ T*>(words + 6U) = value;
     }
 
     // Stage one write WQE (two WQEBBs with notify) in `stage_`, mirroring hcomm's
@@ -743,76 +782,33 @@ private:
                                          uint64_t notify_value)
     {
         CheckSqeOption<kSqeOption>();
-        auto* peer_info = peer_.peerInfo;
-        const uint32_t owner = (static_cast<uint32_t>(info_->packedHead) & info_->sqDepth) == 0U ? 1U : 0U;
-        constexpr uint32_t kOpCode = static_cast<uint32_t>(kWithNotify ? UrmaOpCode::WRITE_WITH_NOTIFY :
-                                                                         UrmaOpCode::WRITE);
+        constexpr UrmaOpCode kOpCode = kWithNotify ? UrmaOpCode::WRITE_WITH_NOTIFY : UrmaOpCode::WRITE;
 
         __ubuf__ uint64_t* words = reinterpret_cast<__ubuf__ uint64_t*>(stage_);
         // SQE header: flag byte, fixed bits 28/29, owner, opcode; inlineMsgLen stays 0.
-        words[0] = (static_cast<uint64_t>(kSqeOption) << kDistSqeFlagShift) | (1ULL << 28U) | (1ULL << 29U) |
-                   (static_cast<uint64_t>(owner) << 31U) | (static_cast<uint64_t>(kOpCode) << 40U);
-        words[1] = peer_info->tpIdNumSgesRemoteTokenId | (1ULL << 24U);
-        words[2] = peer_info->remoteEid[0];
-        words[3] = peer_info->remoteEid[1];
-        words[4] = peer_info->remoteTokenValueUdf;
-        words[5] = reinterpret_cast<uint64_t>(dst);
+        FillSqeWords<kOpCode, kSqeFlags<kSqeOption>, 0U, false>(words, static_cast<uint32_t>(info_->packedHead),
+                                                                peerInfo_, 1U, dst);
         __ubuf__ uint64_t* sge = words + 6U;
         if constexpr (kWithNotify) {
-            sge[0] = ((peer_info->tpIdNumSgesRemoteTokenId >> 32U) & 0xFFFFFU) |
-                     ((peer_info->remoteTokenValueUdf & 0xFFFFFFFFULL) << 32U);
-            sge[1] = reinterpret_cast<uint64_t>(notify_addr);
-            sge[2] = notify_value;
-            sge[3] = 0U;
+            FillNotifyDescriptor(sge, peerInfo_, notify_addr, notify_value);
             sge += 4U;
+            // Clear the trailer of the second WQEBB
+            for (uint32_t i = 12U; i < 2U * kDistWqebbWords; ++i) {
+                words[i] = 0U;
+            }
         }
-        sge[0] = static_cast<uint64_t>(static_cast<uint32_t>(num_bytes));
+        sge[0] = static_cast<uint32_t>(num_bytes);
         sge[1] = reinterpret_cast<uint64_t>(src);
     }
 
-    // Publish the staged WQE the way HcommJettyImpl::PostSqe does: reclaim completions
-    // when the CQ is near full, advance the head, copy UB -> SQ, then ring.
-    template <int64_t kTimeoutCycles, bool kSubmit>
-    __aicore__ inline void PostSqe(uint32_t num_wqebbs)
+    // SQ/CQ publish and capacity primitives, shared with BufferChannel (which
+    // composes on this channel instead of copying it).
+public:
+    // Wrap-aware two-segment UB -> SQ copy (the vendor CopyWqeToSq shape); the source
+    // is the channel's single-WQE staging area or a buffer channel's staging buffer.
+    __aicore__ inline void CopySqeToSq(uint32_t head, uint32_t num_wqebbs, __ubuf__ uint8_t* src)
     {
-        const uint32_t head = static_cast<uint32_t>(info_->packedHead);
-        PollCqWhenNearFull<kTimeoutCycles>();
-        jetty_.AdvanceSq(num_wqebbs);
-        CopySqeToSq(head, num_wqebbs);
-        if constexpr (kSubmit) {
-            Submit();
-        }
-    }
-
-    template <int64_t kTimeoutCycles>
-    __aicore__ inline void PollCqWhenNearFull()
-    {
-        constexpr uint32_t kReclaimBatch = 100U;
-        const uint32_t completions = static_cast<uint32_t>(info_->packedHead >> 32U);
-        const uint32_t tail = LoadDev<uint32_t>(info_->completionTailAddr);
-        if (completions - tail + kDistNearFullThreshold >= info_->cqDepth) {
-            PollCqUntil<kTimeoutCycles>(tail + kReclaimBatch < completions ? tail + kReclaimBatch : completions);
-        }
-    }
-
-    __aicore__ inline void CopySqeToSq(uint32_t head, uint32_t num_wqebbs)
-    {
-        const uint32_t sq_idx = head & (info_->sqDepth - 1U);
-        const uint32_t first = num_wqebbs < info_->sqDepth - sq_idx ? num_wqebbs : info_->sqDepth - sq_idx;
-
-        set_flag(PIPE_S, PIPE_MTE3, 0);
-        wait_flag(PIPE_S, PIPE_MTE3, 0);
-        asc_copy_ub2gm_align(
-            reinterpret_cast<__gm__ uint8_t*>(info_->sqBaseAddr + static_cast<uint64_t>(info_->numWqebbBytes) * sq_idx),
-            stage_, 1, info_->numWqebbBytes * first, asc_store_l2_cache_mode::NOTALLOC_CLEAN, 0, 0);
-        if (first < num_wqebbs) {
-            asc_copy_ub2gm_align(reinterpret_cast<__gm__ uint8_t*>(info_->sqBaseAddr),
-                                 stage_ + static_cast<uint64_t>(info_->numWqebbBytes) * first, 1,
-                                 info_->numWqebbBytes * (num_wqebbs - first), asc_store_l2_cache_mode::NOTALLOC_CLEAN,
-                                 0, 0);
-        }
-        set_flag(PIPE_MTE3, PIPE_S, 0);
-        wait_flag(PIPE_MTE3, PIPE_S, 0);
+        CopyWqesToSq<0U>(head, num_wqebbs, src);
     }
 
     template <int64_t kTimeoutCycles>
@@ -863,7 +859,7 @@ private:
 
     // Reserve SQ/CQ capacity for one indexed chunk.
     template <int64_t kTimeoutCycles>
-    __aicore__ inline bool TryReserve(uint32_t wqebbs, uint32_t completions)
+    __aicore__ inline void ReserveOrWait(uint32_t wqebbs, uint32_t completions)
     {
         uint32_t sqDepth = info_->sqDepth;
         uint32_t cqLimit = info_->cqDepth - kDistNearFullThreshold - completions;
@@ -880,12 +876,12 @@ private:
             uint32_t usedCq = expected - cqTail;
 
             if (usedSq <= sqDepth && wqebbs <= sqDepth - usedSq && usedCq <= cqLimit) {
-                return true;
+                return;
             }
 
             // Capacity pressure: publish earlier pending writes.
             if (!published) {
-                Submit();
+                jetty_.RingDoorbell();
                 published = true;
             }
             // No completion left to reclaim (equality), or the CQ counters disagree.
@@ -893,7 +889,7 @@ private:
 
             if constexpr (kTimeoutCycles > 0) {
                 if (get_sys_cnt() - start >= kTimeoutCycles) {
-                    pypto_panic("dist.channel TryReserve timeout, wqebbs %u, usedSq %u, usedCq %u\n", wqebbs, usedSq,
+                    pypto_panic("dist.channel ReserveOrWait timeout, wqebbs %u, usedSq %u, usedCq %u\n", wqebbs, usedSq,
                                 usedCq);
                 }
             }
@@ -903,6 +899,7 @@ private:
         }
     }
 
+private:
     __aicore__ inline static uint32_t JettyOf(__gm__ Window* win, int32_t peer)
     {
         uint32_t idx = 0;
@@ -921,9 +918,9 @@ private:
     // local address, then apply the same offset to its exchanged remote address.
     __aicore__ inline GM_ADDR RemoteAddrOf(int64_t local_ptr) const
     {
-        uint64_t entry = reinterpret_cast<__gm__ uint64_t*>(win_->jetty_ptrs)[jetty_idx_];
+        uint64_t entry = reinterpret_cast<__gm__ uint64_t*>(win_->jetty_ptrs)[jettyIdx_];
         if (entry == 0) {
-            pypto_panic("dist.channel: jetty table entry %u is null\n", jetty_idx_);
+            pypto_panic("dist.channel: jetty table entry %u is null\n", jettyIdx_);
         }
         auto* channel = reinterpret_cast<__gm__ AscendC::ChannelEntity*>(entry);
         if (channel->localBufferAddr == nullptr || channel->remoteBufferAddr == nullptr) {
@@ -950,9 +947,9 @@ private:
     // mask per row, so a chunk may cross the physical wrap (but never exceeds sqDepth,
     // which would overwrite a slot twice inside one chunk).
     template <typename IndexT, bool kHasSrcIndex, bool kHasDstIndex, int64_t kTimeoutCycles, bool kSubmit>
-    __aicore__ inline void WriteIndexedSimt(GM_ADDR src_base, GM_ADDR dst_base, __ubuf__ IndexT* src_indices,
-                                            __ubuf__ IndexT* dst_indices, uint64_t row_bytes, uint64_t src_stride,
-                                            uint64_t dst_stride, uint32_t count)
+    __aicore__ inline void PostIndexedChunks(GM_ADDR src_base, GM_ADDR dst_base, __ubuf__ IndexT* src_indices,
+                                             __ubuf__ IndexT* dst_indices, uint64_t row_bytes, uint64_t src_stride,
+                                             uint64_t dst_stride, uint32_t count)
     {
         auto* hdr = reinterpret_cast<__ubuf__ Wqebb*>(stage_);
         WriteIndexedParams args{};
@@ -969,8 +966,8 @@ private:
             wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
         }
 
-        hdr->words[0] = kDistSqeBase | (static_cast<uint64_t>(UrmaOpCode::WRITE) << 40U);
-        hdr->words[1] = peer_.peerInfo->tpIdNumSgesRemoteTokenId | (1ULL << 24U);
+        hdr->words[0] = kDistSqeBase | (static_cast<uint64_t>(UrmaOpCode::WRITE) << kDistSqeOpcodeShift);
+        hdr->words[1] = peer_.peerInfo->tpIdNumSgesRemoteTokenId | (1ULL << kDistSqeSgeNumShift);
         hdr->words[2] = peer_.peerInfo->remoteEid[0];
         hdr->words[3] = peer_.peerInfo->remoteEid[1];
         hdr->words[4] = peer_.peerInfo->remoteTokenValueUdf;
@@ -983,9 +980,7 @@ private:
             if (count - done < chunk) {
                 chunk = count - done;
             }
-            if (!TryReserve<kTimeoutCycles>(chunk, 1U)) {
-                pypto_panic("dist.channel.write_indexed: cannot reserve %u SQ WQEBBs\n", chunk);
-            }
+            ReserveOrWait<kTimeoutCycles>(chunk, 1U);
             args.count = chunk;
             args.sq_seq = static_cast<uint32_t>(info_->packedHead);
             args.src_base = src_base_addr + (kHasSrcIndex ? 0ULL : static_cast<uint64_t>(done) * src_stride);
@@ -1002,7 +997,7 @@ private:
 
             jetty_.AdvanceSq(chunk);
             if constexpr (kSubmit) {
-                Submit();
+                jetty_.RingDoorbell();
             }
             done += chunk;
         }
@@ -1022,6 +1017,236 @@ private:
     __aicore__ inline static __ubuf__ uint8_t* UbufSqe(__ubuf__ uint8_t* base)
     {
         return reinterpret_cast<__ubuf__ uint8_t*>(JettyInfo(base) + 1);
+    }
+};
+
+struct BufferChannel {
+    Channel* ch_;
+    __ubuf__ uint8_t* buf_;
+    uint32_t slots_;    // capacity in WQEBBs (buf_bytes / 64)
+    uint32_t pending_;  // staged WQEBBs since the last Submit
+    uint32_t base_seq_; // free-running SQ seq of buf_ slot 0, checked at submit
+    uint32_t last_hdr_; // slot of the last staged op's WQE header (atomics span 2 slots)
+
+    // Capacity is a trap, not a flush: size the ring for the largest batch.
+    __aicore__ inline BufferChannel(Channel* ch, __ubuf__ uint8_t* buf, uint32_t buf_bytes)
+        : ch_(ch), buf_(buf), slots_(buf_bytes / kDistWqebbBytes), pending_(0U), base_seq_(0U), last_hdr_(0U)
+    {
+        if (ch == nullptr || buf == nullptr || buf_bytes < 2U * kDistWqebbBytes ||
+            (buf_bytes % kDistWqebbBytes) != 0U) {
+            pypto_panic("dist.buffer_channel: buf_bytes %u must be a 64-byte multiple of at least 128\n", buf_bytes);
+        }
+        if (slots_ > ch->info_->sqDepth) {
+            pypto_panic("dist.buffer_channel: buf_bytes %u needs %u WQEBBs but the jetty SQ holds only %u\n", buf_bytes,
+                        slots_, ch->info_->sqDepth);
+        }
+    }
+
+private:
+    // Capture the batch sequence once. Flush patches the last header, even when
+    // a two-slot operation ends the batch with a payload.
+    template <UrmaOpCode kOpCode, uint32_t kSqeOption, uint64_t kExtraWord0 = 0U, uint64_t kExtraWord4 = 0U>
+    __aicore__ inline __ubuf__ uint64_t* BeginSqe(GM_ADDR remote, uint32_t extra_wqebbs, uint32_t sge_num = 1U)
+    {
+        CheckStagedSqeOption<kSqeOption>();
+        // Keep the capacity trap inline: a pypto_panic call in this per-append path
+        // costs several cycles. The message is for sanitizer builds only.
+        pypto_assert(pending_ + extra_wqebbs <= slots_, "dist.buffer_channel: ring is full; submit first\n");
+        if (pending_ + extra_wqebbs > slots_) {
+            trap();
+        }
+        if (pending_ == 0U) {
+            base_seq_ = ch_->PackedHead();
+        }
+        last_hdr_ = pending_;
+        auto* words = reinterpret_cast<__ubuf__ uint64_t*>(buf_) + static_cast<uint64_t>(pending_) * kDistWqebbWords;
+        FillSqeWords<kOpCode, kSqeFlags<kSqeOption>, kExtraWord0, true, kExtraWord4>(words, base_seq_ + pending_,
+                                                                                     ch_->peerInfo_, sge_num, remote);
+        return words;
+    }
+
+public:
+    template <uint32_t kSqeOption>
+    __aicore__ inline void Write(GM_ADDR dst, __gm__ uint8_t* src, int64_t num_bytes)
+    {
+        CheckWqeMaxBytes(num_bytes);
+        auto* w = BeginSqe<UrmaOpCode::WRITE, kSqeOption>(dst, 1U);
+        w[6] = static_cast<uint64_t>(num_bytes);
+        w[7] = reinterpret_cast<uint64_t>(src);
+        ++pending_;
+    }
+
+    template <uint32_t kSqeOption, typename T>
+    __aicore__ inline void WriteValue(GM_ADDR dst, T value)
+    {
+        auto* w = BeginSqe<UrmaOpCode::WRITE, kSqeOption, kInlineValueBits<T>>(dst, 1U, 0U);
+        *reinterpret_cast<__ubuf__ T*>(w + 6U) = value;
+        ++pending_;
+    }
+
+    template <uint32_t kSqeOption>
+    __aicore__ inline void WriteNotify(GM_ADDR dst, __gm__ uint8_t* src, int64_t num_bytes, __gm__ uint8_t* notify_addr,
+                                       uint64_t val)
+    {
+        CheckWqeMaxBytes(num_bytes);
+        auto* w = BeginSqe<UrmaOpCode::WRITE_WITH_NOTIFY, kSqeOption>(dst, 2U);
+        FillNotifyDescriptor(w + 6U, ch_->peerInfo_, notify_addr, val);
+        w[10] = static_cast<uint32_t>(num_bytes);
+        w[11] = reinterpret_cast<uint64_t>(src);
+        for (uint32_t i = 12U; i < 2U * kDistWqebbWords; ++i) {
+            w[i] = 0U;
+        }
+        pending_ += 2U;
+    }
+
+    // Mark the final header for completion and copy the batch to the SQ. Submit rings the doorbell.
+    template <int64_t kTimeoutCycles>
+    __aicore__ inline void Flush()
+    {
+        if (pending_ == 0U) {
+            return;
+        }
+        // Posting on the base channel would invalidate the staged sequence numbers.
+        const uint32_t head = ch_->PackedHead();
+        if (head != base_seq_) {
+            pypto_panic("dist.buffer_channel: the base channel posted while %u WQEBBs were staged "
+                        "(head %u, expected %u); do not interleave ch ops with staged appends\n",
+                        pending_, head, base_seq_);
+        }
+        __ubuf__ uint64_t* last = reinterpret_cast<__ubuf__ uint64_t*>(buf_) +
+                                  static_cast<uint64_t>(last_hdr_) * kDistWqebbWords;
+        last[0] |= kDistSqePublishFlags;
+        ch_->template ReserveOrWait<kTimeoutCycles>(pending_, 1U);
+        ch_->CopySqeToSq(head, pending_, buf_);
+        ch_->AdvanceSq(pending_);
+        pending_ = 0U;
+    }
+
+    // Publish the staged batch — the vendor BatchCommit shape: one Flush (one SQ
+    // reservation, one wrap-aware DMA, one AdvanceSq) plus one doorbell. Always rings,
+    // so it also publishes an engine op posted earlier with submit=false.
+    template <int64_t kTimeoutCycles>
+    __aicore__ inline void Submit()
+    {
+        Flush<kTimeoutCycles>();
+        ch_->jetty_.RingDoorbell();
+    }
+
+    // Same scope as the base channel's; traps if WQEBBs were staged and never submitted.
+    template <int64_t kTimeoutCycles>
+    __aicore__ inline void Drain()
+    {
+        if (pending_ != 0U) {
+            pypto_panic("dist.buffer_channel: %u staged WQEBBs were never submitted before drain\n", pending_);
+        }
+        ch_->template Drain<kTimeoutCycles>();
+    }
+
+    // Engine-written read and atomic results are available after Drain.
+    template <uint32_t kSqeOption>
+    __aicore__ inline void ReadSqe(GM_ADDR src, __gm__ uint8_t* dst, uint64_t num_bytes)
+    {
+        auto* w = BeginSqe<UrmaOpCode::READ, kSqeOption>(src, 1U);
+        w[6] = num_bytes;
+        w[7] = reinterpret_cast<uint64_t>(dst);
+        ++pending_;
+    }
+
+    // Stage one write-reduce WQEBB: the UDF flag byte rides above the caller's option,
+    // the reduce fields sit in word 4 above the remote token (the vendor layout).
+    template <uint32_t kSqeOption, typename T, uint32_t kReduceOp>
+    __aicore__ inline void WriteReduceSqe(GM_ADDR dst, __gm__ uint8_t* src, uint64_t num_bytes)
+    {
+        CheckReduceType<T, kReduceOp>();
+        auto* w = BeginSqe<UrmaOpCode::WRITE, kSqeOption, kDistSqeUdfFlag, ReduceDescriptorBits<T, kReduceOp>()>(dst,
+                                                                                                                 1U);
+        w[6] = num_bytes;
+        w[7] = reinterpret_cast<uint64_t>(src);
+        ++pending_;
+    }
+
+    // Stage one fetch-add (two WQEBBs: the header + the immediate payload the engine
+    // writes the previous remote value into, zero-padded like the plain channel).
+    template <uint32_t kSqeOption, typename T>
+    __aicore__ inline void AtomicFetchAddSqe(GM_ADDR dst, __gm__ uint8_t* fetch, T value)
+    {
+        CheckAtomicWord<T>();
+        if (reinterpret_cast<uint64_t>(dst) % sizeof(T) != 0U) {
+            pypto_panic("dist.channel.atomic_fetch_add: destination 0x%llx is not %u-byte aligned\n",
+                        static_cast<unsigned long long>(reinterpret_cast<uint64_t>(dst)),
+                        static_cast<unsigned>(sizeof(T)));
+        }
+        auto* w = BeginSqe<UrmaOpCode::ATOMIC_FADD, kSqeOption>(dst, 2U);
+        w[6] = sizeof(T);
+        w[7] = reinterpret_cast<uint64_t>(fetch);
+        auto* base = reinterpret_cast<__ubuf__ uint8_t*>(w);
+        *reinterpret_cast<__ubuf__ T*>(base + kDistWqebbBytes) = value;
+        uint32_t offset = kDistWqebbBytes + sizeof(T);
+        if constexpr ((kDistWqebbBytes + sizeof(T)) % sizeof(uint64_t) != 0U) {
+            *reinterpret_cast<__ubuf__ uint32_t*>(base + offset) = 0U;
+            offset += sizeof(uint32_t);
+        }
+        for (; offset < 2U * kDistWqebbBytes; offset += sizeof(uint64_t)) {
+            *reinterpret_cast<__ubuf__ uint64_t*>(base + offset) = 0U;
+        }
+        pending_ += 2U;
+    }
+
+    // Stage one compare-and-swap (two WQEBBs; vendor payload order: swap value at
+    // byte 64, compare value right after it).
+    template <uint32_t kSqeOption, typename T>
+    __aicore__ inline void AtomicCasSqe(GM_ADDR dst, __gm__ uint8_t* fetch, T expected, T desired)
+    {
+        CheckAtomicWord<T>();
+        if (reinterpret_cast<uint64_t>(dst) % sizeof(T) != 0U) {
+            pypto_panic("dist.channel.atomic_cas: destination 0x%llx is not %u-byte aligned\n",
+                        static_cast<unsigned long long>(reinterpret_cast<uint64_t>(dst)),
+                        static_cast<unsigned>(sizeof(T)));
+        }
+        auto* w = BeginSqe<UrmaOpCode::ATOMIC_CAS, kSqeOption>(dst, 2U);
+        w[6] = sizeof(T);
+        w[7] = reinterpret_cast<uint64_t>(fetch);
+        auto* base = reinterpret_cast<__ubuf__ uint8_t*>(w);
+        *reinterpret_cast<__ubuf__ T*>(base + kDistWqebbBytes) = desired;
+        *reinterpret_cast<__ubuf__ T*>(base + kDistWqebbBytes + sizeof(T)) = expected;
+        uint32_t offset = kDistWqebbBytes + 2U * sizeof(T);
+        if constexpr ((kDistWqebbBytes + 2U * sizeof(T)) % sizeof(uint64_t) != 0U) {
+            *reinterpret_cast<__ubuf__ uint32_t*>(base + offset) = 0U;
+            offset += sizeof(uint32_t);
+        }
+        for (; offset < 2U * kDistWqebbBytes; offset += sizeof(uint64_t)) {
+            *reinterpret_cast<__ubuf__ uint64_t*>(base + offset) = 0U;
+        }
+        pending_ += 2U;
+    }
+
+    // Append an engine read (one WQEBB, at most 256 MiB) — staged like Write; the
+    // fetched bytes are engine-written and readable only after Drain.
+    template <uint32_t kSqeOption>
+    __aicore__ inline void Read(GM_ADDR src, __gm__ uint8_t* dst, int64_t num_bytes)
+    {
+        CheckWqeMaxBytes(num_bytes);
+        ReadSqe<kSqeOption>(src, dst, static_cast<uint64_t>(num_bytes));
+    }
+
+    // Append an engine-side reduction (one WQEBB, at most 256 MiB).
+    template <uint32_t kSqeOption, typename T, uint32_t kReduceOp>
+    __aicore__ inline void WriteReduce(GM_ADDR dst, __gm__ uint8_t* src, int64_t num_bytes)
+    {
+        CheckWqeMaxBytes(num_bytes);
+        WriteReduceSqe<kSqeOption, T, kReduceOp>(dst, src, static_cast<uint64_t>(num_bytes));
+    }
+
+    template <uint32_t kSqeOption, typename T>
+    __aicore__ inline void AtomicFetchAdd(GM_ADDR dst, __gm__ uint8_t* fetch, T value)
+    {
+        AtomicFetchAddSqe<kSqeOption, T>(dst, fetch, value);
+    }
+
+    template <uint32_t kSqeOption, typename T>
+    __aicore__ inline void AtomicCas(GM_ADDR dst, __gm__ uint8_t* fetch, T expected, T desired)
+    {
+        AtomicCasSqe<kSqeOption, T>(dst, fetch, expected, desired);
     }
 };
 #endif // defined(PYPTO_DIST_HAVE_JETTY)

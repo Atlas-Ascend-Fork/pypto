@@ -24,6 +24,7 @@ from .._utils import (
     _normalize_expr,
     require_const_bool,
     require_const_int,
+    require_enum,
 )
 from ._op_registry import op_impl, op_impl_ast
 
@@ -129,6 +130,31 @@ def _ptr_operand(value, api, arg_name, span):
     )
 
 
+@op_impl("dist.remote_tensor")
+def _build_remote_tensor(self, window, tensor, peer, *, span: Span | None = None):
+    """``pld.remote_tensor(win, tensor, peer)`` -> tensor view over the peer's region.
+
+    Sugar for ``ptr.make_tensor(pld.remote_ptr(win, tensor, peer), tensor.shape)``: the
+    view keeps the source shape, so element offsets address the peer's element."""
+    from .ptr_ops import make_tensor
+
+    source = tensor if isinstance(tensor, _ir_core.Expr) else None
+    if source is None or not isinstance(source.type, _ir_core.TensorType):
+        raise InvalidType(
+            "pld.remote_tensor 'tensor' must be a kernel tensor parameter registered by "
+            "Window.register_memory; use pld.remote_ptr + pl.make_tensor for a raw-pointer view",
+        )
+    window = _window_param(window, "pld.remote_tensor", "win")
+    peer_operand = _int_operand(peer, "pld.remote_tensor", "peer")
+    ptr = _ir_core.create_op_call(
+        "dist.remote_ptr",
+        [window, _ptr_operand(source, "pld.remote_tensor", "tensor", span), peer_operand],
+        {},
+        span,
+    )
+    return make_tensor(ptr, source.type.shape, None, None, span)
+
+
 @op_impl("dist.remote_ptr")
 def _build_remote_ptr(self, window, tensor, peer, *, span: Span | None = None):
     """``ptr = pld.remote_ptr(win, tensor_or_ptr, peer)`` -> typed UB_MEM remote pointer."""
@@ -162,79 +188,24 @@ def _parse_int_operand(parser, node, api, arg_name):
     return _int_operand(parser.parse_expression(node), api, arg_name)
 
 
-def _enum_kwarg_to_int(value, api, arg_name):
-    """Enum member (``pld.NotifyOp.SET``, ``pld.Cmp.GE``) or an int literal -> int.
+def _signal_ptr_operand(value, api, arg_name, span):
+    """Signal-word operand: a pointer to a remote 64-bit integer slot.
 
-    ``ch.*`` keyword values arrive as parse-time-constant Python values (see
-    ``_parse_op_kwargs``), so plain ints are accepted alongside IR ``ConstInt``.
+    The fused write-with-notify forms take the remote pointer from ``remote_ptr`` and
+    require a 64-bit word (the hardware notify value is a ``uint64_t``). The framework
+    cannot verify where a pointer came from.
     """
-    if isinstance(value, _ir_core.ConstInt):
-        return int(value.value)
-    if _is_int(value):
-        return int(value)
-    enum_value = getattr(value, "value", None)
-    if enum_value is not None and _is_int(enum_value):
-        return enum_value
-    raise InvalidType(f"{api} {arg_name} must be an enum value or an int, got {value!r}")
-
-
-def _signal_ptr_operand(value, api, arg_name, span, *, allow_tensor, allow_32=True):
-    """Signal-word operand: a pointer to an integer slot following its dtype.
-
-    ``notify``/``wait`` accept 32/64-bit words and also accept a local tensor
-    parameter (converted to its base pointer); channel notifications take the remote
-    pointer from ``remote_ptr`` and require a 64-bit word (the hardware notify value
-    is a ``uint64_t``). The framework cannot verify where a pointer came from.
-    """
-    if allow_tensor:
-        ptr = _ptr_operand(value, api, arg_name, span)
-    elif isinstance(value, _ir_core.Expr) and isinstance(value.type, _ir_core.PtrType):
+    if isinstance(value, _ir_core.Expr) and isinstance(value.type, _ir_core.PtrType):
         ptr = value
     else:
         raise InvalidType(
             f"{api} {arg_name} must be a remote pointer resolved by ch.remote_ptr(...)")
     dtype = _ptr_dtype(ptr, api)
-    if allow_32:
-        supported = dtype.is_int() and dtype.get_bit() in (32, 64)
-        kinds = "32/64-bit integer signal words"
-    else:
-        supported = dtype in (_ir_core.DataType.INT64, _ir_core.DataType.UINT64)
-        kinds = "64-bit integer signal words"
+    supported = dtype in (_ir_core.DataType.INT64, _ir_core.DataType.UINT64)
+    kinds = "64-bit integer signal words"
     if not supported:
         raise InvalidType(f"{api} {arg_name} must point at {kinds}, got {dtype}")
     return ptr
-
-
-@op_impl("dist.notify")
-def _build_notify(self, dst, val, *, op=None, flush_store=None, span: Span | None = None):
-    """``pld.notify(dst_ptr_or_tensor, val[, op=, flush_store=])`` -> dist.notify."""
-    from ...language.distribute import NotifyOp
-
-    dst_ptr = _signal_ptr_operand(dst, "pld.notify", "dst", span, allow_tensor=True)
-    val_operand = _int_operand(val, "pld.notify", "val")
-    notify_op = _enum_kwarg_to_int(op if op is not None else NotifyOp.SET, "pld.notify", "op")
-    if notify_op not in (int(NotifyOp.SET), int(NotifyOp.ATOMIC_ADD)):
-        raise InvalidVal(
-            f"pld.notify op must be NotifyOp.SET or NotifyOp.ATOMIC_ADD, got {notify_op}"
-        )
-
-    kwargs = {
-        "notify_op": notify_op,
-        "flush_store": True if flush_store is None else require_const_bool(
-            flush_store, subject="pld.notify 'flush_store'",
-        ),
-    }
-    return _ir_core.create_op_call("dist.notify", [dst_ptr, val_operand], kwargs, span)
-
-
-def _cmp_kwarg(cmp, api):
-    """``cmp=`` enum/int -> CmpMode integer (0-5)."""
-    from ...language.distribute import Cmp
-
-    cmp_mode = _enum_kwarg_to_int(cmp if cmp is not None else Cmp.EQ, api, "cmp")
-    if not 0 <= cmp_mode <= 5:
-        raise InvalidVal(f"{api} cmp must be a pld.Cmp member (0-5), got {cmp_mode}")
-    return cmp_mode
 
 
 def _timeout_value(timeout, api, *, minimum=0):
@@ -253,21 +224,6 @@ def _timeout_value(timeout, api, *, minimum=0):
             f"{forever}, but got {timeout}",
         )
     return timeout
-
-
-@op_impl("dist.wait")
-def _build_wait(self, src, val, *, cmp=None, timeout=None, span: Span | None = None):
-    """``pld.wait(src_ptr_or_tensor, val, cmp=, timeout=)`` -> dist.wait."""
-    src_ptr = _signal_ptr_operand(src, "pld.wait", "src", span, allow_tensor=True)
-    val_operand = _int_operand(val, "pld.wait", "val")
-    cmp_mode = _cmp_kwarg(cmp, "pld.wait")
-
-    return _ir_core.create_op_call(
-        "dist.wait",
-        [src_ptr, val_operand],
-        {"cmp": cmp_mode, "timeout_cycles": _timeout_value(timeout, "pld.wait")},
-        span,
-    )
 
 
 def _shape_byte_count(shape, dtype, span):
@@ -332,6 +288,19 @@ class _ChannelCreate:
         self.call = call
 
 
+class _BufferChannelCreate:
+    """Internal: ``pld.buffer_channel`` deferred to the assignment parser, same
+    mechanism as :class:`_ChannelCreate`."""
+
+    __slots__ = ("base", "buf_addr", "buf_bytes", "call")
+
+    def __init__(self, base, buf_addr, buf_bytes, call):
+        self.base = base
+        self.buf_addr = buf_addr
+        self.buf_bytes = buf_bytes
+        self.call = call
+
+
 def _require_const_int(parser, node, api, arg_name):
     """Compile-time integer argument (a literal or a folded constant)."""
     value = parser.parse_expression(node)
@@ -350,8 +319,8 @@ _URMA_OPTION_CQE = 0x20
 _URMA_OPTION_ODR_CONFLICT = 0x03
 
 
-def _urma_option(value, api):
-    """Compile-time ``pld.UrmaOption`` (IntFlag or int) -> validated WQE flag byte."""
+def _urma_option_bits(value, api):
+    """Compile-time ``pld.UrmaOption`` (IntFlag or int) -> validated flag-bits int."""
     if isinstance(value, _ir_core.ConstInt):
         option = int(value.value)
     elif _is_int(value):
@@ -365,16 +334,31 @@ def _urma_option(value, api):
         raise InvalidVal(
             f"{api} option sets unsupported WQE flag bits, got {option:#x}"
         )
-    if not option & _URMA_OPTION_CQE:
-        raise InvalidVal(
-            f"{api} option must include pld.UrmaOption.CQE (drain waits for one "
-            f"completion per batch), got {option:#x}"
-        )
     if option & _URMA_OPTION_ODR_CONFLICT == _URMA_OPTION_ODR_CONFLICT:
         raise InvalidVal(
             f"{api} option cannot set ODR_RELAX and ODR_STRONG together"
         )
     return option
+
+
+def _urma_option(value, api):
+    """Compile-time ``pld.UrmaOption`` -> WQE flag byte with a per-WQE completion."""
+    option = _urma_option_bits(value, api)
+    if not option & _URMA_OPTION_CQE:
+        raise InvalidVal(
+            f"{api} option must include pld.UrmaOption.CQE (drain waits for one "
+            f"completion per batch), got {option:#x}"
+        )
+    return option
+
+
+def _urma_append_option(value, api):
+    """Compile-time ``pld.UrmaOption`` -> BODY flag byte of a staged append.
+
+    A caller-set cqe bit is ignored (stripped): bch.submit publishes one completion
+    per batch (fence+cqe land on the last staged WQE), so staged WQEBBs never carry
+    their own."""
+    return _urma_option_bits(value, api) & ~_URMA_OPTION_CQE
 
 
 @op_impl_ast("dist.channel")
@@ -413,6 +397,57 @@ def _parse_channel(parser, call):
     peer_ir = peer if peer is not None else _normalize_expr(-1, span)
     create = _ir_core.create_op_call("dist.channel", [window, peer_ir], {"ub_addr": ub_addr}, span)
     return _ChannelCreate(window, ub_addr, create)
+
+
+@op_impl_ast("dist.buffer_channel")
+def _parse_buffer_channel(parser, call):
+    """``bch = pld.buffer_channel(ch, buf_addr, buf_bytes)`` -> assignment-time handle.
+
+    The buffer is a compile-time UB address + byte size (the parser reserves the range
+    like ``pld.channel``'s scratch); the handle keeps the base channel so method
+    dispatch can select the staged-append lowering."""
+    from ...language.distribute import Channel
+
+    span = parser.span_tracker.get_span(call)
+    if len(call.args) != 3:
+        raise InvalidArgument(
+            f"pld.buffer_channel requires (ch, buf_addr, buf_bytes), got {len(call.args)} arguments",
+        )
+    if call.keywords:
+        raise InvalidArgument("pld.buffer_channel does not accept keyword arguments")
+
+    base_node = call.args[0]
+    if not isinstance(base_node, ast.Name):
+        raise InvalidType(
+            "pld.buffer_channel first argument must be a pld.channel handle, got "
+            f"{ast.unparse(base_node)}",
+        )
+    binding = parser.local_binding(base_node.id)
+    base = binding[1] if binding is not None and binding[0] == "parse_time" else None
+    if not isinstance(base, Channel):
+        raise InvalidType(
+            f"pld.buffer_channel first argument must be a pld.channel handle, got '{base_node.id}'",
+        )
+
+    buf_addr = _require_const_int(parser, call.args[1], "pld.buffer_channel", "buf_addr")
+    buf_bytes = _require_const_int(parser, call.args[2], "pld.buffer_channel", "buf_bytes")
+    if buf_addr < 0 or buf_addr % 64:
+        raise InvalidVal(
+            f"pld.buffer_channel buf_addr must be a non-negative 64-byte aligned address, got {buf_addr}",
+        )
+    if buf_bytes < 2 * 64 or buf_bytes % 64:
+        raise InvalidVal(
+            f"pld.buffer_channel buf_bytes must be a 64-byte multiple of at least 128, got {buf_bytes}",
+        )
+
+    # The buffer may be used by SIMT code; update the max_vec_tile_end for the whole
+    # reservation, like pld.channel does for its scratch.
+    parser.max_vec_tile_end = max(parser.max_vec_tile_end, buf_addr + buf_bytes)
+
+    create = _ir_core.create_op_call(
+        "dist.buffer_channel", [base.token], {"buf_addr": buf_addr, "buf_bytes": buf_bytes}, span
+    )
+    return _BufferChannelCreate(base, buf_addr, buf_bytes, create)
 
 
 def _channel_dst_ptr(parser, api, node, span):
@@ -679,7 +714,9 @@ def _build_channel_write_reduce(parser, call, channel):
             "ch.write_reduce requires op=pld.ReduceOp.SUM/MAX/MIN",
             hint="The reduction mode is explicit so a lossy MAX/MIN is never spelled as a silent default",
         )
-    reduce_op = _enum_kwarg_to_int(kwargs_parsed["op"], "ch.write_reduce", "op")
+    from ...language.distribute import ReduceOp
+
+    reduce_op = int(require_enum(kwargs_parsed["op"], ReduceOp, subject="ch.write_reduce op").value)
     if reduce_op not in _REDUCE_OPS:
         raise InvalidVal(
             f"ch.write_reduce op must be a pld.ReduceOp member (SUM/MAX/MIN), got {reduce_op}")
@@ -695,6 +732,10 @@ def _build_channel_write_reduce(parser, call, channel):
             "ch.write_reduce does not support dtype "
             f"{source.type.dtype}; supported: int8/int16/int32/uint32/float16/float32/bfloat16")
     _check_tensor_source_layout(source, "ch.write_reduce", span)
+    if _ptr_dtype(dst, "ch.write_reduce") != source.type.dtype:
+        raise InvalidType(
+            "ch.write_reduce source dtype must match the destination pointer "
+            f"({_ptr_dtype(dst, 'ch.write_reduce')}), got {source.type.dtype}")
     submit = kwargs_parsed.get("submit", True)
     if not isinstance(submit, bool):
         raise InvalidType(f"ch.write_reduce submit must be a compile-time bool, got {submit!r}")
@@ -957,11 +998,11 @@ def _build_channel_atomic_cas(parser, call, channel):
 
 
 def _build_channel_write_notify(parser, call, channel):
-    """``ch.write_notify(dst_ptr, tensor, signal_ptr, val, timeout=)`` -> channel.write_notify."""
+    """``ch.write_notify(dst_ptr, tensor, signal_ptr, val, submit=, timeout=)`` -> channel.write_notify."""
     span = parser.span_tracker.get_span(call)
     kwargs_parsed = _parse_op_kwargs(parser, call)
     for name in kwargs_parsed:
-        if name not in ("timeout", "option"):
+        if name not in ("submit", "timeout", "option"):
             raise InvalidArgument(f"ch.write_notify does not accept keyword argument '{name}'")
     if any(isinstance(a, ast.Starred) for a in call.args):
         raise InvalidArgument("ch.write_notify does not accept star-args")
@@ -979,10 +1020,13 @@ def _build_channel_write_notify(parser, call, channel):
             "ch.write_notify tensor must be a kernel GM tensor (the fused WQE reads its source "
             f"from GM; use ch.write for the scalar-word form), got {ast.unparse(call.args[1])}",
         )
+    _check_tensor_source_layout(source, "ch.write_notify", span)
     signal = _signal_ptr_operand(
-        parser.parse_expression(call.args[2]), "ch.write_notify", "signal", span,
-        allow_tensor=False, allow_32=False)
+        parser.parse_expression(call.args[2]), "ch.write_notify", "signal", span)
     val = _parse_int_operand(parser, call.args[3], "ch.write_notify", "val")
+    submit = kwargs_parsed.get("submit", True)
+    if not isinstance(submit, bool):
+        raise InvalidType(f"ch.write_notify submit must be a compile-time bool, got {submit!r}")
     timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_notify", minimum=1)
     option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.write_notify")
 
@@ -997,7 +1041,7 @@ def _build_channel_write_notify(parser, call, channel):
             signal,
             val,
         ],
-        {"timeout_cycles": timeout, "option": option},
+        {"submit": submit, "timeout_cycles": timeout, "option": option},
         span,
     )
 
@@ -1008,6 +1052,22 @@ def _build_channel_submit(parser, call, channel):
     if call.args or call.keywords:
         raise InvalidArgument("ch.submit takes no arguments")
     return _ir_core.create_op_call("channel.submit", [channel.token], {}, span)
+
+
+def _build_channel_lock(parser, call, channel):
+    """``ch.lock()`` -> channel.lock (cross-AIV exclusion over the channel's queue state)."""
+    span = parser.span_tracker.get_span(call)
+    if call.args or call.keywords:
+        raise InvalidArgument("ch.lock takes no arguments")
+    return _ir_core.create_op_call("channel.lock", [channel.token], {}, span)
+
+
+def _build_channel_unlock(parser, call, channel):
+    """``ch.unlock()`` -> channel.unlock."""
+    span = parser.span_tracker.get_span(call)
+    if call.args or call.keywords:
+        raise InvalidArgument("ch.unlock takes no arguments")
+    return _ir_core.create_op_call("channel.unlock", [channel.token], {}, span)
 
 
 def _build_channel_drain(parser, call, channel):
@@ -1059,8 +1119,308 @@ def parse_channel_method(parser, channel, method, call):
         return _build_channel_submit(parser, call, channel)
     if method == "drain":
         return _build_channel_drain(parser, call, channel)
+    if method == "lock":
+        return _build_channel_lock(parser, call, channel)
+    if method == "unlock":
+        return _build_channel_unlock(parser, call, channel)
     if method == "is_exclusive":
         return _build_channel_is_exclusive(parser, call, channel)
     raise InvalidOperation(
         f"pld.Channel has no method '{method}'"
+    )
+
+
+def parse_buffer_channel_method(parser, bchannel, method, call):
+    """Dispatch ``bch.<method>(...)`` for a :class:`BufferChannel` receiver.
+
+    Every engine op stages into the ring like ``write`` (one ``submit`` publishes
+    appends and engine ops together); ``drain`` reuses the plain ``channel.drain`` op
+    via the derived token — the device traps on staged WQEBBs, so submit-then-drain
+    stays enforced."""
+    if method == "write":
+        return _build_buffer_channel_write(parser, call, bchannel)
+    if method == "submit":
+        return _build_buffer_channel_submit(parser, call, bchannel)
+    if method == "drain":
+        return parse_channel_method(parser, bchannel, method, call)
+    if method == "read":
+        return _build_buffer_channel_read(parser, call, bchannel)
+    if method == "write_reduce":
+        return _build_buffer_channel_write_reduce(parser, call, bchannel)
+    if method == "write_notify":
+        return _build_buffer_channel_write_notify(parser, call, bchannel)
+    if method == "atomic_fetch_add":
+        return _build_buffer_channel_atomic_fetch_add(parser, call, bchannel)
+    if method == "atomic_cas":
+        return _build_buffer_channel_atomic_cas(parser, call, bchannel)
+    raise InvalidOperation(f"pld.BufferChannel has no method '{method}'")
+
+
+def _build_buffer_channel_write(parser, call, bchannel):
+    """``bch.write(dst_ptr, tensor|scalar, option=)`` -> buffer_channel.write[_value].
+
+    Stages only: no ``submit``/``timeout`` exist here. ``option`` (default
+    ``pld.UrmaOption.DEFAULT``) is the staged WQEs' BODY flag byte with any caller-set
+    cqe bit ignored — ``bch.submit`` adds fence+cqe to the last WQEBB when it
+    publishes, so one completion covers the batch."""
+    span = parser.span_tracker.get_span(call)
+    kwargs_parsed = _parse_op_kwargs(parser, call)
+    for name in kwargs_parsed:
+        if name != "option":
+            raise InvalidArgument(
+                f"bch.write does not accept keyword argument '{name}' (it only stages)",
+                hint="call bch.submit() to publish the staged batch",
+            )
+    if any(isinstance(a, ast.Starred) for a in call.args):
+        raise InvalidArgument("bch.write does not accept star-args")
+    if len(call.args) != 2:
+        raise InvalidArgument(
+            f"bch.write requires (dst_ptr, tensor or scalar), got {len(call.args)} arguments after the buffer channel",
+            hint="Resolve the destination with ch.remote_ptr(tensor) on the base channel first",
+        )
+    option = _urma_append_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "bch.write")
+
+    dst = _channel_dst_ptr(parser, "bch.write", call.args[0], span)
+    source = parser.parse_expression(call.args[1])
+    if isinstance(source, _ir_core.Var) and isinstance(source.type, _ir_core.TensorType):
+        _check_tensor_source_layout(source, "bch.write", span)
+        num_bytes_arg = _shape_byte_count(source.type.shape, source.type.dtype, span)
+        return _ir_core.create_op_call(
+            "buffer_channel.write", [bchannel.token, dst, num_bytes_arg, source], {"option": option}, span
+        )
+
+    value = _parse_write_scalar(source, call.args[1], _ptr_dtype(dst, "bch.write"), api="bch.write")
+    return _ir_core.create_op_call(
+        "buffer_channel.write_value", [bchannel.token, dst, value], {"option": option}, span
+    )
+
+
+def _build_buffer_channel_submit(parser, call, bchannel):
+    """``bch.submit(timeout=)`` / ``bch.submit(timeout)`` -> buffer_channel.submit."""
+    span = parser.span_tracker.get_span(call)
+    kwargs_parsed = _parse_op_kwargs(parser, call)
+    for name in kwargs_parsed:
+        if name != "timeout":
+            raise InvalidArgument(f"bch.submit does not accept keyword argument '{name}'")
+    if len(call.args) > 1:
+        raise InvalidArgument("bch.submit accepts at most one positional timeout")
+    if call.args:
+        if "timeout" in kwargs_parsed:
+            raise InvalidArgument("bch.submit timeout given both positionally and by keyword")
+        kwargs_parsed = {"timeout": _require_const_int(parser, call.args[0], "bch.submit", "timeout")}
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "bch.submit", minimum=1)
+    return _ir_core.create_op_call(
+        "buffer_channel.submit", [bchannel.token], {"timeout_cycles": timeout}, span
+    )
+
+
+def _build_buffer_channel_read(parser, call, bchannel):
+    """``bch.read(dst_tensor, src_ptr, option=)`` -> buffer_channel.read (staged)."""
+    span = parser.span_tracker.get_span(call)
+    kwargs_parsed = _parse_op_kwargs(parser, call)
+    for name in kwargs_parsed:
+        if name != "option":
+            raise InvalidArgument(f"bch.read does not accept keyword argument '{name}' (it only stages)")
+    if any(isinstance(a, ast.Starred) for a in call.args):
+        raise InvalidArgument("bch.read does not accept star-args")
+    if len(call.args) != 2:
+        raise InvalidArgument(
+            f"bch.read requires (dst_tensor, src_ptr), got {len(call.args)} arguments after the buffer channel",
+            hint="Resolve the remote source with ch.remote_ptr(tensor) on the base channel first",
+        )
+
+    source = parser.parse_expression(call.args[1])
+    if not isinstance(source, _ir_core.Expr) or not isinstance(source.type, _ir_core.PtrType):
+        raise InvalidType(
+            "bch.read source must be a remote pointer resolved by ch.remote_ptr(...) "
+            f"(the engine pulls from the peer's region), got {ast.unparse(call.args[1])}")
+    dst = parser.parse_expression(call.args[0])
+    if not isinstance(dst, _ir_core.Var) or not isinstance(dst.type, _ir_core.TensorType):
+        raise InvalidType(
+            "bch.read destination must be a kernel GM tensor (the engine writes the fetched bytes "
+            f"into it), got {ast.unparse(call.args[0])}")
+    _check_tensor_source_layout(dst, "bch.read", span, name="destination")
+    option = _urma_append_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "bch.read")
+
+    num_bytes_arg = _shape_byte_count(dst.type.shape, dst.type.dtype, span)
+    return _ir_core.create_op_call(
+        "buffer_channel.read",
+        [bchannel.token, source, num_bytes_arg, dst],
+        {"option": option},
+        span,
+    )
+
+
+def _build_buffer_channel_write_reduce(parser, call, bchannel):
+    """``bch.write_reduce(dst_ptr, tensor, op=, option=)`` -> buffer_channel.write_reduce (staged)."""
+    span = parser.span_tracker.get_span(call)
+    kwargs_parsed = _parse_op_kwargs(parser, call)
+    for name in kwargs_parsed:
+        if name not in ("op", "option"):
+            raise InvalidArgument(f"bch.write_reduce does not accept keyword argument '{name}' (it only stages)")
+    if any(isinstance(a, ast.Starred) for a in call.args):
+        raise InvalidArgument("bch.write_reduce does not accept star-args")
+    if len(call.args) != 2:
+        raise InvalidArgument(
+            f"bch.write_reduce requires (dst_ptr, tensor), got {len(call.args)} arguments after the buffer channel",
+            hint="Resolve the destination with ch.remote_ptr(tensor) on the base channel first",
+        )
+    if "op" not in kwargs_parsed:
+        raise InvalidArgument(
+            "bch.write_reduce requires op=pld.ReduceOp.SUM/MAX/MIN",
+            hint="The reduction mode is explicit so a lossy MAX/MIN is never spelled as a silent default",
+        )
+    from ...language.distribute import ReduceOp
+
+    reduce_op = int(require_enum(kwargs_parsed["op"], ReduceOp, subject="bch.write_reduce op").value)
+    if reduce_op not in _REDUCE_OPS:
+        raise InvalidVal(
+            f"bch.write_reduce op must be a pld.ReduceOp member (SUM/MAX/MIN), got {reduce_op}")
+
+    dst = _channel_dst_ptr(parser, "bch.write_reduce", call.args[0], span)
+    source = parser.parse_expression(call.args[1])
+    if not isinstance(source, _ir_core.Var) or not isinstance(source.type, _ir_core.TensorType):
+        raise InvalidType(
+            "bch.write_reduce source must be a kernel GM tensor (the engine reads the reduction "
+            f"operands from GM), got {ast.unparse(call.args[1])}")
+    if source.type.dtype not in _REDUCE_DTYPES:
+        raise InvalidType(
+            "bch.write_reduce does not support dtype "
+            f"{source.type.dtype}; supported: int8/int16/int32/uint32/float16/float32/bfloat16")
+    _check_tensor_source_layout(source, "bch.write_reduce", span)
+    if _ptr_dtype(dst, "bch.write_reduce") != source.type.dtype:
+        raise InvalidType(
+            "bch.write_reduce source dtype must match the destination pointer "
+            f"({_ptr_dtype(dst, 'bch.write_reduce')}), got {source.type.dtype}")
+    option = _urma_append_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "bch.write_reduce")
+
+    num_bytes_arg = _shape_byte_count(source.type.shape, source.type.dtype, span)
+    return _ir_core.create_op_call(
+        "buffer_channel.write_reduce",
+        [bchannel.token, dst, num_bytes_arg, source],
+        {"reduce_op": reduce_op, "option": option},
+        span,
+    )
+
+
+def _build_buffer_channel_write_notify(parser, call, bchannel):
+    """``bch.write_notify(dst_ptr, tensor, signal_ptr, val, option=)`` -> buffer_channel.write_notify."""
+    span = parser.span_tracker.get_span(call)
+    kwargs_parsed = _parse_op_kwargs(parser, call)
+    for name in kwargs_parsed:
+        if name not in ("option",):
+            raise InvalidArgument(f"bch.write_notify does not accept keyword argument '{name}'")
+    if any(isinstance(a, ast.Starred) for a in call.args):
+        raise InvalidArgument("bch.write_notify does not accept star-args")
+    if len(call.args) != 4:
+        raise InvalidArgument(
+            f"bch.write_notify requires (dst_ptr, tensor, signal_ptr, val), got {len(call.args)} "
+            "arguments after the buffer channel",
+            hint="Resolve both addresses with ch.remote_ptr(tensor) first",
+        )
+
+    dst = _channel_dst_ptr(parser, "bch.write_notify", call.args[0], span)
+    source = parser.parse_expression(call.args[1])
+    if not isinstance(source, _ir_core.Var) or not isinstance(source.type, _ir_core.TensorType):
+        raise InvalidType(
+            "bch.write_notify tensor must be a kernel GM tensor (the fused WQE reads its source "
+            f"from GM; use bch.write for the scalar-word form), got {ast.unparse(call.args[1])}",
+        )
+    signal = _signal_ptr_operand(
+        parser.parse_expression(call.args[2]), "bch.write_notify", "signal", span)
+    val = _parse_int_operand(parser, call.args[3], "bch.write_notify", "val")
+    option = _urma_append_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "bch.write_notify")
+
+    num_bytes_arg = _shape_byte_count(source.type.shape, source.type.dtype, span)
+    return _ir_core.create_op_call(
+        "buffer_channel.write_notify",
+        [bchannel.token, dst, num_bytes_arg, source, signal, val],
+        {"option": option},
+        span,
+    )
+
+
+def _build_buffer_channel_atomic_fetch_add(parser, call, bchannel):
+    """``bch.atomic_fetch_add(dst_ptr, fetch_tensor, val, option=)`` -> buffer_channel.atomic_fetch_add (staged)."""
+    span = parser.span_tracker.get_span(call)
+    kwargs_parsed = _parse_op_kwargs(parser, call)
+    for name in kwargs_parsed:
+        if name != "option":
+            raise InvalidArgument(
+                f"bch.atomic_fetch_add does not accept keyword argument '{name}' (it only stages)")
+    if any(isinstance(a, ast.Starred) for a in call.args):
+        raise InvalidArgument("bch.atomic_fetch_add does not accept star-args")
+    if len(call.args) != 3:
+        raise InvalidArgument(
+            f"bch.atomic_fetch_add requires (dst_ptr, fetch_tensor, val), got {len(call.args)} arguments "
+            "after the buffer channel",
+            hint="Resolve the target with ch.remote_ptr(tensor) on the base channel first",
+        )
+
+    dst = _channel_dst_ptr(parser, "bch.atomic_fetch_add", call.args[0], span)
+    dtype = _ptr_dtype(dst, "bch.atomic_fetch_add")
+    if dtype not in _ATOMIC_DTYPES:
+        raise InvalidType(
+            f"bch.atomic_fetch_add destination must point at a 32/64-bit integer word, got {dtype}")
+    fetch = _atomic_fetch_operand(parser.parse_expression(call.args[1]), "bch.atomic_fetch_add")
+    if fetch.type.dtype != dtype:
+        raise InvalidType(
+            f"bch.atomic_fetch_add fetch tensor dtype must match the destination pointer "
+            f"({dtype}), got {fetch.type.dtype}")
+    fetch_bytes = _static_shape_byte_count(fetch.type.shape, fetch.type.dtype)
+    if fetch_bytes is not None and fetch_bytes != dtype.get_bit() // 8:
+        raise InvalidVal(
+            f"bch.atomic_fetch_add fetch tensor must hold exactly one {dtype} element, got shape "
+            f"{fetch.type.shape}")
+    val = _parse_int_operand(parser, call.args[2], "bch.atomic_fetch_add", "val")
+    option = _urma_append_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "bch.atomic_fetch_add")
+
+    return _ir_core.create_op_call(
+        "buffer_channel.atomic_fetch_add",
+        [bchannel.token, dst, fetch, val],
+        {"option": option},
+        span,
+    )
+
+
+def _build_buffer_channel_atomic_cas(parser, call, bchannel):
+    """``bch.atomic_cas(dst_ptr, fetch_tensor, expected, desired, option=)`` -> buffer_channel.atomic_cas (staged)."""
+    span = parser.span_tracker.get_span(call)
+    kwargs_parsed = _parse_op_kwargs(parser, call)
+    for name in kwargs_parsed:
+        if name != "option":
+            raise InvalidArgument(f"bch.atomic_cas does not accept keyword argument '{name}' (it only stages)")
+    if any(isinstance(a, ast.Starred) for a in call.args):
+        raise InvalidArgument("bch.atomic_cas does not accept star-args")
+    if len(call.args) != 4:
+        raise InvalidArgument(
+            f"bch.atomic_cas requires (dst_ptr, fetch_tensor, expected, desired), got {len(call.args)} "
+            "arguments after the buffer channel",
+            hint="Resolve the target with ch.remote_ptr(tensor) on the base channel first",
+        )
+
+    dst = _channel_dst_ptr(parser, "bch.atomic_cas", call.args[0], span)
+    dtype = _ptr_dtype(dst, "bch.atomic_cas")
+    if dtype not in _ATOMIC_DTYPES:
+        raise InvalidType(
+            f"bch.atomic_cas destination must point at a 32/64-bit integer word, got {dtype}")
+    fetch = _atomic_fetch_operand(parser.parse_expression(call.args[1]), "bch.atomic_cas")
+    if fetch.type.dtype != dtype:
+        raise InvalidType(
+            f"bch.atomic_cas fetch tensor dtype must match the destination pointer "
+            f"({dtype}), got {fetch.type.dtype}")
+    fetch_bytes = _static_shape_byte_count(fetch.type.shape, fetch.type.dtype)
+    if fetch_bytes is not None and fetch_bytes != dtype.get_bit() // 8:
+        raise InvalidVal(
+            f"bch.atomic_cas fetch tensor must hold exactly one {dtype} element, got shape "
+            f"{fetch.type.shape}")
+    expected = _parse_int_operand(parser, call.args[2], "bch.atomic_cas", "expected")
+    desired = _parse_int_operand(parser, call.args[3], "bch.atomic_cas", "desired")
+    option = _urma_append_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "bch.atomic_cas")
+
+    return _ir_core.create_op_call(
+        "buffer_channel.atomic_cas",
+        [bchannel.token, dst, fetch, expected, desired],
+        {"option": option},
+        span,
     )

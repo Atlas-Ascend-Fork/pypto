@@ -4,6 +4,6 @@ function kernel incast( %win_0, tensor<8 x 16, bfloat16_t, tensor_view<-2, ND, %
     channel.write(%ch_0, %_expr_tmp_0_0, (((16 mul 8) mul 16) div 8), %src_0, submit=true, timeout_cycles=0, option=32);
     ptr<bfloat16_t> %_expr_tmp_1_0 = channel.remote_ptr(%ch_0, ptr.make_ptr(%dst_0));
     ptr<int64_t> %_expr_tmp_2_0 = channel.remote_ptr(%ch_0, ptr.make_ptr(%sig_0));
-    channel.write_notify(%ch_0, %_expr_tmp_1_0, (((16 mul 8) mul 16) div 8), %src_0, %_expr_tmp_2_0, 1, timeout_cycles=0, option=32);
+    channel.write_notify(%ch_0, %_expr_tmp_1_0, (((16 mul 8) mul 16) div 8), %src_0, %_expr_tmp_2_0, 1, submit=true, timeout_cycles=0, option=32);
     return;
 }

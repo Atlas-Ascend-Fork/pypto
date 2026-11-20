@@ -1,0 +1,10 @@
+function kernel incast( %win_0, tensor<1 x 8, int32_t, tensor_view<-2, ND, %dst_ptr>> %dst_0, tensor<1 x 8, int32_t, tensor_view<-2, ND, %src_ptr>> %src_0) outcast() #entry(false) #type(pro) {
+    int64_t %ch_0 = dist.channel(%win_0, 1, ub_addr=64);
+    ptr<int32_t> %rptr_0 = channel.remote_ptr(%ch_0, ptr.make_ptr(%dst_0));
+    channel.lock(%ch_0);
+    channel.write(%ch_0, %rptr_0, (((32 mul 1) mul 8) div 8), %src_0, submit=false, timeout_cycles=0, option=45);
+    channel.submit(%ch_0);
+    channel.drain(%ch_0, timeout_cycles=0);
+    channel.unlock(%ch_0);
+    return;
+}
