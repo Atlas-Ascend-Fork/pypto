@@ -48,9 +48,9 @@ __aicore__ inline void _fmap3d_kernel_impl_vector(__gm__ half* x_0_ptr)
 __aicore__ inline void _fmap3d_kernel_impl(__gm__ half* x_0)
 {
 #if defined(__DAV_CUBE__)
-    _fmap3d_kernel_impl_cube(x_0);
+    ::_fmap3d_kernel_impl_cube(x_0);
 #endif
 #if defined(__DAV_VEC__)
-    _fmap3d_kernel_impl_vector(x_0);
+    ::_fmap3d_kernel_impl_vector(x_0);
 #endif
 }

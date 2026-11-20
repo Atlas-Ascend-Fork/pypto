@@ -220,7 +220,7 @@ def test_profiler_api_outputs(tmp_path, kind, mode):
 
 @pytest.mark.soc("950", "960")
 @pytest.mark.parametrize("name", [None, "pypto_pro_exact_profile_alias"])
-@pytest.mark.parametrize("mode", ["eager", "graph_before_collection"])
+@pytest.mark.parametrize("mode", ["eager", "graph_before_collection", "graph_custom_op_core_limits"])
 def test_op_summary_exact_name(tmp_path, monkeypatch, name, mode):
     """Require the exact Op Name; mangled names and extra prefixes must fail."""
     _check_npu()
@@ -229,15 +229,33 @@ def test_op_summary_exact_name(tmp_path, monkeypatch, name, mode):
     @pl.jit(name=name)
     def prof_named_kernel(out: pl.Tensor[[32], pl.DT_INT32, pl.Output]):
         with pl.section_vector():
-            out[0] = 7
+            out[pl.get_block_idx()] = 7
 
     out = torch.zeros(32, dtype=torch.int32, device=ST_DEVICE)
-    prof_named_kernel[1](out)
+    launch = prof_named_kernel[1]
+    if mode == "graph_custom_op_core_limits":
+        library = torch.library.Library("pypto_pro_profile_names", "FRAGMENT")
+        op_name = "run_default" if name is None else "run_alias"
+        library.define(f"{op_name}(Tensor(a!) out) -> ()")
+
+        def custom_kernel(output):
+            prof_named_kernel(output)
+
+        torch.library.impl(library, op_name, "PrivateUse1")(custom_kernel)
+        custom_op = getattr(torch.ops.pypto_pro_profile_names, op_name)
+
+        def launch(output):
+            with torch.npu.npugraph_ex.scope.limit_core_num(2, 2):
+                custom_op(output)
+
+    launch(out)
     torch.npu.synchronize()
     out.zero_()
     torch.npu.synchronize()
+    expected_output = torch.zeros_like(out)
+    expected_output[:2 if mode == "graph_custom_op_core_limits" else 1] = 7
     output_dir = str(tmp_path / "profiler")
-    skip_first = int(mode == "graph_before_collection")
+    skip_first = int(mode != "eager")
     with torch_npu.profiler.profile(
         activities=[torch_npu.profiler.ProfilerActivity.NPU],
         experimental_config=_build_experimental_config(),
@@ -246,16 +264,17 @@ def test_op_summary_exact_name(tmp_path, monkeypatch, name, mode):
     ) as prof:
         for step in range(skip_first + 1):
             if mode == "eager":
-                prof_named_kernel[1](out)
+                launch(out)
             else:
                 if step == 0:
                     graph = torch.npu.NPUGraph()
                     with torch.npu.graph(graph):
-                        prof_named_kernel[1](out)
+                        launch(out)
+                out.zero_()
                 graph.replay()
             torch.npu.synchronize()
             prof.step()
-    assert out[0].item() == 7
+    torch.testing.assert_close(out, expected_output, rtol=0, atol=0)
     expected = name if name is not None else "prof_named_kernel"
     files = []
     names = []

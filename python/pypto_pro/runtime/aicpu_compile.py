@@ -349,7 +349,7 @@ def compile_aicpu_variant(kernel, concrete_key, spec, bound_signature, static_si
         kernel, concrete_key, datatype_consts=dtype_consts, bound_signature=bound_signature
     )
 
-    op_name = kernel.__name__
+    op_name = _jit._get_kernel_ir_function(program).name
 
     # Kernel body via the shared CCE codegen (all IR→C++ emission), bare mode.
     cce_body = generate_aicpu_bare_body(program, arch, op_name)

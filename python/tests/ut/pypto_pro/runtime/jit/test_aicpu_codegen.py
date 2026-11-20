@@ -26,16 +26,51 @@ import tempfile
 
 from pypto_pro import ir
 import pypto_pro.language as pl
-from pypto_pro.runtime.aicpu_compile import generate_aicpu_bare_body, generate_aicpu_sources
-from pypto_pro.runtime.jit import _extract_param_specs
+from pypto_pro.runtime.aicpu_compile import compile_aicpu_variant, generate_aicpu_bare_body, generate_aicpu_sources
+from pypto_pro.runtime.jit import _extract_param_specs, _get_kernel_ir_function
+import pytest
 
 
 def _generate(kernel):
     kdef = kernel.to_kernel_def()
     program, _ = kdef.parse_target_program(ir.SectionKind.Vector)
     specs = _extract_param_specs(program, None)
-    body = generate_aicpu_bare_body(program, __import__("pypto_pro").runtime.platform.NpuArch.DAV_3510, kernel.__name__)
-    return generate_aicpu_sources(body, specs, kernel.__name__)
+    name = _get_kernel_ir_function(program).name
+    body = generate_aicpu_bare_body(program, __import__("pypto_pro").runtime.platform.NpuArch.DAV_3510, name)
+    return generate_aicpu_sources(body, specs, name)
+
+
+@pytest.mark.parametrize("delivery", ["fast_launch", "offline"])
+def test_custom_name_matches_impl_call(delivery, monkeypatch, tmp_path):
+    @pl.jit(mode="aicpu_kernel", arch="3510", name="opt_aicpu")
+    def original_kernel(
+        x: pl.Tensor[[4], pl.DT_INT32, pl.Input],
+        out: pl.Tensor[[4], pl.DT_INT32, pl.Output],
+    ):
+        pl.setval(out, 0, pl.getval(x, 0))
+
+    if delivery == "fast_launch":
+        monkeypatch.setenv("ASCEND_WORK_PATH", str(tmp_path))
+        sources = []
+
+        def fake_build(out_dir, op_name, cpp_path, host_path, so_path, arch, timeout):
+            sources.append(cpp_path.read_text(encoding="utf-8"))
+
+        monkeypatch.setattr("pypto_pro.runtime.aicpu_compile.build_aicpu_jit_so", fake_build)
+        compile_aicpu_variant(original_kernel, None, (None, None, None, None), None, ())
+        source, = sources
+        call = "return opt_aicpu_impl_vector("
+    else:
+        from pypto_pro.runtime.opc import aclnn_aicpu_codegen
+
+        monkeypatch.setattr(aclnn_aicpu_codegen, "_setup_arch_env", lambda arch: arch)
+        result = aclnn_aicpu_codegen._prepare_from_kernel(
+            original_kernel, "3510", None, tmp_path, "libprobe.so",
+        )
+        source = Path(result.kernel_cpp_path).read_text(encoding="utf-8")
+        call = "uint32_t status = opt_aicpu_impl_vector("
+    assert "inline uint32_t opt_aicpu_impl_vector(" in source
+    assert call in source
 
 
 def test_generates_fast_launch_host_source():

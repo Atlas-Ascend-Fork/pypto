@@ -54,6 +54,6 @@ __aicore__ inline void _atomic_ops_codegen_kernel_impl_vector(__gm__ int32_t* i3
 __aicore__ inline void _atomic_ops_codegen_kernel_impl(__gm__ int32_t* i32_0, __gm__ uint64_t* u64_0, __gm__ float* f32_0, __gm__ int64_t* out_0, __gm__ float* fout_0)
 {
 #if defined(__DAV_VEC__)
-    _atomic_ops_codegen_kernel_impl_vector(i32_0, u64_0, f32_0, out_0, fout_0);
+    ::_atomic_ops_codegen_kernel_impl_vector(i32_0, u64_0, f32_0, out_0, fout_0);
 #endif
 }

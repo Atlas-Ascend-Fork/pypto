@@ -65,6 +65,6 @@ __aicore__ inline void pointer_kernel_impl_vector(int32_t count_0)
 __aicore__ inline void pointer_kernel_impl(int32_t count_0)
 {
 #if defined(__DAV_VEC__)
-    pointer_kernel_impl_vector(count_0);
+    ::pointer_kernel_impl_vector(count_0);
 #endif
 }

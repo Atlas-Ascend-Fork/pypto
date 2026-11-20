@@ -9,11 +9,13 @@
 """JIT names propagate through IR, device entry, launch, SK and profiling."""
 
 import ast
+from dataclasses import replace
 import importlib
 
 from pypto_pro import ir
 from pypto_pro._errors import InvalidArgument, InvalidType, NameNotFound
 import pypto_pro.language as pl
+from pypto_pro.runtime.compile_config import get_jit_compile_config
 from pypto_pro.runtime.kernel import KernelDef
 from pypto_pro.runtime.platform import NpuArch
 import pytest
@@ -78,7 +80,7 @@ def test_name_is_shared_by_ir_launch_sk_and_profiling(name, mode, monkeypatch, t
     entry = next(line for line in caller.splitlines() if line.startswith('extern "C" __global__'))
     assert f"void {expected}(" in entry
     assert f"::{expected}<<<" in caller
-    assert f"\n    {expected}_impl(" in caller
+    assert f"\n    ::{expected}_impl(" in caller
     assert f'aclprofStr2Id("{expected}")' in caller
     if mode == "sk":
         assert f"SK_BIND({expected}," in caller
@@ -181,6 +183,30 @@ def test_direct_kernel_definition_validates_the_effective_name(name, explicit):
     )
     with pytest.raises((InvalidArgument, InvalidType)):
         definition.parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize("simt", [False, True])
+def test_generated_impl_calls_are_not_shadowed_by_parameters(simt, tmp_path):
+    target = get_jit_compile_config().resolve_kernel_target(
+        NpuArch.DAV_3510, has_cube=False, has_vector=True,
+    )
+    params = [("float", f"custom_kernel{suffix}", True) for suffix in ("_impl", "_impl_cube", "_impl_vector")]
+    args = ", ".join(name for _, name, _ in params)
+    entry = jit._make_global_entry(
+        "custom_kernel", params, target=target, simt_kernel=simt, max_threads=32,
+    )
+    assert f"::custom_kernel_impl({args});" in entry
+    cube = jit.CodegenResult(
+        build_dir=str(tmp_path), content="", kernel_name="custom_kernel", bisheng_cross_sync=False,
+        needs_print_debug=False, entry_params=params, has_cube=True,
+    )
+    vector = replace(cube, has_cube=False, has_vector=True)
+    combined = jit._assemble_cv_source(cube, vector)
+    assert f"::custom_kernel_impl_cube({args});" in combined.content
+    assert f"::custom_kernel_impl_vector({args});" in combined.content
+    sk = jit._make_sk_bind_block("custom_kernel", params, target, pl.SkCap.CAP_4_DISABLE_DCCI_ALL)
+    sk_args = ", ".join(f"args->{name}" for _, name, _ in params)
+    assert f"\n    ::custom_kernel_impl({sk_args});\n" in sk
 
 
 def test_main_is_allowed_for_ir_parsing():

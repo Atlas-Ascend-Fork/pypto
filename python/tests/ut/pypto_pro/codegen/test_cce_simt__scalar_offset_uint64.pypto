@@ -41,6 +41,6 @@ __aicore__ inline void kernel_impl_vector(__gm__ int32_t* data_0_ptr, __gm__ int
 __aicore__ inline void kernel_impl(__gm__ int32_t* data_0, __gm__ int32_t* out_0, uint64_t row_0, uint64_t col_0)
 {
 #if defined(__DAV_VEC__)
-    kernel_impl_vector(data_0, out_0, row_0, col_0);
+    ::kernel_impl_vector(data_0, out_0, row_0, col_0);
 #endif
 }

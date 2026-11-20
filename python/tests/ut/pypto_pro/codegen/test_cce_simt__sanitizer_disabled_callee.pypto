@@ -68,6 +68,6 @@ __aicore__ inline void _simt_callee_codegen_kernel_impl_vector(__gm__ int32_t* s
 __aicore__ inline void _simt_callee_codegen_kernel_impl(__gm__ int32_t* src_0, int32_t delta_0)
 {
 #if defined(__DAV_VEC__)
-    _simt_callee_codegen_kernel_impl_vector(src_0, delta_0);
+    ::_simt_callee_codegen_kernel_impl_vector(src_0, delta_0);
 #endif
 }

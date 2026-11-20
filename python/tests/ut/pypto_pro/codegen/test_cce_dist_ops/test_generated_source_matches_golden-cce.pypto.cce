@@ -125,6 +125,6 @@ __aicore__ inline void _dist_pointer_codegen_kernel_impl_vector(__gm__ uint8_t* 
 __aicore__ inline void _dist_pointer_codegen_kernel_impl(__gm__ uint8_t* win_0, __gm__ uint8_t* ws_0, __gm__ int64_t* sig_0, __gm__ int32_t* sig32_0, __gm__ bfloat16_t* src_0, __gm__ int32_t* idx_0, __gm__ bfloat16_t* out_0, __gm__ int64_t* out2_0, __gm__ float* out2f_0)
 {
 #if defined(__DAV_VEC__)
-    _dist_pointer_codegen_kernel_impl_vector(win_0, ws_0, sig_0, sig32_0, src_0, idx_0, out_0, out2_0, out2f_0);
+    ::_dist_pointer_codegen_kernel_impl_vector(win_0, ws_0, sig_0, sig32_0, src_0, idx_0, out_0, out2_0, out2f_0);
 #endif
 }

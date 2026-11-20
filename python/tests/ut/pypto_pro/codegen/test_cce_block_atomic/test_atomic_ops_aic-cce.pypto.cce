@@ -49,6 +49,6 @@ __aicore__ inline void kernel_impl_cube(__gm__ int32_t* state_0_ptr, __gm__ uint
 __aicore__ inline void kernel_impl(__gm__ int32_t* state_0, __gm__ uint64_t* u64_0, __gm__ float* f32_0, __gm__ int64_t* out_0)
 {
 #if defined(__DAV_CUBE__)
-    kernel_impl_cube(state_0, u64_0, f32_0, out_0);
+    ::kernel_impl_cube(state_0, u64_0, f32_0, out_0);
 #endif
 }

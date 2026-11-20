@@ -1330,7 +1330,7 @@ def _make_global_entry(
     # Use C linkage to avoid C++ name mangling of the device entry.
     return (
         f'extern "C" {sched}__global__ {qualifier} void {kernel_name}({sig})\n'
-        f"{{\n{body_prelude}    {kernel_name}_impl({call_args});\n}}\n"
+        f"{{\n{body_prelude}    ::{kernel_name}_impl({call_args});\n}}\n"
     )
 
 
@@ -1504,7 +1504,7 @@ def _make_sk_bind_block(
     # exposes ``sysArgs->skTaskSyncCfg`` + the ``kernel_common.h`` block-local global
     # directly, so we emit the equivalent assignment. Without it the config stays 0 and
     # the interfaces fall into the default branch.
-    sk_body = f"    {kernel_name}_impl({call_args});\n"
+    sk_body = f"    ::{kernel_name}_impl({call_args});\n"
     if sk_cap & EARLY_START_MASK:
         sk_body = "    g_super_kernel_early_start_config = sysArgs->skTaskSyncCfg;\n" + sk_body
     # Tile accessors read pypto __gm__ records (see pypto_block_meta.h): the
@@ -1635,7 +1635,7 @@ def _assemble_cv_source(
         wrapper_lines.extend(
             [
                 "#if defined(__DAV_CUBE__)",
-                f"    {reference.kernel_name}_impl_cube({_target_call_args(cube)});",
+                f"    ::{reference.kernel_name}_impl_cube({_target_call_args(cube)});",
                 "#endif",
             ]
         )
@@ -1643,7 +1643,7 @@ def _assemble_cv_source(
         wrapper_lines.extend(
             [
                 "#if defined(__DAV_VEC__)",
-                f"    {reference.kernel_name}_impl_vector({_target_call_args(vector)});",
+                f"    ::{reference.kernel_name}_impl_vector({_target_call_args(vector)});",
                 "#endif",
             ]
         )

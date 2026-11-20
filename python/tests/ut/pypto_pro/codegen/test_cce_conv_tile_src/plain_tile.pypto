@@ -48,9 +48,9 @@ __aicore__ inline void k_impl_vector(__gm__ half* x_0_ptr)
 __aicore__ inline void k_impl(__gm__ half* x_0)
 {
 #if defined(__DAV_CUBE__)
-    k_impl_cube(x_0);
+    ::k_impl_cube(x_0);
 #endif
 #if defined(__DAV_VEC__)
-    k_impl_vector(x_0);
+    ::k_impl_vector(x_0);
 #endif
 }

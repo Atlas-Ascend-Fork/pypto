@@ -202,7 +202,7 @@ def test_tile_block_records_are_always_seeded():
 def test_global_entry_takes_an_opaque_prelude_and_stays_sk_agnostic():
     source = _make_global_entry("k", [], target=_target(), schedmode=1, body_prelude="    seed();\n")
     assert "__schedmode__(1) __global__ __vector__ void k(" in source
-    assert "    seed();\n    k_impl();" in source
+    assert "    seed();\n    ::k_impl();" in source
 
 
 def test_non_fused_entry_seeds_block_meta_records():

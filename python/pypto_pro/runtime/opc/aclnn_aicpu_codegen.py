@@ -53,7 +53,7 @@ from pypto.pypto_impl import ir
 from ..._errors import InvalidArgument, InvalidVal
 from ..aicpu_compile import _impl_name, _parse_aicpu_program, generate_aicpu_bare_body, reject_unsupported_aicpu_params
 from ..entry_params import collect_dyn_vars, cpp_type_from_dtype
-from ..jit import _setup_arch_env
+from ..jit import _get_kernel_ir_function, _setup_arch_env
 from ..platform import normalize_arch
 
 
@@ -422,11 +422,11 @@ def _prepare_from_kernel(kernel, arch: str, op_type: str | None, out_dir, kernel
     if getattr(kernel, "_tilingkey_schema", None) is not None:
         raise InvalidVal(f"AICPU offline v1 does not support tiling_key on kernel '{kernel.__name__}'")
 
-    op_name = kernel.__name__
-    op_type = op_type or op_name
     arch_npu = _setup_arch_env(normalize_arch(arch))
 
     kernel_def, program, param_specs = _parse_aicpu_program(kernel)
+    op_name = _get_kernel_ir_function(program).name
+    op_type = op_type or op_name
     _validate_offline_specs(param_specs)
 
     param_names = list(inspect.signature(kernel._func).parameters)

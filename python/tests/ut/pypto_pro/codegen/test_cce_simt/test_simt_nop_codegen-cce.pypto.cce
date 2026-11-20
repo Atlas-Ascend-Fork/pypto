@@ -41,6 +41,6 @@ __aicore__ inline void kernel_impl_vector()
 __aicore__ inline void kernel_impl()
 {
 #if defined(__DAV_VEC__)
-    kernel_impl_vector();
+    ::kernel_impl_vector();
 #endif
 }

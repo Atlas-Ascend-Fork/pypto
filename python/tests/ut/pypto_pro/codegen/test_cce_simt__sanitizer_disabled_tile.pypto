@@ -77,6 +77,6 @@ __aicore__ inline void _simt_tile_codegen_kernel_impl_vector(__gm__ float* x_0_p
 __aicore__ inline void _simt_tile_codegen_kernel_impl(__gm__ float* x_0, __gm__ float* out_0, uint32_t n_0, float delta_0)
 {
 #if defined(__DAV_VEC__)
-    _simt_tile_codegen_kernel_impl_vector(x_0, out_0, n_0, delta_0);
+    ::_simt_tile_codegen_kernel_impl_vector(x_0, out_0, n_0, delta_0);
 #endif
 }

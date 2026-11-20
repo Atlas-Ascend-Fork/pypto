@@ -1,4 +1,4 @@
 extern "C" __global__ __cube__ void probe()
 {
-    probe_impl();
+    ::probe_impl();
 }
