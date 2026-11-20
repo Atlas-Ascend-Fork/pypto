@@ -46,7 +46,8 @@ pypto_pro.language.simt.log1p(
 | -Inf | NaN |
 | NaN | NaN |
 | -1 | -Inf |
-| ±0 | +0 |
+| +0 | +0 |
+| -0 | -0 |
 | 小于-1的有限值 | NaN |
 
 ## 调用示例

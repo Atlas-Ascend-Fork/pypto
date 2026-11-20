@@ -104,6 +104,7 @@ def test_fma_relu_all_supported_dtypes_with_tile_operands():
     rhs = torch.linspace(3.0, -3.0, ELEMENTS)
     lhs[:8] = torch.tensor([float("nan"), 1.0, float("inf"), float("-inf"), 0.0, -0.0, -1.0, 1.0])
     rhs[:8] = torch.tensor([1.0, float("nan"), -1.0, -1.0, float("inf"), 1.0, 1.0, 1.0])
+    lhs[8], rhs[8] = 0.0, 1.0
 
     def golden(x, y):
         return torch.clamp(x * y + x, min=0.0)
@@ -118,4 +119,8 @@ def test_fma_relu_all_supported_dtypes_with_tile_operands():
     for (lhs_source, rhs_source), output in zip(operand_pairs, outputs):
         expected = golden(lhs_source.float(), rhs_source.float()).to(lhs_source.dtype)
         rtol, atol = {torch.float16: (0.005, 0.005), torch.bfloat16: (0.02, 0.02)}[lhs_source.dtype]
-        torch.testing.assert_close(output.cpu(), expected, rtol=rtol, atol=atol, equal_nan=True)
+        actual = output.cpu()
+        torch.testing.assert_close(actual, expected, rtol=rtol, atol=atol, equal_nan=True)
+        # Both negative and positive FMA zeros become positive zero after ReLU.
+        for index in (5, 8):
+            assert actual[0, index].view(torch.int16).item() == 0

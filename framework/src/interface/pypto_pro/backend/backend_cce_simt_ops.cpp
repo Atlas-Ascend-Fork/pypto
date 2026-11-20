@@ -1020,16 +1020,26 @@ std::string MakeSimtCbrtCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& 
     return ConvertSimtFloatResultFromFP32(input.dtype, s.str());
 }
 
-std::string BuildSimtNanMinMax(const std::string& lhs, const std::string& rhs, const ir::DataType& dtype,
-                               const char* comparison, const char* intrinsic)
+std::string BuildSimtHalfMinMax(const std::string& lhs, const std::string& rhs, bool isMax)
+{
+    std::ostringstream s;
+    s << "({const half __half_lhs = (" << lhs << "), __half_rhs = (" << rhs << ");"
+      << "const bool __both_zero = (float)__half_lhs == 0.0f && (float)__half_rhs == 0.0f;"
+      << "__both_zero ? (signbitf((float)__half_lhs) ? "
+      << (isMax ? "__half_rhs : __half_lhs" : "__half_lhs : __half_rhs") << ") : "
+      << "(__half_lhs " << (isMax ? ">=" : "<=") << " __half_rhs ? __half_lhs : __half_rhs);})";
+    return s.str();
+}
+
+std::string BuildSimtNanMinMax(const std::string& lhs, const std::string& rhs, const ir::DataType& dtype, bool isMax)
 {
     std::ostringstream s;
     s << "({auto __nan_lhs = (" << lhs << "); auto __nan_rhs = (" << rhs << ");"
       << "__isnan(__nan_lhs) ? __nan_lhs : (__isnan(__nan_rhs) ? __nan_rhs : ";
     if (dtype == ir::DataType::FP16) {
-        s << "(__nan_lhs " << comparison << " __nan_rhs ? __nan_lhs : __nan_rhs)";
+        s << BuildSimtHalfMinMax("__nan_lhs", "__nan_rhs", isMax);
     } else {
-        s << intrinsic << "(__nan_lhs, __nan_rhs)";
+        s << (isMax ? "__max" : "__min") << "(__nan_lhs, __nan_rhs)";
     }
     s << ");})";
     return s.str();
@@ -1039,16 +1049,14 @@ std::string MakeSimtMaxNanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
-    return BuildSimtNanMinMax(codegen.GetExprAsCode(op->args_[0]), codegen.GetExprAsCode(op->args_[1]), dtype,
-                              ">=", "__max");
+    return BuildSimtNanMinMax(codegen.GetExprAsCode(op->args_[0]), codegen.GetExprAsCode(op->args_[1]), dtype, true);
 }
 
 std::string MakeSimtMinNanCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     const auto dtype = ir::As<ir::ScalarType>(op->args_[0]->GetType())->dtype_;
-    return BuildSimtNanMinMax(codegen.GetExprAsCode(op->args_[0]), codegen.GetExprAsCode(op->args_[1]), dtype,
-                              "<=", "__min");
+    return BuildSimtNanMinMax(codegen.GetExprAsCode(op->args_[0]), codegen.GetExprAsCode(op->args_[1]), dtype, false);
 }
 
 std::string MakeSimtAtan2CodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
@@ -1731,8 +1739,8 @@ std::string MakeSimtMinCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
         return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __fminf(" + a + ", " + b + ")))";
     }
     if (dtype == ir::DataType::FP16) {
-        return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : ((" + a + ") <= (" + b + ") ? (" +
-               a + ") : (" + b + "))))";
+        return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : " +
+               BuildSimtHalfMinMax(a, b, false) + "))";
     }
     return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __min(" + a + ", " + b + ")))";
 }
@@ -1752,8 +1760,8 @@ std::string MakeSimtMaxCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& c
         return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __fmaxf(" + a + ", " + b + ")))";
     }
     if (dtype == ir::DataType::FP16) {
-        return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : ((" + a + ") >= (" + b + ") ? (" +
-               a + ") : (" + b + "))))";
+        return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : " +
+               BuildSimtHalfMinMax(a, b, true) + "))";
     }
     return "(__isnan(" + a + ") ? " + b + " : (__isnan(" + b + ") ? " + a + " : __max(" + a + ", " + b + ")))";
 }
@@ -1957,7 +1965,7 @@ std::string MakeSimtFmaReluCodegenCCE(const ir::CallPtr& op, codegen::CodegenBas
     const std::string addend = codegen.GetExprAsCode(op->args_[2]);
     const auto dtype = ir::As<ir::ScalarType>(op->GetType())->dtype_;
     const std::string value = "((" + dtype.ToCTypeString() + ")__fma((" + lhs + "), (" + rhs + "), (" + addend + ")))";
-    return BuildSimtNanMinMax(value, "((" + dtype.ToCTypeString() + ")0.0f)", dtype, ">=", "__max");
+    return BuildSimtNanMinMax(value, "((" + dtype.ToCTypeString() + ")0.0f)", dtype, true);
 }
 
 std::string MakeSimtUnorderedCompareCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase,

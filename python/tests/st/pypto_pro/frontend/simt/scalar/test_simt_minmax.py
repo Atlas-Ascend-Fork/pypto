@@ -156,6 +156,8 @@ def test_min_all_supported_float_dtypes():
     for (lhs_source, rhs_source), output in zip(operand_pairs, outputs):
         expected = torch.fmin(lhs_source.float(), rhs_source.float()).to(lhs_source.dtype)
         torch.testing.assert_close(output.cpu(), expected, rtol=0, atol=0, equal_nan=True)
+        if lhs_source.dtype == torch.float16:
+            assert torch.equal(output.cpu()[:, 3:5].view(torch.int16), torch.full((1, 2), -32768, dtype=torch.int16))
 
 @pl.vector_function(mode="simt", max_threads=ELEMENTS)
 def min_signed_dtypes(
@@ -560,9 +562,15 @@ def test_min_nan_dtypes_with_tile_operands():
     rhs = torch.tensor([2.0, 3.0, -1.0, -5.0, 4.0, float("nan"), -7.0, 0.5] * 8)
     lhs[:7] = torch.tensor([-0.0, 0.0, float("nan"), 1.0, float("nan"), float("inf"), float("-inf")])
     rhs[:7] = torch.tensor([0.0, -0.0, 1.0, float("nan"), float("nan"), 2.0, 2.0])
+    lhs[7:9] = torch.tensor([-0.0, 0.0])
+    rhs[7:9] = torch.tensor([-0.0, 0.0])
     lhs_fp32 = lhs.to(torch.float32).reshape(1, -1)
     rhs_fp32 = rhs.to(torch.float32).reshape(1, -1)
     operand_pairs = tuple((lhs_fp32.to(dtype), rhs_fp32.to(dtype)) for dtype in (torch.float16, torch.bfloat16))
+    for lhs_source, rhs_source in operand_pairs:
+        nan_bits = (0x7E01, 0x7E02) if lhs_source.dtype == torch.float16 else (0x7FC1, 0x7FC2)
+        lhs_source.view(torch.int16)[0, 4] = nan_bits[0]
+        rhs_source.view(torch.int16)[0, 4] = nan_bits[1]
     outputs = tuple(torch.empty_like(lhs_source, device=ST_DEVICE) for lhs_source, _ in operand_pairs)
     arguments = [operand.to(ST_DEVICE) for pair in operand_pairs for operand in pair]
     simt_min_nan_tile(*arguments, *outputs)
@@ -570,9 +578,10 @@ def test_min_nan_dtypes_with_tile_operands():
     for (lhs_source, rhs_source), output in zip(operand_pairs, outputs):
         expected = torch.minimum(lhs_source.float(), rhs_source.float()).to(lhs_source.dtype)
         torch.testing.assert_close(output.cpu(), expected, rtol=0, atol=0, equal_nan=True)
-        # ASC's FP16 comparison selects the left operand on a tie; BF16 uses __min.
-        zero_bits = [-32768, 0] if lhs_source.dtype == torch.float16 else [-32768, -32768]
-        assert torch.equal(output.cpu()[:, :2].view(torch.int16), torch.tensor([zero_bits], dtype=torch.int16))
+        assert torch.equal(output.cpu()[:, :2].view(torch.int16), torch.full((1, 2), -32768, dtype=torch.int16))
+        assert torch.equal(output.cpu()[:, 7:9].view(torch.int16), torch.tensor([[-32768, 0]], dtype=torch.int16))
+        assert output.cpu()[0, 4].view(torch.int16).item() == lhs_source[0, 4].view(torch.int16).item()
+
 
 # --------------------------------------------------- max ---------------------------------------------------
 
@@ -709,6 +718,8 @@ def test_max_all_supported_float_dtypes():
     for (lhs_source, rhs_source), output in zip(operand_pairs, outputs):
         expected = torch.fmax(lhs_source.float(), rhs_source.float()).to(lhs_source.dtype)
         torch.testing.assert_close(output.cpu(), expected, rtol=0, atol=0, equal_nan=True)
+        if lhs_source.dtype == torch.float16:
+            assert torch.equal(output.cpu()[:, 3:5].view(torch.int16), torch.zeros((1, 2), dtype=torch.int16))
 
 @pl.vector_function(mode="simt", max_threads=ELEMENTS)
 def max_signed_dtypes(
@@ -1113,9 +1124,15 @@ def test_max_nan_dtypes_with_tile_operands():
     rhs = torch.tensor([2.0, 3.0, -1.0, -5.0, 4.0, float("nan"), -7.0, 0.5] * 8)
     lhs[:7] = torch.tensor([-0.0, 0.0, float("nan"), 1.0, float("nan"), float("inf"), float("-inf")])
     rhs[:7] = torch.tensor([0.0, -0.0, 1.0, float("nan"), float("nan"), 2.0, 2.0])
+    lhs[7:9] = torch.tensor([-0.0, 0.0])
+    rhs[7:9] = torch.tensor([-0.0, 0.0])
     lhs_fp32 = lhs.to(torch.float32).reshape(1, -1)
     rhs_fp32 = rhs.to(torch.float32).reshape(1, -1)
     operand_pairs = tuple((lhs_fp32.to(dtype), rhs_fp32.to(dtype)) for dtype in (torch.float16, torch.bfloat16))
+    for lhs_source, rhs_source in operand_pairs:
+        nan_bits = (0x7E01, 0x7E02) if lhs_source.dtype == torch.float16 else (0x7FC1, 0x7FC2)
+        lhs_source.view(torch.int16)[0, 4] = nan_bits[0]
+        rhs_source.view(torch.int16)[0, 4] = nan_bits[1]
     outputs = tuple(torch.empty_like(lhs_source, device=ST_DEVICE) for lhs_source, _ in operand_pairs)
     arguments = [operand.to(ST_DEVICE) for pair in operand_pairs for operand in pair]
     simt_max_nan_tile(*arguments, *outputs)
@@ -1123,6 +1140,6 @@ def test_max_nan_dtypes_with_tile_operands():
     for (lhs_source, rhs_source), output in zip(operand_pairs, outputs):
         expected = torch.maximum(lhs_source.float(), rhs_source.float()).to(lhs_source.dtype)
         torch.testing.assert_close(output.cpu(), expected, rtol=0, atol=0, equal_nan=True)
-        # ASC's FP16 comparison selects the left operand on a tie; BF16 uses __max.
-        zero_bits = [-32768, 0] if lhs_source.dtype == torch.float16 else [0, 0]
-        assert torch.equal(output.cpu()[:, :2].view(torch.int16), torch.tensor([zero_bits], dtype=torch.int16))
+        assert torch.equal(output.cpu()[:, :2].view(torch.int16), torch.zeros((1, 2), dtype=torch.int16))
+        assert torch.equal(output.cpu()[:, 7:9].view(torch.int16), torch.tensor([[-32768, 0]], dtype=torch.int16))
+        assert output.cpu()[0, 4].view(torch.int16).item() == lhs_source[0, 4].view(torch.int16).item()

@@ -34,9 +34,8 @@ pypto_pro.language.simt.rcp(
 
 ## 约束说明
 
-只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
-
-当数据类型为DT_BF16时，本接口不支持次正规数（Subnormal）场景：value为次正规数时，返回与value同号的无穷大（Inf）；计算结果处于次正规数范围时，返回保留结果符号的0。
+- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
+- 当数据类型为DT_BF16时，本接口不支持输入或除法结果为次正规数（Subnormal）的场景。
 
 ## 返回值说明
 
@@ -49,6 +48,8 @@ pypto_pro.language.simt.rcp(
 | +Inf | +0 |
 | -Inf | -0 |
 | NaN | NaN |
+
+- 当数据类型为DT_BF16时，输入为次正规数（Subnormal）时输出与value同号的Inf；除法结果为次正规数时输出保留结果符号的0。
 
 ## 调用示例
 

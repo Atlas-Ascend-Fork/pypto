@@ -28,16 +28,25 @@ pypto_pro.language.simt.erfinv(
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| value | 输入 | 误差函数值，Scalar类型，仅支持DT_FP32，实数定义域为$[-1,1]$。Tensor或Tile元素需通过下标访问后传入。 |
+| value | 输入 | 误差函数值，Scalar类型，仅支持DT_FP32，范围为$[-1,1]$。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 
-- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
-- 定义域是数学语义说明，不进行输入数值范围的编译期校验。输入超出$[-1,1]$（包括正负无穷）或为NaN时返回NaN。
+只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
 
 ## 返回值说明
 
-返回误差函数的反函数值，数据类型为DT_FP32。输入为-1和1时分别返回负无穷和正无穷；正负零保留原符号。
+返回误差函数的反函数值，数据类型为DT_FP32。特殊值如下：
+
+| value取值 | 返回值 |
+|---|---|
+| -1 | -Inf |
+| +1 | +Inf |
+| +0 | +0 |
+| -0 | -0 |
+| 超出$[-1,1]$的有限数 | NaN |
+| ±Inf | NaN |
+| NaN | NaN |
 
 ## 调用示例
 

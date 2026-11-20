@@ -34,11 +34,20 @@ pypto_pro.language.simt.erfcx(
 
 ## 约束说明
 
-只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
+- 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
+- 本接口不支持内部除法结果为次正规数（Subnormal）的场景。
 
 ## 返回值说明
 
-返回缩放互补误差函数值，数据类型为DT_FP32。正无穷返回正零，负无穷返回正无穷，NaN返回NaN。
+返回缩放互补误差函数值，数据类型为DT_FP32。特殊值如下：
+
+| value取值 | 返回值 |
+|---|---|
+| +Inf | +0 |
+| -Inf | +Inf |
+| NaN | NaN |
+
+- 内部除法结果为次正规数（Subnormal）时输出0。
 
 ## 调用示例
 

@@ -43,7 +43,7 @@ pypto_pro.language.simt.tanh(
 | value取值 | 返回值 |
 |---|---|
 | +0 | +0 |
-| -0 | +0 |
+| -0 | -0 |
 | +Inf | +1 |
 | -Inf | -1 |
 | NaN | NaN |

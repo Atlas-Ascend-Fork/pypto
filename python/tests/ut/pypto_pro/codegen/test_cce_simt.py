@@ -1225,6 +1225,9 @@ def test_fp16_scalar_math_codegen_maps_cce_intrinsics_without_simt_headers():
 
     for intrinsic in ("__cvt_float<", "__cvt_half<"):
         assert intrinsic in function
+    assert "(float)__half_lhs == 0.0f && (float)__half_rhs == 0.0f" in function
+    assert "__both_zero ? (signbitf((float)__half_lhs) ? __half_lhs : __half_rhs)" in function
+    assert "__both_zero ? (signbitf((float)__half_lhs) ? __half_rhs : __half_lhs)" in function
     assert "simt_api/" not in cpp
 
 
@@ -1380,8 +1383,12 @@ def test_nan_select_codegen_is_self_contained():
     assert "__hmin_nan(" not in cpp
     assert "__isnan(__nan_lhs) ? __nan_lhs" in cpp
     assert "__isnan(__nan_rhs) ? __nan_rhs" in cpp
-    assert "__nan_lhs >= __nan_rhs" in cpp
-    assert "__nan_lhs <= __nan_rhs" in cpp
+    assert "__half_lhs >= __half_rhs ? __half_lhs : __half_rhs" in cpp
+    assert "__half_lhs <= __half_rhs ? __half_lhs : __half_rhs" in cpp
+    assert "__both_zero ? (signbitf((float)__half_lhs) ? __half_lhs : __half_rhs)" in cpp
+    assert "__both_zero ? (signbitf((float)__half_lhs) ? __half_rhs : __half_lhs)" in cpp
+    assert "__min(__nan_lhs, __nan_rhs)" in cpp
+    assert "__max(__nan_lhs, __nan_rhs)" in cpp
     assert "__cvt_float<" not in cpp
     assert "simt_api/" not in cpp
 
@@ -1711,6 +1718,7 @@ def test_fp16_fma_comparison_codegen_is_self_contained():
         assert f"{wrapper}(" not in cpp
     assert "__fma(" in cpp
     assert "__isnan(__nan_lhs) ? __nan_lhs" in cpp
+    assert "__both_zero ? (signbitf((float)__half_lhs) ? __half_rhs : __half_lhs)" in cpp
     for comparison in ("==", "<=", ">=", "<", ">"):
         assert f"(__cmp_lhs {comparison} __cmp_rhs) || __isnan(__cmp_lhs) || __isnan(__cmp_rhs)" in cpp
     assert cpp.count("auto __cmp_lhs = (") == 5

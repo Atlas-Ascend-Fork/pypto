@@ -31,23 +31,26 @@ pypto_pro.language.simt.yn(
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| order | 输入 | 阶数，Scalar类型，仅支持DT_INT32。有效阶数为非负整数。Tensor或Tile元素需通过下标访问后传入。 |
-| value | 输入 | 源操作数，正实数为实数定义域，Scalar类型，仅支持DT_FP32。Tensor或Tile元素需通过下标访问后传入。 |
+| order | 输入 | 阶数，Scalar类型，仅支持DT_INT32，范围为$[0,128]$。Tensor或Tile元素需通过下标访问后传入。 |
+| value | 输入 | 源操作数，Scalar类型，仅支持DT_FP32，范围为$(0,+\infty)$。Tensor或Tile元素需通过下标访问后传入。 |
 
 ## 约束说明
 
 - 只能在SIMT kernel、SIMT vector function或SIMT helper中调用。
-- order为负数或value为负数时返回NaN，不进行输入数值范围的编译期校验。
+- order大于128的场景不支持，不保证计算结果。
+- 本接口不支持内部计算的除数为次正规数（Subnormal）的场景。
 
 ## 返回值说明
 
-返回指定阶数的第二类贝塞尔函数值，数据类型为DT_FP32。order为0或1时分别与[pypto_pro.language.simt.y0](y0.md)或[pypto_pro.language.simt.y1](y1.md)一致。
+返回指定阶数的第二类贝塞尔函数值，数据类型为DT_FP32。order为0或1时分别与[pypto_pro.language.simt.y0](y0.md)或[pypto_pro.language.simt.y1](y1.md)一致。特殊值如下：
 
 | 输入情况 | 返回值 |
 |---|---|
 | order < 0，或value为负数或NaN | NaN |
-| order ≥ 0，value为±0 | -Inf |
-| order ≥ 0，value为+Inf | +0 |
+| 0 ≤ order ≤ 128，value为±0 | -Inf |
+| 0 ≤ order ≤ 128，value为+Inf | +0 |
+
+- 内部计算的除数为次正规数（Subnormal）时可能输出-Inf。
 
 ## 调用示例
 
