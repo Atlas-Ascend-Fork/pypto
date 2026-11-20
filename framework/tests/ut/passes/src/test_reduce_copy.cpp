@@ -951,6 +951,8 @@ TEST_F(ReduceCopyTest, DirectPathGate_RejectsCrossCoreWithoutDirectPath)
     std::vector<std::set<int>> outGraph{{1}, {}};
     MergeInput input = BuildSimpleMergeInput(2, outGraph, {{0, 1}});
     input.isEnforceMergeGroup = {false};
+    input.subgraphAICOpNum = {1, 0}; // sg0 纯 C
+    input.subgraphAIVOpNum = {0, 1}; // sg1 纯 V
     input.subgraphAICLatency = {50, 0};
     input.subgraphAIVLatency = {0, 50};
     input.boundaryTensors = {{100, {0}, {1}, true, {}, {}}};
@@ -972,6 +974,8 @@ TEST_F(ReduceCopyTest, DirectPathGate_AllowsCrossCoreWithDirectPath)
     std::vector<std::set<int>> outGraph{{1}, {}};
     MergeInput input = BuildSimpleMergeInput(2, outGraph, {{0, 1}});
     input.isEnforceMergeGroup = {false};
+    input.subgraphAICOpNum = {1, 0}; // sg0 纯 C
+    input.subgraphAIVOpNum = {0, 1}; // sg1 纯 V
     input.subgraphAICLatency = {50, 0};
     input.subgraphAIVLatency = {0, 50};
     input.boundaryTensors = {{100, {0}, {1}, true, {}, {}}};
@@ -993,6 +997,8 @@ TEST_F(ReduceCopyTest, DirectPathGate_RejectsWhenEligibilityOutsideGroup)
     std::vector<std::set<int>> outGraph{{1, 2}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1}});
     input.isEnforceMergeGroup = {false};
+    input.subgraphAICOpNum = {1, 0, 0}; // sg0 纯 C
+    input.subgraphAIVOpNum = {0, 1, 1}; // sg1/sg2 纯 V
     input.subgraphAICLatency = {50, 0, 0};
     input.subgraphAIVLatency = {0, 50, 50};
     // sg0(纯C) -> sg1(纯V, 组内)/sg2(纯V, 组外); 直连命中仅来自组外消费者 sg2
@@ -1016,6 +1022,8 @@ TEST_F(ReduceCopyTest, DirectPathGate_IgnoresSameCoreEdge)
     std::vector<std::set<int>> outGraph{{1}, {2}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1, 2}});
     input.isEnforceMergeGroup = {false};
+    input.subgraphAICOpNum = {1, 1, 0}; // sg0/sg1 纯 C
+    input.subgraphAIVOpNum = {0, 0, 1}; // sg2 纯 V
     input.subgraphAICLatency = {50, 50, 0};
     input.subgraphAIVLatency = {0, 0, 50};
     input.boundaryTensors = {{100, {0}, {1}, true, {}, {}},  // C-C 边界, 无直连资格
@@ -1048,6 +1056,8 @@ TEST_F(ReduceCopyTest, DirectPathGate_RejectsCrossCorePairInMixedConsumerFanout)
     std::vector<std::set<int>> outGraph{{1, 2}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1, 2}});
     input.isEnforceMergeGroup = {false};
+    input.subgraphAICOpNum = {0, 0, 1}; // sg2 纯 C
+    input.subgraphAIVOpNum = {1, 1, 0}; // sg0/sg1 纯 V
     input.subgraphAICLatency = {0, 0, 50};
     input.subgraphAIVLatency = {50, 50, 0};
     input.boundaryTensors = {{100, {0}, {1, 2}, true, {}, {}}};
@@ -1070,6 +1080,8 @@ TEST_F(ReduceCopyTest, DirectPathGate_AllowsCrossCorePairWithOwnDirectPath)
     std::vector<std::set<int>> outGraph{{1, 2}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1, 2}});
     input.isEnforceMergeGroup = {false};
+    input.subgraphAICOpNum = {0, 0, 1}; // sg2 纯 C
+    input.subgraphAIVOpNum = {1, 1, 0}; // sg0/sg1 纯 V
     input.subgraphAICLatency = {0, 0, 50};
     input.subgraphAIVLatency = {50, 50, 0};
     input.boundaryTensors = {{100, {0}, {1, 2}, true, {}, {}}};
@@ -1092,6 +1104,8 @@ TEST_F(ReduceCopyTest, DirectPathGate_RejectsWhenDirectPathOnlyOnSameCoreEndpoin
     std::vector<std::set<int>> outGraph{{1, 2}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1, 2}});
     input.isEnforceMergeGroup = {false};
+    input.subgraphAICOpNum = {0, 0, 1}; // sg2 纯 C
+    input.subgraphAIVOpNum = {1, 1, 0}; // sg0/sg1 纯 V
     input.subgraphAICLatency = {0, 0, 50};
     input.subgraphAIVLatency = {50, 50, 0};
     input.boundaryTensors = {{100, {0}, {1, 2}, true, {}, {}}};
@@ -1113,6 +1127,8 @@ TEST_F(ReduceCopyTest, DirectPathGate_IgnoresNonCvOperationPair)
     for (auto kind : {EndpointCoreKind::AICPU, EndpointCoreKind::UNKNOWN}) {
         MergeInput input = BuildSimpleMergeInput(2, {{1}, {}}, {{0, 1}});
         input.isEnforceMergeGroup = {false};
+        input.subgraphAICOpNum = {1, 0}; // sg0 纯 C
+        input.subgraphAIVOpNum = {0, 1}; // sg1 纯 V
         input.boundaryTensors = {{100, {0}, {1}, true, {}, {}}};
         input.boundaryTensors[0].producers = {{0, EndpointCoreKind::AIC, false}};
         input.boundaryTensors[0].consumers = {{1, kind, false}};
@@ -1132,6 +1148,8 @@ TEST_F(ReduceCopyTest, DirectPathGate_IgnoresDirectPathOnNonCvOperation)
         for (bool cvDirectPath : {false, true}) {
             MergeInput input = BuildSimpleMergeInput(2, {{1}, {}}, {{0, 1}});
             input.isEnforceMergeGroup = {false};
+            input.subgraphAICOpNum = {1, 0}; // sg0 纯 C
+            input.subgraphAIVOpNum = {0, 1}; // sg1 纯 V
             input.boundaryTensors = {{100, {0}, {1}, true, {}, {}}};
             input.boundaryTensors[0].producers = {{0, EndpointCoreKind::AIC, false}};
             input.boundaryTensors[0].consumers = {{1, kind, true}, {1, EndpointCoreKind::AIV, cvDirectPath}};
@@ -1144,12 +1162,17 @@ TEST_F(ReduceCopyTest, DirectPathGate_IgnoresDirectPathOnNonCvOperation)
     }
 }
 
-// A mixed subgraph must not hide an actual AIC producer -> AIV consumer boundary.
-TEST_F(ReduceCopyTest, DirectPathGate_RejectsCrossCoreOperationInMixedSubgraph)
+// 混合 root 的跨核端点对不触发直连门: sg0 内真实 AIC 边界生产者与无关 AIV op 同 root,
+// 该 root 已无干净两核并行可牺牲(代价沉没), 与纯 V sg1 的合并不因缺直连资格被拒。
+// 语意演进: !6828 侧级豁免 -> !7160 删除豁免并断言拒绝 -> 本次按 root 纯度豁免:
+// 检测保持 op 级, 仅"纯C root <-> 纯V root"的配对才须出示直连资格。
+TEST_F(ReduceCopyTest, DirectPathGate_AllowsCrossCoreOperationFromMixedRoot)
 {
     std::vector<std::set<int>> outGraph{{1}, {}};
     MergeInput input = BuildSimpleMergeInput(2, outGraph, {{0, 1}});
     input.isEnforceMergeGroup = {false};
+    input.subgraphAICOpNum = {1, 0}; // sg0 含 AIC 边界生产者, sg1 纯 V
+    input.subgraphAIVOpNum = {1, 1}; // sg0 同时含无关 AIV op -> 混合 root
     input.subgraphAICLatency = {50, 0};
     input.subgraphAIVLatency = {50, 50}; // sg0 contains an unrelated AIV op; the boundary producer is AIC
     input.boundaryTensors = {{100, {0}, {1}, true, {}, {}}};
@@ -1160,20 +1183,22 @@ TEST_F(ReduceCopyTest, DirectPathGate_RejectsCrossCoreOperationInMixedSubgraph)
     MixGraphMerger merger;
     MergeOutput output = merger.Merge(input);
 
-    const int Num2 = 2;
-    EXPECT_EQ(output.numSubgraphUpdated, Num2);
-    EXPECT_NE(output.subgraphIdUpdated[0], output.subgraphIdUpdated[1]);
+    const int Num1 = 1;
+    EXPECT_EQ(output.numSubgraphUpdated, Num1);
+    EXPECT_EQ(output.subgraphIdUpdated[0], output.subgraphIdUpdated[1]);
 }
 
-// 混合 root 吸并纯核(无合并时序依赖): 首轮 {sg0(纯C), sg1(纯V)} 靠 tensor100 的直连资格合成
-// MIX root; 次轮候选 {MIX root, sg2(纯V)} 中 tensor100 两端已同 root(内部化), 其资格不再算本次
-// 收益, 而 tensor101 的跨核对 (sg0,sg2) 无资格 -> 拒绝, 停在 2 子图
-// (端点级判定不依赖 root 整体核构成, MIX root 内的纯C 端点仍被识别为跨核一端)
-TEST_F(ReduceCopyTest, DirectPathGate_RejectsPureCoreAbsorbedByMixedRoot)
+// 多轮合并自洽: 首轮 {sg0(纯C), sg1(纯V)} 靠 tensor100 直连资格合成 MIX root;
+// 次轮 MIX root 吸并纯 V sg2 时, tensor101 的跨核端点对 (sg0,sg2) 因 prodRoot 已混合
+// 不再收费(合并器前轮自产的 MIX root 不成为后轮拒绝源), 整链归 1。
+// (!7160 曾断言拒绝停在 2 子图; 本次按 root 纯度豁免后翻转, 修复多轮 CV 混合被误拒)
+TEST_F(ReduceCopyTest, DirectPathGate_AllowsPureCoreAbsorbedByMixedRoot)
 {
     std::vector<std::set<int>> outGraph{{1, 2}, {}, {}};
     MergeInput input = BuildSimpleMergeInput(3, outGraph, {{0, 1}, {0, 1, 2}});
     input.isEnforceMergeGroup = {false, false};
+    input.subgraphAICOpNum = {1, 0, 0}; // sg0 纯 C; sg1/sg2 纯 V, 首轮合并后 root 成 MIX
+    input.subgraphAIVOpNum = {0, 1, 1};
     input.subgraphAICLatency = {50, 0, 0};
     input.subgraphAIVLatency = {0, 50, 50};
     input.boundaryTensors = {{100, {0}, {1}, true, {}, {}},  // 首轮跨核边, 资格在 sg1
@@ -1187,10 +1212,10 @@ TEST_F(ReduceCopyTest, DirectPathGate_RejectsPureCoreAbsorbedByMixedRoot)
     MixGraphMerger merger;
     MergeOutput output = merger.Merge(input);
 
-    const int Num2 = 2;
-    EXPECT_EQ(output.numSubgraphUpdated, Num2);
-    EXPECT_EQ(output.subgraphIdUpdated[0], output.subgraphIdUpdated[1]); // {0,1} 已合成 MIX root
-    EXPECT_NE(output.subgraphIdUpdated[1], output.subgraphIdUpdated[2]); // 纯V sg2 未被吸并
+    const int Num1 = 1;
+    EXPECT_EQ(output.numSubgraphUpdated, Num1);
+    EXPECT_EQ(output.subgraphIdUpdated[0], output.subgraphIdUpdated[1]);
+    EXPECT_EQ(output.subgraphIdUpdated[0], output.subgraphIdUpdated[2]); // sg2 已被 MIX root 吸并
 }
 
 // enforce 合并超 op 数上限时不拦截, 只打 WARN; 子图照常合并为 1

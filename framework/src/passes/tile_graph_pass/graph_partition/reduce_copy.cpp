@@ -1258,12 +1258,22 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
     // tensor 层: 分侧统计 prodRoots/consRoots, 仅 prodRoots>1 && consRoots>1 拒绝为 N:M tensor;
     //            1:1/1:N/N:1 均视为简单 tensor edge, 建 root 级方向边。
     // root 图层: 用 rootPreds/rootSuccs 识别整体 N:M 并拒绝; 1:1/N:1/1:N 均通过。
-    // 跨核直连门: 按实际"生产-消费端点对"识别跨核边(端点核类型相异且两端 root 相异),
-    //            存在跨核边时至少一对须自身具备直连资格, 详见下方逐对判定与末尾门控。
+    // 跨核直连门: 只检查纯 C/V root 之间的实际跨核数据边, 组内这些边至少一条具备直连资格。
     // sink 保护: actualGroup 内不产出 boundary tensor 的 root,
     //            统计其当前所有 producer root, >1 且串行损失(Σbranch − max)超过
     //            kSerialLossRatio × 合入root 才拒绝; 其余(损失可被 root 消化/全部归一 root)放行。
     std::unordered_set<int> mergedRoot(actualGroup.begin(), actualGroup.end());
+    // root 级核构成(纯C/纯V/混合): 混合 root 的跨核串行化代价已沉没, 无干净两核并行可牺牲,
+    // 涉及混合 root 的边不触发直连门; 纯 C root <-> 纯 V root 的边按候选组汇总直连收益。
+    std::unordered_map<int, std::pair<bool, bool>> rootCoreKinds;
+    for (int sg = 0; sg < mInput.numSubgraph; ++sg) {
+        const int root = FindParent(sg);
+        if (mergedRoot.count(root) > 0) {
+            auto& [hasAIC, hasAIV] = rootCoreKinds[root];
+            hasAIC = hasAIC || mInput.subgraphAICOpNum[sg] > 0;
+            hasAIV = hasAIV || mInput.subgraphAIVOpNum[sg] > 0;
+        }
+    }
     ++mVisitStamp;
     std::set<int> allProdRoots;
     std::unordered_map<int, std::set<int>> rootPreds;
@@ -1298,8 +1308,7 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                 }
             }
             // 仅"分属不同候选 root 的真实 op 对"才构成本次新增边界; 同 root 关系已被前序合并
-            // 内部化, 不计本次收益。混合子图/root 不改变 op 自身核型, 也不因此产生豁免
-            // (核型事实属于 op, 子图聚合时代的 MIXED 豁免已不成立)。
+            // 内部化, 不计本次收益。
             for (const auto& prod : info.producers) {
                 const int prodRoot = FindParent(prod.subgraphId);
                 for (const auto& cons : info.consumers) {
@@ -1320,8 +1329,13 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                     if (mergedRoot.count(prodRoot) == 0 || mergedRoot.count(consRoot) == 0) {
                         continue;
                     }
-                    hasCrossCoreEdge = true;
-                    hasDirectPathEdge = hasDirectPathEdge || pairDirectPath;
+                    const auto [prodHasAIC, prodHasAIV] = rootCoreKinds.at(prodRoot);
+                    const auto [consHasAIC, consHasAIV] = rootCoreKinds.at(consRoot);
+                    // 仅"一端纯 C、另一端纯 V"的 root 对要求直连资格。
+                    if (prodHasAIC == consHasAIV && prodHasAIV == consHasAIC && prodHasAIC != prodHasAIV) {
+                        hasCrossCoreEdge = true;
+                        hasDirectPathEdge = hasDirectPathEdge || pairDirectPath;
+                    }
                     if (pairDirectPath) {
                         directPathRootPairs.insert({prodRoot, consRoot});
                     }
@@ -1560,12 +1574,10 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
         APASS_LOG_DEBUG_F(Elements::Operation, "Structural merge skipped: no simple tensor edge benefit.");
         return false;
     }
-    // 直连收益门(跨核边界): 候选组内存在本次有效的跨核端点对(纯 C ↔ 纯 V 且两端 root 相异)时,
-    //            至少一对须自身具备直连通路资格(L0C2UB/UB2L1), 否则合并只剩调度收益, 拒绝;
-    //            同核端点对(C-C/V-V)、AICPU/UNKNOWN 端点对与无直接边界的合并不受约束。
+    // 仅纯 C/V root 之间的跨核边触发直连要求, 这些边中至少一条具备直连资格即可。
     if (hasCrossCoreEdge && !hasDirectPathEdge) {
         APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Structural merge skipped: cross-core edge without direct-path (L0C2UB/UB2L1) benefit.");
+                          "Structural merge skipped: pure C/V roots have no direct-path (L0C2UB/UB2L1) benefit.");
         return false;
     }
     APASS_LOG_DEBUG_F(Elements::Operation, "Structural merge allowed: has simple tensor edge benefit.");
