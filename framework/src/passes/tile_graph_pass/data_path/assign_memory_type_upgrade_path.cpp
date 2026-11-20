@@ -51,6 +51,35 @@ bool CheckUBTileShapeByRank(const LogicalTensorPtr& tensor)
     return MemoryPathUtils::CheckUBTileShape(tensor);
 }
 
+bool IsZeroOffset(const Offset& offset, const std::vector<SymbolicScalar>& dynOffset)
+{
+    return TensorOffset::IsZero(offset) && std::all_of(dynOffset.begin(), dynOffset.end(), [](const auto& dim) {
+               return dim.IsImmediate() && dim.Concrete() == 0;
+           });
+}
+
+bool IsWholeTensor(const LogicalTensorPtr& tensor)
+{
+    return tensor->GetRawTensor() != nullptr && tensor->GetRawTensor()->GetRawShape() == tensor->GetShape() &&
+           IsZeroOffset(tensor->GetOffset(), tensor->GetDynOffset());
+}
+
+bool IsWholeTensorContract(const Operation& contract)
+{
+    if (contract.iOperand.size() != 1 || contract.oOperand.size() != 1) {
+        return false;
+    }
+    const auto& input = contract.iOperand.front();
+    const auto& output = contract.oOperand.front();
+    auto attr = std::dynamic_pointer_cast<AssembleOpAttribute>(contract.GetOpAttribute());
+    // 单个零偏移 CONTRACT 的有效范围由输入推导，形状推导也从输入填写 fromDynValidShape。
+    // 输出有效范围若大于输入，就会包含未写入的数据。合法图中两者数值一致，表达式可能多一层 Max。
+    // 全量覆盖按静态形状判断。
+    return attr != nullptr && IsZeroOffset(attr->GetToOffset(), attr->GetToDynOffset()) &&
+           input->GetShape() == output->GetShape() && input->Datatype() == output->Datatype() &&
+           input->Format() == output->Format() && IsWholeTensor(input) && IsWholeTensor(output);
+}
+
 // ND 全量元素数: 全部维度乘积
 size_t ShapeNumel(const Shape& shape)
 {
@@ -987,176 +1016,278 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
                                                            bool requireMatrixShape, bool checkUbTileShape,
                                                            bool checkUb2L1Constraints)
 {
-    constexpr size_t kMatrixShapeDimCount = 2;
     if (contractOp.GetOpcode() != Opcode::OP_CONTRACT || contractOp.iOperand.empty() || contractOp.oOperand.empty()) {
         return SUCCESS;
     }
-    auto input = contractOp.iOperand.front();
-    auto middle = contractOp.oOperand.front();
-    if (input == nullptr || middle == nullptr || input->GetMemoryTypeOriginal() != sourceType ||
-        !CanUseMiddleTensorForUpgrade(middle, sourceType) || !HasOnlyContractProducers(middle) ||
-        !HasOnlySliceConsumers(middle)) {
-        return SUCCESS;
-    }
-    // middle 的 shape 存在 -1（动态维度）时不能参与升级：
-    // 动态 shape 的 tensor 无法作为本地 scratch 静态分配（OoOSchedule requires static rawShape）。
-    const auto& middleShape = middle->GetShape();
-    if (std::any_of(middleShape.begin(), middleShape.end(), [](int64_t dim) { return dim < 0; })) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "Skip %s: op[%d] middle tensor[%d], dynamic middle shape.",
-                          reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
-        return SUCCESS;
-    }
-    // Large-to-small must be a single-contract path: the slice/view side already reads with a
-    // from-offset, and multiple contracts would write the middle with their own to-offsets.
-    // Offsets on both sides cannot be handled by the underlying direct path and break accuracy.
-    // The same-memory path (sourceType == targetType, e.g. UB2UB) is exempt: multiple contracts
-    // fan-in is its designed pattern (CanKeepContractProducersInUb checks producers one by one).
-    if (sourceType != targetType &&
-        (middle->GetProducers().size() != 1 || *middle->GetProducers().begin() != &contractOp)) {
-        APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Skip %s: op[%d] middle tensor[%d], multiple contract producers on a cross-memory path.",
-                          reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
+    const ContractSlicePath path{contractOp,
+                                 contractOp.iOperand.front(),
+                                 contractOp.oOperand.front(),
+                                 sourceType,
+                                 targetType,
+                                 reason,
+                                 requireMatrixShape,
+                                 checkUbTileShape,
+                                 checkUb2L1Constraints};
+    if (!CheckContractSliceTopology(path)) {
         return SUCCESS;
     }
     const bool isLiteNpu = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
-    // For large-to-small the middle stays in sourceType after the upgrade; reject when it cannot
-    // fit. UB residency holds both the ND original and the NZ copy, L0C residency holds NZ only.
-    // The same-memory path is exempt: its caller already checks the middle against the
-    // assemble-output UB limit and the middle carries no NZ copy there.
-    if (sourceType != targetType && middle->GetShape().size() >= kMatrixShapeDimCount) {
-        if (sourceType == MemoryType::MEM_UB) {
-            const bool isConv = MemoryPathUtils::HasConvConsumer(middle);
-            if (middleShape.size() > SHAPE_DIM2 && (isConv || !MemoryPathUtils::AllBatchAxesAreOne(middleShape))) {
-                APASS_LOG_DEBUG_F(Elements::Operation,
-                                  "Skip %s: op[%d] middle tensor[%d], rank>2 conv tile or non-unit batch axes.",
-                                  reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
-                return SUCCESS;
-            }
-            const size_t ubLimit = static_cast<size_t>(
-                Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) * UB_THRESHOLD_NORMAL);
-            if (CalcNZTensorSize(middle, isConv) > ubLimit) {
-                APASS_LOG_DEBUG_F(Elements::Operation,
-                                  "Skip %s: op[%d] middle tensor[%d], storage %zu bytes exceeds UB limit %zu bytes.",
-                                  reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic(),
-                                  CalcNZTensorSize(middle, isConv), ubLimit);
-                return SUCCESS;
-            }
-        } else if (sourceType == MemoryType::MEM_L0C) {
-            const bool isConv = MemoryPathUtils::HasConvProducer(input);
-            // LiteNPU batch matmul（batch 轴全 1）tile 允许 L0C2UB rank>2 直连；非 LiteNPU 维持 conv-only
-            if (middleShape.size() > SHAPE_DIM2 && !isConv &&
-                !(isLiteNpu && MemoryPathUtils::AllBatchAxesAreOne(middleShape))) {
-                APASS_LOG_DEBUG_F(Elements::Operation, "Skip %s: op[%d] middle tensor[%d], rank>2 non-unit batch axes.",
-                                  reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
-                return SUCCESS;
-            }
-            const size_t l0cLimit = static_cast<size_t>(
-                Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_L0C) * L0C_THRESHOLD);
-            if (CalcNzStorageSize(middle, isConv) > l0cLimit) {
-                APASS_LOG_DEBUG_F(Elements::Operation,
-                                  "Skip %s: op[%d] middle tensor[%d], storage %zu bytes exceeds L0C limit %zu bytes.",
-                                  reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic(),
-                                  CalcNzStorageSize(middle, isConv), l0cLimit);
-                return SUCCESS;
-            }
+    if (!CheckContractSliceStorage(path, isLiteNpu) || !CheckContractSliceProducers(path, isLiteNpu)) {
+        return SUCCESS;
+    }
+    std::vector<Operation*> compatibleSlices;
+    if (!CollectCompatibleContractSlices(path, compatibleSlices)) {
+        return SUCCESS;
+    }
+    if (compatibleSlices.size() == path.middle->GetConsumers().size()) {
+        return ApplySingleContractSliceUpgrade(contractOp, sourceType, targetType, reason);
+    }
+    return TryPartialContractSliceUpgrade(path, compatibleSlices);
+}
+
+bool AssignMemoryType::CheckContractSliceTopology(const ContractSlicePath& path) const
+{
+    const auto& input = path.input;
+    const auto& middle = path.middle;
+    const auto sourceType = path.sourceType;
+    const auto targetType = path.targetType;
+    if (input == nullptr || middle == nullptr || input->GetMemoryTypeOriginal() != sourceType ||
+        !CanUseMiddleTensorForUpgrade(middle, sourceType) || !HasOnlyContractProducers(middle) ||
+        !HasOnlySliceConsumers(middle)) {
+        return false;
+    }
+    // 中间张量需要静态分配，包含动态维度时跳过升级。
+    const auto& middleShape = middle->GetShape();
+    if (std::any_of(middleShape.begin(), middleShape.end(), [](int64_t dim) { return dim < 0; })) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "Skip %s: op[%d] middle tensor[%d], dynamic middle shape.",
+                          path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic());
+        return false;
+    }
+    // 跨内存大搬小要求单个 CONTRACT，避免多路写入偏移与 SLICE 读取偏移叠加。
+    // UB2UB 等同内存通路允许多个 CONTRACT 汇入，由调用方逐一检查生产者。
+    if (sourceType != targetType &&
+        (middle->GetProducers().size() != 1 || *middle->GetProducers().begin() != &path.contract)) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Skip %s: op[%d] middle tensor[%d], multiple contract producers on a cross-memory path.",
+                          path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic());
+        return false;
+    }
+    return true;
+}
+
+bool AssignMemoryType::CheckContractSliceStorage(const ContractSlicePath& path, bool isLiteNpu) const
+{
+    const auto& middle = path.middle;
+    const auto& middleShape = middle->GetShape();
+    // 大搬小升级后，中间张量驻留在源内存。UB 容量计入 ND 原数据和 NZ 副本，L0C 只计 NZ。
+    // 同内存通路由调用方检查容量，且不会在中间张量上产生 NZ 副本。
+    if (path.sourceType == path.targetType || middleShape.size() < SHAPE_DIM2) {
+        return true;
+    }
+    if (path.sourceType == MemoryType::MEM_UB) {
+        const bool isConv = MemoryPathUtils::HasConvConsumer(middle);
+        if (middleShape.size() > SHAPE_DIM2 && (isConv || !MemoryPathUtils::AllBatchAxesAreOne(middleShape))) {
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Skip %s: op[%d] middle tensor[%d], rank>2 conv tile or non-unit batch axes.",
+                              path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic());
+            return false;
+        }
+        const size_t ubLimit = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) *
+                                                   UB_THRESHOLD_NORMAL);
+        if (CalcNZTensorSize(middle, isConv) > ubLimit) {
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Skip %s: op[%d] middle tensor[%d], storage %zu bytes exceeds UB limit %zu bytes.",
+                              path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic(),
+                              CalcNZTensorSize(middle, isConv), ubLimit);
+            return false;
+        }
+    } else if (path.sourceType == MemoryType::MEM_L0C) {
+        const bool isConv = MemoryPathUtils::HasConvProducer(path.input);
+        // 高维直连支持卷积，以及 LiteNPU 上所有批次维度均为 1 的批量矩阵乘。
+        if (middleShape.size() > SHAPE_DIM2 && !isConv &&
+            !(isLiteNpu && MemoryPathUtils::AllBatchAxesAreOne(middleShape))) {
+            APASS_LOG_DEBUG_F(Elements::Operation, "Skip %s: op[%d] middle tensor[%d], rank>2 non-unit batch axes.",
+                              path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic());
+            return false;
+        }
+        const size_t l0cLimit = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_L0C) *
+                                                    L0C_THRESHOLD);
+        if (CalcNzStorageSize(middle, isConv) > l0cLimit) {
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Skip %s: op[%d] middle tensor[%d], storage %zu bytes exceeds L0C limit %zu bytes.",
+                              path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic(),
+                              CalcNzStorageSize(middle, isConv), l0cLimit);
+            return false;
         }
     }
-    if (requireMatrixShape && input->GetShape().size() != kMatrixShapeDimCount) {
-        return SUCCESS;
+    return true;
+}
+
+bool AssignMemoryType::CheckContractSliceProducers(const ContractSlicePath& path, bool isLiteNpu)
+{
+    const auto& input = path.input;
+    const auto& middle = path.middle;
+    const auto sourceType = path.sourceType;
+    const auto targetType = path.targetType;
+    // 先检查输入和中间张量的并行需求，再逐个检查生产者的通路约束。
+    if (path.requireMatrixShape && input->GetShape().size() != SHAPE_DIM2) {
+        return false;
     }
     if (HasParallelDifferentConsumerRequirement(input, targetType)) {
         APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Skip %s: op[%d] middle tensor[%d], parallel input requirement conflict.", reason.c_str(),
-                          contractOp.GetOpMagic(), middle->GetMagic());
-        return SUCCESS;
+                          "Skip %s: op[%d] middle tensor[%d], parallel input requirement conflict.",
+                          path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic());
+        return false;
     }
     if (HasParallelDifferentConsumerRequirement(middle, targetType)) {
         APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Skip %s: op[%d] middle tensor[%d], parallel middle requirement conflict.", reason.c_str(),
-                          contractOp.GetOpMagic(), middle->GetMagic());
-        return SUCCESS;
+                          "Skip %s: op[%d] middle tensor[%d], parallel middle requirement conflict.",
+                          path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic());
+        return false;
     }
     for (auto* producer : middle->GetProducers()) {
         auto producerInput = producer->iOperand.front();
         if (producerInput == nullptr || producerInput->GetMemoryTypeOriginal() != sourceType) {
-            return SUCCESS;
+            return false;
         }
-        if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_UB &&
-            !(isLiteNpu ? inserter.IsL0C2UbLiteNPUSupportedDtype(producerInput) :
-                          inserter.IsL0C2UbSupportedDtype(producerInput))) {
-            return SUCCESS;
+        if (!IsContractSliceSourceDtypeSupported(producerInput, sourceType, targetType, isLiteNpu)) {
+            return false;
         }
-        if (isLiteNpu && sourceType == MemoryType::MEM_L1 && targetType == MemoryType::MEM_UB &&
-            !inserter.IsL12UbLiteNPUSupportedDtype(producerInput)) {
-            return SUCCESS;
-        }
-        if (sourceType == MemoryType::MEM_UB && targetType == MemoryType::MEM_L1 &&
-            !(isLiteNpu ? inserter.IsUb2L1LiteNPUSupportedDtype(producerInput) :
-                          inserter.IsUb2L1SupportedDtype(producerInput))) {
-            return SUCCESS;
-        }
-        if (requireMatrixShape && producerInput->GetShape().size() != kMatrixShapeDimCount) {
-            return SUCCESS;
+        if (path.requireMatrixShape && producerInput->GetShape().size() != SHAPE_DIM2) {
+            return false;
         }
         if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_L1 &&
             !CanUseL0C2L1UpgradePath(*producer)) {
-            return SUCCESS;
+            return false;
         }
         if (HasParallelDifferentConsumerRequirement(producerInput, targetType)) {
             APASS_LOG_DEBUG_F(Elements::Operation,
                               "Skip %s: op[%d] middle tensor[%d], parallel producer requirement conflict.",
-                              reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
-            return SUCCESS;
+                              path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic());
+            return false;
         }
     }
+    return true;
+}
+
+bool AssignMemoryType::IsContractSliceSourceDtypeSupported(const LogicalTensorPtr& input, MemoryType sourceType,
+                                                           MemoryType targetType, bool isLiteNpu) const
+{
+    if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_UB) {
+        return isLiteNpu ? inserter.IsL0C2UbLiteNPUSupportedDtype(input) : inserter.IsL0C2UbSupportedDtype(input);
+    }
+    if (isLiteNpu && sourceType == MemoryType::MEM_L1 && targetType == MemoryType::MEM_UB) {
+        return inserter.IsL12UbLiteNPUSupportedDtype(input);
+    }
+    if (sourceType == MemoryType::MEM_UB && targetType == MemoryType::MEM_L1) {
+        return isLiteNpu ? inserter.IsUb2L1LiteNPUSupportedDtype(input) : inserter.IsUb2L1SupportedDtype(input);
+    }
+    return true;
+}
+
+bool AssignMemoryType::CollectCompatibleContractSlices(const ContractSlicePath& path,
+                                                       std::vector<Operation*>& compatibleSlices)
+{
+    const auto& input = path.input;
+    const auto& middle = path.middle;
+    const auto sourceType = path.sourceType;
+    const auto targetType = path.targetType;
+    const bool allowPartialUpgrade = Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510 &&
+                                     MemoryPathUtils::IsSpecialDirectMemoryPath(sourceType, targetType) &&
+                                     !MemoryPathUtils::HasConvProducer(input);
+    // A5 的部分升级只允许倍数关系不符的分支回退，其他检查仍适用于所有 Slice。
     for (auto* consumer : middle->GetConsumers()) {
         if (!IsSliceOutputTarget(*consumer, targetType)) {
-            return SUCCESS;
+            return false;
         }
         auto output = consumer->oOperand.front();
-        if (requireMatrixShape && output->GetShape().size() != kMatrixShapeDimCount) {
-            return SUCCESS;
+        if (path.requireMatrixShape && output->GetShape().size() != SHAPE_DIM2) {
+            return false;
         }
         if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_L1 &&
             !CanUseL0C2L1UpgradePath(*consumer)) {
-            return SUCCESS;
+            return false;
         }
         bool shapeCompatible = MemoryPathUtils::IsDimMultiple(input->GetShape(), output->GetShape());
         if (sourceType != MemoryType::MEM_L0C || targetType != MemoryType::MEM_L1) {
             shapeCompatible = shapeCompatible || MemoryPathUtils::IsDimMultiple(output->GetShape(), input->GetShape());
         }
-        if (!shapeCompatible) {
-            APASS_LOG_DEBUG_F(Elements::Operation,
-                              "Skip %s: op[%d] middle tensor[%d], incompatible input and output tile shapes.",
-                              reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
-            return SUCCESS;
-        }
-        if (checkUbTileShape && !CheckUBTileShapeByRank(output)) {
-            return SUCCESS;
-        }
-        if (checkUb2L1Constraints) {
-            const size_t ubLimit = static_cast<size_t>(
-                Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) * UB_THRESHOLD_NORMAL);
-            int64_t copyInModeValue = 0;
-            int64_t consumerIsGemv = 0;
-            // copy_in_mode=ND2ND 的 GEMV A 视图保持 ND 布局走 TCopyUB2L1ND2ND 直连（见
-            // GenerateMoveOp::ProcessUB2L1 的 GEMV 分支），不作为回退 DDR 的判据；bias/scale 的 ND2ND 仍回退
-            const bool ndCopyInReject = consumer->GetAttr<int64_t>("op_attr_copy_in_mode", copyInModeValue) &&
-                                        copyInModeValue == 0 &&
-                                        !(consumer->GetAttr<int64_t>(OpAttributeKey::isGemv, consumerIsGemv) &&
-                                          consumerIsGemv != 0);
-            // MXMatmul场景K轴非64对齐不支持UB2L1直连（MX补齐仅由DDR路径支持），回退DDR
-            if (CalcNZTensorSize(input, MemoryPathUtils::HasConvConsumer(middle)) > ubLimit || ndCopyInReject ||
-                MemoryPathUtils::IsMxPaddingMode(*consumer)) {
-                APASS_LOG_DEBUG_F(
-                    Elements::Operation,
-                    "Skip %s: op[%d] middle tensor[%d], UB-to-L1 size, copy mode or MX padding constraints.",
-                    reason.c_str(), contractOp.GetOpMagic(), middle->GetMagic());
-                return SUCCESS;
+        if (shapeCompatible) {
+            compatibleSlices.push_back(consumer);
+        } else {
+            if (!allowPartialUpgrade) {
+                APASS_LOG_DEBUG_F(Elements::Operation,
+                                  "Skip %s: op[%d] middle tensor[%d], incompatible input and output tile shapes.",
+                                  path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic());
+                return false;
             }
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "%s: Contract[%d] keeps Slice[%d] on the original path due to incompatible tile shapes.",
+                              path.reason.c_str(), path.contract.GetOpMagic(), consumer->GetOpMagic());
+        }
+        if (path.checkUbTileShape && !CheckUBTileShapeByRank(output)) {
+            return false;
+        }
+        if (path.checkUb2L1Constraints && !CheckContractSliceUB2L1(path, *consumer)) {
+            return false;
         }
     }
-    return ApplySingleContractSliceUpgrade(contractOp, sourceType, targetType, reason);
+    return true;
+}
+
+bool AssignMemoryType::CheckContractSliceUB2L1(const ContractSlicePath& path, const Operation& slice) const
+{
+    const size_t ubLimit = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) *
+                                               UB_THRESHOLD_NORMAL);
+    int64_t copyInModeValue = 0;
+    int64_t consumerIsGemv = 0;
+    // GEMV 的 A 输入允许走 ND2ND 直连，偏置和缩放因子的 ND2ND 搬运仍经 DDR。
+    const bool ndCopyInReject = slice.GetAttr<int64_t>("op_attr_copy_in_mode", copyInModeValue) &&
+                                copyInModeValue == 0 &&
+                                !(slice.GetAttr<int64_t>(OpAttributeKey::isGemv, consumerIsGemv) &&
+                                  consumerIsGemv != 0);
+    // MXMatmul 的 K 轴未按 64 对齐时需要经 DDR 补齐。
+    if (CalcNZTensorSize(path.input, MemoryPathUtils::HasConvConsumer(path.middle)) > ubLimit || ndCopyInReject ||
+        MemoryPathUtils::IsMxPaddingMode(slice)) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Skip %s: op[%d] middle tensor[%d], UB-to-L1 size, copy mode or MX padding constraints.",
+                          path.reason.c_str(), path.contract.GetOpMagic(), path.middle->GetMagic());
+        return false;
+    }
+    return true;
+}
+
+Status AssignMemoryType::TryPartialContractSliceUpgrade(const ContractSlicePath& path,
+                                                        const std::vector<Operation*>& compatibleSlices)
+{
+    const auto& input = path.input;
+    const auto& middle = path.middle;
+    const auto sourceType = path.sourceType;
+    const auto targetType = path.targetType;
+    auto middleType = middle->GetMemoryTypeOriginal();
+    if (compatibleSlices.empty() ||
+        (middleType != MemoryType::MEM_UNKNOWN && middleType != MemoryType::MEM_DEVICE_DDR) ||
+        !IsWholeTensorContract(path.contract) || inserter.GetRequirementOrUnknown(input, path.contract) != sourceType ||
+        !std::all_of(compatibleSlices.begin(), compatibleSlices.end(), [&middle](const Operation* slice) {
+            return slice->iOperand.size() == 1 && slice->iOperand.front() == middle && slice->oOperand.size() == 1;
+        })) {
+        return SUCCESS;
+    }
+
+    // 剩余 Slice 继续经原 CONTRACT 读取 DDR，改接的 Slice 直接从源内存搬运。
+    const auto sliceCount = middle->GetConsumers().size();
+    auto middleRequirements = inserter.tensorTobeMap.find(middle);
+    for (auto* slice : compatibleSlices) {
+        RETURN_IF_NOT_SUCCESS(EnsureSliceOutputTarget(*slice, targetType, path.reason));
+        slice->ReplaceIOperand(0, input);
+        if (middleRequirements != inserter.tensorTobeMap.end()) {
+            middleRequirements->second.erase(slice->GetOpMagic());
+        }
+        MemoryPathUtils::ForceSetRequirement(inserter, input, *slice, sourceType, path.reason);
+    }
+    APASS_LOG_DEBUG_F(Elements::Operation, "%s: Contract[%d] rewired %zu/%zu slices for direct transfer.",
+                      path.reason.c_str(), path.contract.GetOpMagic(), compatibleSlices.size(), sliceCount);
+    return SUCCESS;
 }
 
 size_t AssignMemoryType::CalcNzAlignedSize(const LogicalTensorPtr& tensor, bool isConv) const

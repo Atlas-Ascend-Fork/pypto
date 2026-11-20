@@ -201,6 +201,26 @@ private:
     Status TryUpgradeSingleContractSlicePath(Operation& contractOp, MemoryType sourceType, MemoryType targetType,
                                              const std::string& reason, bool requireMatrixShape, bool checkUbTileShape,
                                              bool checkUb2L1Constraints);
+    struct ContractSlicePath {
+        Operation& contract;
+        LogicalTensorPtr input;
+        LogicalTensorPtr middle;
+        MemoryType sourceType;
+        MemoryType targetType;
+        const std::string& reason;
+        bool requireMatrixShape;
+        bool checkUbTileShape;
+        bool checkUb2L1Constraints;
+    };
+    bool CheckContractSliceTopology(const ContractSlicePath& path) const;
+    bool CheckContractSliceStorage(const ContractSlicePath& path, bool isLiteNpu) const;
+    bool CheckContractSliceProducers(const ContractSlicePath& path, bool isLiteNpu);
+    bool IsContractSliceSourceDtypeSupported(const LogicalTensorPtr& input, MemoryType sourceType,
+                                             MemoryType targetType, bool isLiteNpu) const;
+    bool CollectCompatibleContractSlices(const ContractSlicePath& path, std::vector<Operation*>& compatibleSlices);
+    bool CheckContractSliceUB2L1(const ContractSlicePath& path, const Operation& slice) const;
+    Status TryPartialContractSliceUpgrade(const ContractSlicePath& path,
+                                          const std::vector<Operation*>& compatibleSlices);
     bool CanUseMiddleTensorForUpgrade(const LogicalTensorPtr& middle, MemoryType targetType) const;
     bool IsOutCastTensor(const LogicalTensorPtr& tensor) const;
     bool HasOnlyContractProducers(const LogicalTensorPtr& tensor) const;

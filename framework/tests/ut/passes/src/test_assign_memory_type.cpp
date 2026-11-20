@@ -2691,6 +2691,276 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBSmallToLarge)
     Platform::Instance().ReloadMemoryPaths("2201");
 }
 
+TEST_F(AssignMemoryTypeTest, TestA5MatmulAssembleExpSliceEnabled)
+{
+    constexpr auto name = "TestA5MatmulAssembleExpSliceEnabled";
+    PrepareA5Platform();
+    SetFullTestStrategy();
+    config::SetPassOption(ENABLE_SLICE, true);
+    config::SetDebugOption(CFG_COMPILE_DBEUG_MODE, CFG_DEBUG_ALL);
+    config::SetBuildStatic(true);
+    PROGRAM("AssignMemoryTest")
+    {
+        Tensor leftA(DT_FP16, {NUM_16, NUM_16}, "leftA");
+        Tensor leftB(DT_FP16, {NUM_16, NUM_32}, "leftB");
+        Tensor rightA(DT_FP16, {NUM_16, NUM_16}, "rightA");
+        Tensor rightB(DT_FP16, {NUM_16, NUM_16}, "rightB");
+        Tensor out(DT_FP16, {NUM_16, NUM_48}, "output");
+        FUNCTION(name, {leftA, leftB, rightA, rightB, out})
+        {
+            TileShape::Current().SetCubeTile({NUM_32, NUM_32}, {NUM_64, NUM_64}, {NUM_16, NUM_16});
+            Tensor left = Matrix::Matmul(DT_FP16, leftA, leftB);
+            Tensor right = Matrix::Matmul(DT_FP16, rightA, rightB);
+            Tensor assembled(DT_FP16, {NUM_16, NUM_48}, "assembled");
+            Assemble(left, {0, 0}, assembled);
+            Assemble(right, {0, NUM_32}, assembled);
+            TileShape::Current().SetVecTile(NUM_16, NUM_64);
+            out = Exp(assembled);
+        }
+        auto* function = Program::GetInstance().GetFunctionByRawName(std::string("TENSOR_") + name);
+        ASSERT_NE(function, nullptr);
+        std::vector<Operation*> contracts;
+        for (auto& op : function->Operations()) {
+            if (op.GetOpcode() == Opcode::OP_CONTRACT && op.iOperand.front()->GetMemoryTypeOriginal() == MEM_L0C) {
+                EXPECT_EQ(op.oOperand.front()->GetMemoryTypeOriginal(), MEM_UB);
+                contracts.push_back(&op);
+            }
+        }
+        ASSERT_EQ(contracts.size(), 3);
+        GenerateMoveOp generateMove;
+        for (auto* contract : contracts) {
+            ASSERT_EQ(generateMove.CreateMoveOpForAssemble(*function, *contract), SUCCESS);
+            EXPECT_EQ(contract->GetOpcode(), Opcode::OP_L0C_COPY_UB);
+        }
+    }
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+static void CheckMixedSlicePaths(const char* name, MemoryType source, MemoryType target, Opcode directMoveOpcode)
+{
+    auto* function = Program::GetInstance().GetFunctionByRawName(std::string("TENSOR_") + name);
+    ASSERT_NE(function, nullptr);
+    Operation* directSlice = nullptr;
+    Operation* ddrSlice = nullptr;
+    for (auto& op : function->Operations()) {
+        if (op.GetOpcode() != Opcode::OP_SLICE || op.iOperand.front()->GetShape() != Shape{NUM_16, NUM_48} ||
+            op.oOperand.front()->GetMemoryTypeOriginal() != target) {
+            continue;
+        }
+        if (op.oOperand.front()->GetShape() == Shape{NUM_16, NUM_16}) {
+            directSlice = &op;
+        } else if (op.oOperand.front()->GetShape() == Shape{NUM_16, NUM_32}) {
+            ddrSlice = &op;
+        }
+    }
+    ASSERT_NE(directSlice, nullptr);
+    ASSERT_NE(ddrSlice, nullptr);
+    EXPECT_EQ(directSlice->iOperand.front()->GetMemoryTypeOriginal(), source);
+    auto middle = ddrSlice->iOperand.front();
+    EXPECT_EQ(middle->GetMemoryTypeOriginal(), MEM_DEVICE_DDR);
+    ASSERT_EQ(middle->GetProducers().size(), 1);
+    auto* contract = *middle->GetProducers().begin();
+    EXPECT_EQ(contract->GetOpcode(), Opcode::OP_CONTRACT);
+    EXPECT_EQ(contract->iOperand.front(), directSlice->iOperand.front());
+    ASSERT_EQ(GenerateMoveOp().ProcessViewOp(*function, *directSlice), SUCCESS);
+    EXPECT_EQ(directSlice->GetOpcode(), directMoveOpcode);
+}
+
+TEST_F(AssignMemoryTypeTest, TestA5MatmulViewExpSliceEnabled)
+{
+    constexpr auto name = "TestA5MatmulViewExpSliceEnabled";
+    PrepareA5Platform();
+    SetFullTestStrategy();
+    config::SetPassOption(ENABLE_SLICE, true);
+    config::SetDebugOption(CFG_COMPILE_DBEUG_MODE, CFG_DEBUG_ALL);
+    config::SetBuildStatic(true);
+    PROGRAM("AssignMemoryTest")
+    {
+        Tensor inputA(DT_FP16, {NUM_16, NUM_16}, "A");
+        Tensor inputB(DT_FP16, {NUM_16, NUM_48}, "B");
+        const Shape leftShape{NUM_16, NUM_16};
+        const Shape rightShape{NUM_16, NUM_32};
+        Tensor leftOut(DT_FP16, leftShape, "leftOutput");
+        Tensor rightOut(DT_FP16, rightShape, "rightOutput");
+        FUNCTION(name, {inputA, inputB, leftOut, rightOut})
+        {
+            TileShape::Current().SetCubeTile({NUM_32, NUM_32}, {NUM_64, NUM_64}, {NUM_64, NUM_64});
+            Tensor ab = Matrix::Matmul(DT_FP16, inputA, inputB);
+            TileShape::Current().SetVecTile(NUM_16, NUM_64);
+            leftOut = Exp(View(ab, leftShape, {0, 0}));
+            rightOut = Exp(View(ab, rightShape, {0, NUM_16}));
+        }
+        CheckMixedSlicePaths(name, MEM_L0C, MEM_UB, Opcode::OP_L0C_COPY_UB);
+    }
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+TEST_F(AssignMemoryTypeTest, TestA5ExpViewMatmulSliceEnabled)
+{
+    constexpr auto name = "TestA5ExpViewMatmulSliceEnabled";
+    PrepareA5Platform();
+    SetFullTestStrategy();
+    config::SetPassOption(ENABLE_SLICE, true);
+    config::SetDebugOption(CFG_COMPILE_DBEUG_MODE, CFG_DEBUG_ALL);
+    config::SetBuildStatic(true);
+    PROGRAM("AssignMemoryTest")
+    {
+        Tensor input(DT_FP16, {NUM_16, NUM_48}, "input");
+        Tensor leftB(DT_FP16, {NUM_16, NUM_16}, "leftB");
+        Tensor rightB(DT_FP16, {NUM_32, NUM_16}, "rightB");
+        Tensor leftOut(DT_FP16, {NUM_16, NUM_16}, "leftOutput");
+        Tensor rightOut(DT_FP16, {NUM_16, NUM_16}, "rightOutput");
+        FUNCTION(name, {input, leftB, rightB, leftOut, rightOut})
+        {
+            TileShape::Current().SetVecTile(NUM_16, NUM_64);
+            Tensor exp = Exp(input);
+            Tensor left = View(exp, Shape{NUM_16, NUM_16}, {0, 0});
+            Tensor right = View(exp, Shape{NUM_16, NUM_32}, {0, NUM_16});
+            TileShape::Current().SetCubeTile({NUM_32, NUM_32}, {NUM_64, NUM_64}, {NUM_64, NUM_64});
+            leftOut = Matrix::Matmul(DT_FP16, left, leftB);
+            rightOut = Matrix::Matmul(DT_FP16, right, rightB);
+        }
+        CheckMixedSlicePaths(name, MEM_UB, MEM_L1, Opcode::OP_UB_COPY_L1);
+    }
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+TEST_F(AssignMemoryTypeTest, TestA5MatmulViewMatmulSliceEnabled)
+{
+    constexpr auto name = "TestA5MatmulViewMatmulSliceEnabled";
+    PrepareA5Platform();
+    SetFullTestStrategy();
+    config::SetPassOption(ENABLE_SLICE, true);
+    config::SetDebugOption(CFG_COMPILE_DBEUG_MODE, CFG_DEBUG_ALL);
+    config::SetBuildStatic(true);
+    PROGRAM("AssignMemoryTest")
+    {
+        Tensor inputA(DT_FP16, {NUM_16, NUM_16}, "A");
+        Tensor inputB(DT_FP16, {NUM_16, NUM_48}, "B");
+        Tensor leftB(DT_FP16, {NUM_16, NUM_16}, "leftB");
+        Tensor rightB(DT_FP16, {NUM_32, NUM_16}, "rightB");
+        Tensor leftOut(DT_FP16, {NUM_16, NUM_16}, "leftOutput");
+        Tensor rightOut(DT_FP16, {NUM_16, NUM_16}, "rightOutput");
+        FUNCTION(name, {inputA, inputB, leftB, rightB, leftOut, rightOut})
+        {
+            TileShape::Current().SetCubeTile({NUM_32, NUM_32}, {NUM_64, NUM_64}, {NUM_64, NUM_64});
+            Tensor ab = Matrix::Matmul(DT_FP16, inputA, inputB);
+            Tensor left = View(ab, Shape{NUM_16, NUM_16}, {0, 0});
+            Tensor right = View(ab, Shape{NUM_16, NUM_32}, {0, NUM_16});
+            leftOut = Matrix::Matmul(DT_FP16, left, leftB);
+            rightOut = Matrix::Matmul(DT_FP16, right, rightB);
+        }
+        CheckMixedSlicePaths(name, MEM_L0C, MEM_L1, Opcode::OP_L0C_TO_L1);
+    }
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+TEST_F(AssignMemoryTypeTest, MixedSlicePathsRequireWholeTensorContract)
+{
+    PrepareA5Platform();
+    config::SetPassOption(ENABLE_SLICE, true);
+    const Shape inputShape{NUM_16, NUM_48};
+    const Shape smallSliceShape{NUM_16, NUM_16};
+    const Shape largeSliceShape{NUM_16, NUM_32};
+    const auto validRows = CreateTestScalarVar("validRows").Max(0).Min(NUM_16);
+    const std::vector<SymbolicScalar> inputValidShape{validRows, NUM_48};
+    const std::vector<std::tuple<std::string, Shape, Offset, MemoryType, bool>> cases{
+        {"DifferentContractShapes", {NUM_16, NUM_64}, {0, 0}, MEM_UB, false},
+        {"NonZeroContractOffset", {NUM_16, NUM_64}, {0, NUM_16}, MEM_L1, false},
+        {"WholeContractWithDynamicValidShape", inputShape, {0, 0}, MEM_UB, true},
+    };
+    for (const auto& [name, middleShape, contractOffset, targetMemoryType, expectDirect] : cases) {
+        SCOPED_TRACE(name);
+        auto function = std::make_shared<Function>(Program::GetInstance(), name, name, nullptr);
+        Program::GetInstance().InsertFuncToFunctionMap(name, function);
+        IRBuilder builder;
+        auto validInput = expectDirect ? inputValidShape : CreateTestConstIntVector(inputShape);
+        auto validMiddle = CreateTestConstIntVector(middleShape);
+        if (expectDirect) {
+            validMiddle.front() = validRows.Max(0);
+            ASSERT_NE(validInput.front().Dump(), validMiddle.front().Dump());
+        }
+        auto input = builder.CreateTensorVar(DT_FP16, inputShape, validInput);
+        input->SetMemoryTypeBoth(MEM_L0C);
+        auto middle = builder.CreateTensorVar(DT_FP16, middleShape, validMiddle);
+        auto small = builder.CreateTensorVar(DT_FP16, smallSliceShape, CreateTestConstIntVector(smallSliceShape));
+        auto large = builder.CreateTensorVar(DT_FP16, largeSliceShape, CreateTestConstIntVector(largeSliceShape));
+        auto& contract = builder.CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {input}, {middle});
+        contract.SetOpAttribute(std::make_shared<AssembleOpAttribute>(contractOffset));
+        auto& firstSlice = builder.CreateTensorOpStmt(*function, Opcode::OP_SLICE, {middle}, {small});
+        firstSlice.SetOpAttribute(std::make_shared<ViewOpAttribute>(contractOffset, targetMemoryType));
+        auto& secondSlice = builder.CreateTensorOpStmt(*function, Opcode::OP_SLICE, {middle}, {large});
+        secondSlice.SetOpAttribute(
+            std::make_shared<ViewOpAttribute>(Offset{0, contractOffset[1] + NUM_16}, targetMemoryType));
+
+        AssignMemoryType assignMemoryType;
+        ASSERT_EQ(assignMemoryType.RunOnFunction(*function), SUCCESS);
+        EXPECT_EQ(middle->GetMemoryTypeOriginal(), MEM_DEVICE_DDR);
+        EXPECT_EQ(firstSlice.iOperand.front(), expectDirect ? input : middle);
+        EXPECT_EQ(small->GetMemoryTypeOriginal(), targetMemoryType);
+        EXPECT_EQ(secondSlice.iOperand.front(), middle);
+        if (expectDirect) {
+            ASSERT_EQ(GenerateMoveOp().ProcessViewOp(*function, firstSlice), SUCCESS);
+            EXPECT_EQ(firstSlice.GetOpcode(), Opcode::OP_L0C_COPY_UB);
+        }
+    }
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
+TEST_F(AssignMemoryTypeTest, MixedSlicePathsRespectMiddleMemoryAndConvProducer)
+{
+    PrepareA5Platform();
+    config::SetPassOption(ENABLE_SLICE, true);
+    const Shape inputShape{NUM_16, NUM_48};
+    const Shape smallSliceShape{NUM_16, NUM_16};
+    const Shape largeSliceShape{NUM_16, NUM_32};
+    const std::vector<std::tuple<std::string, MemoryType, bool, bool>> cases{
+        {"DdrMiddle", MEM_DEVICE_DDR, false, true},
+        {"MiddleInSourceMemory", MEM_L0C, false, false},
+        {"MiddleInTargetMemory", MEM_UB, false, false},
+        {"ConvProducer", MEM_DEVICE_DDR, true, false},
+    };
+    for (const auto& [name, middleType, isConv, expectDirect] : cases) {
+        SCOPED_TRACE(name);
+        auto function = std::make_shared<Function>(Program::GetInstance(), name, name, nullptr);
+        IRBuilder builder;
+        const auto inputValidShape = CreateTestConstIntVector(inputShape);
+        auto source = builder.CreateTensorVar(DT_FP16, inputShape, inputValidShape);
+        auto input = builder.CreateTensorVar(DT_FP16, inputShape, inputValidShape);
+        auto middle = builder.CreateTensorVar(DT_FP16, inputShape, inputValidShape);
+        auto small = builder.CreateTensorVar(DT_FP16, smallSliceShape, CreateTestConstIntVector(smallSliceShape));
+        auto large = builder.CreateTensorVar(DT_FP16, largeSliceShape, CreateTestConstIntVector(largeSliceShape));
+        source->SetMemoryTypeBoth(MEM_L0C);
+        input->SetMemoryTypeBoth(MEM_L0C);
+        middle->SetMemoryTypeBoth(middleType);
+        // 二维 tile 通过对齐检查，使负例聚焦于卷积生产者对部分升级的限制。
+        auto& producer = builder.CreateTensorOpStmt(*function, Opcode::OP_TRANS_FORMAT_L0C, {source}, {input});
+        producer.SetAttribute(OpAttributeKey::isConv, isConv);
+
+        auto& contract = builder.CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {input}, {middle});
+        contract.SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{0, 0}));
+        auto& smallSlice = builder.CreateTensorOpStmt(*function, Opcode::OP_SLICE, {middle}, {small});
+        smallSlice.SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, MEM_UB));
+        auto& largeSlice = builder.CreateTensorOpStmt(*function, Opcode::OP_SLICE, {middle}, {large});
+        largeSlice.SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, NUM_16}, MEM_UB));
+
+        AssignMemoryType pass;
+        pass.inserter.UpdateTensorTobeMap(input, contract, MEM_L0C);
+        pass.inserter.UpdateTensorTobeMap(middle, smallSlice, middleType);
+        pass.inserter.UpdateTensorTobeMap(middle, largeSlice, middleType);
+        ASSERT_EQ(pass.ProcessL0C2UBLargeToSmall(*function), SUCCESS);
+
+        EXPECT_EQ(middle->GetMemoryTypeOriginal(), middleType);
+        EXPECT_EQ(smallSlice.iOperand.front(), expectDirect ? input : middle);
+        EXPECT_EQ(largeSlice.iOperand.front(), middle);
+        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, contract), MEM_L0C);
+        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, smallSlice), expectDirect ? MEM_L0C : MEM_UNKNOWN);
+        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(middle, smallSlice), expectDirect ? MEM_UNKNOWN : middleType);
+        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(middle, largeSlice), middleType);
+    }
+    Platform::Instance().ReloadMemoryPaths("2201");
+}
+
 TEST_F(AssignMemoryTypeTest, TestL0C2UBParallelDdrFallback)
 {
     auto shapes = PrepareA5Platform();
