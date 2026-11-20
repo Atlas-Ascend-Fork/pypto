@@ -26,6 +26,8 @@ namespace npu {
 namespace tile_fwk {
 
 constexpr size_t INPUT_SIZE = 2;
+// 二输入广播场景下另一路输入的下标 (idx ^ 1)
+constexpr size_t PAIRED_INPUT_INDEX = 1;
 
 bool InsertCondition(const Opcode& code) { return SUPPORT_BRC_INLINE.count(code) > 0; }
 
@@ -150,7 +152,6 @@ Status AxisCombine::AlignBroadCastOpInputs(Function& function, Operation& op)
     }
     for (size_t idx = 0; idx < INPUT_SIZE; ++idx) {
         auto srcTensor = inputTensor[idx];
-        auto otherTensor = inputTensor[idx ^ 1];
         auto alignedShape = srcTensor->GetShape();
         if (alignedShape.back() != 1) {
             continue;
@@ -162,36 +163,58 @@ Status AxisCombine::AlignBroadCastOpInputs(Function& function, Operation& op)
         const bool enableAxisCombine = axisCombineMarker.IsTensorEnableAxisCombine(srcTensor);
         const bool isDAV3510 = Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510;
         if (!enableAxisCombine) {
-            padValue = otherTensor->GetShape().back();
-            if (AlignedIfNeed(alignedShape.back(), padValue) != SUCCESS) {
+            if (InsertExpandForOperand(function, op, inputTensor, idx) != SUCCESS) {
                 return FAILED;
             }
-            auto alignedTensor = CreateAlignedTensor(srcTensor, alignedShape);
-            auto& expand = irBuilder_.CreateTensorOpStmt(function, Opcode::OP_EXPAND, {srcTensor}, {alignedTensor});
-            auto validShape = BuildAlignedValidShape(irBuilder_, inputTensor, idx, alignedShape);
-            expand.SetAttribute(OpAttributeKey::expandDims,
-                                std::vector<int>{static_cast<int>(inputTensor[idx]->GetShape().size() - 1)});
-            expand.SetAttribute(OP_ATTR_PREFIX + "validShape", validShape);
-            alignedTensor->UpdateDynValidShape(validShape);
-            expand.UpdateSubgraphID(op.GetSubgraphID());
-            UpdateOperand(op, idx, srcTensor, alignedTensor, inputTensor);
-            UpdateBrcOperandAfterExpand(op);
-            MoveResultTokenToInsertedOp(function, srcTensor, alignedTensor, expand);
             continue;
-        } else if (!isDAV3510 && !IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
-            if (AlignedIfNeed(alignedShape.back(), padValue) != SUCCESS) {
+        }
+        if (!isDAV3510 && !IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
+            if (InsertBrcbForOperand(function, op, inputTensor, idx, padValue) != SUCCESS) {
                 return FAILED;
             }
-            auto alignedTensor = CreateAlignedTensor(srcTensor, alignedShape);
-            auto& brcb = irBuilder_.CreateTensorOpStmt(function, Opcode::OP_BRCB, {srcTensor}, {alignedTensor});
-            auto validShape = BuildAlignedValidShape(irBuilder_, inputTensor, idx, alignedShape);
-            alignedTensor->UpdateDynValidShape(validShape);
-            brcb.UpdateSubgraphID(op.GetSubgraphID());
-            UpdateOperand(op, idx, srcTensor, alignedTensor, inputTensor);
-            MoveResultTokenToInsertedOp(function, srcTensor, alignedTensor, brcb);
         }
         op.SetAttribute(OpAttributeKey::brcbIdx, static_cast<int64_t>(idx + 1));
     }
+    return SUCCESS;
+}
+
+Status AxisCombine::InsertExpandForOperand(Function& function, Operation& op, LogicalTensors& inputTensor, size_t idx)
+{
+    auto srcTensor = inputTensor[idx]; // 必须值拷贝：UpdateOperand 会改写 inputTensor[idx]
+    auto alignedShape = srcTensor->GetShape();
+    int64_t padValue = inputTensor[idx ^ PAIRED_INPUT_INDEX]->GetShape().back();
+    if (AlignedIfNeed(alignedShape.back(), padValue) != SUCCESS) {
+        return FAILED;
+    }
+    auto alignedTensor = CreateAlignedTensor(srcTensor, alignedShape);
+    auto& expand = irBuilder_.CreateTensorOpStmt(function, Opcode::OP_EXPAND, {srcTensor}, {alignedTensor});
+    auto validShape = BuildAlignedValidShape(irBuilder_, inputTensor, idx, alignedShape);
+    expand.SetAttribute(OpAttributeKey::expandDims,
+                        std::vector<int>{static_cast<int>(inputTensor[idx]->GetShape().size() - 1)});
+    expand.SetAttribute(OP_ATTR_PREFIX + "validShape", validShape);
+    alignedTensor->UpdateDynValidShape(validShape);
+    expand.UpdateSubgraphID(op.GetSubgraphID());
+    UpdateOperand(op, idx, srcTensor, alignedTensor, inputTensor);
+    UpdateBrcOperandAfterExpand(op);
+    MoveResultTokenToInsertedOp(function, srcTensor, alignedTensor, expand);
+    return SUCCESS;
+}
+
+Status AxisCombine::InsertBrcbForOperand(Function& function, Operation& op, LogicalTensors& inputTensor, size_t idx,
+                                         int64_t padValue)
+{
+    auto srcTensor = inputTensor[idx]; // 必须值拷贝：UpdateOperand 会改写 inputTensor[idx]
+    auto alignedShape = srcTensor->GetShape();
+    if (AlignedIfNeed(alignedShape.back(), padValue) != SUCCESS) {
+        return FAILED;
+    }
+    auto alignedTensor = CreateAlignedTensor(srcTensor, alignedShape);
+    auto& brcb = irBuilder_.CreateTensorOpStmt(function, Opcode::OP_BRCB, {srcTensor}, {alignedTensor});
+    auto validShape = BuildAlignedValidShape(irBuilder_, inputTensor, idx, alignedShape);
+    alignedTensor->UpdateDynValidShape(validShape);
+    brcb.UpdateSubgraphID(op.GetSubgraphID());
+    UpdateOperand(op, idx, srcTensor, alignedTensor, inputTensor);
+    MoveResultTokenToInsertedOp(function, srcTensor, alignedTensor, brcb);
     return SUCCESS;
 }
 

@@ -553,6 +553,20 @@ Status GenerateMoveOp::CheckTransFormatTopology(Operation& op, Operation*& outTr
         return SUCCESS;
     }
     auto transFormatOp = *producers.begin();
+    bool isValid = false;
+    if (ValidateTransFormatProducer(op, inputTensor, transFormatOp, isValid) != SUCCESS) {
+        return FAILED;
+    }
+    if (isValid) {
+        outTransFormatOp = transFormatOp;
+    }
+    return SUCCESS;
+}
+
+Status GenerateMoveOp::ValidateTransFormatProducer(Operation& op, const LogicalTensorPtr& inputTensor,
+                                                   Operation* transFormatOp, bool& isValid) const
+{
+    isValid = false;
     if (transFormatOp == nullptr) {
         APASS_LOG_ERROR_F(Elements::Operation,
                           "ProcessL0CCopyUBConv: op[%d] producer set size is 1 but producer is nullptr.",
@@ -585,10 +599,140 @@ Status GenerateMoveOp::CheckTransFormatTopology(Operation& op, Operation*& outTr
                           op.GetOpMagic(), transFormatOp->GetOpMagic());
         return FAILED;
     }
-
-    outTransFormatOp = transFormatOp;
+    isValid = true;
     return SUCCESS;
 }
+
+namespace {
+
+// NCHW(NCDHW) 4/5 维 VIEW 路径中 C(channel) 维的索引，该维进入 L0C 的 n
+constexpr size_t CHANNEL_DIM_INDEX = 1;
+
+// VIEW 路的 L0C 有效行列信息 (m=Π_{i≠C}, n=C)，用于大搬小时刷新有效行列避免越界写
+struct L0CValidInfo {
+    std::vector<SymbolicScalar> l0cValidMN;
+    SymbolicScalar l0cValidW;
+    bool needUpdateL0cValidW = false;
+};
+
+std::shared_ptr<CopyOpAttribute> CreateConvCopyAttrBase(const std::shared_ptr<CopyOpAttribute>& copyAttrUb,
+                                                        const LogicalTensorPtr& transFormatInput,
+                                                        const LogicalTensorPtr& ubDst)
+{
+    // rawShape 随 L0C 源传播: 动态场景 (M/N 符号) 在源侧, UB 输出的 raw shape 为静态 tile
+    return std::make_shared<CopyOpAttribute>(transFormatInput->GetMemoryTypeOriginal(), copyAttrUb->GetToOffset(),
+                                             OpImmediate::Specified(ubDst->GetShape()),
+                                             OpImmediate::Specified(transFormatInput->GetRawTensor()->GetDynRawShape()),
+                                             OpImmediate::Specified(transFormatInput->GetDynValidShape()));
+}
+
+Status RefreshConvCopyFromOffset(const Operation& op, const std::shared_ptr<CopyOpAttribute>& copyAttr,
+                                 const std::vector<OpImmediate>& ubFromOffset,
+                                 const LogicalTensorPtr& transFormatOutput, bool isViewPath)
+{
+    // 刷新源偏移: 合并后 src 直连 L0C 原始 (M, N) tensor，VIEW 路径携带的 4/5 维 NCHW(NCDHW)
+    // 源偏移需折算为 L0C (m, n) 二维坐标继承到新 copy attr 上；否则大搬小 (一个 L0C 块跨
+    // 多个 UB tile) 时各 copy 均从块首读取，且相互因属性一致被公共算子消除误删。
+    // INSERT (小搬大) 路径的源偏移为二维零偏移，原样保留。
+    if (!isViewPath) {
+        if (!ubFromOffset.empty()) {
+            copyAttr->SetFromOffset(ubFromOffset);
+        }
+        return SUCCESS;
+    }
+    const Shape& tfShape = transFormatOutput->GetShape();
+    if (tfShape.size() != ubFromOffset.size()) {
+        APASS_LOG_ERROR_F(Elements::Operation,
+                          "ProcessL0CCopyUBConv: op[%d] view fromOffset size %zu mismatch src shape size %zu.",
+                          op.GetOpMagic(), ubFromOffset.size(), tfShape.size());
+        return FAILED;
+    }
+    auto offsetScalars = OpImmediate::ToSpecified(ubFromOffset);
+    SymbolicScalar srcMOffset = 0;
+    for (size_t i = 0; i < offsetScalars.size(); ++i) {
+        if (i == CHANNEL_DIM_INDEX) {
+            // C (channel) 维进入 L0C 的 n
+            continue;
+        }
+        int64_t stride = 1;
+        for (size_t j = i + 1; j < tfShape.size(); ++j) {
+            stride *= tfShape[j];
+        }
+        srcMOffset = srcMOffset + offsetScalars[i] * stride;
+    }
+    copyAttr->SetFromOffset(
+        OpImmediate::Specified(std::vector<SymbolicScalar>{srcMOffset, offsetScalars[CHANNEL_DIM_INDEX]}));
+    return SUCCESS;
+}
+
+L0CValidInfo RefreshViewPathValidInfo(const LogicalTensorPtr& ubDst, bool isViewPath)
+{
+    L0CValidInfo info;
+    // VIEW (等大/大搬小) 路径: L0C_VALID_MN 继承自 TRANS_FORMAT 的是整块 valid，大搬小时
+    // copy 会越过 UB tile 边界越界写 (覆写相邻 UB buffer)；按 view 窗口的运行时 valid
+    // shape 刷新为本 copy 的有效行列 (n*c*h*w -> m=Π_{i≠C}, n=c)。
+    // 注: UB tile 的 dynValidShape 不在 pass 内更新 (动态场景会与通用重推导冲突)，由
+    // op_infer_shape_impl.cpp 注册的 L0CCopyUBConvInferFunc 统一推导。
+    if (!isViewPath || ubDst == nullptr) {
+        return info;
+    }
+    const auto& ubValid = ubDst->GetDynValidShape();
+    if (ubValid.size() < SHAPE_DIM4) {
+        return info;
+    }
+    SymbolicScalar validN = ubValid[CHANNEL_DIM_INDEX];
+    SymbolicScalar validM = ubValid[0];
+    for (size_t i = CHANNEL_DIM_INDEX + 1; i < ubValid.size(); ++i) {
+        validM = validM * ubValid[i];
+    }
+    info.l0cValidMN = {validM, validN};
+    // VIEW (等大/大搬小) 路径，需要根据outdyn shape更新realCutW
+    info.l0cValidW = ubValid.back();
+    info.needUpdateL0cValidW = true;
+    return info;
+}
+
+void ApplyL0CCopyUBConvResult(Operation& op, Operation* transFormatOp, const LogicalTensorPtr& transFormatInput,
+                              const LogicalTensorPtr& transFormatOutput, const LogicalTensorPtr& ubDst, bool isViewPath,
+                              const std::shared_ptr<CopyOpAttribute>& copyAttr, const L0CValidInfo& validInfo)
+{
+    auto transFormatAttrs = transFormatOp->GetAllAttr();
+    op.SetOpCode(Opcode::OP_L0C_COPY_UB_CONV);
+    op.GetAllAttr() = std::move(transFormatAttrs);
+    op.SetAttribute(OpAttributeKey::isConv, true);
+    op.SetOpAttribute(copyAttr);
+    op.ReplaceIOperand(0, transFormatInput);
+
+    if (!validInfo.l0cValidMN.empty()) {
+        op.SetAttribute(OpAttributeKey::l0cValidMN, validInfo.l0cValidMN);
+        if (validInfo.needUpdateL0cValidW) {
+            op.SetAttribute(Conv::LoadStoreConvOpAttributeKey::realCutW, validInfo.l0cValidW);
+        }
+    }
+
+    // 落点侧这一片: INSERT 路 (小搬大) 是 transFormatOutput, VIEW 路 (大搬小) 反过来是 ubDst。
+    op.SetAttribute(OpAttributeKey::l0cTileShape, isViewPath ? ubDst->GetShape() : transFormatOutput->GetShape());
+
+    transFormatOp->SetAsDeleted();
+}
+
+// 将 view/assemble 携带的 offset 与 copy 属性现有 offset 用 TensorOffset::Add 累加；尺寸检查失败报错
+bool AccumulateCopyOffset(const Operation& op, const std::vector<OpImmediate>& curOffsets,
+                          const std::vector<SymbolicScalar>& sourceOffsetScalar, const char* opKind,
+                          const char* offsetKind, const char* sourceKind, std::vector<OpImmediate>& mergedOffsets)
+{
+    std::vector<SymbolicScalar> curOffsetScalar = OpImmediate::ToSpecified(curOffsets);
+    // 尺寸检查
+    if (curOffsetScalar.size() != sourceOffsetScalar.size()) {
+        APASS_LOG_ERROR_F(Elements::Operation, "%s op[%d]: %s size mismatch, cur size=%zu, %s size=%zu.", opKind,
+                          op.GetOpMagic(), offsetKind, curOffsetScalar.size(), sourceKind, sourceOffsetScalar.size());
+        return false;
+    }
+    mergedOffsets = OpImmediate::Specified(TensorOffset::Add(sourceOffsetScalar, curOffsetScalar));
+    return true;
+}
+
+} // namespace
 
 Status GenerateMoveOp::ProcessL0CCopyUBConv(Operation& op) const
 {
@@ -597,107 +741,30 @@ Status GenerateMoveOp::ProcessL0CCopyUBConv(Operation& op) const
     if (topoRet != SUCCESS || transFormatOp == nullptr) {
         return topoRet;
     }
-
-    auto transFormatAttrs = transFormatOp->GetAllAttr();
     auto copyAttrUb = std::dynamic_pointer_cast<CopyOpAttribute>(op.GetOpAttribute());
     if (!copyAttrUb) {
         APASS_LOG_ERROR_F(Elements::Operation, "ProcessL0CCopyUBConv: op[%d] copy attribute is nullptr.",
                           op.GetOpMagic());
         return FAILED;
     }
-
     if (op.GetOOperands().empty() || op.GetOOperands().front() == nullptr) {
         APASS_LOG_ERROR_F(Elements::Operation, "ProcessL0CCopyUBConv: op[%d] output operand empty or null.",
                           op.GetOpMagic());
         return FAILED;
     }
-
     auto ubDst = op.GetOOperands().front();
     auto transFormatOutput = transFormatOp->GetOOperands().front();
     auto transFormatInput = transFormatOp->GetIOperands().front();
-
-    std::shared_ptr<CopyOpAttribute> copyAttr;
-    std::vector<SymbolicScalar> l0cValidMN;
-    SymbolicScalar l0cValidW;
-    bool needUpdateL0cValidW = false;
-
     const auto& ubFromOffset = copyAttrUb->GetFromOffset();
     bool isViewPath = ubFromOffset.size() >= SHAPE_DIM4;
 
-    copyAttr = std::make_shared<CopyOpAttribute>(
-        transFormatInput->GetMemoryTypeOriginal(), copyAttrUb->GetToOffset(), OpImmediate::Specified(ubDst->GetShape()),
-        // rawShape 随 L0C 源传播: 动态场景 (M/N 符号) 在源侧, UB 输出的 raw shape 为静态 tile
-        OpImmediate::Specified(transFormatInput->GetRawTensor()->GetDynRawShape()),
-        OpImmediate::Specified(transFormatInput->GetDynValidShape()));
-
-    // 刷新源偏移: 合并后 src 直连 L0C 原始 (M, N) tensor，VIEW 路径携带的 4/5 维 NCHW(NCDHW)
-    // 源偏移需折算为 L0C (m, n) 二维坐标继承到新 copy attr 上；否则大搬小 (一个 L0C 块跨
-    // 多个 UB tile) 时各 copy 均从块首读取，且相互因属性一致被公共算子消除误删。
-    // INSERT (小搬大) 路径的源偏移为二维零偏移，原样保留。
-    if (isViewPath) {
-        const Shape& tfShape = transFormatOutput->GetShape();
-        if (tfShape.size() != ubFromOffset.size()) {
-            APASS_LOG_ERROR_F(Elements::Operation,
-                              "ProcessL0CCopyUBConv: op[%d] view fromOffset size %zu mismatch src shape size %zu.",
-                              op.GetOpMagic(), ubFromOffset.size(), tfShape.size());
-            return FAILED;
-        }
-        auto offsetScalars = OpImmediate::ToSpecified(ubFromOffset);
-        SymbolicScalar srcMOffset = 0;
-        for (size_t i = 0; i < offsetScalars.size(); ++i) {
-            if (i == 1) {
-                // C (channel) 维进入 L0C 的 n
-                continue;
-            }
-            int64_t stride = 1;
-            for (size_t j = i + 1; j < tfShape.size(); ++j) {
-                stride *= tfShape[j];
-            }
-            srcMOffset = srcMOffset + offsetScalars[i] * stride;
-        }
-        copyAttr->SetFromOffset(OpImmediate::Specified(std::vector<SymbolicScalar>{srcMOffset, offsetScalars[1]}));
-    } else if (!ubFromOffset.empty()) {
-        copyAttr->SetFromOffset(ubFromOffset);
+    auto copyAttr = CreateConvCopyAttrBase(copyAttrUb, transFormatInput, ubDst);
+    if (RefreshConvCopyFromOffset(op, copyAttr, ubFromOffset, transFormatOutput, isViewPath) != SUCCESS) {
+        return FAILED;
     }
-
-    // VIEW (等大/大搬小) 路径: L0C_VALID_MN 继承自 TRANS_FORMAT 的是整块 valid，大搬小时
-    // copy 会越过 UB tile 边界越界写 (覆写相邻 UB buffer)；按 view 窗口的运行时 valid
-    // shape 刷新为本 copy 的有效行列 (n*c*h*w -> m=Π_{i≠C}, n=c)。
-    // 注: UB tile 的 dynValidShape 不在 pass 内更新 (动态场景会与通用重推导冲突)，由
-    // op_infer_shape_impl.cpp 注册的 L0CCopyUBConvInferFunc 统一推导。
-    if (isViewPath && ubDst != nullptr) {
-        const auto& ubValid = ubDst->GetDynValidShape();
-        if (ubValid.size() >= SHAPE_DIM4) {
-            SymbolicScalar validN = ubValid[1];
-            SymbolicScalar validM = ubValid[0];
-            for (size_t i = 2; i < ubValid.size(); ++i) {
-                validM = validM * ubValid[i];
-            }
-            l0cValidMN = {validM, validN};
-            // VIEW (等大/大搬小) 路径，需要根据outdyn shape更新realCutW
-            l0cValidW = ubValid.back();
-            needUpdateL0cValidW = true;
-        }
-    }
-
-    op.SetOpCode(Opcode::OP_L0C_COPY_UB_CONV);
-    op.GetAllAttr() = std::move(transFormatAttrs);
-    op.SetAttribute(OpAttributeKey::isConv, true);
-    op.SetOpAttribute(copyAttr);
-    op.ReplaceIOperand(0, transFormatInput);
-
-    if (!l0cValidMN.empty()) {
-        op.SetAttribute(OpAttributeKey::l0cValidMN, l0cValidMN);
-        if (needUpdateL0cValidW) {
-            op.SetAttribute(Conv::LoadStoreConvOpAttributeKey::realCutW, l0cValidW);
-        }
-    }
-
-    // 落点侧这一片: INSERT 路 (小搬大) 是 transFormatOutput, VIEW 路 (大搬小) 反过来是 ubDst。
-    op.SetAttribute(OpAttributeKey::l0cTileShape, isViewPath ? ubDst->GetShape() : transFormatOutput->GetShape());
-
-    transFormatOp->SetAsDeleted();
-
+    L0CValidInfo validInfo = RefreshViewPathValidInfo(ubDst, isViewPath);
+    ApplyL0CCopyUBConvResult(op, transFormatOp, transFormatInput, transFormatOutput, ubDst, isViewPath, copyAttr,
+                             validInfo);
     return SUCCESS;
 }
 
@@ -828,48 +895,9 @@ Status GenerateMoveOp::CreateMoveOp(Function& function) const
     const Opcode sliceOpcode = config::GetSliceOpcode();
     const Opcode contractOpcode = config::GetContractOpcode();
     for (auto& op : function.Operations()) {
-        if (op.GetOpcode() == Opcode::OP_ASSEMBLE_SSA || op.GetOpcode() == contractOpcode) {
-            CreateMoveOpForAssemble(function, op);
-            continue;
-        }
-        if (op.GetOpcode() == sliceOpcode) {
-            Status status = ProcessViewOp(function, op);
-            if (status != SUCCESS) {
-                return status;
-            }
-            continue;
-        }
-        switch (op.GetOpcode()) {
-            case Opcode::OP_CONVERT: {
-                Status createMoveOpForConvert = CreateMoveOpForConvert(function, op);
-                if (createMoveOpForConvert != SUCCESS) {
-                    return createMoveOpForConvert;
-                }
-                break;
-            }
-            case Opcode::OP_DUPLICATE: {
-                Status status = ProcessDuplicateOp(op);
-                if (status != SUCCESS) {
-                    return status;
-                }
-                break;
-            }
-            case Opcode::OP_L1_COPY_IN_CONV: {
-                Status status = ProcessL1CopyInConv(op);
-                if (status != SUCCESS) {
-                    return status;
-                }
-                break;
-            }
-            case Opcode::OP_L0C_COPY_OUT_CONV: {
-                Status status = ProcessL0CCopyOutConv(op);
-                if (status != SUCCESS) {
-                    return status;
-                }
-                break;
-            }
-            default:
-                break;
+        Status status = ProcessSingleOp(function, op, sliceOpcode, contractOpcode);
+        if (status != SUCCESS) {
+            return status;
         }
     }
     for (auto& op : function.Operations()) {
@@ -881,6 +909,92 @@ Status GenerateMoveOp::CreateMoveOp(Function& function) const
         }
     }
     function.EraseOperations(false, true, SortOperationsMode::LIGHTWEIGHT);
+    return SUCCESS;
+}
+
+Status GenerateMoveOp::ProcessSingleOp(Function& function, Operation& op, Opcode sliceOpcode,
+                                       Opcode contractOpcode) const
+{
+    if (op.GetOpcode() == Opcode::OP_ASSEMBLE_SSA || op.GetOpcode() == contractOpcode) {
+        (void)CreateMoveOpForAssemble(function, op);
+        return SUCCESS;
+    }
+    if (op.GetOpcode() == sliceOpcode) {
+        return ProcessViewOp(function, op);
+    }
+    switch (op.GetOpcode()) {
+        case Opcode::OP_CONVERT:
+            return CreateMoveOpForConvert(function, op);
+        case Opcode::OP_DUPLICATE:
+            return ProcessDuplicateOp(op);
+        case Opcode::OP_L1_COPY_IN_CONV:
+            return ProcessL1CopyInConv(op);
+        case Opcode::OP_L0C_COPY_OUT_CONV:
+            return ProcessL0CCopyOutConv(op);
+        default:
+            return SUCCESS;
+    }
+}
+
+// 将 view-family op 的 fromOffset 累加进 L1_COPY_IN_CONV 的 copy 属性，并删除 view op
+static Status MergeViewFromOffsetIntoCopyIn(Operation& op, Operation* producerOp,
+                                            const std::shared_ptr<ViewOpAttribute>& viewAttr,
+                                            const std::shared_ptr<CopyOpAttribute>& copyAttr)
+{
+    std::vector<OpImmediate> curFromOffset = copyAttr->GetFromOffset();
+
+    // 如果当前 offset 为空，直接使用 view-family op 的 offset
+    if (curFromOffset.empty()) {
+        copyAttr->SetFromOffset(OpImmediate::Specified(viewAttr->GetFromTensorOffset()));
+    } else {
+        // 使用 TensorOffset::Add 进行累加
+        std::vector<OpImmediate> mergedFromOffset;
+        std::vector<SymbolicScalar> viewOffsetScalar = OpImmediate::ToSpecified(
+            OpImmediate::Specified(TensorOffset(viewAttr->GetFromOffset(), viewAttr->GetFromDynOffset())));
+        if (!AccumulateCopyOffset(op, curFromOffset, viewOffsetScalar, "L1_COPY_IN_CONV", "fromOffset", "view",
+                                  mergedFromOffset)) {
+            return FAILED;
+        }
+        copyAttr->SetFromOffset(mergedFromOffset);
+    }
+    auto viewInput = producerOp->GetIOperands().front();
+    copyAttr->SetRawShape(OpImmediate::Specified(viewInput->GetRawTensor()->GetDynRawShape()));
+    op.SetOpAttribute(copyAttr);
+
+    // 4. 标记删除 view-family op
+    op.ReplaceIOperand(0, viewInput);
+    producerOp->SetAsDeleted();
+    return SUCCESS;
+}
+
+// 将 assemble-family op 的 toOffset 累加进 L0C_COPY_OUT_CONV 的 copy 属性，并删除 assemble op
+static Status MergeAssembleToOffsetIntoCopyOut(Operation& op, Operation* consumerOp,
+                                               const std::shared_ptr<AssembleOpAttribute>& assembleAttr,
+                                               const std::shared_ptr<CopyOpAttribute>& copyAttr)
+{
+    std::vector<OpImmediate> curToOffset = copyAttr->GetToOffset();
+    std::vector<OpImmediate> assembleOffsetImm = OpImmediate::Specified(
+        TensorOffset(assembleAttr->GetToOffset(), assembleAttr->GetToDynOffset()));
+
+    // 如果当前 offset 为空，直接使用 assemble-family op 的 offset
+    if (curToOffset.empty()) {
+        copyAttr->SetToOffset(assembleOffsetImm);
+    } else {
+        // 使用 TensorOffset::Add 进行累加
+        std::vector<OpImmediate> mergedToOffset;
+        if (!AccumulateCopyOffset(op, curToOffset, OpImmediate::ToSpecified(assembleOffsetImm), "L0C_COPY_OUT_CONV",
+                                  "toOffset", "assemble", mergedToOffset)) {
+            return FAILED;
+        }
+        copyAttr->SetToOffset(mergedToOffset);
+    }
+    auto assembleOutput = consumerOp->GetOOperands().front();
+    copyAttr->SetRawShape(OpImmediate::Specified(assembleOutput->GetRawTensor()->GetDynRawShape()));
+    op.SetOpAttribute(copyAttr);
+
+    // 4. 标记删除 assemble-family op
+    op.ReplaceOOperand(0, assembleOutput);
+    consumerOp->SetAsDeleted();
     return SUCCESS;
 }
 
@@ -912,36 +1026,7 @@ Status GenerateMoveOp::ProcessL1CopyInConv(Operation& op) const
         APASS_LOG_ERROR_F(Elements::Operation, "L1_COPY_IN_CONV op[%d]: CopyOpAttribute is null.", op.GetOpMagic());
         return FAILED;
     }
-    std::vector<OpImmediate> curFromOffset = copyAttr->GetFromOffset();
-
-    // 如果当前 offset 为空，直接使用 view-family op 的 offset
-    if (curFromOffset.empty()) {
-        copyAttr->SetFromOffset(OpImmediate::Specified(viewAttr->GetFromTensorOffset()));
-    } else {
-        // 使用 TensorOffset::Add 进行累加
-        std::vector<SymbolicScalar> curFromOffsetScalar = OpImmediate::ToSpecified(curFromOffset);
-        std::vector<SymbolicScalar> viewOffsetScalar = OpImmediate::ToSpecified(
-            OpImmediate::Specified(TensorOffset(viewAttr->GetFromOffset(), viewAttr->GetFromDynOffset())));
-
-        // 尺寸检查
-        if (curFromOffsetScalar.size() == viewOffsetScalar.size()) {
-            auto ret = TensorOffset::Add(viewOffsetScalar, curFromOffsetScalar);
-            copyAttr->SetFromOffset(OpImmediate::Specified(ret));
-        } else {
-            APASS_LOG_ERROR_F(Elements::Operation,
-                              "L1_COPY_IN_CONV op[%d]: fromOffset size mismatch, cur size=%zu, view size=%zu.",
-                              op.GetOpMagic(), curFromOffsetScalar.size(), viewOffsetScalar.size());
-            return FAILED;
-        }
-    }
-    auto viewInput = producerOp->GetIOperands().front();
-    copyAttr->SetRawShape(OpImmediate::Specified(viewInput->GetRawTensor()->GetDynRawShape()));
-    op.SetOpAttribute(copyAttr);
-
-    // 4. 标记删除 view-family op
-    op.ReplaceIOperand(0, viewInput);
-    producerOp->SetAsDeleted();
-    return SUCCESS;
+    return MergeViewFromOffsetIntoCopyIn(op, producerOp, viewAttr, copyAttr);
 }
 
 Status GenerateMoveOp::ProcessL0CCopyOutConv(Operation& op) const
@@ -973,37 +1058,7 @@ Status GenerateMoveOp::ProcessL0CCopyOutConv(Operation& op) const
         APASS_LOG_ERROR_F(Elements::Operation, "L0C_COPY_OUT_CONV op[%d]: CopyOpAttribute is null.", op.GetOpMagic());
         return FAILED;
     }
-    std::vector<OpImmediate> curToOffset = copyAttr->GetToOffset();
-
-    // 如果当前 offset 为空，直接使用 assemble-family op 的 offset
-    if (curToOffset.empty()) {
-        copyAttr->SetToOffset(
-            OpImmediate::Specified(TensorOffset(assembleAttr->GetToOffset(), assembleAttr->GetToDynOffset())));
-    } else {
-        // 使用 TensorOffset::Add 进行累加
-        std::vector<SymbolicScalar> curToOffsetScalar = OpImmediate::ToSpecified(curToOffset);
-        std::vector<SymbolicScalar> assembleOffsetScalar = OpImmediate::ToSpecified(
-            OpImmediate::Specified(TensorOffset(assembleAttr->GetToOffset(), assembleAttr->GetToDynOffset())));
-
-        // 尺寸检查
-        if (curToOffsetScalar.size() == assembleOffsetScalar.size()) {
-            auto ret = TensorOffset::Add(assembleOffsetScalar, curToOffsetScalar);
-            copyAttr->SetToOffset(OpImmediate::Specified(ret));
-        } else {
-            APASS_LOG_ERROR_F(Elements::Operation,
-                              "L0C_COPY_OUT_CONV op[%d]: toOffset size mismatch, cur size=%zu, assemble size=%zu.",
-                              op.GetOpMagic(), curToOffsetScalar.size(), assembleOffsetScalar.size());
-            return FAILED;
-        }
-    }
-    auto assembleOutput = consumerOp->GetOOperands().front();
-    copyAttr->SetRawShape(OpImmediate::Specified(assembleOutput->GetRawTensor()->GetDynRawShape()));
-    op.SetOpAttribute(copyAttr);
-
-    // 4. 标记删除 assemble-family op
-    op.ReplaceOOperand(0, assembleOutput);
-    consumerOp->SetAsDeleted();
-    return SUCCESS;
+    return MergeAssembleToOffsetIntoCopyOut(op, consumerOp, assembleAttr, copyAttr);
 }
 
 Status GenerateMoveOp::ProcessViewOp(Function& function, Operation& op) const

@@ -47,6 +47,10 @@ private:
     void SortedProducer(std::vector<Operation*>& sortedProducers) const;
     void CollectProducerInfo(const std::vector<Operation*>& sortedProducers, const LogicalTensorPtr& curTensor,
                              std::vector<std::string>& opStrList, std::stringstream& ss) const;
+    void DumpOperandInfo(const LogicalTensorPtr& iOperands, const LogicalTensorPtr& curTensor,
+                         std::stringstream& ss) const;
+    void DumpCurTensorShapeInfo(const LogicalTensorPtr& curTensor, std::stringstream& ss) const;
+    void DumpOpTrailingInfo(const Operation& op, std::stringstream& ss) const;
     unsigned long ComputeHash(const std::vector<Operation*>& producers, LogicalTensorPtr curTensor) const;
     std::unordered_map<LogicalTensorPtr, std::vector<Operation*>> GetTensorProducers(
         Function& function, std::vector<LogicalTensorPtr>& sequence);
@@ -56,6 +60,15 @@ private:
         Function& function, const LogicalTensorPtr& oldTensor, const LogicalTensorPtr& newTensor,
         const std::vector<Operation*>& sortedOldProducers, const std::vector<Operation*>& sortedNewProducers,
         std::vector<std::pair<LogicalTensorPtr, LogicalTensorPtr>>& tensorRedirectPairs) const;
+    bool CollectProducerOutputRedirectPairs(
+        Function& function, const std::vector<Operation*>& sortedOldProducers,
+        const std::vector<Operation*>& sortedNewProducers,
+        std::vector<std::pair<LogicalTensorPtr, LogicalTensorPtr>>& tensorRedirectPairs,
+        std::unordered_map<int, LogicalTensorPtr>& oldToNew) const;
+    bool CollectSingleProducerRedirectPairs(
+        Function& function, const Operation* oldProducer, const Operation* newProducer,
+        std::vector<std::pair<LogicalTensorPtr, LogicalTensorPtr>>& tensorRedirectPairs,
+        std::unordered_map<int, LogicalTensorPtr>& oldToNew, std::unordered_map<int, LogicalTensorPtr>& newToOld) const;
     uint32_t GetTensorCoreFlag(const LogicalTensorPtr& tensor) const;
     void CollectSubgraphIds(const std::set<Operation*, LogicalTensor::CompareOp>& ops,
                             std::unordered_set<int>& subgraphIds) const;
@@ -88,6 +101,11 @@ private:
                               std::unordered_set<Operation*>& cacheProducers,
                               const std::unordered_map<LogicalTensorPtr, std::vector<Operation*>>& tensorProducerMap,
                               std::vector<Operation*>& oldBucketProducers);
+    bool HasOutCastSameRawTensor(Function& function, const LogicalTensorPtr& tensor) const;
+    bool HasSameProducerGroup(const std::vector<Operation*>& oldProducers,
+                              const std::vector<Operation*>& newProducers) const;
+    bool PassesMergeGuards(Function& function, const LogicalTensorPtr& oldTensor,
+                           const LogicalTensorPtr& newTensor) const;
     const TensorSet& GetSameRawMagicTensors(const LogicalTensorPtr& tensor) const;
     std::vector<Operation*> CollectConsumersWithSameRawMagic(Function& function, const LogicalTensorPtr& tensor) const;
     void MarkRedundantProducersDeleted(Function& function, const std::vector<Operation*>& oldBucketProducers,

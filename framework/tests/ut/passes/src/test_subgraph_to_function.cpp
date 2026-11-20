@@ -33,6 +33,7 @@
 #include "passes/tile_graph_pass/static_subgraph_processor.h"
 #include "passes/pass_mgr/pass_manager.h"
 #include "passes/statistics/execute_graph_statistic.h"
+#include "interface/tensor/tensor_slot.h"
 #include "ut_json/ut_json_tool.h"
 #include "interface/tensor/irbuilder.h"
 
@@ -1160,6 +1161,128 @@ TEST_F(SubgraphToFunctionTest, LightweightStableSortIgnoresInplaceSelfDependency
 }
 
 std::shared_ptr<LogicalTensor> GetTensorDataSubgraphTensor(Operation& refOp);
+
+/*
+ * partialUpdate outcast 的共享存储链路：outcast(buf) 被子图 copy_in 读取（通过共享 RawTensor
+ * 的别名 LogicalTensor），且 outIncastLinkMap 指向 incast(x)。
+ * 预期：RecordPartialUpdateIncastForSubgraph 找到 copy_in，将 outcast 的 actualRawmagic
+ * 指向 incast，并为子图补录 incast 参数。
+ */
+namespace {
+struct PartialUpdateGraph {
+    Function* function;
+    std::shared_ptr<LogicalTensor> incast;
+    std::shared_ptr<LogicalTensor> outcast;
+    std::shared_ptr<LogicalTensor> unlinkTarget;
+};
+
+PartialUpdateGraph BuildPartialUpdateGraph(bool addSharedProducer, bool addDirectOutcastCopyIn)
+{
+    ComputationalGraphBuilder G;
+    std::vector<std::string> tensorNames = {"x", "ub", "state", "ubSrc", "stateRead", "ub2", "y"};
+    std::vector<MemoryType> memTypes = {
+        MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_UB,
+        MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR};
+    if (!addSharedProducer) {
+        // stateRead 无同子图 producer：RecordIncastInfo 会将其登记为 !isOutputToGM 的 incast 参数
+        tensorNames = {"x", "ub", "state", "stateRead", "ub2", "y"};
+        memTypes = {MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR,
+                    MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR};
+    }
+    if (addDirectOutcastCopyIn) {
+        tensorNames.push_back("ubDirect");
+        memTypes.push_back(MemoryType::MEM_UB);
+    }
+    EXPECT_TRUE(G.AddTensors(DataType::DT_FP32, {16, 16}, memTypes, tensorNames));
+    EXPECT_TRUE(G.AddOp(Opcode::OP_COPY_OUT, {"ub"}, {"state"}, "copy_out_state"));
+    if (addSharedProducer) {
+        // stateRead 有同子图 producer：避开普通 incast 记录，确保 partialUpdate 补录路径可达
+        EXPECT_TRUE(G.AddOp(Opcode::OP_COPY_OUT, {"ubSrc"}, {"stateRead"}, "copy_out_src"));
+    }
+    EXPECT_TRUE(G.AddOp(Opcode::OP_COPY_IN, {"stateRead"}, {"ub2"}, "copy_in_state"));
+    EXPECT_TRUE(G.AddOp(Opcode::OP_COPY_OUT, {"ub2"}, {"y"}, "copy_out_y"));
+    if (addDirectOutcastCopyIn) {
+        EXPECT_TRUE(G.AddOp(Opcode::OP_COPY_IN, {"state"}, {"ubDirect"}, "copy_in_direct"));
+    }
+    EXPECT_TRUE(G.SetInCast({"x"}));
+    EXPECT_TRUE(G.SetOutCast({"state", "y"}));
+    for (const auto& name : {"copy_out_state", "copy_out_src", "copy_in_state", "copy_out_y", "copy_in_direct"}) {
+        Operation* op = G.GetOp(name);
+        if (op != nullptr) {
+            op->UpdateSubgraphID(0);
+        }
+    }
+    // stateRead 与 state 共享 RawTensor 存储（同 rawMagic，不同 LogicalTensor 版本）
+    G.GetTensor("stateRead")->tensor = G.GetTensor("state")->tensor;
+
+    PartialUpdateGraph graph;
+    graph.function = G.GetFunction();
+    graph.incast = G.GetTensor("x");
+    graph.outcast = G.GetTensor("state");
+    graph.unlinkTarget = G.GetTensor("ub2");
+    graph.function->SetTotalSubGraphCount(1);
+    return graph;
+}
+
+void SetupPartialUpdateLink(Function* function, const std::shared_ptr<LogicalTensor>& outcast,
+                            const std::shared_ptr<LogicalTensor>& incast, bool setLink)
+{
+    function->GetSlotScope() = std::make_shared<TensorSlotScope>(function);
+    function->GetSlotScope()->ioslot.partialUpdateOutcastList.push_back(0);
+    if (setLink) {
+        function->outIncastLinkMap[outcast->GetRawTensor()] = incast->GetRawTensor();
+    }
+}
+} // namespace
+
+TEST_F(SubgraphToFunctionTest, PartialUpdateOutcastRecordsIncastAliasForSharedStorage)
+{
+    auto graph = BuildPartialUpdateGraph(true, false);
+    ASSERT_NE(graph.function, nullptr);
+    SetupPartialUpdateLink(graph.function, graph.outcast, graph.incast, true);
+
+    SubgraphToFunction pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.function), SUCCESS);
+    ASSERT_NE(graph.function->rootFunc_, nullptr);
+    // 共享存储的 outcast 应通过 partialUpdate 链路把 actualRawmagic 指向 incast 的 rawMagic
+    EXPECT_EQ(graph.outcast->tensor->actualRawmagic, graph.incast->GetRawMagic());
+}
+
+TEST_F(SubgraphToFunctionTest, PartialUpdateOutcastSkipsWhenLinkMissing)
+{
+    auto graph = BuildPartialUpdateGraph(false, false);
+    ASSERT_NE(graph.function, nullptr);
+    SetupPartialUpdateLink(graph.function, graph.outcast, graph.incast, false);
+
+    SubgraphToFunction pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.function), SUCCESS);
+    // 无 outIncastLinkMap 链接时跳过补录，actualRawmagic 保持原值
+    EXPECT_NE(graph.outcast->tensor->actualRawmagic, graph.incast->GetRawMagic());
+}
+
+TEST_F(SubgraphToFunctionTest, PartialUpdateOutcastSkipsWhenIncastNotFound)
+{
+    auto graph = BuildPartialUpdateGraph(false, false);
+    ASSERT_NE(graph.function, nullptr);
+    // link 指向不在 incast 列表的存储（ub2 的 rawTensor），actualIncast 查找失败应跳过
+    SetupPartialUpdateLink(graph.function, graph.outcast, graph.unlinkTarget, true);
+
+    SubgraphToFunction pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.function), SUCCESS);
+    EXPECT_NE(graph.outcast->tensor->actualRawmagic, graph.incast->GetRawMagic());
+}
+
+TEST_F(SubgraphToFunctionTest, PartialUpdateOutcastSkipsWhenStorageAlreadyInput)
+{
+    auto graph = BuildPartialUpdateGraph(false, true);
+    ASSERT_NE(graph.function, nullptr);
+    SetupPartialUpdateLink(graph.function, graph.outcast, graph.incast, true);
+
+    SubgraphToFunction pass;
+    ASSERT_EQ(pass.RunOnFunction(*graph.function), SUCCESS);
+    // 子图已直接 copy_in 该 outcast 存储（!isOutputToGM 参数已登记），应跳过补录避免自别名
+    EXPECT_NE(graph.outcast->tensor->actualRawmagic, graph.incast->GetRawMagic());
+}
 
 TEST_F(SubgraphToFunctionTest, UB2L1DynamicAttributesUseL1Tensor)
 {

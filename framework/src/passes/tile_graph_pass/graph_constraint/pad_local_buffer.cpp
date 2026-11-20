@@ -39,6 +39,48 @@ const std::unordered_set<OpCalcType> ELEMENTWISE_LIKE_TYPES{OpCalcType::CAST, Op
                                                             OpCalcType::MOVE_OUT};
 // OP_VIEW_TYPE 当前不在白名单内，所在通路不支持合轴，合轴模式下不会对其进行倒数第二轴 pad
 const std::unordered_set<Opcode> shapeTransformOps{Opcode::OP_VIEW, Opcode::OP_ASSEMBLE, Opcode::OP_RESHAPE};
+// matmul/cube 系列算子（含 EPILOGUE 宏指令变体），其输入 dtype 判定与 matmul 系列一致
+const std::unordered_set<Opcode> cubeMatmulOps{Opcode::OP_A_MUL_B,
+                                               Opcode::OP_AT_MUL_B,
+                                               Opcode::OP_A_MUL_BT,
+                                               Opcode::OP_AT_MUL_BT,
+                                               Opcode::OP_A_MULACC_B,
+                                               Opcode::OP_A_MUL_B_EPILOGUE,
+                                               Opcode::OP_AT_MUL_B_EPILOGUE,
+                                               Opcode::OP_A_MUL_BT_EPILOGUE,
+                                               Opcode::OP_AT_MUL_BT_EPILOGUE,
+                                               Opcode::OP_A_MULACC_B_EPILOGUE};
+// 这些搬运 op 的输入 dtype 由其前置 cube op 的输入 dtype 决定（如 int8 输入 A_MULACC_B 的 fp16 输出）
+const std::unordered_set<Opcode> cubeOutputLikeOps{Opcode::OP_COPY_OUT, Opcode::OP_L0C_TO_L1, Opcode::OP_L0C_COPY_UB,
+                                                   Opcode::OP_UB_COPY_L1};
+
+// PadMatmul 的场景标记，由 in 的 producer/consumer 拓扑推导
+struct MatmulSceneFlags {
+    bool isL1ConvertScene = false;
+    bool isUB2L1Scene = false;
+    bool isGemvUbCopyL1 = false;
+};
+
+MatmulSceneFlags DetectMatmulScene(const LogicalTensorPtr& in)
+{
+    MatmulSceneFlags flags;
+    const auto& producers = in->GetProducers();
+    const auto& consumers = in->GetConsumers();
+    flags.isL1ConvertScene = !producers.empty() && !consumers.empty() && *producers.begin() != nullptr &&
+                             *consumers.begin() != nullptr &&
+                             ((*producers.begin())->GetOpcode() == Opcode::OP_L1_TO_FIX_QUANT_PRE ||
+                              (*producers.begin())->GetOpcode() == Opcode::OP_L1_TO_BT ||
+                              (*consumers.begin())->GetOpcode() == Opcode::OP_L1_TO_BT ||
+                              (*consumers.begin())->GetOpcode() == Opcode::OP_L1_TO_FIX_QUANT_PRE);
+    flags.isUB2L1Scene = !consumers.empty() && *consumers.begin() != nullptr &&
+                         (*consumers.begin())->GetOpcode() == Opcode::OP_UB_COPY_L1;
+    // GEMV A 来自 UB（isGemv 由 ProcessUB2L1 设置）：UB_COPY_L1 输入按 K 对齐、M 不 pad
+    int64_t isGemvUbCopyL1Val = 0;
+    flags.isGemvUbCopyL1 = flags.isUB2L1Scene &&
+                           (*consumers.begin())->GetAttr<int64_t>(OpAttributeKey::isGemv, isGemvUbCopyL1Val) &&
+                           isGemvUbCopyL1Val != 0;
+    return flags;
+}
 // 设置原始 rawshape（替代 RawTensor::oriRawshape = rawshape）
 // 原始代码中 oriRawshape 是每次进入函数时都设置为当前 rawshape 值
 Shape& PadLocalBuffer::SetOriRawshape(LogicalTensorPtr& in)
@@ -80,17 +122,6 @@ bool PadLocalBuffer::ShouldDefaultPadKirin9050Cube(const Operation& op, const Lo
 bool PadLocalBuffer::IsInputDataType(const Operation& op, const LogicalTensorPtr& in,
                                      const std::unordered_set<DataType>& targetTypes) const
 {
-    static const std::unordered_set<Opcode> cubeOps = {Opcode::OP_A_MUL_B,
-                                                       Opcode::OP_AT_MUL_B,
-                                                       Opcode::OP_A_MUL_BT,
-                                                       Opcode::OP_AT_MUL_BT,
-                                                       Opcode::OP_A_MULACC_B,
-                                                       Opcode::OP_A_MUL_B_EPILOGUE,
-                                                       Opcode::OP_AT_MUL_B_EPILOGUE,
-                                                       Opcode::OP_A_MUL_BT_EPILOGUE,
-                                                       Opcode::OP_AT_MUL_BT_EPILOGUE,
-                                                       Opcode::OP_A_MULACC_B_EPILOGUE};
-
     if (in == nullptr || in->tensor == nullptr) {
         return false;
     }
@@ -104,7 +135,7 @@ bool PadLocalBuffer::IsInputDataType(const Operation& op, const LogicalTensorPtr
     APASS_LOG_DEBUG_F(Elements::Tensor, "####### %d data type is %s\n", in->magic,
                       DataType2VectorRegStr(in->tensor->GetDataType()).c_str());
 
-    bool matmulOp = cubeOps.count(op.GetOpcode()) != 0;
+    bool matmulOp = cubeMatmulOps.count(op.GetOpcode()) != 0;
     bool opsInputDtype = false;
     if (op.GetIOperands().size() > 0 && op.GetIOperands()[0] != nullptr && op.GetIOperands()[0]->tensor != nullptr) {
         opsInputDtype = targetTypes.find(op.GetIOperands()[0]->tensor->GetDataType()) != targetTypes.end();
@@ -119,23 +150,42 @@ bool PadLocalBuffer::IsInputDataType(const Operation& op, const LogicalTensorPtr
         // 包括matmul系列和GM->L1->L0系列
         return true;
     }
-
-    if (op.GetOpcode() == Opcode::OP_COPY_OUT || op.GetOpcode() == Opcode::OP_L0C_TO_L1 ||
-        op.GetOpcode() == Opcode::OP_L0C_COPY_UB || op.GetOpcode() == Opcode::OP_UB_COPY_L1) {
-        Operation* inProducerPtr = *in->GetProducers().begin();
-        if (inProducerPtr != nullptr && inProducerPtr->GetIOperands().size() != 0 &&
-            inProducerPtr->GetIOperands()[0] != nullptr && inProducerPtr->GetIOperands()[0]->tensor != nullptr) {
-            // 检查in的前置op节点的输入是否为int8。
-            // iOperands (dtype:int8) --> A_MULACC_B --> in (dtype:fp16/int32), iOperands (dtype:fp16/int32) -->
-            // COPY_OUT
-            return targetTypes.find(inProducerPtr->GetIOperands()[0]->tensor->GetDataType()) != targetTypes.end();
-        }
+    if (cubeOutputLikeOps.count(op.GetOpcode()) != 0) {
+        return IsCubeLikeProducerInputDtype(in, targetTypes);
     }
     return false;
 }
 
+bool PadLocalBuffer::IsCubeLikeProducerInputDtype(const LogicalTensorPtr& in,
+                                                  const std::unordered_set<DataType>& targetTypes) const
+{
+    Operation* inProducerPtr = *in->GetProducers().begin();
+    if (inProducerPtr == nullptr || inProducerPtr->GetIOperands().size() == 0 ||
+        inProducerPtr->GetIOperands()[0] == nullptr || inProducerPtr->GetIOperands()[0]->tensor == nullptr) {
+        return false;
+    }
+    // 检查in的前置op节点的输入是否为int8。
+    // iOperands (dtype:int8) --> A_MULACC_B --> in (dtype:fp16/int32), iOperands (dtype:fp16/int32) --> COPY_OUT
+    return targetTypes.find(inProducerPtr->GetIOperands()[0]->tensor->GetDataType()) != targetTypes.end();
+}
+
 void PadLocalBuffer::PadMatmulL1ConvertScene(Operation& op, LogicalTensorPtr& in, size_t lowIndex)
 {
+    /*
+    输入带bias或fixpipe场景，切分tileShape为[1, N]，在L1_TO_BT和L1_TO_FIX_QUANT_PRE时，BT统一为FP32，BT
+    BUFFER要求64B对齐，FixPipe为uint64，FB BUFFER为128B对齐，均要求N满足16元素对齐，否则会出现address misalign异常
+    示例场景：biasShape = [1, 3208]，tileShapeN = [32, 128]，3208 % 32 = 8尾块非对齐
+    另外，bias或fixpipe场景只做低维16元素对齐，高维保持不变
+    Before:
+    L1_TO_L0A --> L0A (shape:[24, 400]) ------------------------->    \
+    L1_TO_BT --> bias_BT (shape:[1, 8]) -----> (address misalign)  A_MUL_B
+    L1_TO_L0B --> L0B (shape:[400, 16]) ------------------------->    /
+
+    After:
+    L1_TO_L0A --> L0A (shape:[32, 400])  -->   \
+    L1_TO_BT --> bias_BT (shape:[1, 16]) --> A_MUL_B --> output(shape:[32, 16])
+    L1_TO_L0B --> L0B (shape:[400, 16])  -->   /
+    */
     const auto& producers = in->GetProducers();
     const auto& consumers = in->GetConsumers();
     auto bytes = BytesOf(in->Datatype());
@@ -325,21 +375,6 @@ void PadLocalBuffer::PadMatmul(Operation& op, LogicalTensorPtr& in)
     }
     auto highIndex = in->shape.size() - 2; // matmul高轴
     auto lowIndex = in->shape.size() - 1;  // matmul低轴
-    const auto& producers = in->GetProducers();
-    const auto& consumers = in->GetConsumers();
-    const bool isL1ConvertScene = !producers.empty() && !consumers.empty() && *producers.begin() != nullptr &&
-                                  *consumers.begin() != nullptr &&
-                                  ((*producers.begin())->GetOpcode() == Opcode::OP_L1_TO_FIX_QUANT_PRE ||
-                                   (*producers.begin())->GetOpcode() == Opcode::OP_L1_TO_BT ||
-                                   (*consumers.begin())->GetOpcode() == Opcode::OP_L1_TO_BT ||
-                                   (*consumers.begin())->GetOpcode() == Opcode::OP_L1_TO_FIX_QUANT_PRE);
-    const bool isUB2L1Scene = !consumers.empty() && *consumers.begin() != nullptr &&
-                              (*consumers.begin())->GetOpcode() == Opcode::OP_UB_COPY_L1;
-    // GEMV A 来自 UB（isGemv 由 ProcessUB2L1 设置）：UB_COPY_L1 输入按 K 对齐、M 不 pad
-    int64_t isGemvUbCopyL1Val = 0;
-    const bool isGemvUbCopyL1 = isUB2L1Scene &&
-                                (*consumers.begin())->GetAttr<int64_t>(OpAttributeKey::isGemv, isGemvUbCopyL1Val) &&
-                                isGemvUbCopyL1Val != 0;
     /*
     首先，可以通过in的数据类型是否为int8来判断是否要做32B对齐。
     再者，存在两种情况
@@ -358,41 +393,31 @@ void PadLocalBuffer::PadMatmul(Operation& op, LogicalTensorPtr& in)
                           op.opmagic, op.GetOpcodeStr().c_str(), in->magic);
         return;
     }
+    MatmulSceneFlags sceneFlags = DetectMatmulScene(in);
     SetOriRawshape(in); // 先设置，再使用
-    if (isL1ConvertScene) {
-        /*
-        输入带bias或fixpipe场景，切分tileShape为[1, N]，在L1_TO_BT和L1_TO_FIX_QUANT_PRE时，BT统一为FP32，BT
-        BUFFER要求64B对齐，FixPipe为uint64，FB BUFFER为128B对齐，均要求N满足16元素对齐，否则会出现address misalign异常
-        示例场景：biasShape = [1, 3208]，tileShapeN = [32, 128]，3208 % 32 = 8尾块非对齐
-        另外，bias或fixpipe场景只做低维16元素对齐，高维保持不变
-        Before:
-        L1_TO_L0A --> L0A (shape:[24, 400]) ------------------------->    \
-        L1_TO_BT --> bias_BT (shape:[1, 8]) -----> (address misalign)  A_MUL_B
-        L1_TO_L0B --> L0B (shape:[400, 16]) ------------------------->    /
-
-        After:
-        L1_TO_L0A --> L0A (shape:[32, 400])  -->   \
-        L1_TO_BT --> bias_BT (shape:[1, 16]) --> A_MUL_B --> output(shape:[32, 16])
-        L1_TO_L0B --> L0B (shape:[400, 16])  -->   /
-        */
+    if (sceneFlags.isL1ConvertScene) {
         PadMatmulL1ConvertScene(op, in, lowIndex);
     } else {
-        // GEMV 的 UB_COPY_L1(isGemv) 输入按 K 对齐、M 不 pad，避免改 RESHAPE 输出 rawshape 触发误插 spill。
-        if (IsGemvL1ATensor(in) || IsGemvL0ATensor(in) || isGemvUbCopyL1) {
-            PadMatmulGemvKAlign(in, highIndex, lowIndex);
-        } else {
-            PadMatmulHighLow(in, highIndex, lowIndex, GetMatmulPaddingValue(op, in));
-        }
-        TryPadMatmulIsMXScene(op, in);
+        PadMatmulNonConvertScene(op, in, highIndex, lowIndex, sceneFlags.isGemvUbCopyL1);
     }
-    if (isUB2L1Scene) {
+    if (sceneFlags.isUB2L1Scene && !sceneFlags.isGemvUbCopyL1) {
         // GEMV 跳过 ND2NZ，无 bank 冲突优化需求，跳过 +=1（避免改 RESHAPE 输出 rawshape）。
-        if (!isGemvUbCopyL1) {
-            (in->tensor->rawshape[highIndex]) += 1;
-        }
+        (in->tensor->rawshape[highIndex]) += 1;
     }
     APASS_LOG_DEBUG_F(Elements::Tensor, "####### %d %d set rawshape as %s\n", in->tensor->rawmagic, in->magic,
                       IntVecToStr(in->tensor->rawshape).c_str());
+}
+
+void PadLocalBuffer::PadMatmulNonConvertScene(Operation& op, LogicalTensorPtr& in, size_t highIndex, size_t lowIndex,
+                                              bool isGemvUbCopyL1)
+{
+    // GEMV 的 UB_COPY_L1(isGemv) 输入按 K 对齐、M 不 pad，避免改 RESHAPE 输出 rawshape 触发误插 spill。
+    if (IsGemvL1ATensor(in) || IsGemvL0ATensor(in) || isGemvUbCopyL1) {
+        PadMatmulGemvKAlign(in, highIndex, lowIndex);
+    } else {
+        PadMatmulHighLow(in, highIndex, lowIndex, GetMatmulPaddingValue(op, in));
+    }
+    TryPadMatmulIsMXScene(op, in);
 }
 
 bool PadLocalBuffer::IsUb2L1CopyOp(const Operation& op)

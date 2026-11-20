@@ -75,6 +75,26 @@ void AddCallOpTokenDependency(Function& rootFunction, Operation& producerCallOp,
     PassTokenUtils::AddTokenIfAbsent(consumerCallOp, token);
 }
 
+// 判断子图内是否存在某个 rawMagic 输入 tensor 的 producer 来自其他子图
+bool HasStorageFromOtherSubgraph(const std::vector<OperationPtr>& subgraphOps, int rawMagic, size_t subgraphId)
+{
+    for (const auto& op : subgraphOps) {
+        for (const auto& input : op->GetIOperands()) {
+            if (input->GetRawMagic() != rawMagic) {
+                continue;
+            }
+            bool fromOther = std::any_of(input->GetProducers().begin(), input->GetProducers().end(),
+                                         [subgraphId](const auto* producer) {
+                                             return producer->GetSubgraphID() != static_cast<int>(subgraphId);
+                                         });
+            if (fromOther) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 } // namespace
 
 void SubgraphToFunction::Init()
@@ -104,19 +124,8 @@ Status SubgraphToFunction::RunOnFunction(Function& function)
         APASS_LOG_ERROR_F(Elements::Function, "Failed to build the data dependency structure.");
         return FAILED;
     }
-    // 只在静态流程中构建图
-    if (function.GetFunctionType() == FunctionType::STATIC) {
-        // 1. Construct in-graph & out-graph
-        if (staticProcessor_.BuildGraph(function) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "Failed to build graph from input function.");
-            return FAILED;
-        }
-        // reconnect in-graph and out-graph by Incast and Outcast
-        RecordIncastOutcast(function);
-        SetupStaticProcessor();
-    } else {
-        // reconnect in-graph and out-graph by Incast and Outcast
-        RecordIncastOutcast(function);
+    if (BuildGraphAndRecordIncastOutcast(function) != SUCCESS) {
+        return FAILED;
     }
     // Construct function.subFunctionInvokeMap
     ConstructParamMap(function);
@@ -133,6 +142,25 @@ Status SubgraphToFunction::RunOnFunction(Function& function)
         APASS_LOG_ERROR_F(Elements::Function, "Failed to recover copy in into view.");
         return FAILED;
     }
+    return SUCCESS;
+}
+
+Status SubgraphToFunction::BuildGraphAndRecordIncastOutcast(Function& function)
+{
+    // 只在静态流程中构建图
+    if (function.GetFunctionType() != FunctionType::STATIC) {
+        // reconnect in-graph and out-graph by Incast and Outcast
+        RecordIncastOutcast(function);
+        return SUCCESS;
+    }
+    // 1. Construct in-graph & out-graph
+    if (staticProcessor_.BuildGraph(function) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Function, "Failed to build graph from input function.");
+        return FAILED;
+    }
+    // reconnect in-graph and out-graph by Incast and Outcast
+    RecordIncastOutcast(function);
+    SetupStaticProcessor();
     return SUCCESS;
 }
 
@@ -442,6 +470,12 @@ void SubgraphToFunction::ConstructnList(Function& function)
 
 void SubgraphToFunction::RecordEsgIncastOutcast(Function& function)
 {
+    RecordEsgIncastOutcastForAllOps(function);
+    RecordPartialUpdateOutcastIncast(function);
+}
+
+void SubgraphToFunction::RecordEsgIncastOutcastForAllOps(Function& function)
+{
     for (int i = 0; i < static_cast<int>(nLIST.size()); i++) {
         for (size_t j = 0; j < nLIST[i].size(); j++) {
             // 4.1 Record iOperand info, global tensor and incast
@@ -453,7 +487,10 @@ void SubgraphToFunction::RecordEsgIncastOutcast(Function& function)
             }
         }
     }
+}
 
+void SubgraphToFunction::RecordPartialUpdateOutcastIncast(Function& function)
+{
     auto scope = function.GetSlotScope();
     if (scope == nullptr) {
         return;
@@ -462,73 +499,71 @@ void SubgraphToFunction::RecordEsgIncastOutcast(Function& function)
         if (outcastIndex < 0 || static_cast<size_t>(outcastIndex) >= function.GetOutcast().size()) {
             continue;
         }
-        const auto& outcast = function.GetOutcast()[outcastIndex];
-        auto link = function.outIncastLinkMap.find(outcast->GetRawTensor());
-        if (link == function.outIncastLinkMap.end()) {
+        RecordPartialUpdateOutcastForIndex(function, outcastIndex);
+    }
+}
+
+void SubgraphToFunction::RecordPartialUpdateOutcastForIndex(Function& function, int outcastIndex)
+{
+    const auto& outcast = function.GetOutcast()[outcastIndex];
+    auto link = function.outIncastLinkMap.find(outcast->GetRawTensor());
+    if (link == function.outIncastLinkMap.end()) {
+        return;
+    }
+    auto actualIncast = std::find_if(function.GetIncast().begin(), function.GetIncast().end(),
+                                     [&link](const auto& incast) { return incast->GetRawTensor() == link->second; });
+    if (actualIncast == function.GetIncast().end()) {
+        return;
+    }
+    const LogicalTensorPtr& incast = *actualIncast;
+    for (size_t i = 0; i < nLIST.size(); i++) {
+        RecordPartialUpdateIncastForSubgraph(outcast, incast, i);
+    }
+}
+
+void SubgraphToFunction::RecordPartialUpdateIncastForSubgraph(const LogicalTensorPtr& outcast,
+                                                              const LogicalTensorPtr& incast, size_t i)
+{
+    const auto& tensorArgs = subFuncInvokeInfos[i].GetTensorArgs();
+    bool storageAlreadyInput = std::any_of(tensorArgs.begin(), tensorArgs.end(), [&outcast, &incast](const auto& arg) {
+        return !arg.isOutputToGM && (arg.realDDRId == outcast->GetRawMagic() || arg.realDDRId == incast->GetRawMagic());
+    });
+    if (storageAlreadyInput || HasStorageFromOtherSubgraph(nLIST[i], outcast->GetRawMagic(), i)) {
+        return;
+    }
+    RecordIncastForPartialUpdateStorage(outcast, incast, i);
+}
+
+void SubgraphToFunction::RecordIncastForPartialUpdateStorage(const LogicalTensorPtr& outcast,
+                                                             const LogicalTensorPtr& incast, size_t i)
+{
+    for (const auto& op : nLIST[i]) {
+        if (!IsCopyIn(op->GetOpcode())) {
             continue;
         }
-        auto actualIncast = std::find_if(
-            function.GetIncast().begin(), function.GetIncast().end(),
-            [&link](const auto& incast) { return incast->GetRawTensor() == link->second; });
-        if (actualIncast == function.GetIncast().end()) {
-            continue;
-        }
-        for (size_t i = 0; i < nLIST.size(); i++) {
-            const auto& tensorArgs = subFuncInvokeInfos[i].GetTensorArgs();
-            bool storageAlreadyInput = std::any_of(
-                tensorArgs.begin(), tensorArgs.end(), [&outcast, &actualIncast](const auto& arg) {
-                    return !arg.isOutputToGM &&
-                           (arg.realDDRId == outcast->GetRawMagic() || arg.realDDRId == (*actualIncast)->GetRawMagic());
-                });
-            if (storageAlreadyInput) {
-                continue;
-            }
-            bool storageComesFromOtherSubgraph = false;
-            for (const auto& op : nLIST[i]) {
-                for (const auto& input : op->GetIOperands()) {
-                    if (input->GetRawMagic() != outcast->GetRawMagic()) {
-                        continue;
-                    }
-                    storageComesFromOtherSubgraph = std::any_of(
-                        input->GetProducers().begin(), input->GetProducers().end(),
-                        [i](const auto* producer) { return producer->GetSubgraphID() != static_cast<int>(i); });
-                    if (storageComesFromOtherSubgraph) {
-                        break;
-                    }
-                }
-                if (storageComesFromOtherSubgraph) {
-                    break;
-                }
-            }
-            if (storageComesFromOtherSubgraph) {
-                continue;
-            }
-            bool recorded = false;
-            for (const auto& op : nLIST[i]) {
-                if (!IsCopyIn(op->GetOpcode())) {
-                    continue;
-                }
-                for (size_t k = 0; k < op->GetIOperands().size(); k++) {
-                    if (op->GetIOperands()[k]->GetRawMagic() != outcast->GetRawMagic()) {
-                        continue;
-                    }
-                    const auto& incast = *actualIncast;
-                    // // Shared storage already addresses the input buffer; do not create a self alias.
-                    if (outcast->GetRawTensor() != incast->GetRawTensor()) {
-                        outcast->tensor->actualRawmagic = incast->GetRawMagic();
-                    }
-                    subFuncInvokeInfos[i].RecordTensorArg(k, incast->GetRawMagic(), incast->GetOffset(),
-                                                          incast->GetShape(), incast->tensor->rawshape,
-                                                          incast->Datatype(), false, incast, op->GetOpMagic());
-                    recorded = true;
-                    break;
-                }
-                if (recorded) {
-                    break;
-                }
-            }
+        if (RecordIncastForCopyInOperand(outcast, incast, i, *op)) {
+            return;
         }
     }
+}
+
+bool SubgraphToFunction::RecordIncastForCopyInOperand(const LogicalTensorPtr& outcast, const LogicalTensorPtr& incast,
+                                                      size_t i, Operation& op)
+{
+    for (size_t k = 0; k < op.GetIOperands().size(); k++) {
+        if (op.GetIOperands()[k]->GetRawMagic() != outcast->GetRawMagic()) {
+            continue;
+        }
+        // // Shared storage already addresses the input buffer; do not create a self alias.
+        if (outcast->GetRawTensor() != incast->GetRawTensor()) {
+            outcast->tensor->actualRawmagic = incast->GetRawMagic();
+        }
+        subFuncInvokeInfos[i].RecordTensorArg(k, incast->GetRawMagic(), incast->GetOffset(), incast->GetShape(),
+                                              incast->tensor->rawshape, incast->Datatype(), false, incast,
+                                              op.GetOpMagic());
+        return true;
+    }
+    return false;
 }
 
 void SubgraphToFunction::RecordIncastOutcast(Function& function)
@@ -894,18 +929,34 @@ Status SubgraphToFunction::BuildRootCallOpTokenDependency(
 
 Status SubgraphToFunction::IslandToFunction(Function& function)
 {
+    Function* rootFunc = nullptr;
+    if (CreateAndInitRootFunction(function, rootFunc) != SUCCESS) {
+        return FAILED;
+    }
+    size_t programIdx = 0;
+    if (BuildAllSubgraphCallOps(function, *rootFunc, programIdx) != SUCCESS) {
+        return FAILED;
+    }
+    return FinalizeRootFunction(function, *rootFunc, programIdx);
+}
+
+Status SubgraphToFunction::CreateAndInitRootFunction(Function& function, Function*& rootFunc)
+{
     // 1. Create root function
     auto rootName = Function::CreateRootRawName(function.GetRawName());
     Program::GetInstance().BeginFunction(rootName, function.GetFunctionType(), GraphType::EXECUTE_GRAPH);
-    auto rootFunc = Program::GetInstance().GetCurrentFunction();
+    rootFunc = Program::GetInstance().GetCurrentFunction();
     if (rootFunc == nullptr) {
         APASS_LOG_ERROR_F(Elements::Function, "Failed to create root function.");
         return FAILED;
     }
     InitializeRootFunction(function, *rootFunc);
+    return SUCCESS;
+}
 
+Status SubgraphToFunction::BuildAllSubgraphCallOps(Function& function, Function& rootFunc, size_t& programIdx)
+{
     // 2. Call HashInterface to compute hash value to determine isomorphism of each subgraph.
-    size_t programIdx = 0;
     std::unordered_map<const Operation*, Operation*> originOpToCallOp;
     for (size_t i = 0; i < nLIST.size(); i++) {
         Operation* callOp = nullptr;
@@ -920,40 +971,42 @@ Status SubgraphToFunction::IslandToFunction(Function& function)
             }
         }
     }
-    if (BuildRootCallOpTokenDependency(function, *rootFunc, originOpToCallOp) != SUCCESS) {
+    if (BuildRootCallOpTokenDependency(function, rootFunc, originOpToCallOp) != SUCCESS) {
         APASS_LOG_ERROR_F(Elements::Function, "Failed to build root callop token dependency.");
         return FAILED;
     }
+    return SUCCESS;
+}
 
+Status SubgraphToFunction::FinalizeRootFunction(Function& function, Function& rootFunc, size_t programIdx)
+{
     // 3. Finalize root function
+    auto rootName = Function::CreateRootRawName(function.GetRawName());
     auto rootEndResult = Program::GetInstance().EndFunction(rootName, false);
-    auto resultFunc = std::get<0>(rootEndResult);
-    if (resultFunc != rootFunc) {
+    if (std::get<0>(rootEndResult) != &rootFunc) {
         APASS_LOG_ERROR_F(Elements::Function, "Root function mismatch after finalization.");
         return FAILED;
     }
     if (function.GetFunctionType() == FunctionType::STATIC) {
-        rootFunc->topoInfo_ = function.topoInfo_;
+        rootFunc.topoInfo_ = function.topoInfo_;
     }
-    function.rootFunc_ = rootFunc;
+    function.rootFunc_ = &rootFunc;
 
     // 4. Add graphType of ESGInvokeInfoMap
     if (function.GetFunctionType() == FunctionType::STATIC) {
-        Status readyStateStatus = staticProcessor_.HandleReadyStates(rootFunc);
+        Status readyStateStatus = staticProcessor_.HandleReadyStates(&rootFunc);
         if (readyStateStatus != SUCCESS) {
             APASS_LOG_ERROR_F(Elements::Graph, "Failed to handle ready states.");
             return readyStateStatus;
         }
     }
     // Root calls are emitted in a valid historical order. Re-sort only when token-only dependencies require it.
-    if (!rootFunc->GetVarDependency().GetAllDependencies().empty()) {
-        rootFunc->SortOperations(SortOperationsMode::LIGHTWEIGHT_STABLE);
+    if (!rootFunc.GetVarDependency().GetAllDependencies().empty()) {
+        rootFunc.SortOperations(SortOperationsMode::LIGHTWEIGHT_STABLE);
     }
     // 5. symbolize esg to program subgraph for both static and dynamic paths
-    SymbolizeFunction(*rootFunc, mergedFuncList);
-
-    auto graphNum = nLIST.size();
-    APASS_LOG_INFO_F(Elements::Operation, "Compressed Graph %zu, total_Graph %zu.", programIdx, graphNum);
+    SymbolizeFunction(rootFunc, mergedFuncList);
+    APASS_LOG_INFO_F(Elements::Operation, "Compressed Graph %zu, total_Graph %zu.", programIdx, nLIST.size());
     return SUCCESS;
 }
 
@@ -1051,46 +1104,26 @@ std::shared_ptr<LogicalTensor> GetTensorDataSubgraphTensor(Operation& refOp)
     std::shared_ptr<LogicalTensor> subgraphTensor;
     switch (refOp.GetOpcode()) {
         case Opcode::OP_COPY_IN:
-            subgraphTensor = refOp.GetOOperands()[0];
-            break;
         case Opcode::OP_UB_COPY_L1:
+        case Opcode::OP_VEC_DUP:
+        case Opcode::OP_BIND_TENSOR:
+        case Opcode::OP_SHMEM_LOAD:
+        case Opcode::OP_VIEW:
+        case Opcode::OP_L1_RESHAPE_COPY_IN:
+        case Opcode::OP_RESHAPE_COPY_IN:
             subgraphTensor = refOp.GetOOperands()[0];
             break;
         case Opcode::OP_COPY_OUT:
+        case Opcode::OP_L0C_RESHAPE_COPY_OUT:
+        case Opcode::OP_RESHAPE_COPY_OUT:
             subgraphTensor = refOp.GetIOperands()[0];
             break;
-        case Opcode::OP_VEC_DUP:
-            subgraphTensor = refOp.GetOOperands()[0];
-            break;
-        case Opcode::OP_BIND_TENSOR:
-            subgraphTensor = refOp.GetOOperands()[0];
-            break;
-        case Opcode::OP_SHMEM_LOAD:
-            subgraphTensor = refOp.GetOOperands()[0];
-            break;
         case Opcode::OP_SHMEM_STORE:
-            subgraphTensor = refOp.GetIOperands()[1];
-            break;
         case Opcode::OP_SHMEM_GET:
             subgraphTensor = refOp.GetIOperands()[1];
             break;
         case Opcode::OP_SHMEM_PUT:
             subgraphTensor = refOp.GetIOperands()[2];
-            break;
-        case Opcode::OP_VIEW:
-            subgraphTensor = refOp.GetOOperands()[0];
-            break;
-        case Opcode::OP_L1_RESHAPE_COPY_IN:
-            subgraphTensor = refOp.GetOOperands()[0];
-            break;
-        case Opcode::OP_L0C_RESHAPE_COPY_OUT:
-            subgraphTensor = refOp.GetIOperands()[0];
-            break;
-        case Opcode::OP_RESHAPE_COPY_IN:
-            subgraphTensor = refOp.GetOOperands()[0];
-            break;
-        case Opcode::OP_RESHAPE_COPY_OUT:
-            subgraphTensor = refOp.GetIOperands()[0];
             break;
         default:
             break;
@@ -1124,6 +1157,108 @@ static std::vector<GetTensorDataUsageDesc> GetTensorDataBuildUsageDesc(Function&
     return getTensorDataUsageDescList;
 }
 
+namespace {
+
+std::shared_ptr<CopyOpAttribute> CreateCopyInTensorAndAttrFromIncast(IRBuilder& builder,
+                                                                     const std::shared_ptr<LogicalTensor>& source,
+                                                                     std::shared_ptr<LogicalTensor>& copyInTensor)
+{
+    copyInTensor = builder.CreateTensorVar(source->Datatype(), source->GetShape(), std::vector<SymbolicScalar>{},
+                                           source->Format());
+    GraphUtils::CopyDynStatus(copyInTensor, source);
+    std::vector<OpImmediate> copyInOffset(
+        OpImmediate::Specified(std::vector<int64_t>(copyInTensor->GetShape().size(), 0)));
+    std::vector<OpImmediate> copyInShape(OpImmediate::Specified(copyInTensor->GetShape()));
+    std::vector<OpImmediate> copyInRawShape(OpImmediate::Specified(copyInTensor->GetShape()));
+    return std::make_shared<CopyOpAttribute>(copyInOffset, MemoryType::MEM_UB, copyInShape, copyInRawShape);
+}
+
+Status CreateCopyInTensorAndAttrFromOutcast(Function& function, IRBuilder& builder,
+                                            std::unordered_map<int, GetTensorDataOutcastDesc>& outcastDescDict,
+                                            int index, std::shared_ptr<LogicalTensor>& copyInTensor,
+                                            std::shared_ptr<LogicalTensor>& copyInSourceTensor,
+                                            std::shared_ptr<CopyOpAttribute>& copyInAttr)
+{
+    if (outcastDescDict.count(index) == 0) {
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Index %d is not found in function %s. Please check whether the input graph is complete.",
+                          index, function.GetRawName().c_str());
+        return FAILED;
+    }
+    auto& outcastDesc = outcastDescDict[index];
+    auto outcastAttr = std::static_pointer_cast<CopyOpAttribute>(outcastDesc.copyout->GetOpAttribute());
+    copyInSourceTensor = outcastDesc.outcast;
+    copyInTensor = builder.CreateTensorVar(copyInSourceTensor->Datatype(), copyInSourceTensor->GetShape(),
+                                           std::vector<SymbolicScalar>{}, copyInSourceTensor->Format());
+    GraphUtils::CopyDynStatus(copyInTensor, copyInSourceTensor);
+    copyInAttr = std::make_shared<CopyOpAttribute>(outcastAttr->GetToOffset(), MemoryType::MEM_UB,
+                                                   outcastAttr->GetShape(), outcastAttr->GetRawShape());
+    return SUCCESS;
+}
+
+void AddTensorDataDependCopyInOp(Function& function, Operation* refOp, int index, MemoryType subgraphMemoryType,
+                                 int subgraphID, const std::shared_ptr<LogicalTensor>& copyInTensor,
+                                 const std::shared_ptr<LogicalTensor>& copyInSourceTensor,
+                                 std::shared_ptr<CopyOpAttribute> copyInAttr)
+{
+    copyInTensor->SetMemoryTypeBoth(subgraphMemoryType);
+    auto& copyInOp = PassOperationUtils::AddOperation(function, Opcode::OP_COPY_IN, {copyInSourceTensor},
+                                                      {copyInTensor},
+                                                      [&copyInAttr](Operation& op) { op.SetOpAttribute(copyInAttr); });
+    copyInOp.UpdateSubgraphID(subgraphID);
+    SetEmuOpcode(&copyInOp, EMUOP_TENSOR_GETDATA_DEPEND);
+    GetTensorDataSetIndex(&copyInOp, index);
+
+    refOp->GetIOperands().push_back(copyInTensor);
+    copyInTensor->AddConsumer(refOp);
+}
+
+Status InsertGetTensorDataCopyIn(Function& function, IRBuilder& builder,
+                                 std::unordered_map<int, GetTensorDataOutcastDesc>& outcastDescDict, Operation* refOp,
+                                 int index, const std::vector<RawSymbolicScalarPtr>& callList,
+                                 MemoryType subgraphMemoryType, int subgraphID)
+{
+    if (callList.size() == 0) {
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Call list is empty in function %s. Please check whether the input graph is complete.",
+                          function.GetRawName().c_str());
+        return FAILED;
+    }
+    // For the same index, only one copyin is necessary.
+    auto getTensorDataIOType = callList[0]
+                                   ->GetExpressionOperandList()[GET_TENSOR_DATA_OPERAND_INDEX_IOTYPE]
+                                   ->GetImmediateValue();
+    auto getTensorDataIOTypeIndex = callList[0]
+                                        ->GetExpressionOperandList()[GET_TENSOR_DATA_OPERAND_INDEX_IOTYPE_INDEX]
+                                        ->GetImmediateValue();
+
+    std::shared_ptr<LogicalTensor> copyInTensor;
+    std::shared_ptr<LogicalTensor> copyInSourceTensor;
+    std::shared_ptr<CopyOpAttribute> copyInAttr;
+    if (getTensorDataIOType == GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST) {
+        copyInSourceTensor = function.GetIncast()[getTensorDataIOTypeIndex];
+        copyInAttr = CreateCopyInTensorAndAttrFromIncast(builder, copyInSourceTensor, copyInTensor);
+    } else if (getTensorDataIOType == GET_TENSOR_DATA_OPERAND_IOTYPE_OUTCAST) {
+        if (CreateCopyInTensorAndAttrFromOutcast(function, builder, outcastDescDict, index, copyInTensor,
+                                                 copyInSourceTensor, copyInAttr) != SUCCESS) {
+            return FAILED;
+        }
+    } else {
+        // Impossible
+        APASS_LOG_ERROR_F(
+            Elements::Function,
+            "The operation is neither MOVE_IN nor MOVE_OUT in function %s. Please check whether the input "
+            "graph is valid.",
+            function.GetRawName().c_str());
+        return FAILED;
+    }
+    AddTensorDataDependCopyInOp(function, refOp, index, subgraphMemoryType, subgraphID, copyInTensor,
+                                copyInSourceTensor, copyInAttr);
+    return SUCCESS;
+}
+
+} // namespace
+
 Status SubgraphToFunction::GetTensorDataDependencyInsert(Function& function)
 {
     IRBuilder builder;
@@ -1133,71 +1268,10 @@ Status SubgraphToFunction::GetTensorDataDependencyInsert(Function& function)
 
     for (auto& [refOp, usageDict, subgraphMemoryType, subgraphID] : getTensorDataUsageDescList) {
         for (auto& [index, callList] : usageDict) {
-            std::shared_ptr<LogicalTensor> copyInTensor;
-            if (callList.size() == 0) {
-                APASS_LOG_ERROR_F(
-                    Elements::Function,
-                    "Call list is empty in function %s. Please check whether the input graph is complete.",
-                    function.GetRawName().c_str());
+            if (InsertGetTensorDataCopyIn(function, builder, getTensorDataOutcastDescDict, refOp, index, callList,
+                                          subgraphMemoryType, subgraphID) != SUCCESS) {
                 return FAILED;
             }
-            // For the same index, only one copyin is necessary.
-            auto getTensorDataIOType = callList[0]
-                                           ->GetExpressionOperandList()[GET_TENSOR_DATA_OPERAND_INDEX_IOTYPE]
-                                           ->GetImmediateValue();
-            auto getTensorDataIOTypeIndex = callList[0]
-                                                ->GetExpressionOperandList()[GET_TENSOR_DATA_OPERAND_INDEX_IOTYPE_INDEX]
-                                                ->GetImmediateValue();
-
-            std::shared_ptr<LogicalTensor> copyInSourceTensor;
-            std::shared_ptr<CopyOpAttribute> copyInAttr;
-            if (getTensorDataIOType == GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST) {
-                copyInSourceTensor = function.GetIncast()[getTensorDataIOTypeIndex];
-                copyInTensor = builder.CreateTensorVar(copyInSourceTensor->Datatype(), copyInSourceTensor->GetShape(),
-                                                       std::vector<SymbolicScalar>{}, copyInSourceTensor->Format());
-                GraphUtils::CopyDynStatus(copyInTensor, copyInSourceTensor);
-                std::vector<OpImmediate> copyInOffset(
-                    OpImmediate::Specified(std::vector<int64_t>(copyInTensor->GetShape().size(), 0)));
-                std::vector<OpImmediate> copyInShape(OpImmediate::Specified(copyInTensor->GetShape()));
-                std::vector<OpImmediate> copyInRawShape(OpImmediate::Specified(copyInTensor->GetShape()));
-                copyInAttr = std::make_shared<CopyOpAttribute>(copyInOffset, MemoryType::MEM_UB, copyInShape,
-                                                               copyInRawShape);
-            } else if (getTensorDataIOType == GET_TENSOR_DATA_OPERAND_IOTYPE_OUTCAST) {
-                if (!getTensorDataOutcastDescDict.count(index)) {
-                    APASS_LOG_ERROR_F(
-                        Elements::Function,
-                        "Index %d is not found in function %s. Please check whether the input graph is complete.",
-                        index, function.GetRawName().c_str());
-                    return FAILED;
-                }
-                auto& outcastDesc = getTensorDataOutcastDescDict[index];
-                auto outcastAttr = std::static_pointer_cast<CopyOpAttribute>(outcastDesc.copyout->GetOpAttribute());
-                copyInSourceTensor = outcastDesc.outcast;
-                copyInTensor = builder.CreateTensorVar(copyInSourceTensor->Datatype(), copyInSourceTensor->GetShape(),
-                                                       std::vector<SymbolicScalar>{}, copyInSourceTensor->Format());
-                GraphUtils::CopyDynStatus(copyInTensor, copyInSourceTensor);
-                copyInAttr = std::make_shared<CopyOpAttribute>(outcastAttr->GetToOffset(), MemoryType::MEM_UB,
-                                                               outcastAttr->GetShape(), outcastAttr->GetRawShape());
-            } else {
-                // Impossible
-                APASS_LOG_ERROR_F(
-                    Elements::Function,
-                    "The operation is neither MOVE_IN nor MOVE_OUT in function %s. Please check whether the input "
-                    "graph is valid.",
-                    function.GetRawName().c_str());
-                return FAILED;
-            }
-
-            copyInTensor->SetMemoryTypeBoth(subgraphMemoryType);
-            auto& copyInOp = PassOperationUtils::AddOperation(
-                function, Opcode::OP_COPY_IN, {copyInSourceTensor}, {copyInTensor},
-                [&copyInAttr](Operation& op) { op.SetOpAttribute(copyInAttr); });
-            copyInOp.UpdateSubgraphID(subgraphID);
-            SetEmuOpcode(&copyInOp, EMUOP_TENSOR_GETDATA_DEPEND);
-            GetTensorDataSetIndex(&copyInOp, index);
-
-            refOp->GetIOperands().push_back(copyInTensor);
-            copyInTensor->AddConsumer(refOp);
         }
     }
     return SUCCESS;

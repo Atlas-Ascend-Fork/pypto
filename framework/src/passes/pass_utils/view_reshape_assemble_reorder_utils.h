@@ -143,6 +143,16 @@ private:
         std::vector<FaninAssembleRecord> faninAssembles;
     };
 
+    // fanin 链路的中间 shape 推导结果，供拆分后的记录函数间传递
+    struct FaninShapeInfo {
+        SymbolicShape inputDynShape;
+        SymbolicShape middleDynShape;
+        SymbolicShape outputDynShape;
+        Shape reshapeInputShape;
+        SymbolicShape reshapeDynShape;
+        SymbolicShape finalOutputDynShape;
+    };
+
     void ClearRecords();
     bool HasRecords() const;
     static bool HasCascadedPattern(Function& function);
@@ -154,6 +164,11 @@ private:
                                       const ChainMatch& match, const ViewOpAttribute& viewAttr,
                                       const Shape& reshapeOutputShape, const SymbolicShape& reshapeDynShape,
                                       const SymbolicShape& inputDynShape);
+    Status CollectFanoutViewRecords(Operation& reshapeOp, const ChainMatch& match, const ViewOpAttribute& viewAttr,
+                                    const LogicalTensorPtr& fanoutSource, const SymbolicShape& compactDynShape,
+                                    const SymbolicShape& middleDynShape, const SymbolicShape& inputDynShape,
+                                    const Shape& reshapeOutputShape, const SymbolicShape& reshapeDynShape,
+                                    ViewReshapeFanoutRecord& record, bool& allCollected);
     Status TryCollectFanoutViewRecord(Operation& reshapeOp, Operation& consumer, const ChainMatch& match,
                                       const ViewOpAttribute& viewAttr, const SymbolicShape& compactDynShape,
                                       const SymbolicShape& middleDynShape, const SymbolicShape& inputDynShape,
@@ -166,6 +181,12 @@ private:
     Status TryRecordReshapeAssembleFanin(Function& function, Operation& reshapeOp, Operation& assembleOp,
                                          const ChainMatch& match, const AssembleOpAttribute& assembleAttr,
                                          const AxisPlan& axisPlan);
+    static bool BuildFaninShapeInfo(const ChainMatch& match, const AssembleOpAttribute& assembleAttr,
+                                    const AxisPlan& axisPlan, FaninShapeInfo& info);
+    Status CollectFaninAssembleRecords(Operation& reshapeOp, Operation& assembleOp, const ChainMatch& match,
+                                       const AssembleOpAttribute& assembleAttr, const LogicalTensorPtr& faninSource,
+                                       const FaninShapeInfo& info, ReshapeAssembleFaninRecord& record,
+                                       bool& allCollected);
     Status TryCollectFaninAssembleRecord(Operation& reshapeOp, Operation& assembleOp, Operation& producer,
                                          const ChainMatch& match, const AssembleOpAttribute& assembleAttr,
                                          const SymbolicShape& inputDynShape, const SymbolicShape& middleDynShape,

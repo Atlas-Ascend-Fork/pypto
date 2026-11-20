@@ -54,6 +54,7 @@ private:
     void Init();
     Status GetTensorDataDependencyInsert(Function& function);
     Status GetTensorDataDependencyClear(Function& function);
+    Status BuildGraphAndRecordIncastOutcast(Function& function);
 
     void DoHealthCheckAfter(Function& function, const std::string& folderPath) override;
 
@@ -70,6 +71,9 @@ private:
     void SetHashOrderInfoOnCallOp(const std::vector<std::shared_ptr<Operation>>& subgraph, Operation& callOp) const;
     void InitializeRootFunction(Function& function, Function& rootFunc);
     Status IslandToFunction(Function& function);
+    Status CreateAndInitRootFunction(Function& function, Function*& rootFunc);
+    Status BuildAllSubgraphCallOps(Function& function, Function& rootFunc, size_t& programIdx);
+    Status FinalizeRootFunction(Function& function, Function& rootFunc, size_t programIdx);
     void ConstructnList(Function& function);
 
     // 与 subFuncInvokeInfos相关的函数
@@ -79,6 +83,14 @@ private:
     void RecordConnectionWithProducers(RecordInfo recordInfo, SubfuncInvokeInfoTy& iter);
     void RecordEsgOutcast(Function& function, size_t i, size_t j, size_t k);
     void RecordEsgIncastOutcast(Function& function);
+    void RecordEsgIncastOutcastForAllOps(Function& function);
+    void RecordPartialUpdateOutcastIncast(Function& function);
+    void RecordPartialUpdateOutcastForIndex(Function& function, int outcastIndex);
+    void RecordPartialUpdateIncastForSubgraph(const LogicalTensorPtr& outcast, const LogicalTensorPtr& incast,
+                                              size_t i);
+    void RecordIncastForPartialUpdateStorage(const LogicalTensorPtr& outcast, const LogicalTensorPtr& incast, size_t i);
+    bool RecordIncastForCopyInOperand(const LogicalTensorPtr& outcast, const LogicalTensorPtr& incast, size_t i,
+                                      Operation& op);
     void InsertParameter(size_t i, Function& leafFunc);
     void ConstructParamMap(Function& function);
     void RecordOutcastInfo(Function& function, RecordInfo recordInfo, SubfuncInvokeInfoTy& iter);

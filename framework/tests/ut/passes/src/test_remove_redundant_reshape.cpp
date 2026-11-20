@@ -1013,3 +1013,98 @@ TEST_F(RemoveRedundantReshapeTest, TestDirectReshapeAssemblePreservesOutcastAlia
     EXPECT_EQ(generated->GetRawMagic(), output->GetRawMagic());
     EXPECT_EQ(generated->Symbol(), output->Symbol());
 }
+
+/*
+ * Fanin 链路：reshape 输入由两个 ASSEMBLE 写入（各自输入来自 A_MUL_B 输出），
+ * reshape 将 1 维 input 展开为 2 维 middle，链上 ASSEMBLE 的二维 toOffset 落在折叠组
+ * 非连续区域 -> 走 TryRecordReshapeAssembleFanin 路径收集两个 fanin assemble 并重排。
+ * 重排后：两个原 fanin ASSEMBLE 与链上 ASSEMBLE 被删除，插入等量新 ASSEMBLE
+ * （写 reshapeInput）和一个 metadata RESHAPE。
+ */
+TEST_F(RemoveRedundantReshapeTest, TestReshapeAssembleFaninWithMatmul)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "TestReshapeAssembleFanin",
+                                           "TestReshapeAssembleFanin", nullptr);
+    ASSERT_NE(func, nullptr);
+
+    const std::vector<int64_t> matmulOutShape{4096};
+    const std::vector<int64_t> inputShape{8192};
+    const std::vector<int64_t> middleShape{4, 2048};
+    // 链上 assemble 的输出尾维与 middle 不同（4096 != 2048），使折叠组判定为非连续，
+    // 从而进入 fanin 收集路径；同时零 toOffset 保证 fanin 写入区不越界
+    const std::vector<int64_t> outputShape{4, 4096};
+
+    auto mmA1 = IRBuilder().CreateTensorVar(DT_FP32, matmulOutShape, CreateTestConstIntVector(matmulOutShape));
+    auto mmB1 = IRBuilder().CreateTensorVar(DT_FP32, matmulOutShape, CreateTestConstIntVector(matmulOutShape));
+    auto mmC1 = IRBuilder().CreateTensorVar(DT_FP32, matmulOutShape, CreateTestConstIntVector(matmulOutShape));
+    auto mmA2 = IRBuilder().CreateTensorVar(DT_FP32, matmulOutShape, CreateTestConstIntVector(matmulOutShape));
+    auto mmB2 = IRBuilder().CreateTensorVar(DT_FP32, matmulOutShape, CreateTestConstIntVector(matmulOutShape));
+    auto mmC2 = IRBuilder().CreateTensorVar(DT_FP32, matmulOutShape, CreateTestConstIntVector(matmulOutShape));
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, inputShape, CreateTestConstIntVector(inputShape));
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, middleShape, CreateTestConstIntVector(middleShape));
+    auto output = IRBuilder().CreateTensorVar(DT_FP32, outputShape, CreateTestConstIntVector(outputShape));
+
+    IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_A_MUL_B, {mmA1, mmB1}, {mmC1});
+    IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_A_MUL_B, {mmA2, mmB2}, {mmC2});
+
+    auto& faninAssemble1 = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_ASSEMBLE, {mmC1}, {input});
+    faninAssemble1.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0}));
+    auto& faninAssemble2 = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_ASSEMBLE, {mmC2}, {input});
+    faninAssemble2.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{4096}));
+
+    auto& reshapeOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_RESHAPE, {input}, {middle});
+    auto& assembleOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_ASSEMBLE, {middle}, {output});
+    assembleOp.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0}));
+
+    func->inCasts_.push_back(mmA1);
+    func->inCasts_.push_back(mmB1);
+    func->inCasts_.push_back(mmA2);
+    func->inCasts_.push_back(mmB2);
+    func->outCasts_.push_back(output);
+
+    const int faninAssemble1Magic = faninAssemble1.GetOpMagic();
+    const int faninAssemble2Magic = faninAssemble2.GetOpMagic();
+    const int reshapeMagic = reshapeOp.GetOpMagic();
+    const int assembleMagic = assembleOp.GetOpMagic();
+
+    // 重排开关：额外构造一条 reshape->assemble->assemble 级联链（与主链不相交，
+    // 且 reshape 采用折叠 shape 避免被冗余消除），使 HasCascadedAssemblesAfterReshape
+    // 命中后 Process 才会执行 Append 阶段
+    const std::vector<int64_t> cascadInShape{4096};
+    const std::vector<int64_t> cascadMidShape{2, 2048};
+    auto cascadIn = IRBuilder().CreateTensorVar(DT_FP32, cascadInShape, CreateTestConstIntVector(cascadInShape));
+    auto cascadMid = IRBuilder().CreateTensorVar(DT_FP32, cascadMidShape, CreateTestConstIntVector(cascadMidShape));
+    auto cascadMidOut = IRBuilder().CreateTensorVar(DT_FP32, cascadMidShape, CreateTestConstIntVector(cascadMidShape));
+    auto cascadOut = IRBuilder().CreateTensorVar(DT_FP32, cascadMidShape, CreateTestConstIntVector(cascadMidShape));
+    IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_RESHAPE, {cascadIn}, {cascadMid});
+    auto& cascadedAssemble1 = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_ASSEMBLE, {cascadMid}, {cascadMidOut});
+    cascadedAssemble1.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0}));
+    IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_ASSEMBLE, {cascadMidOut}, {cascadOut});
+
+    RemoveRedundantReshape pass;
+    EXPECT_EQ(pass.RunOnFunction(*func), SUCCESS);
+
+    auto ops = func->Operations();
+    EXPECT_TRUE(IsOpRemoved(ops, faninAssemble1Magic)) << "Fanin assemble1 should be removed after reorder";
+    EXPECT_TRUE(IsOpRemoved(ops, faninAssemble2Magic)) << "Fanin assemble2 should be removed after reorder";
+    EXPECT_TRUE(IsOpRemoved(ops, assembleMagic)) << "Chained assemble should be removed after reorder";
+    EXPECT_TRUE(IsOpRemoved(ops, reshapeMagic)) << "Original reshape should be removed after reorder";
+
+    int assembleCount = 0;
+    int reshapeCount = 0;
+    int matmulCount = 0;
+    for (auto& op : ops) {
+        if (op.GetOpcode() == Opcode::OP_ASSEMBLE) {
+            assembleCount++;
+        } else if (op.GetOpcode() == Opcode::OP_RESHAPE) {
+            reshapeCount++;
+        } else if (op.GetOpcode() == Opcode::OP_A_MUL_B) {
+            matmulCount++;
+        }
+    }
+    // 两个 fanin assemble 重排为直接写 reshaped 输入缓冲的新 assemble；
+    // 级联链在 MergeViewAssemble 阶段被合并，不再保留
+    EXPECT_EQ(assembleCount, 2) << "Two new assembles for fanin should remain";
+    EXPECT_EQ(reshapeCount, 1) << "One metadata reshape should be re-created";
+    EXPECT_EQ(matmulCount, 2) << "Matmul ops should be preserved";
+}

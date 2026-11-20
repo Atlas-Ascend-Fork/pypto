@@ -59,6 +59,7 @@ private:
     Status PostCheck(Function& function) override;
     Status RunOnFunction(Function& function) override;
     Status CreateMoveOp(Function& function) const;
+    Status ProcessSingleOp(Function& function, Operation& op, Opcode sliceOpcode, Opcode contractOpcode) const;
     void SetCopyAttr(Operation& op, ViewOpAttribute* viewOpAttribute) const;
     void SetL0C2L1CopyAttr(Operation& op, const Shape& realShape, const std::vector<OpImmediate>& fromOffset,
                            const std::vector<OpImmediate>& toOffset,
@@ -96,6 +97,8 @@ private:
                                const std::vector<OpImmediate>& toOffset) const;
     Status ProcessL0CCopyUBConv(Operation& op) const;
     Status CheckTransFormatTopology(Operation& op, Operation*& outTransFormatOp) const;
+    Status ValidateTransFormatProducer(Operation& op, const LogicalTensorPtr& inputTensor, Operation* transFormatOp,
+                                       bool& isValid) const;
 };
 } // namespace npu::tile_fwk
 #endif // PASS_GENERATE_MOVE_OP_H_

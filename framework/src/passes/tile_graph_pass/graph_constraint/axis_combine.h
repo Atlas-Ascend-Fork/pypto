@@ -42,6 +42,9 @@ public:
 
 private:
     Status AlignBroadCastOpInputs(Function& function, Operation& op);
+    Status InsertExpandForOperand(Function& function, Operation& op, LogicalTensors& inputTensor, size_t idx);
+    Status InsertBrcbForOperand(Function& function, Operation& op, LogicalTensors& inputTensor, size_t idx,
+                                int64_t padValue);
     LogicalTensorPtr CreateAlignedTensor(const LogicalTensorPtr& srcTensor, const std::vector<int64_t>& alignedShape);
     bool enableBrcb_{true};
     AxisCombineMarker axisCombineMarker;

@@ -580,11 +580,8 @@ Status ViewReshapeAssembleReorderUtils::TryRecordViewReshapeFanout(Function& fun
         return SUCCESS;
     }
     SymbolicShape middleDynShape;
-    if (!GetSymbolicShape(match.middle, middleDynShape)) {
-        return SUCCESS;
-    }
     SymbolicShape compactDynShape;
-    if (!GetSymbolicShape(match.output, compactDynShape)) {
+    if (!GetSymbolicShape(match.middle, middleDynShape) || !GetSymbolicShape(match.output, compactDynShape)) {
         return SUCCESS;
     }
 
@@ -598,8 +595,30 @@ Status ViewReshapeAssembleReorderUtils::TryRecordViewReshapeFanout(Function& fun
                                    GetChainScopeInfo(viewOp, reshapeOp),
                                    {}};
 
-    for (Operation* consumer : consumers) {
+    bool allCollected = false;
+    Status status = CollectFanoutViewRecords(reshapeOp, match, viewAttr, match.output, compactDynShape, middleDynShape,
+                                             inputDynShape, reshapeOutputShape, reshapeDynShape, record, allCollected);
+    if (status != SUCCESS) {
+        return status;
+    }
+    if (!allCollected) {
+        return SUCCESS;
+    }
+    viewReshapeFanoutRecords_.emplace_back(std::move(record));
+    MarkViewReshapeFanoutVisited(viewOp, reshapeOp, viewReshapeFanoutRecords_.back());
+    return SUCCESS;
+}
+
+Status ViewReshapeAssembleReorderUtils::CollectFanoutViewRecords(
+    Operation& reshapeOp, const ChainMatch& match, const ViewOpAttribute& viewAttr,
+    const LogicalTensorPtr& fanoutSource, const SymbolicShape& compactDynShape, const SymbolicShape& middleDynShape,
+    const SymbolicShape& inputDynShape, const Shape& reshapeOutputShape, const SymbolicShape& reshapeDynShape,
+    ViewReshapeFanoutRecord& record, bool& allCollected)
+{
+    allCollected = true;
+    for (Operation* consumer : fanoutSource->GetConsumers()) {
         if (consumer == nullptr) {
+            allCollected = false;
             return SUCCESS;
         }
         FanoutViewRecord fanoutRecord;
@@ -611,12 +630,11 @@ Status ViewReshapeAssembleReorderUtils::TryRecordViewReshapeFanout(Function& fun
             return status;
         }
         if (!canReorder) {
+            allCollected = false;
             return SUCCESS;
         }
         record.fanoutViews.emplace_back(std::move(fanoutRecord));
     }
-    viewReshapeFanoutRecords_.emplace_back(std::move(record));
-    MarkViewReshapeFanoutVisited(viewOp, reshapeOp, viewReshapeFanoutRecords_.back());
     return SUCCESS;
 }
 
@@ -757,54 +775,76 @@ Status ViewReshapeAssembleReorderUtils::TryRecordReshapeAssembleFanin(Function& 
     if (producers.size() <= 1 || GetSingleConsumer(match.input) == nullptr) {
         return SUCCESS;
     }
-    SymbolicShape inputDynShape;
-    SymbolicShape middleDynShape;
-    SymbolicShape outputDynShape;
-    if (!GetChainSymbolicShapes(match, inputDynShape, middleDynShape, outputDynShape)) {
+    FaninShapeInfo info;
+    if (!BuildFaninShapeInfo(match, assembleAttr, axisPlan, info)) {
         return SUCCESS;
     }
-    Shape reshapeInputShape;
-    SymbolicShape reshapeDynShape;
-    if (!ApplyBackwardShape(match.output->GetShape(), outputDynShape, axisPlan, reshapeInputShape, reshapeDynShape)) {
-        return SUCCESS;
-    }
-    SymbolicShape finalOutputDynShape;
-    if (!BuildAssembledValidShape(assembleAttr.GetToOffset(), assembleAttr.GetToDynOffset(), middleDynShape,
-                                  match.output->GetShape().size(), finalOutputDynShape)) {
-        return SUCCESS;
-    }
+    ReshapeAssembleFaninRecord record{
+        &reshapeOp,
+        &assembleOp,
+        match.output,
+        irBuilder_.CreateTensorVar(function, match.output->Datatype(), info.reshapeInputShape, info.reshapeDynShape,
+                                   match.output->Format()),
+        info.reshapeDynShape,
+        info.finalOutputDynShape,
+        GetFirstSpan(reshapeOp, assembleOp),
+        GetChainScopeInfo(reshapeOp, assembleOp),
+        {}};
 
-    ReshapeAssembleFaninRecord record{&reshapeOp,
-                                      &assembleOp,
-                                      match.output,
-                                      irBuilder_.CreateTensorVar(function, match.output->Datatype(), reshapeInputShape,
-                                                                 reshapeDynShape, match.output->Format()),
-                                      reshapeDynShape,
-                                      finalOutputDynShape,
-                                      GetFirstSpan(reshapeOp, assembleOp),
-                                      GetChainScopeInfo(reshapeOp, assembleOp),
-                                      {}};
+    bool allCollected = false;
+    Status status = CollectFaninAssembleRecords(reshapeOp, assembleOp, match, assembleAttr, match.input, info, record,
+                                                allCollected);
+    if (status != SUCCESS) {
+        return status;
+    }
+    if (!allCollected) {
+        return SUCCESS;
+    }
+    reshapeAssembleFaninRecords_.emplace_back(std::move(record));
+    MarkReshapeAssembleFaninVisited(reshapeOp, assembleOp, reshapeAssembleFaninRecords_.back());
+    return SUCCESS;
+}
 
-    for (Operation* producer : producers) {
+bool ViewReshapeAssembleReorderUtils::BuildFaninShapeInfo(const ChainMatch& match,
+                                                          const AssembleOpAttribute& assembleAttr,
+                                                          const AxisPlan& axisPlan, FaninShapeInfo& info)
+{
+    if (!GetChainSymbolicShapes(match, info.inputDynShape, info.middleDynShape, info.outputDynShape)) {
+        return false;
+    }
+    if (!ApplyBackwardShape(match.output->GetShape(), info.outputDynShape, axisPlan, info.reshapeInputShape,
+                            info.reshapeDynShape)) {
+        return false;
+    }
+    return BuildAssembledValidShape(assembleAttr.GetToOffset(), assembleAttr.GetToDynOffset(), info.middleDynShape,
+                                    match.output->GetShape().size(), info.finalOutputDynShape);
+}
+
+Status ViewReshapeAssembleReorderUtils::CollectFaninAssembleRecords(
+    Operation& reshapeOp, Operation& assembleOp, const ChainMatch& match, const AssembleOpAttribute& assembleAttr,
+    const LogicalTensorPtr& faninSource, const FaninShapeInfo& info, ReshapeAssembleFaninRecord& record,
+    bool& allCollected)
+{
+    allCollected = true;
+    for (Operation* producer : faninSource->GetProducers()) {
         if (producer == nullptr) {
+            allCollected = false;
             return SUCCESS;
         }
         FaninAssembleRecord faninRecord;
         bool canReorder = false;
-        Status status = TryCollectFaninAssembleRecord(reshapeOp, assembleOp, *producer, match, assembleAttr,
-                                                      inputDynShape, middleDynShape, outputDynShape, reshapeInputShape,
-                                                      reshapeDynShape, faninRecord, canReorder);
+        Status status = TryCollectFaninAssembleRecord(
+            reshapeOp, assembleOp, *producer, match, assembleAttr, info.inputDynShape, info.middleDynShape,
+            info.outputDynShape, info.reshapeInputShape, info.reshapeDynShape, faninRecord, canReorder);
         if (status != SUCCESS) {
             return status;
         }
         if (!canReorder) {
+            allCollected = false;
             return SUCCESS;
         }
         record.faninAssembles.emplace_back(std::move(faninRecord));
     }
-
-    reshapeAssembleFaninRecords_.emplace_back(std::move(record));
-    MarkReshapeAssembleFaninVisited(reshapeOp, assembleOp, reshapeAssembleFaninRecords_.back());
     return SUCCESS;
 }
 

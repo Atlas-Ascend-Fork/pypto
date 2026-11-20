@@ -119,72 +119,8 @@ Status IntraSubgraphAdapter::AdaptBoundaryTensors(Function& function)
     LogicalTensors boundaryTensors = CollectBoundaryTensors(function);
 
     for (size_t i = 0; i < boundaryTensors.size(); i++) {
-        LogicalTensorPtr tensor = boundaryTensors[i];
-        if (CheckBoundaryTensor(tensor) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Tensor,
-                              "Check boundary tensor failed; Please check the CheckBoundaryTensor method.");
+        if (AdaptSingleBoundaryTensor(function, boundaryTensors[i]) != SUCCESS) {
             return FAILED;
-        }
-
-        // If the boundary tensor is already in the ddr, then skip processing this tensor
-        if (tensor->GetMemoryTypeOriginal() == MEM_DEVICE_DDR) {
-            RouteBoundaryTensorToDDR(tensor);
-            continue;
-        }
-
-        std::set<int> producerColors, consumerColors;
-        CollectProducerColors(tensor, producerColors);
-        CollectConsumerColors(tensor, consumerColors);
-
-        std::set<int> commonColors = SetIntersection(producerColors, consumerColors);
-        if (CheckColorCount(function, tensor, commonColors.size()) != SUCCESS) {
-            return FAILED;
-        }
-        if (commonColors.size() == 1) {
-            if (!Platform::Instance().GetDie().HasDirectPath(tensor->GetMemoryTypeOriginal(), MEM_DEVICE_DDR)) {
-                APASS_LOG_INFO_F(
-                    Elements::Tensor,
-                    "No direct path from %s to DDR for boundary tensor %s, process as DDR boundary directly.",
-                    MemoryTypeToString(tensor->GetMemoryTypeOriginal()).c_str(), tensor->Dump().c_str());
-                if (ProcessBoundaryTensor(function, tensor) == FAILED) {
-                    APASS_LOG_ERROR_F(
-                        Elements::Tensor,
-                        "Process boundary tensor failed, tensor magic : %d; Please check ProcessBoundaryTensor.",
-                        tensor->GetMagic());
-                    return FAILED;
-                }
-                continue;
-            }
-            // For boundary tensor that have both producer and consumer in a single subgraph,
-            // we split it to multiple boundary tensors, whose producers and consumers do not share same subgraph.
-            int mainSubgraphID = *(commonColors.begin()); // the only subgraph id that has both producers and consumers.
-            LogicalTensors newBoundaryTensors;
-
-            APASS_LOG_DEBUG_F(Elements::Tensor, "********** %s requires SplitBoundaryTensor. **********",
-                              function.GetMagicName().c_str());
-            APASS_LOG_DEBUG_F(Elements::Tensor,
-                              "Boundary tensor: %s, mainSubgraphID: %d, producerColors: %s, consumerColors: %s",
-                              tensor->Dump().c_str(), mainSubgraphID, IntSetToStr(producerColors).c_str(),
-                              IntSetToStr(consumerColors).c_str());
-            for (const auto& producer : tensor->GetProducers()) {
-                APASS_LOG_DEBUG_F(Elements::Operation, "producer: %s", producer->Dump().c_str());
-            }
-            for (const auto& consumer : tensor->GetConsumers()) {
-                APASS_LOG_DEBUG_F(Elements::Operation, "consumer: %s", consumer->Dump().c_str());
-            }
-
-            if (SplitBoundaryTensor(function, tensor, mainSubgraphID, newBoundaryTensors) == FAILED) {
-                APASS_LOG_ERROR_F(
-                    Elements::Tensor,
-                    "Split boundary tensor failed, tensor magic : %d; Please check SplitBoundaryTensor method.",
-                    tensor->GetMagic());
-                return FAILED;
-            }
-            if (ProcessBoundaryTensors(function, newBoundaryTensors) == FAILED) {
-                APASS_LOG_ERROR_F(Elements::Tensor,
-                                  "Process boundary tensors failed; Please check ProcessBoundaryTensors method.");
-                return FAILED;
-            }
         }
     }
     if (RouteVersionGroupsToDDR(function) != SUCCESS) {
@@ -198,6 +134,91 @@ Status IntraSubgraphAdapter::AdaptBoundaryTensors(Function& function)
         }
     }
     return SUCCESS;
+}
+
+Status IntraSubgraphAdapter::AdaptSingleBoundaryTensor(Function& function, const LogicalTensorPtr& tensor)
+{
+    if (CheckBoundaryTensor(tensor) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Tensor,
+                          "Check boundary tensor failed; Please check the CheckBoundaryTensor method.");
+        return FAILED;
+    }
+
+    // If the boundary tensor is already in the ddr, then skip processing this tensor
+    if (tensor->GetMemoryTypeOriginal() == MEM_DEVICE_DDR) {
+        RouteBoundaryTensorToDDR(tensor);
+        return SUCCESS;
+    }
+
+    std::set<int> producerColors;
+    std::set<int> consumerColors;
+    CollectProducerColors(tensor, producerColors);
+    CollectConsumerColors(tensor, consumerColors);
+
+    std::set<int> commonColors = SetIntersection(producerColors, consumerColors);
+    if (CheckColorCount(function, tensor, commonColors.size()) != SUCCESS) {
+        return FAILED;
+    }
+    if (commonColors.size() != 1) {
+        return SUCCESS;
+    }
+    return AdaptSharedColorBoundaryTensor(function, tensor, commonColors, producerColors, consumerColors);
+}
+
+Status IntraSubgraphAdapter::AdaptSharedColorBoundaryTensor(Function& function, const LogicalTensorPtr& tensor,
+                                                            const std::set<int>& commonColors,
+                                                            const std::set<int>& producerColors,
+                                                            const std::set<int>& consumerColors)
+{
+    if (!Platform::Instance().GetDie().HasDirectPath(tensor->GetMemoryTypeOriginal(), MEM_DEVICE_DDR)) {
+        APASS_LOG_INFO_F(Elements::Tensor,
+                         "No direct path from %s to DDR for boundary tensor %s, process as DDR boundary directly.",
+                         MemoryTypeToString(tensor->GetMemoryTypeOriginal()).c_str(), tensor->Dump().c_str());
+        if (ProcessBoundaryTensor(function, tensor) == FAILED) {
+            APASS_LOG_ERROR_F(Elements::Tensor,
+                              "Process boundary tensor failed, tensor magic : %d; Please check ProcessBoundaryTensor.",
+                              tensor->GetMagic());
+            return FAILED;
+        }
+        return SUCCESS;
+    }
+    // For boundary tensor that have both producer and consumer in a single subgraph,
+    // we split it to multiple boundary tensors, whose producers and consumers do not share same subgraph.
+    int mainSubgraphID = *(commonColors.begin()); // the only subgraph id that has both producers and consumers.
+    LogicalTensors newBoundaryTensors;
+
+    LogSharedColorBoundaryTensor(function, tensor, mainSubgraphID, producerColors, consumerColors);
+
+    if (SplitBoundaryTensor(function, tensor, mainSubgraphID, newBoundaryTensors) == FAILED) {
+        APASS_LOG_ERROR_F(Elements::Tensor,
+                          "Split boundary tensor failed, tensor magic : %d; Please check SplitBoundaryTensor method.",
+                          tensor->GetMagic());
+        return FAILED;
+    }
+    if (ProcessBoundaryTensors(function, newBoundaryTensors) == FAILED) {
+        APASS_LOG_ERROR_F(Elements::Tensor,
+                          "Process boundary tensors failed; Please check ProcessBoundaryTensors method.");
+        return FAILED;
+    }
+    return SUCCESS;
+}
+
+void IntraSubgraphAdapter::LogSharedColorBoundaryTensor(Function& function, const LogicalTensorPtr& tensor,
+                                                        int mainSubgraphID, const std::set<int>& producerColors,
+                                                        const std::set<int>& consumerColors)
+{
+    APASS_LOG_DEBUG_F(Elements::Tensor, "********** %s requires SplitBoundaryTensor. **********",
+                      function.GetMagicName().c_str());
+    APASS_LOG_DEBUG_F(Elements::Tensor,
+                      "Boundary tensor: %s, mainSubgraphID: %d, producerColors: %s, consumerColors: %s",
+                      tensor->Dump().c_str(), mainSubgraphID, IntSetToStr(producerColors).c_str(),
+                      IntSetToStr(consumerColors).c_str());
+    for (const auto& producer : tensor->GetProducers()) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "producer: %s", producer->Dump().c_str());
+    }
+    for (const auto& consumer : tensor->GetConsumers()) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "consumer: %s", consumer->Dump().c_str());
+    }
 }
 
 Status IntraSubgraphAdapter::CheckColorCount(Function& function, LogicalTensorPtr tensor, size_t commonColorCount)
@@ -249,44 +270,8 @@ Status IntraSubgraphAdapter::SplitBoundaryTensor(Function& function, LogicalTens
 {
     // If the tensor has multiple producers in different subgraph, producers must be assemble-family or OP_COPY_OUT.
     for (const auto& producer : tensor->GetProducers()) {
-        if (producer->GetSubgraphID() != mainSubgraphID) {
-            Opcode producerOpcode = producer->GetOpcode();
-            if (OpcodeManager::Inst().GetOpCalcType(producerOpcode) != OpCalcType::MOVE_OUT &&
-                OpcodeManager::Inst().GetOpCalcType(producerOpcode) != OpCalcType::MOVE_LOCAL) {
-                APASS_LOG_ERROR_F(
-                    Elements::Operation,
-                    "OpCalcType error, boundary tensor magic : %d, producer op magic : %d, producer op : %s; If the "
-                    "tensor has multiple producers, then the producers can only be assemble-family/OP_COPY_OUT.%s",
-                    tensor->GetMagic(), producer->GetOpMagic(), producer->GetOpcodeStr().c_str(),
-                    GetFormatBacktrace(*producer).c_str());
-                return FAILED;
-            }
-            LogicalTensors& producerInputs = producer->GetIOperands();
-            if (producerInputs.size() != 1) {
-                APASS_LOG_ERROR_F(
-                    Elements::Operation,
-                    "Producer input error, boundary tensor magic : %d, producer op magic : %d, producer op : %s; The "
-                    "Assemble-family producer should have one input operand.%s",
-                    tensor->GetMagic(), producer->GetOpMagic(), producer->GetOpcodeStr().c_str(),
-                    GetFormatBacktrace(*producer).c_str());
-                return FAILED;
-            }
-            // When there are multiple consumers, for producer from other subgraph, we insert a new ASSEMBLE
-            // to the other subgraph, and change the producer to main subgraph.
-            if (tensor->GetConsumers().size() != 1) {
-                LogicalTensorPtr assembleInput = producer->GetIOperands()[0];
-                APASS_LOG_DEBUG_F(Elements::Tensor, "SplitBoundaryTensor output of %s[%d]",
-                                  producer->GetOpcodeStr().c_str(), producer->GetOpMagic());
-                LogicalTensorPtr newTensor = InsertOpBetween(function, config::GetContractOpcode(), assembleInput,
-                                                             {producer});
-                producer->UpdateSubgraphID(mainSubgraphID);
-                APASS_LOG_INFO_F(Elements::Tensor, "Adjust %s(magic : %d) to subgraph %d.",
-                                 producer->GetOpcodeStr().c_str(), producer->GetOpMagic(), mainSubgraphID);
-                // The intermediate tensor become a new boundary tensor.
-                newBoundaryTensors.push_back(newTensor);
-                APASS_LOG_INFO_F(Elements::Tensor, "Add new tensor(magic : %d) to boundary tensors.",
-                                 assembleInput->GetMagic());
-            }
+        if (SplitProducerToMainSubgraph(function, tensor, producer, mainSubgraphID, newBoundaryTensors) != SUCCESS) {
+            return FAILED;
         }
     }
     // When there is only one consumer, we process the boundary tensor as it doesn't have a main subgraph.
@@ -294,7 +279,59 @@ Status IntraSubgraphAdapter::SplitBoundaryTensor(Function& function, LogicalTens
         newBoundaryTensors.push_back(tensor);
         return SUCCESS;
     }
+    return InsertContractBeforeSubsidiaryConsumers(function, tensor, mainSubgraphID, newBoundaryTensors);
+}
 
+Status IntraSubgraphAdapter::SplitProducerToMainSubgraph(Function& function, const LogicalTensorPtr& tensor,
+                                                         Operation* producer, int mainSubgraphID,
+                                                         LogicalTensors& newBoundaryTensors)
+{
+    if (producer->GetSubgraphID() == mainSubgraphID) {
+        return SUCCESS;
+    }
+    Opcode producerOpcode = producer->GetOpcode();
+    if (OpcodeManager::Inst().GetOpCalcType(producerOpcode) != OpCalcType::MOVE_OUT &&
+        OpcodeManager::Inst().GetOpCalcType(producerOpcode) != OpCalcType::MOVE_LOCAL) {
+        APASS_LOG_ERROR_F(
+            Elements::Operation,
+            "OpCalcType error, boundary tensor magic : %d, producer op magic : %d, producer op : %s; If the "
+            "tensor has multiple producers, then the producers can only be assemble-family/OP_COPY_OUT.%s",
+            tensor->GetMagic(), producer->GetOpMagic(), producer->GetOpcodeStr().c_str(),
+            GetFormatBacktrace(*producer).c_str());
+        return FAILED;
+    }
+    LogicalTensors& producerInputs = producer->GetIOperands();
+    if (producerInputs.size() != 1) {
+        APASS_LOG_ERROR_F(
+            Elements::Operation,
+            "Producer input error, boundary tensor magic : %d, producer op magic : %d, producer op : %s; The "
+            "Assemble-family producer should have one input operand.%s",
+            tensor->GetMagic(), producer->GetOpMagic(), producer->GetOpcodeStr().c_str(),
+            GetFormatBacktrace(*producer).c_str());
+        return FAILED;
+    }
+    // When there are multiple consumers, for producer from other subgraph, we insert a new ASSEMBLE
+    // to the other subgraph, and change the producer to main subgraph.
+    if (tensor->GetConsumers().size() == 1) {
+        return SUCCESS;
+    }
+    LogicalTensorPtr assembleInput = producer->GetIOperands()[0];
+    APASS_LOG_DEBUG_F(Elements::Tensor, "SplitBoundaryTensor output of %s[%d]", producer->GetOpcodeStr().c_str(),
+                      producer->GetOpMagic());
+    LogicalTensorPtr newTensor = InsertOpBetween(function, config::GetContractOpcode(), assembleInput, {producer});
+    producer->UpdateSubgraphID(mainSubgraphID);
+    APASS_LOG_INFO_F(Elements::Tensor, "Adjust %s(magic : %d) to subgraph %d.", producer->GetOpcodeStr().c_str(),
+                     producer->GetOpMagic(), mainSubgraphID);
+    // The intermediate tensor become a new boundary tensor.
+    newBoundaryTensors.push_back(newTensor);
+    APASS_LOG_INFO_F(Elements::Tensor, "Add new tensor(magic : %d) to boundary tensors.", assembleInput->GetMagic());
+    return SUCCESS;
+}
+
+Status IntraSubgraphAdapter::InsertContractBeforeSubsidiaryConsumers(Function& function, const LogicalTensorPtr& tensor,
+                                                                     int mainSubgraphID,
+                                                                     LogicalTensors& newBoundaryTensors)
+{
     std::vector<Operation*> subsidiaryConsumers;
     for (const auto& consumer : tensor->GetConsumers()) {
         if (consumer->GetSubgraphID() != mainSubgraphID) {
@@ -359,58 +396,72 @@ Status IntraSubgraphAdapter::ProcessBoundaryTensor(Function& function, LogicalTe
 Status IntraSubgraphAdapter::AdapteTensorProducers(Function& function, LogicalTensorPtr tensor)
 {
     if (tensor->GetProducers().size() > 1) {
-        auto producers = tensor->GetProducers();
-        for (Operation* producer : producers) {
-            APASS_LOG_DEBUG_F(Elements::Operation, "|---- Producer %s[%d].", producer->GetOpcodeStr().c_str(),
-                              producer->GetOpMagic());
-            if (producer->GetOpcode() == config::GetContractOpcode()) {
-                APASS_LOG_DEBUG_F(Elements::Operation, "|---- Op Attr: %s", producer->Dump().c_str());
-            }
-            if (OpcodeManager::Inst().GetOpCalcType(producer->GetOpcode()) != OpCalcType::MOVE_OUT &&
-                OpcodeManager::Inst().GetOpCalcType(producer->GetOpcode()) != OpCalcType::MOVE_LOCAL) {
-                APASS_LOG_ERROR_F(
-                    Elements::Operation,
-                    "OpCalcType error; If the tensor has multiple producers, then the producers can only be "
-                    "assemble-family/OP_COPY_OUT.%s",
-                    GetFormatBacktrace(*producer).c_str());
-                return FAILED;
-            }
-            if (IsAssembleWithDifferentMemoryType(*producer, MemoryType::MEM_DEVICE_DDR)) {
-                SetConfiguredOpcode(*producer, config::GetContractOpcode());
-            }
-        }
-        return SUCCESS;
+        return AdaptMultiProducersToDdr(tensor);
     }
     if (tensor->GetProducers().size() == 1) {
-        Operation* producer = *(tensor->GetProducers().begin());
+        return AdaptSingleProducerToDdr(function, tensor);
+    }
+    APASS_LOG_INFO_F(Elements::Tensor, "Boundary tensor has no producer, tensor magic : %d.", tensor->GetMagic());
+    return SUCCESS;
+}
+
+Status IntraSubgraphAdapter::AdaptMultiProducersToDdr(const LogicalTensorPtr& tensor)
+{
+    auto producers = tensor->GetProducers();
+    for (Operation* producer : producers) {
         APASS_LOG_DEBUG_F(Elements::Operation, "|---- Producer %s[%d].", producer->GetOpcodeStr().c_str(),
                           producer->GetOpMagic());
         if (producer->GetOpcode() == config::GetContractOpcode()) {
             APASS_LOG_DEBUG_F(Elements::Operation, "|---- Op Attr: %s", producer->Dump().c_str());
         }
-        if (GraphUtils::IsCrossCoreMoveOp(producer)) {
-            producer->SetOpCode(Opcode::OP_COPY_OUT);
-            auto convertOpAttr = dynamic_cast<ConvertOpAttribute*>(producer->GetOpAttribute().get());
-            if (convertOpAttr != nullptr) {
-                std::vector<int64_t> offset(tensor->GetShape().size(), 0);
-                producer->SetOpAttribute(std::make_shared<CopyOpAttribute>(
-                    convertOpAttr->GetConvertPath().first, OpImmediate::Specified(offset),
-                    OpImmediate::Specified(tensor->GetShape()),
-                    OpImmediate::Specified(tensor->GetRawTensor()->GetDynRawShape())));
-            }
-            APASS_LOG_DEBUG_F(Elements::Operation, "change %s[%d] opcode to OP_COPY_OUT.",
-                              producer->GetOpcodeStr().c_str(), producer->GetOpMagic());
+        if (OpcodeManager::Inst().GetOpCalcType(producer->GetOpcode()) != OpCalcType::MOVE_OUT &&
+            OpcodeManager::Inst().GetOpCalcType(producer->GetOpcode()) != OpCalcType::MOVE_LOCAL) {
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "OpCalcType error; If the tensor has multiple producers, then the producers can only be "
+                              "assemble-family/OP_COPY_OUT.%s",
+                              GetFormatBacktrace(*producer).c_str());
+            return FAILED;
         }
         if (IsAssembleWithDifferentMemoryType(*producer, MemoryType::MEM_DEVICE_DDR)) {
             SetConfiguredOpcode(*producer, config::GetContractOpcode());
         }
-        if (producer->GetOpcode() != config::GetContractOpcode() && producer->GetOpcode() != Opcode::OP_COPY_OUT) {
-            InsertOpBetween(function, config::GetContractOpcode(), *producer, tensor);
-        }
-        return SUCCESS;
     }
-    APASS_LOG_INFO_F(Elements::Tensor, "Boundary tensor has no producer, tensor magic : %d.", tensor->GetMagic());
     return SUCCESS;
+}
+
+Status IntraSubgraphAdapter::AdaptSingleProducerToDdr(Function& function, const LogicalTensorPtr& tensor)
+{
+    Operation* producer = *(tensor->GetProducers().begin());
+    APASS_LOG_DEBUG_F(Elements::Operation, "|---- Producer %s[%d].", producer->GetOpcodeStr().c_str(),
+                      producer->GetOpMagic());
+    if (producer->GetOpcode() == config::GetContractOpcode()) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "|---- Op Attr: %s", producer->Dump().c_str());
+    }
+    if (GraphUtils::IsCrossCoreMoveOp(producer)) {
+        RewriteCrossCoreProducerToCopyOut(producer, tensor);
+    }
+    if (IsAssembleWithDifferentMemoryType(*producer, MemoryType::MEM_DEVICE_DDR)) {
+        SetConfiguredOpcode(*producer, config::GetContractOpcode());
+    }
+    if (producer->GetOpcode() != config::GetContractOpcode() && producer->GetOpcode() != Opcode::OP_COPY_OUT) {
+        InsertOpBetween(function, config::GetContractOpcode(), *producer, tensor);
+    }
+    return SUCCESS;
+}
+
+void IntraSubgraphAdapter::RewriteCrossCoreProducerToCopyOut(Operation* producer, const LogicalTensorPtr& tensor)
+{
+    producer->SetOpCode(Opcode::OP_COPY_OUT);
+    auto convertOpAttr = dynamic_cast<ConvertOpAttribute*>(producer->GetOpAttribute().get());
+    if (convertOpAttr != nullptr) {
+        std::vector<int64_t> offset(tensor->GetShape().size(), 0);
+        producer->SetOpAttribute(
+            std::make_shared<CopyOpAttribute>(convertOpAttr->GetConvertPath().first, OpImmediate::Specified(offset),
+                                              OpImmediate::Specified(tensor->GetShape()),
+                                              OpImmediate::Specified(tensor->GetRawTensor()->GetDynRawShape())));
+    }
+    APASS_LOG_DEBUG_F(Elements::Operation, "change %s[%d] opcode to OP_COPY_OUT.", producer->GetOpcodeStr().c_str(),
+                      producer->GetOpMagic());
 }
 
 static bool IsIndirectView(Operation* op)
@@ -517,6 +568,22 @@ LogicalTensorPtr IntraSubgraphAdapter::InsertOpBetween(Function& function, Opcod
     ASSERT(opcode == config::GetSliceOpcode() || opcode == config::GetContractOpcode())
         << "[IntraSubgraphAdapter][Operation][ERROR]: Opcode for IntraSubgraphAdapter::InsertOpBetween must be "
            "current view-family or assemble-family opcode.";
+    LogicalTensorPtr newTensor = CreateInsertedOpTensor(tensor);
+    for (Operation* op : ops) {
+        op->ReplaceInputOperand(tensor, newTensor);
+    }
+    Operation* newOp = CreateInsertedOp(function, opcode, tensor, ops, newOpSubgraphID, newTensor);
+    newTensor->AddProducer(newOp);
+    for (Operation* op : ops) {
+        newTensor->AddConsumer(op);
+        tensor->RemoveConsumer(op);
+    }
+    tensor->AddConsumer(newOp);
+    return newTensor;
+}
+
+LogicalTensorPtr IntraSubgraphAdapter::CreateInsertedOpTensor(const LogicalTensorPtr& tensor)
+{
     auto newRawTensor = std::make_shared<RawTensor>(tensor->Datatype(), tensor->GetRawTensor()->rawshape,
                                                     tensor->Format());
     LogicalTensorPtr newTensor = irBuilder_.CreateTensorVar(newRawTensor, tensor->GetOffset(), tensor->GetShape(),
@@ -526,11 +593,13 @@ LogicalTensorPtr IntraSubgraphAdapter::InsertOpBetween(Function& function, Opcod
     newTensor->SetMemoryTypeBoth(tensor->GetMemoryTypeOriginal(), true);
     APASS_LOG_DEBUG_F(Elements::Tensor, "Compare Ori: %s", tensor->Dump().c_str());
     APASS_LOG_DEBUG_F(Elements::Tensor, "Compare New: %s", newTensor->Dump().c_str());
+    return newTensor;
+}
 
-    for (Operation* op : ops) {
-        op->ReplaceInputOperand(tensor, newTensor);
-    }
-
+Operation* IntraSubgraphAdapter::CreateInsertedOp(Function& function, Opcode opcode, const LogicalTensorPtr& tensor,
+                                                  const std::vector<Operation*>& ops, int newOpSubgraphID,
+                                                  const LogicalTensorPtr& newTensor)
+{
     std::vector<int64_t> offset(tensor->GetShape().size(), 0);
     Operation* newOp = &irBuilder_.CreateTensorOpStmt(function, opcode, {tensor}, {newTensor});
     newOps.push_back(newOp);
@@ -548,14 +617,8 @@ LogicalTensorPtr IntraSubgraphAdapter::InsertOpBetween(Function& function, Opcod
     }
     APASS_LOG_DEBUG_F(Elements::Operation, "Insert New Op %s[%d], info: %s", newOp->GetOpcodeStr().c_str(),
                       newOp->GetOpMagic(), newOp->Dump().c_str());
-    newOp->UpdateSubgraphID(newOpSubgraphID == -1 ? ops[0]->GetSubgraphID() : newOpSubgraphID);
-    newTensor->AddProducer(newOp);
-    for (Operation* op : ops) {
-        newTensor->AddConsumer(op);
-        tensor->RemoveConsumer(op);
-    }
-    tensor->AddConsumer(newOp);
-    return newTensor;
+    newOp->UpdateSubgraphID(newOpSubgraphID == kInheritOpsSubgraphId ? ops[0]->GetSubgraphID() : newOpSubgraphID);
+    return newOp;
 }
 
 void IntraSubgraphAdapter::CollectProducerColors(LogicalTensorPtr tensor, std::set<int>& colors)

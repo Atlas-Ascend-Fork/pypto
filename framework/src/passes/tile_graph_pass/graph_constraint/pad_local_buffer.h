@@ -37,6 +37,8 @@ public:
 private:
     Status RunOnFunction(Function& function) override;
     void PadMatmulL1ConvertScene(Operation& op, LogicalTensorPtr& in, size_t lowIndex);
+    void PadMatmulNonConvertScene(Operation& op, LogicalTensorPtr& in, size_t highIndex, size_t lowIndex,
+                                  bool isGemvUbCopyL1);
     void PadForMatMulMX(LogicalTensorPtr& in, const int64_t& axisNum);
     void PadMatmul(Operation& op, LogicalTensorPtr& in);
     bool TryPadMatmulMXScene(Operation& op, LogicalTensorPtr& in);
@@ -68,6 +70,8 @@ private:
     int64_t AlignedRawTensorIfNeed(LogicalTensorPtr& in, int64_t pos, const int64_t base);
     bool IsInputDataType(const Operation& op, const LogicalTensorPtr& in,
                          const std::unordered_set<DataType>& targetTypes) const;
+    bool IsCubeLikeProducerInputDtype(const LogicalTensorPtr& in,
+                                      const std::unordered_set<DataType>& targetTypes) const;
     bool ShouldDefaultPadKirin9050Cube(const Operation& op, const LogicalTensorPtr& in, bool matmulOp,
                                        const std::unordered_set<DataType>& targetTypes) const;
     // 设置原始 rawshape（替代 RawTensor::oriRawshape = rawshape）

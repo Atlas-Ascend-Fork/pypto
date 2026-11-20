@@ -28,6 +28,9 @@
 #include "interface/program/program.h"
 
 namespace npu::tile_fwk {
+// InsertOpBetween 的 newOpSubgraphID 传该值表示继承 ops[0] 的 subgraph id
+constexpr int kInheritOpsSubgraphId = -1;
+
 class IntraSubgraphAdapter : public Pass {
 public:
     IntraSubgraphAdapter() : Pass("IntraSubgraphAdapter") {}
@@ -37,18 +40,35 @@ public:
 
 private:
     Status AdaptBoundaryTensors(Function& function);
+    Status AdaptSingleBoundaryTensor(Function& function, const LogicalTensorPtr& tensor);
+    Status AdaptSharedColorBoundaryTensor(Function& function, const LogicalTensorPtr& tensor,
+                                          const std::set<int>& commonColors, const std::set<int>& producerColors,
+                                          const std::set<int>& consumerColors);
+    void LogSharedColorBoundaryTensor(Function& function, const LogicalTensorPtr& tensor, int mainSubgraphID,
+                                      const std::set<int>& producerColors, const std::set<int>& consumerColors);
     Status CheckColorCount(Function& function, LogicalTensorPtr tensor, size_t commonColorCount);
     Status CheckBoundaryTensor(LogicalTensorPtr tensor);
     Status SplitBoundaryTensor(Function& function, LogicalTensorPtr tensor, int mainSubgraphID,
                                LogicalTensors& newBoundaryTensors);
+    Status SplitProducerToMainSubgraph(Function& function, const LogicalTensorPtr& tensor, Operation* producer,
+                                       int mainSubgraphID, LogicalTensors& newBoundaryTensors);
+    Status InsertContractBeforeSubsidiaryConsumers(Function& function, const LogicalTensorPtr& tensor,
+                                                   int mainSubgraphID, LogicalTensors& newBoundaryTensors);
     LogicalTensors CollectBoundaryTensors(Function& function);
     Status ProcessBoundaryTensors(Function& function, LogicalTensors tensors);
     Status ProcessBoundaryTensor(Function& function, LogicalTensorPtr tensor);
     Status AdapteTensorProducers(Function& function, LogicalTensorPtr tensor);
+    Status AdaptMultiProducersToDdr(const LogicalTensorPtr& tensor);
+    Status AdaptSingleProducerToDdr(Function& function, const LogicalTensorPtr& tensor);
+    void RewriteCrossCoreProducerToCopyOut(Operation* producer, const LogicalTensorPtr& tensor);
     Status AdapteTensorConsumers(Function& function, LogicalTensorPtr tensor);
     LogicalTensorPtr InsertOpBetween(Function& function, Opcode opcode, Operation& op, LogicalTensorPtr tensor);
     LogicalTensorPtr InsertOpBetween(Function& function, Opcode opcode, LogicalTensorPtr tensor,
-                                     const std::vector<Operation*>& ops, int newOpSubgraphID = -1);
+                                     const std::vector<Operation*>& ops, int newOpSubgraphID = kInheritOpsSubgraphId);
+    LogicalTensorPtr CreateInsertedOpTensor(const LogicalTensorPtr& tensor);
+    Operation* CreateInsertedOp(Function& function, Opcode opcode, const LogicalTensorPtr& tensor,
+                                const std::vector<Operation*>& ops, int newOpSubgraphID,
+                                const LogicalTensorPtr& newTensor);
     void CollectProducerColors(LogicalTensorPtr tensor, std::set<int>& colors);
     void CollectConsumerColors(LogicalTensorPtr tensor, std::set<int>& colors);
     std::set<int> SetIntersection(std::set<int>& a, std::set<int>& b);

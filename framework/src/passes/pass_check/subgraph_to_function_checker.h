@@ -38,6 +38,8 @@ public:
 private:
     Status NOPCheck(const Operation& op) const;
     Status CheckSubGraphTopo(Function& function) const;
+    Status CheckOpSubgraphTopo(const Operation& op, size_t opIdx, int totalSubGraphNum,
+                               std::vector<bool>& hitSubgraph) const;
 
     template <typename eType>
     Status InAndOutGraphConsistencyCheck(const std::vector<std::vector<eType>>& inEdgeGraph,
@@ -50,9 +52,15 @@ private:
     Status CheckInAndOutGraphMatch(Function& function);
     bool HasOnlyViewProducers(const std::set<Operation*, LogicalTensor::CompareOp>& producers);
     Status CheckSubGraphBoundary(Function& function);
+    Status CheckInputOperandBoundary(const Operation& op, size_t opIdx, size_t operandIdx,
+                                     const LogicalTensorPtr& operand, int subGraphId);
+    Status CheckOutputOperandBoundary(const Operation& op, size_t opIdx, size_t operandIdx,
+                                      const LogicalTensorPtr& operand, int subGraphId);
     Status VerifyRedundantEdge(const int srcNode, const int dstNode) const;
     Status ColorOutGraphCheck(Function& function) const;
     Status VerifySingleOpTopology(Function& function, size_t opIndex);
+    Status VerifyTopologySuccessors(Function& function, Operation* currentOp,
+                                    const std::unordered_set<Operation*>& consumers, size_t opIdx);
     Status CheckReadyStateConsistency(Function& function, size_t opIndex);
 
 private:

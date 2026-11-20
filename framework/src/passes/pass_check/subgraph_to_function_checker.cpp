@@ -68,34 +68,8 @@ Status SubGraphToFuncChecker::CheckSubGraphTopo(Function& function) const
     }
     std::vector<bool> hitSubgraph = std::vector<bool>(totalSubGraphNum, false);
     for (size_t i = 0; i < operations.size(); i++) {
-        auto& op = operations[i];
-        int subGraphId = op.GetSubgraphID();
-        if (subGraphId < 0 && NOPCheck(op) != SUCCESS) {
-            APASS_LOG_ERROR_C(GraphErr::GRAPH_SUBGRAPH_ID_INVALID, Elements::Graph,
-                              "operation %zu has negative subGraphID %d and failed NOP check. %s", i, subGraphId,
-                              GetFormatBacktrace(op).c_str());
+        if (CheckOpSubgraphTopo(operations[i], i, totalSubGraphNum, hitSubgraph) != SUCCESS) {
             return FAILED;
-        }
-        if (subGraphId >= totalSubGraphNum) {
-            APASS_LOG_ERROR_C(GraphErr::GRAPH_SUBGRAPH_ID_INVALID, Elements::Graph,
-                              "operation %zu has subGraphID %d that exceeds totalSubGraphNum %d. %s", i, subGraphId,
-                              totalSubGraphNum, GetFormatBacktrace(op).c_str());
-            return FAILED;
-        }
-        hitSubgraph[subGraphId] = true;
-
-        for (auto inOperand : op.GetIOperands()) {
-            for (auto parentOp : inOperand->GetProducers()) {
-                int parentSubGraphId = parentOp->GetSubgraphID();
-                if (parentSubGraphId > subGraphId) {
-                    APASS_LOG_ERROR_C(
-                        GraphErr::GRAPH_TOPOLOGY_STRUCTURE, Elements::Graph,
-                        "operation %zu has subGraphId %d and parent subGraphId %d, parent subGraphId should be less "
-                        "than or equal to subGraphId. %s",
-                        i, subGraphId, parentSubGraphId, GetFormatBacktrace(op).c_str());
-                    return FAILED;
-                }
-            }
         }
     }
 
@@ -106,6 +80,43 @@ Status SubGraphToFuncChecker::CheckSubGraphTopo(Function& function) const
         }
     }
 
+    return SUCCESS;
+}
+
+Status SubGraphToFuncChecker::CheckOpSubgraphTopo(const Operation& op, size_t opIdx, int totalSubGraphNum,
+                                                  std::vector<bool>& hitSubgraph) const
+{
+    int subGraphId = op.GetSubgraphID();
+    if (subGraphId < 0 && NOPCheck(op) != SUCCESS) {
+        APASS_LOG_ERROR_C(GraphErr::GRAPH_SUBGRAPH_ID_INVALID, Elements::Graph,
+                          "operation %zu has negative subGraphID %d and failed NOP check. %s", opIdx, subGraphId,
+                          GetFormatBacktrace(op).c_str());
+        return FAILED;
+    }
+    if (subGraphId >= totalSubGraphNum) {
+        APASS_LOG_ERROR_C(GraphErr::GRAPH_SUBGRAPH_ID_INVALID, Elements::Graph,
+                          "operation %zu has subGraphID %d that exceeds totalSubGraphNum %d. %s", opIdx, subGraphId,
+                          totalSubGraphNum, GetFormatBacktrace(op).c_str());
+        return FAILED;
+    }
+    // 合法 NOP（负 subGraphId）不参与子图命中统计，避免负下标越界写
+    if (subGraphId >= 0) {
+        hitSubgraph[subGraphId] = true;
+    }
+
+    for (auto inOperand : op.GetIOperands()) {
+        for (auto parentOp : inOperand->GetProducers()) {
+            int parentSubGraphId = parentOp->GetSubgraphID();
+            if (parentSubGraphId > subGraphId) {
+                APASS_LOG_ERROR_C(
+                    GraphErr::GRAPH_TOPOLOGY_STRUCTURE, Elements::Graph,
+                    "operation %zu has subGraphId %d and parent subGraphId %d, parent subGraphId should be less "
+                    "than or equal to subGraphId. %s",
+                    opIdx, subGraphId, parentSubGraphId, GetFormatBacktrace(op).c_str());
+                return FAILED;
+            }
+        }
+    }
     return SUCCESS;
 }
 
@@ -293,72 +304,90 @@ Status SubGraphToFuncChecker::CheckSubGraphBoundary(Function& function)
         int subGraphId = op.GetSubgraphID();
         for (size_t k = 0; k < op.iOperand.size(); k++) {
             auto iOperand = op.GetInputOperand(k);
-            auto producers = iOperand->GetProducers();
-            // 特殊情况：如果producer有且只有view操作，在Rule 1中不需要标记为子图边界
-            bool hasOnlyViewProducers = HasOnlyViewProducers(producers);
-            // Rule 1: Operands from DDR memory must be marked as subgraph boundary
-            // (这个规则可以在producer都是view操作时跳过)
-            if (iOperand->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR &&
-                !SubgraphUtils::IsBoundary(iOperand) && !hasOnlyViewProducers) {
-                APASS_LOG_ERROR_C(
-                    TensorErr::TENSOR_SUBGRAPH_BOUNDARY, Elements::Tensor,
-                    "Input operand %zu of operation %zu (opdump: %s) is from DDR but not marked as subgraph boundary! "
-                    "%s",
-                    k, i, op.Dump().c_str(), GetFormatBacktrace(op).c_str());
-                return FAILED;
-            }
-            // Rule 2: Operands with consumer in a different subgraph must be marked as subgraph boundary
-            if (subGraphId != CommonUtils::GetTensorSubgraphID(iOperand) && !SubgraphUtils::IsBoundary(iOperand)) {
-                APASS_LOG_ERROR_C(
-                    TensorErr::TENSOR_SUBGRAPH_BOUNDARY, Elements::Tensor,
-                    "Input operand %zu of operation %zu (opdump: %s) has a consumer in a different subgraph but not "
-                    "marked as subgraph boundary! %s",
-                    k, i, op.Dump().c_str(), GetFormatBacktrace(op).c_str());
-                return FAILED;
-            }
-            // Rule 3: Input operands of special ops (e.g., OP_UB_COPY_IN) must be marked as subgraph boundary
-            if (IsCopyIn(op.GetOpcode()) && !SubgraphUtils::IsBoundary(iOperand)) {
-                APASS_LOG_ERROR_C(
-                    TensorErr::TENSOR_SUBGRAPH_BOUNDARY, Elements::Tensor,
-                    "Input operand %zu of IsCopyIn operation %zu (opdump: %s) is not marked as subgraph boundary! %s",
-                    k, i, op.Dump().c_str(), GetFormatBacktrace(op).c_str());
+            if (CheckInputOperandBoundary(op, i, k, iOperand, subGraphId) != SUCCESS) {
                 return FAILED;
             }
         }
         for (size_t k = 0; k < op.oOperand.size(); k++) {
             auto oOperand = op.GetOutputOperand(k);
-            auto producers = oOperand->GetProducers();
-            // 特殊情况：如果producer有且只有view操作，在Rule 1中不需要标记为子图边界
-            bool hasOnlyViewProducers = HasOnlyViewProducers(producers);
-            // Rule 1: Operands from DDR memory must be marked as subgraph boundary
-            if (oOperand->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR &&
-                !SubgraphUtils::IsBoundary(oOperand) && !hasOnlyViewProducers) {
-                APASS_LOG_ERROR_C(
-                    TensorErr::TENSOR_SUBGRAPH_BOUNDARY, Elements::Tensor,
-                    "Output operand %zu of operation %zu (opdump: %s) is from DDR but not marked as subgraph boundary! "
-                    "%s",
-                    k, i, op.Dump().c_str(), GetFormatBacktrace(op).c_str());
-                return FAILED;
-            }
-            // Rule 2: Operands with producer in a different subgraph must be marked as subgraph boundary
-            if (subGraphId != CommonUtils::GetTensorSubgraphID(oOperand) && !SubgraphUtils::IsBoundary(oOperand)) {
-                APASS_LOG_ERROR_C(
-                    TensorErr::TENSOR_SUBGRAPH_BOUNDARY, Elements::Tensor,
-                    "Output operand %zu of operation %zu (opdump: %s) has a producer in a different subgraph but not "
-                    "marked as subgraph boundary! %s",
-                    k, i, op.Dump().c_str(), GetFormatBacktrace(op).c_str());
-                return FAILED;
-            }
-            // Rule 3: Output operands of special ops (e.g., OP_UB_COPY_OUT, OP_TRANSPOSE_DATA_MOVE, OP_INDEX_OUTCAST)
-            // must be marked as subgraph boundary
-            if (IsCopyOut(op.GetOpcode()) && !SubgraphUtils::IsBoundary(oOperand)) {
-                APASS_LOG_ERROR_C(
-                    TensorErr::TENSOR_SUBGRAPH_BOUNDARY, Elements::Tensor,
-                    "Output operand %zu of IsCopyOut operation %zu (opdump: %s) is not marked as subgraph boundary! %s",
-                    k, i, op.Dump().c_str(), GetFormatBacktrace(op).c_str());
+            if (CheckOutputOperandBoundary(op, i, k, oOperand, subGraphId) != SUCCESS) {
                 return FAILED;
             }
         }
+    }
+    return SUCCESS;
+}
+
+Status SubGraphToFuncChecker::CheckInputOperandBoundary(const Operation& op, size_t opIdx, size_t operandIdx,
+                                                        const LogicalTensorPtr& operand, int subGraphId)
+{
+    auto producers = operand->GetProducers();
+    // 特殊情况：如果producer有且只有view操作，在Rule 1中不需要标记为子图边界
+    bool hasOnlyViewProducers = HasOnlyViewProducers(producers);
+    // Rule 1: Operands from DDR memory must be marked as subgraph boundary
+    // (这个规则可以在producer都是view操作时跳过)
+    if (operand->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR && !SubgraphUtils::IsBoundary(operand) &&
+        !hasOnlyViewProducers) {
+        APASS_LOG_ERROR_C(
+            TensorErr::TENSOR_SUBGRAPH_BOUNDARY, Elements::Tensor,
+            "Input operand %zu of operation %zu (opdump: %s) is from DDR but not marked as subgraph boundary! "
+            "%s",
+            operandIdx, opIdx, op.Dump().c_str(), GetFormatBacktrace(op).c_str());
+        return FAILED;
+    }
+    // Rule 2: Operands with consumer in a different subgraph must be marked as subgraph boundary
+    if (subGraphId != CommonUtils::GetTensorSubgraphID(operand) && !SubgraphUtils::IsBoundary(operand)) {
+        APASS_LOG_ERROR_C(
+            TensorErr::TENSOR_SUBGRAPH_BOUNDARY, Elements::Tensor,
+            "Input operand %zu of operation %zu (opdump: %s) has a consumer in a different subgraph but not "
+            "marked as subgraph boundary! %s",
+            operandIdx, opIdx, op.Dump().c_str(), GetFormatBacktrace(op).c_str());
+        return FAILED;
+    }
+    // Rule 3: Input operands of special ops (e.g., OP_UB_COPY_IN) must be marked as subgraph boundary
+    if (IsCopyIn(op.GetOpcode()) && !SubgraphUtils::IsBoundary(operand)) {
+        APASS_LOG_ERROR_C(
+            TensorErr::TENSOR_SUBGRAPH_BOUNDARY, Elements::Tensor,
+            "Input operand %zu of IsCopyIn operation %zu (opdump: %s) is not marked as subgraph boundary! %s",
+            operandIdx, opIdx, op.Dump().c_str(), GetFormatBacktrace(op).c_str());
+        return FAILED;
+    }
+    return SUCCESS;
+}
+
+Status SubGraphToFuncChecker::CheckOutputOperandBoundary(const Operation& op, size_t opIdx, size_t operandIdx,
+                                                         const LogicalTensorPtr& operand, int subGraphId)
+{
+    auto producers = operand->GetProducers();
+    // 特殊情况：如果producer有且只有view操作，在Rule 1中不需要标记为子图边界
+    bool hasOnlyViewProducers = HasOnlyViewProducers(producers);
+    // Rule 1: Operands from DDR memory must be marked as subgraph boundary
+    if (operand->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR && !SubgraphUtils::IsBoundary(operand) &&
+        !hasOnlyViewProducers) {
+        APASS_LOG_ERROR_C(
+            TensorErr::TENSOR_SUBGRAPH_BOUNDARY, Elements::Tensor,
+            "Output operand %zu of operation %zu (opdump: %s) is from DDR but not marked as subgraph boundary! "
+            "%s",
+            operandIdx, opIdx, op.Dump().c_str(), GetFormatBacktrace(op).c_str());
+        return FAILED;
+    }
+    // Rule 2: Operands with producer in a different subgraph must be marked as subgraph boundary
+    if (subGraphId != CommonUtils::GetTensorSubgraphID(operand) && !SubgraphUtils::IsBoundary(operand)) {
+        APASS_LOG_ERROR_C(
+            TensorErr::TENSOR_SUBGRAPH_BOUNDARY, Elements::Tensor,
+            "Output operand %zu of operation %zu (opdump: %s) has a producer in a different subgraph but not "
+            "marked as subgraph boundary! %s",
+            operandIdx, opIdx, op.Dump().c_str(), GetFormatBacktrace(op).c_str());
+        return FAILED;
+    }
+    // Rule 3: Output operands of special ops (e.g., OP_UB_COPY_OUT, OP_TRANSPOSE_DATA_MOVE, OP_INDEX_OUTCAST)
+    // must be marked as subgraph boundary
+    if (IsCopyOut(op.GetOpcode()) && !SubgraphUtils::IsBoundary(operand)) {
+        APASS_LOG_ERROR_C(
+            TensorErr::TENSOR_SUBGRAPH_BOUNDARY, Elements::Tensor,
+            "Output operand %zu of IsCopyOut operation %zu (opdump: %s) is not marked as subgraph boundary! %s",
+            operandIdx, opIdx, op.Dump().c_str(), GetFormatBacktrace(op).c_str());
+        return FAILED;
     }
     return SUCCESS;
 }
@@ -505,17 +534,22 @@ Status SubGraphToFuncChecker::DoPostCheck(Function& function)
     return SUCCESS;
 }
 
-Status SubGraphToFuncChecker::VerifySingleOpTopology(Function& function, size_t opIdx)
+namespace {
+// 通过 subgraphId 在 root function 的 call op 中查找对应的 operation，找不到返回 nullptr
+Operation* FindCallOpBySubgraphId(Function& rootFunc, int subgraphId)
 {
-    const auto& callOps = function.rootFunc_->Operations();
-    // 通过 subgraphId 查找对应的 currentOp
-    Operation* currentOp = nullptr;
-    for (const auto& op : callOps) {
-        if (static_cast<size_t>(op.GetSubgraphID()) == opIdx) {
-            currentOp = const_cast<Operation*>(&op);
-            break;
+    for (const auto& op : rootFunc.Operations()) {
+        if (op.GetSubgraphID() == subgraphId) {
+            return const_cast<Operation*>(&op);
         }
     }
+    return nullptr;
+}
+} // namespace
+
+Status SubGraphToFuncChecker::VerifySingleOpTopology(Function& function, size_t opIdx)
+{
+    Operation* currentOp = FindCallOpBySubgraphId(*function.rootFunc_, static_cast<int>(opIdx));
 
     if (currentOp == nullptr) {
         APASS_LOG_ERROR_F(Elements::Operation, "Cannot find operation with subgraphId %zu", opIdx);
@@ -543,17 +577,18 @@ Status SubGraphToFuncChecker::VerifySingleOpTopology(Function& function, size_t 
                           GetFormatBacktrace(currentOp).c_str());
         return FAILED;
     }
+    return VerifyTopologySuccessors(function, currentOp, consumers, opIdx);
+}
+
+Status SubGraphToFuncChecker::VerifyTopologySuccessors(Function& function, Operation* currentOp,
+                                                       const std::unordered_set<Operation*>& consumers, size_t opIdx)
+{
+    auto& topoInfo = function.rootFunc_->topoInfo_.topology_[opIdx];
     for (auto succ : topoInfo.outGraph) {
         const int consumerSubgraphId = static_cast<int>(succ);
 
         // 通过 subgraphId 查找预期的消费者op
-        Operation* expectedConsumer = nullptr;
-        for (const auto& op : callOps) {
-            if (op.GetSubgraphID() == consumerSubgraphId) {
-                expectedConsumer = const_cast<Operation*>(&op);
-                break;
-            }
-        }
+        Operation* expectedConsumer = FindCallOpBySubgraphId(*function.rootFunc_, consumerSubgraphId);
 
         if (expectedConsumer == nullptr) {
             APASS_LOG_ERROR_F(Elements::Graph, "Cannot find expected consumer with subgraphId %d", consumerSubgraphId);
