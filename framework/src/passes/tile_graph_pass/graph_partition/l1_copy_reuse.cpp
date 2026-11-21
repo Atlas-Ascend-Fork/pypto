@@ -297,19 +297,7 @@ Status L1CopyInReuseRunner::MergeDupL1CopyIn(Function& func, std::vector<std::ve
                 continue;
             }
             deletedOps.push_back(deletedOp);
-            for (const auto& token : deletedOp->tokens_) {
-                for (auto* consumer : deletedOp->ConsumerOps()) {
-                    if (consumer != nullptr && !consumer->IsDeleted()) {
-                        PassTokenUtils::AddTokenConsumer(func, token, *consumer);
-                    }
-                }
-            }
-
-            auto keptIt = tensormagic2Op_.find(deletedOp->GetOOperands()[0]->GetRawTensor()->GetRawMagic());
-            Operation* keptOp = keptIt == tensormagic2Op_.end() ? nullptr : oriList[keptIt->second];
-            if (keptOp != nullptr && keptOp != deletedOp && !keptOp->IsDeleted()) {
-                PassTokenUtils::MoveResultTokensToProducers(func, {deletedOp}, {keptOp}, {});
-            }
+            TransferDeletedCopyInTokens(func, deletedOp, oriList);
         }
         PassTokenUtils::CleanupDeletedTokenDependency(func, deletedOps);
         // 重新连边
@@ -330,6 +318,24 @@ Status L1CopyInReuseRunner::MergeDupL1CopyIn(Function& func, std::vector<std::ve
         }
     }
     return SUCCESS;
+}
+
+void L1CopyInReuseRunner::TransferDeletedCopyInTokens(Function& func, Operation* deletedOp,
+                                                      const std::vector<Operation*>& oriList)
+{
+    for (const auto& token : deletedOp->tokens_) {
+        for (auto* consumer : deletedOp->ConsumerOps()) {
+            if (consumer != nullptr && !consumer->IsDeleted()) {
+                PassTokenUtils::AddTokenConsumer(func, token, *consumer);
+            }
+        }
+    }
+
+    auto keptIt = tensormagic2Op_.find(deletedOp->GetOOperands()[0]->GetRawTensor()->GetRawMagic());
+    Operation* keptOp = keptIt == tensormagic2Op_.end() ? nullptr : oriList[keptIt->second];
+    if (keptOp != nullptr && keptOp != deletedOp && !keptOp->IsDeleted()) {
+        PassTokenUtils::MoveResultTokensToProducers(func, {deletedOp}, {keptOp}, {});
+    }
 }
 
 int L1CopyInReuseRunner::GetMaxInColor(const std::vector<int>& nodes, int curColor)

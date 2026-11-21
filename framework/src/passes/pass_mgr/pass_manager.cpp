@@ -68,6 +68,55 @@ namespace npu::tile_fwk {
 namespace {
 using PassEntry = PassManager::PassEntry;
 
+// PVC2_OOO 策略的 pass 执行序（纯数据表）
+constexpr PassName kPvc2OooPassSequence[] = {
+    PassName::INFER_TENSOR_FORMAT,
+    PassName::REMOVE_REDUNDANT_RESHAPE,
+    PassName::AUTO_CAST,
+    PassName::INFER_MEMORY_CONFLICT,
+    PassName::REMOVE_UNDRIVEN_VIEW,
+    PassName::EXPAND_FUNCTION,
+    PassName::MERGE_VIEW_ASSEMBLE,
+    PassName::SPLIT_RESHAPE,
+    PassName::SPLIT_RAW_TENSOR,
+    PassName::SPLIT_LARGE_FANOUT_TENSOR,
+    PassName::DUPLICATE_OP,
+    PassName::ASSIGN_MEMORY_TYPE,
+    PassName::INFER_DISCONTINUOUS_INPUT,
+    PassName::REMOVE_REDUNDANT_OP,
+    PassName::INSERT_OP_FOR_VIEWASSEMBLE,
+    PassName::PROCESS_ATOMIC,
+    PassName::BUILD_TREE_FROM_REDUCE,
+    PassName::GRAPH_PARTITION,
+    PassName::N_BUFFER_MERGE,
+    PassName::L1_COPY_IN_REUSE_MERGE,
+    PassName::REDUCE_COPY_MERGE,
+    PassName::INTRA_SUBGRAPH_ADAPTER,
+    PassName::GENERATE_MOVE_OP,
+    PassName::COMMON_OPERATION_ELIMINATE,
+    PassName::AXIS_COMBINE,
+    PassName::PAD_LOCAL_BUFFER,
+    PassName::REMOVE_UNALIGNED_RESHAPE,
+    PassName::REPLACE_TENSOR,
+    PassName::PRE_GRAPH_PROCESS,
+    PassName::INFER_DYN_SHAPE,
+    PassName::SUBGRAPH_TO_FUNCTION,
+    PassName::VF_FUSION_CLUSTER_IDENTIFY,
+    PassName::INFER_PARAM_INDEX,
+    PassName::SRC_DST_BUFFER_MERGE,
+    PassName::ADD_ALLOC,
+    PassName::OOO_SCHEDULE,
+    PassName::TUNE_TILEOP_SEQ_FOR_VF,
+    PassName::REMOVE_ALLOC,
+    PassName::COPY_OUT_RESOLVE,
+    PassName::INSERT_SYNC,
+    PassName::TUNE_SYNC_FOR_VF,
+    PassName::MIX_SUBGRAPH_SPLIT,
+    PassName::LAST_USE_MARK,
+    PassName::GLOBAL_MEMORY_REUSE,
+    PassName::CODEGEN_PREPROC,
+};
+
 std::vector<PassEntry> BuildPassEntries(std::initializer_list<PassName> passNames)
 {
     std::vector<PassEntry> entries;
@@ -80,53 +129,12 @@ std::vector<PassEntry> BuildPassEntries(std::initializer_list<PassName> passName
 
 std::vector<PassEntry> BuildPvc2OooPassEntries()
 {
-    return BuildPassEntries({
-        PassName::INFER_TENSOR_FORMAT,
-        PassName::REMOVE_REDUNDANT_RESHAPE,
-        PassName::AUTO_CAST,
-        PassName::INFER_MEMORY_CONFLICT,
-        PassName::REMOVE_UNDRIVEN_VIEW,
-        PassName::EXPAND_FUNCTION,
-        PassName::MERGE_VIEW_ASSEMBLE,
-        PassName::SPLIT_RESHAPE,
-        PassName::SPLIT_RAW_TENSOR,
-        PassName::SPLIT_LARGE_FANOUT_TENSOR,
-        PassName::DUPLICATE_OP,
-        PassName::ASSIGN_MEMORY_TYPE,
-        PassName::INFER_DISCONTINUOUS_INPUT,
-        PassName::REMOVE_REDUNDANT_OP,
-        PassName::INSERT_OP_FOR_VIEWASSEMBLE,
-        PassName::PROCESS_ATOMIC,
-        PassName::BUILD_TREE_FROM_REDUCE,
-        PassName::GRAPH_PARTITION,
-        PassName::N_BUFFER_MERGE,
-        PassName::L1_COPY_IN_REUSE_MERGE,
-        PassName::REDUCE_COPY_MERGE,
-        PassName::INTRA_SUBGRAPH_ADAPTER,
-        PassName::GENERATE_MOVE_OP,
-        PassName::COMMON_OPERATION_ELIMINATE,
-        PassName::AXIS_COMBINE,
-        PassName::PAD_LOCAL_BUFFER,
-        PassName::REMOVE_UNALIGNED_RESHAPE,
-        PassName::REPLACE_TENSOR,
-        PassName::PRE_GRAPH_PROCESS,
-        PassName::INFER_DYN_SHAPE,
-        PassName::SUBGRAPH_TO_FUNCTION,
-        PassName::VF_FUSION_CLUSTER_IDENTIFY,
-        PassName::INFER_PARAM_INDEX,
-        PassName::SRC_DST_BUFFER_MERGE,
-        PassName::ADD_ALLOC,
-        PassName::OOO_SCHEDULE,
-        PassName::TUNE_TILEOP_SEQ_FOR_VF,
-        PassName::REMOVE_ALLOC,
-        PassName::COPY_OUT_RESOLVE,
-        PassName::INSERT_SYNC,
-        PassName::TUNE_SYNC_FOR_VF,
-        PassName::MIX_SUBGRAPH_SPLIT,
-        PassName::LAST_USE_MARK,
-        PassName::GLOBAL_MEMORY_REUSE,
-        PassName::CODEGEN_PREPROC,
-    });
+    std::vector<PassEntry> entries;
+    entries.reserve(std::size(kPvc2OooPassSequence));
+    for (auto passName : kPvc2OooPassSequence) {
+        entries.emplace_back(PassNameStr(passName), passName);
+    }
+    return entries;
 }
 } // namespace
 
@@ -136,7 +144,9 @@ PassManager& PassManager::Instance()
     return instance;
 }
 
-void RegPass()
+namespace {
+// pass 注册列表较长，按图类型拆为两段注册，保持原有注册顺序
+void RegTensorAndTileGraphPasses()
 {
     REG_PASS(InferTensorFormat);
     REG_PASS(GlobalMemoryReuse);
@@ -163,6 +173,12 @@ void RegPass()
     REG_PASS(RemoveRedundantOp);
     REG_PASS(SplitRawTensor);
     REG_PASS(SplitReshape);
+}
+} // namespace
+
+void RegPass()
+{
+    RegTensorAndTileGraphPasses();
     REG_PASS(RemoveUnalignedReshape);
     REG_PASS(CodegenPreproc);
     REG_PASS(SplitLargeFanoutTensor);
@@ -323,11 +339,80 @@ static void WarnUnmatchedDumpPassGraph(const std::string& strategy, const std::v
                      StringUtils::ToString(unmatchedPasses).c_str(), strategy.c_str());
 }
 
+PassConfigs PassManager::ResolvePassDfxConfigs(const std::string& strategy, const std::string& identifier,
+                                               const std::vector<std::string>& dumpPassGraph) const
+{
+    auto passDfxCfg = ConfigManager::Instance().GetPassConfigs(strategy, identifier);
+    if (!dumpPassGraph.empty()) {
+        const bool matched = std::find(dumpPassGraph.begin(), dumpPassGraph.end(), identifier) != dumpPassGraph.end();
+        passDfxCfg.dumpGraph = matched;
+        passDfxCfg.printGraph = matched;
+    }
+    if (config::GetDebugOption<int64_t>(CFG_COMPILE_DBEUG_MODE) == CFG_DEBUG_ALL) {
+        passDfxCfg.printGraph = true;
+        passDfxCfg.dumpGraph = true;
+        passDfxCfg.printProgram = true;
+    }
+    return passDfxCfg;
+}
+
+Status PassManager::ExecuteSinglePass(Program& program, Function& function, const PassEntry& passEntry, size_t passIdx,
+                                      const std::string& strategy, const std::string& strategyLogFolder) const
+{
+    const auto& identifier = passEntry.identifier;
+    const auto& passName = passEntry.passName;
+    auto pass = PassRegistry::GetInstance().CreatePass(PassNameStr(passName));
+    if (pass == nullptr) {
+        APASS_LOG_ERROR_F(Elements::Function, "Pass [%s] does not exist.", PassNameStr(passName));
+        return FAILED;
+    }
+    PassLogUtil logUtil(*pass, function, strategyLogFolder, passIdx);
+    auto passDfxCfg = ResolvePassDfxConfigs(strategy, identifier,
+                                            config::GetDebugOption<std::vector<std::string>>(CFG_DUMP_PASS_GRAPH));
+    pass->SetPassConfigs(passDfxCfg);
+    APASS_LOG_INFO_F(Elements::Function, "Apply pass <%s> on function: %s.", identifier.c_str(),
+                     function.GetMagicName().c_str());
+    MonitorPassCompileScope passCompileScope(strategy, identifier, passIdx, function.GetMagicName(),
+                                             MonitorManager::Instance().GetCurrentFunctionIndex(),
+                                             MonitorManager::Instance().GetCurrentFuncOpSize());
+    Status status = pass->Run(function, strategy, identifier, passIdx, strategyLogFolder);
+    passCompileScope.FinishAt(status == SUCCESS, std::chrono::high_resolution_clock::now());
+    if (status != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Function, "Run pass <%s> failed.", identifier.c_str());
+        return FAILED;
+    }
+    if (identifier == "ExpandFunction") {
+        // ExpandFunction 之后的图规模，作为后续 pass 的阈值基线。
+        MonitorManager::Instance().SetCurrentFuncOpSize(static_cast<int>(function.GetOperationSize()), true);
+    }
+    if (passDfxCfg.dumpPassTimeCost) {
+        LogPassRuntime(identifier, program, function, passCompileScope.GetStartTime());
+    }
+    if (config::GetVerifyOption<bool>(KEY_ENABLE_PASS_VERIFY)) {
+        Program::GetInstance().VerifyPass(&function, passIdx, identifier);
+    }
+    return SUCCESS;
+}
+void PassManager::FinalizePassRun(Function& function, const std::string& strategy, const std::string& strategyLogFolder,
+                                  bool anyPassExecuted) const
+{
+    if (config::GetDebugOption<int64_t>(CFG_COMPILE_DBEUG_MODE) == CFG_DEBUG_ALL && anyPassExecuted) {
+        ExtractPassLogByFunction(function, strategyLogFolder);
+    }
+    if (strategy != config::GetPassStrategy() || strategyLogFolder.empty()) {
+        return;
+    }
+    const std::string graphPath = config::LogTopFolder() + "/" + kComputationGraphFolder + "/" + strategyLogFolder;
+    const std::string realGraphPath = RealPath(graphPath);
+    if (!realGraphPath.empty()) {
+        config::SetRunDataOption(KEY_COMPUTE_GRAPH_PATH, realGraphPath);
+    }
+}
+
 Status PassManager::RunPass(Program& program, Function& function, const std::string& strategy) const
 {
     auto strategyPasses = GetStrategyPasses(strategy);
     const std::string strategyLogFolder = GetStrategyLogFolderName(strategy);
-    std::unique_ptr<Pass> pass = nullptr;
     std::vector<std::string> identifiers;
     std::transform(strategyPasses.begin(), strategyPasses.end(), std::back_inserter(identifiers),
                    [](const PassEntry& elem) { return elem.identifier; });
@@ -336,64 +421,19 @@ Status PassManager::RunPass(Program& program, Function& function, const std::str
     if (strategy == config::GetPassStrategy()) {
         WarnUnmatchedDumpPassGraph(strategy, dumpPassGraph, identifiers);
     }
+    bool anyPassExecuted = false;
     for (size_t i = startIdx; i < strategyPasses.size(); i++) {
-        const auto& identifier = strategyPasses[i].identifier;
-        if (ShouldTerminateAtStage(identifier)) {
+        // stage-stop 为编译期调试开关：直接返回并跳过收尾（与拆分前语义一致），
+        // 避免半程图被写入 KEY_COMPUTE_GRAPH_PATH 或触发多余的 pass log 提取
+        if (ShouldTerminateAtStage(strategyPasses[i].identifier)) {
             return SUCCESS;
         }
-        const auto& passName = strategyPasses[i].passName;
-        pass = PassRegistry::GetInstance().CreatePass(PassNameStr(passName));
-        if (pass == nullptr) {
-            APASS_LOG_ERROR_F(Elements::Function, "Pass [%s] does not exist.", PassNameStr(passName));
+        if (ExecuteSinglePass(program, function, strategyPasses[i], i, strategy, strategyLogFolder) != SUCCESS) {
             return FAILED;
         }
-        PassLogUtil logUtil(*pass, function, strategyLogFolder, i);
-        auto passDfxCfg = ConfigManager::Instance().GetPassConfigs(strategy, identifier);
-        if (!dumpPassGraph.empty()) {
-            const bool matched = std::find(dumpPassGraph.begin(), dumpPassGraph.end(), identifier) !=
-                                 dumpPassGraph.end();
-            passDfxCfg.dumpGraph = matched;
-            passDfxCfg.printGraph = matched;
-        }
-        if (config::GetDebugOption<int64_t>(CFG_COMPILE_DBEUG_MODE) == CFG_DEBUG_ALL) {
-            passDfxCfg.printGraph = true;
-            passDfxCfg.dumpGraph = true;
-            passDfxCfg.printProgram = true;
-        }
-        pass->SetPassConfigs(passDfxCfg);
-        APASS_LOG_INFO_F(Elements::Function, "Apply pass <%s> on function: %s.", identifier.c_str(),
-                         function.GetMagicName().c_str());
-        MonitorPassCompileScope passCompileScope(strategy, identifier, i, function.GetMagicName(),
-                                                 MonitorManager::Instance().GetCurrentFunctionIndex(),
-                                                 MonitorManager::Instance().GetCurrentFuncOpSize());
-        Status status = pass->Run(function, strategy, identifier, i, strategyLogFolder);
-        auto passEnd = std::chrono::high_resolution_clock::now();
-        passCompileScope.FinishAt(status == SUCCESS, passEnd);
-        if (status != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "Run pass <%s> failed.", identifier.c_str());
-            return FAILED;
-        }
-        if (identifier == "ExpandFunction") {
-            // ExpandFunction 之后的图规模，作为后续 pass 的阈值基线。
-            MonitorManager::Instance().SetCurrentFuncOpSize(static_cast<int>(function.GetOperationSize()), true);
-        }
-        if (passDfxCfg.dumpPassTimeCost) {
-            LogPassRuntime(identifier, program, function, passCompileScope.GetStartTime());
-        }
-        if (config::GetVerifyOption<bool>(KEY_ENABLE_PASS_VERIFY)) {
-            Program::GetInstance().VerifyPass(&function, i, identifier);
-        }
+        anyPassExecuted = true;
     }
-    if (config::GetDebugOption<int64_t>(CFG_COMPILE_DBEUG_MODE) == CFG_DEBUG_ALL && pass != nullptr) {
-        ExtractPassLogByFunction(function, strategyLogFolder);
-    }
-    if (strategy == config::GetPassStrategy() && !strategyLogFolder.empty()) {
-        const std::string graphPath = config::LogTopFolder() + "/" + kComputationGraphFolder + "/" + strategyLogFolder;
-        const std::string realGraphPath = RealPath(graphPath);
-        if (!realGraphPath.empty()) {
-            config::SetRunDataOption(KEY_COMPUTE_GRAPH_PATH, realGraphPath);
-        }
-    }
+    FinalizePassRun(function, strategy, strategyLogFolder, anyPassExecuted);
     return SUCCESS;
 }
 

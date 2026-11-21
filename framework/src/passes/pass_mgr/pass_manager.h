@@ -23,6 +23,7 @@
 #include "interface/inner/tilefwk.h"
 #include "interface/program/program.h"
 #include "interface/function/function.h"
+#include "interface/configs/config_manager.h"
 #include "passes/pass_mgr/pass_dependency.h"
 
 namespace npu::tile_fwk {
@@ -54,6 +55,12 @@ private:
 
     std::vector<PassEntry> GetStrategyPasses(const std::string& strategy) const;
     std::string GetStrategyLogFolderName(const std::string& strategy) const;
+    PassConfigs ResolvePassDfxConfigs(const std::string& strategy, const std::string& identifier,
+                                      const std::vector<std::string>& dumpPassGraph) const;
+    Status ExecuteSinglePass(Program& program, Function& function, const PassEntry& passEntry, size_t passIdx,
+                             const std::string& strategy, const std::string& strategyLogFolder) const;
+    void FinalizePassRun(Function& function, const std::string& strategy, const std::string& strategyLogFolder,
+                         bool anyPassExecuted) const;
 
     std::unordered_map<std::string, std::vector<PassEntry>> strategies_;
     mutable std::mutex strategyLogMutex_;

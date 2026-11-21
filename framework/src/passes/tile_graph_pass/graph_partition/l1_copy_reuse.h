@@ -63,6 +63,8 @@ private:
                       std::vector<uint64_t>& hashColor, const std::vector<std::vector<int>>& colorNode);
     int GetMaxInColor(const std::vector<int>& nodes, int curColor);
     Status MergeDupL1CopyIn(Function& func, std::vector<std::vector<int>>& colorNode, int color);
+    // 删除 copyin 时迁移其 token 依赖到保留 op 与消费者，并清理失效 token
+    void TransferDeletedCopyInTokens(Function& func, Operation* deletedOp, const std::vector<Operation*>& oriList);
     void MergeProcessIdUpdate(Function& func, std::vector<std::vector<int>>& colorNode, int color);
     std::vector<int> GetOpInputFeature(const OperationsViewer& opOriList, const int opIdx, const int ioperandIdx);
     void RemoveUselessViews(Function& func) const;
