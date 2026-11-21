@@ -6,4 +6,5 @@
 
 softmax_simd
 softmax_simt
+metadata_aicpu
 ```

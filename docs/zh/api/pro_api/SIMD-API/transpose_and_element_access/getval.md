@@ -39,7 +39,14 @@ SIMT函数中不支持显式调用pypto_pro.language.getval，应使用上述下
 
 ## 约束说明
 
-无。
+### AI CPU Kernel中的使用约束
+
+mode="aicpu_kernel"声明的AI CPU Kernel中，本接口仅支持以下用法：
+
+- container仅支持Tensor，传入Tile会被拒绝：AI CPU Kernel没有片上存储，不支持Tile场景；
+- 仅支持函数调用形式；Tensor方法形式（如`t.size()`）及其他接收Tensor的接口在解析阶段抛出NotSupported。
+
+完整操作面（numel、getval、setval与在位性判断）参见[numel](../../AICPU-API/numel.md)。
 
 ## 调用示例
 

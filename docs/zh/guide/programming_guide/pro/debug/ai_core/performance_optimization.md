@@ -106,19 +106,19 @@ msprof op python3 test_example.py
 
 **图1 Cube和Vector流水存在间隙**
 
-![Cube和Vector流水均存在明显间隙](../../../figures/pro/pro_pipeline_with_gaps.png "Cube和Vector流水均存在明显间隙")
+![Cube和Vector流水均存在明显间隙](../../../../figures/pro/pro_pipeline_with_gaps.png "Cube和Vector流水均存在明显间隙")
 
 图2中的Cube流水在稳态阶段保持连续，MTE、Fixpipe和Vector任务与Cube计算并行执行。此时Kernel达到Cube bound，即达到Cube流水的性能上限。
 
 **图2 Cube流水达到bound状态**
 
-![Cube流水连续执行并形成Cube bound](../../../figures/pro/pro_pipeline_cube_bound.png "Cube流水连续执行并形成Cube bound")
+![Cube流水连续执行并形成Cube bound](../../../../figures/pro/pro_pipeline_cube_bound.png "Cube流水连续执行并形成Cube bound")
 
 ## 多核切分优化
 
-PyPTO Pro使用[`pypto_pro.language.get_block_idx()`](../../../../api/pro_api/SIMD-API/system_variables/get_block_idx.md)和[`pypto_pro.language.get_block_num()`](../../../../api/pro_api/SIMD-API/system_variables/get_block_num.md)划分多核任务。切分方案既要完整覆盖计算范围、避免多个Core重复写入同一输出区域，也要保证各Core负载均衡。
+PyPTO Pro使用[`pypto_pro.language.get_block_idx()`](../../../../../api/pro_api/SIMD-API/system_variables/get_block_idx.md)和[`pypto_pro.language.get_block_num()`](../../../../../api/pro_api/SIMD-API/system_variables/get_block_num.md)划分多核任务。切分方案既要完整覆盖计算范围、避免多个Core重复写入同一输出区域，也要保证各Core负载均衡。
 
-- `block_dim`不宜超过可并行执行的任务数，否则会产生空闲工作单元。逻辑核数的取值约束参见[Kernel核函数](../development/kernel_function.md#blockdim的含义与设置)。
+- `block_dim`不宜超过可并行执行的任务数，否则会产生空闲工作单元。逻辑核数的取值约束参见[Kernel核函数](../../development/kernel_function.md#blockdim的含义与设置)。
 - 各Core的工作量应尽量接近，避免将尾块或高开销分支集中到少数Core。
 - 规则二维Tile可先线性编号，再按Core编号进行跨步分配，以减小尾部负载差异。
 - 输出区域应由唯一Core写入；需要跨Core归约时，应使用明确且受支持的同步与归约方案。
@@ -143,7 +143,7 @@ GM访问应保持连续和对齐，并尽量合并为大粒度搬运。需要重
 
 ## 流水与多缓冲优化
 
-[`pypto_pro.language.make_tile_group`](../../../../api/pro_api/SIMD-API/resource_management/make_tile_group.md)为同一逻辑数据分配多块轮转Tile：`current()`返回当前Tile，`next()`切换到下一块。启用`@pypto_pro.language.jit(auto_mutex=True)`后，编译器根据Tile的mutex信息插入核内同步，从而构建双缓冲或N缓冲流水。
+[`pypto_pro.language.make_tile_group`](../../../../../api/pro_api/SIMD-API/resource_management/make_tile_group.md)为同一逻辑数据分配多块轮转Tile：`current()`返回当前Tile，`next()`切换到下一块。启用`@pypto_pro.language.jit(auto_mutex=True)`后，编译器根据Tile的mutex信息插入核内同步，从而构建双缓冲或N缓冲流水。
 
 优化时应重点检查：
 
@@ -158,7 +158,7 @@ GM访问应保持连续和对齐，并尽量合并为大粒度搬运。需要重
 
 ## Cube与Vector协同优化
 
-矩阵计算通过[`pypto_pro.language.section_cube()`](../../../../api/pro_api/SIMD-API/controlflow/section_cube.md)描述Cube任务，矢量计算通过[`pypto_pro.language.section_vector()`](../../../../api/pro_api/SIMD-API/controlflow/section_vector.md)描述Vector任务。对于混合Kernel，应尽量重叠Cube计算、Vector前后处理和DMA搬运，并减少不必要的数据格式转换和跨存储层搬运。
+矩阵计算通过[`pypto_pro.language.section_cube()`](../../../../../api/pro_api/SIMD-API/controlflow/section_cube.md)描述Cube任务，矢量计算通过[`pypto_pro.language.section_vector()`](../../../../../api/pro_api/SIMD-API/controlflow/section_vector.md)描述Vector任务。对于混合Kernel，应尽量重叠Cube计算、Vector前后处理和DMA搬运，并减少不必要的数据格式转换和跨存储层搬运。
 
 - Cube计算应检查M、N、K方向的TileShape、左右矩阵布局、转置方式以及L0A Buffer/L0B Buffer装载格式。
 - 归约长度较大时，应在L0C Buffer中完成分块累加，再按需要转换并写回。

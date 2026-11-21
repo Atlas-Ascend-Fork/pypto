@@ -61,6 +61,12 @@ SIMT适合需要逐线程控制或难以使用规整Tile计算表达的场景，
 
 典型的SIMT计算先定义SIMT函数，通过线程索引划分数据，再使用标量计算、同步或原子接口完成逐Thread处理。详细内容参见[SIMT编程范式](SIMT/programming_paradigm.md)。
 
+## AI CPU（控制CPU串行任务）
+
+除运行在AI Core上的SIMD与SIMT Kernel外，PyPTO Pro还支持将Kernel运行在SoC控制CPU（AI CPU）上。AI CPU Kernel是单任务串行执行的标量程序：没有多核启动规模，不使用片上存储与Tile编程，直接对GM中的Tensor做逐元素标量读写，适合元数据规划、动态shape预处理等控制流密集、计算量小的任务，并遵循状态ABI（0为成功，1为参数非法）。
+
+AI CPU Kernel通过pypto_pro.language.jit的mode="aicpu_kernel"声明，与SIMD/SIMT Kernel在同一个算子中按Stream依赖协作。详细内容参见[AI CPU编程范式](AICPU/programming_paradigm.md)。
+
 ## AI Core硬件基础
 
 AI处理器包含多个AI Core，多个AI Core可以并行处理不同的数据分片。AI Core内部包含Scalar、Vector、Cube、片上存储和数据搬运等单元：
@@ -93,5 +99,6 @@ PyPTO Pro算子的典型开发与运行流程如下：
 - [PyPTO Pro快速入门](../../../quick_start/pro/index.md)：通过完整算子示例了解Kernel定义、编译和运行流程。
 - [SIMD编程](SIMD/index.md)：了解SPMD多核并行、Tile编程、SIMD矢量计算和矩阵计算。
 - [SIMT编程](SIMT/index.md)：了解线程架构、内存层级、SIMT函数、同步和原子操作。
+- [AI CPU算子开发](../aicpu_development/index.md)：了解控制CPU串行任务的编程面、状态ABI与启动方式。
 - [Kernel核函数](../development/kernel_function.md)：了解Kernel参数、实际核数和启动方式。
 - [编译与执行](../development/compilation_and_execution/index.md)：了解JIT编译和离线二进制编译。

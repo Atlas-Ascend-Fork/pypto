@@ -48,7 +48,7 @@ pypto_pro.language.matmul_mx(
 | scale_a | 输入 | 源操作数（左量化系数矩阵），Tile类型，存储空间为L0A_MX Buffer，数据类型为DT_FP8E8M0，形状为[M, K/32]，layout默认且仅支持ZZ，fractal默认且仅支持32。每个量化系数对应A矩阵K方向连续32个元素。 |
 | scale_b | 输入 | 源操作数（右量化系数矩阵），Tile类型，存储空间为L0B_MX Buffer，数据类型为DT_FP8E8M0，形状为[K/32, N]，layout默认且仅支持NN，fractal默认且仅支持32。每个量化系数对应B矩阵K方向连续32个元素。 |
 | bias_tile | 输入 | 源操作数（可选偏置），Tile类型，存储空间为BiasTable Buffer，数据类型仅支持DT_FP32，形状为[1, N]且N必须与rhs_tile的N维一致，layout默认且仅支持ND。偏置沿M维广播。 |
-| phase | 输入 | K维分块累加阶段，[pypto_pro.language.AccPhase](../basic_data_structures/AccPhase.md)类型，可选，用于控制矩阵计算与L0C Buffer数据搬出之间的UnitFlag同步。与[pypto_pro.language.STPhase](../basic_data_structures/STPhase.md)的配合方式见[Cube计算进阶](../../../../guide/programming_guide/pro/advanced_programming/cube_computation_advanced_usage.md)。 |
+| phase | 输入 | K维分块累加阶段，[pypto_pro.language.AccPhase](../basic_data_structures/AccPhase.md)类型，可选，用于控制矩阵计算与L0C Buffer数据搬出之间的UnitFlag同步。与[pypto_pro.language.STPhase](../basic_data_structures/STPhase.md)的配合方式见[Cube计算进阶](../../../../guide/programming_guide/pro/development/advanced_programming/cube_computation_advanced_usage.md)。 |
 
 ## 约束说明
 

@@ -751,3 +751,7 @@
       - [pypto_pro.language.printf](pro_api/Utils-API/debugging/printf.md)
       - [pypto_pro.language.pto_assert](pro_api/Utils-API/debugging/pto_assert.md)
       - [pypto_pro.language.trap](pro_api/Utils-API/debugging/trap.md)
+  - [AI CPU API](pro_api/AICPU-API/index.md)
+    - [pypto_pro.language.numel](pro_api/AICPU-API/numel.md)
+    - [pypto_pro.language.getval](pro_api/SIMD-API/transpose_and_element_access/getval.md)（AI CPU约束见该页）
+    - [pypto_pro.language.setval](pro_api/SIMD-API/transpose_and_element_access/setval.md)（AI CPU约束见该页）

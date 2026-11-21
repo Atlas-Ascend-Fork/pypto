@@ -19,4 +19,5 @@
 | **同构子图组**          | 互为同构子图的片段，形成的集合被称为同构子图组。在广度方向合图Pass处理过程中，会为每一组同构子图生成一个唯一的特征标识，即hashorder。<br> |
 | **stitch**              | 打破多个loop的边界，将没有依赖关系的多个leaf function执行任务缝合成一个大任务统一下发，减少同步开销，提升调度性能。 |
 | **SuperKernel（SK）**   | 算子二进制融合技术：图编译阶段将多个已编译的子核函数融合成一个超级核函数，减少任务调度与下发开销。 |
+| **AI CPU Kernel**        | 运行在SoC控制CPU（AI CPU）上的串行任务Kernel，通过pypto_pro.language.jit的mode="aicpu_kernel"声明。单任务执行、无多核启动规模与片上存储编程，直接对GM做标量读写，遵循状态ABI（0为成功，1为参数非法），适合元数据规划、动态shape预处理等控制流密集型任务。 |
 | **早启（Early-Start）** | SuperKernel子核间的任务重叠执行能力：通过成对的set_next_task_start与wait_pre_task_end接口，使子核与相邻子核的指令并行执行。 |

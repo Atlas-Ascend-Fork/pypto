@@ -7,4 +7,5 @@
 programming_paradigm_overview
 SIMD/index
 SIMT/index
+AICPU/index
 ```

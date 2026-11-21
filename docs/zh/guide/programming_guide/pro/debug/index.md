@@ -4,7 +4,6 @@
 :maxdepth: 1
 :titlesonly:
 
-functional_debugging
-sanitizer
-performance_optimization
+ai_core/index
+aicpu/index
 ```

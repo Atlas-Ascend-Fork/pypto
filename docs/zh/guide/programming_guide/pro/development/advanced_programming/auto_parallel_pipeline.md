@@ -13,7 +13,7 @@ CV融合算子中，Cube和Vector的计算相互依赖，若按串行流水执�
 
 **图1 串行流水与并行流水的执行节奏对比**
 
-![串行流水与并行流水的执行节奏对比](../../../figures/pro/pro_parallel_pipeline_serial_vs_parallel.svg "串行流水与并行流水的执行节奏对比")
+![串行流水与并行流水的执行节奏对比](../../../../figures/pro/pro_parallel_pipeline_serial_vs_parallel.svg "串行流水与并行流水的执行节奏对比")
 
 图中`sN·iM`表示第N个stage正在处理第M次迭代的数据，格子宽度代表该stage的耗时（各stage耗时不同，图中为示意值）。
 
@@ -58,8 +58,8 @@ def stage1(ki, a, b_l1, a_l1_db, left_db, right_db, acc_db, mm1_vec_db):
 > - 跨核Buffer和核内Buffer需要在kernel函数体内、所有循环之外声明，也可以由kernel函数体内调用的普通函数返回；不能写在stage内，也不能写在stage调用的普通函数中。
 > - 声明的返回值必须绑定到kernel函数体内的变量，不能直接作为实参传入调用。
 > - 每个Buffer使用不同的变量名，不同section中也不能重名。
-> - 自动流水只识别make_tile_group声明的跨核共享Buffer。[pypto_pro.language.make_tensor](../../../../api/pro_api/SIMD-API/resource_management/make_tensor.md)创建的GM上的Tensor视图不是跨核共享Buffer，Cube与Vector通过它交接数据时框架不会插入任何核间同步；需要跨核交接的数据必须放在UB或L1 Buffer中。
-> - 自动流水不扫描[pypto_pro.language.make_tile](../../../../api/pro_api/SIMD-API/resource_management/make_tile.md)声明的Tile，不会为访问它的op插入任何同步。框架也不检查它的地址，其地址范围与跨核Buffer（或与跨核Buffer复用地址的Buffer）重叠时不会报错，但同样不会插入同步，需由开发者自行保证地址不冲突。参与流水的Buffer建议统一用make_tile_group声明，不需要轮转和自动同步时只配置`depth`、不配置`mutex_ids`即可。
+> - 自动流水只识别make_tile_group声明的跨核共享Buffer。[pypto_pro.language.make_tensor](../../../../../api/pro_api/SIMD-API/resource_management/make_tensor.md)创建的GM上的Tensor视图不是跨核共享Buffer，Cube与Vector通过它交接数据时框架不会插入任何核间同步；需要跨核交接的数据必须放在UB或L1 Buffer中。
+> - 自动流水不扫描[pypto_pro.language.make_tile](../../../../../api/pro_api/SIMD-API/resource_management/make_tile.md)声明的Tile，不会为访问它的op插入任何同步。框架也不检查它的地址，其地址范围与跨核Buffer（或与跨核Buffer复用地址的Buffer）重叠时不会报错，但同样不会插入同步，需由开发者自行保证地址不冲突。参与流水的Buffer建议统一用make_tile_group声明，不需要轮转和自动同步时只配置`depth`、不配置`mutex_ids`即可。
 > - 一个跨核Buffer需要恰好被相邻的两个stage使用，两个stage分别位于Cube和Vector上，并构成一对一的生产者和消费者关系。需要把数据送到更后面的stage时，应逐级交接。
 > - `fwd_ids`和`bwd_ids`的取值范围为0～15，只能直接写编译期常量整数列表，或使用kernel外绑定到整数列表的变量，不支持切片、拼接、函数调用等表达式。ID数量需要等于slot数或等于1；等于1时所有slot共用同一个同步ID，可能降低性能。
 > - 跨核Buffer的slot需要随迭代顺序轮转。按stage在主循环中的书写顺序编号（与第一个stage位于Cube还是Vector无关），写该Buffer的stage编号为奇数时至少需要2个slot，为偶数时至少需要`preload`个slot；slot数不足时会在编译期报错，并提示所需的最小slot数。
@@ -352,7 +352,7 @@ def test_pipeline_demo_kernel():
 
 **图2 完整示例在preload=2时的执行顺序与同步关系**
 
-![自动CV并行流水完整示例的流水与同步关系](../../../figures/pro/pro_auto_parallel_pipeline_example.svg "自动CV并行流水完整示例的流水与同步关系")
+![自动CV并行流水完整示例的流水与同步关系](../../../../figures/pro/pro_auto_parallel_pipeline_example.svg "自动CV并行流水完整示例的流水与同步关系")
 
 - **并行preload**：填充阶段先让前级stage处理两个迭代。进入稳态后，Cube侧交错执行`stage1(i+2)`和`stage3(i)`，Vector侧交错执行`stage2(i+2)`和`stage4(i)`，AIC与AIV同时处理不同迭代的数据。主循环结束后，编译器继续排空已经进入流水的`stage3`和`stage4`任务。
 - **核间同步**：编译器根据跨核Buffer的`fwd_ids`和`bwd_ids`自动插入`set_cross_core`和`wait_cross_core`。`mm1_vec_db`使用Forward ID 0/1和Backward ID 2/3，`p_mat_db`使用Forward ID 4/5和Backward ID 6/7，`out_vec_db`使用Forward ID 8/9和Backward ID 10/11。Forward事件保证消费者等待数据写完，Backward事件保证生产者等待消费者使用完毕后再覆写对应slot。
@@ -362,4 +362,4 @@ def test_pipeline_demo_kernel():
 
 > [!NOTE]说明
 >
-> - 本示例按单个1:2 CV执行组设计，因此`block_dim`设置为1。扩展为多个执行组时，需要通过`pypto_pro.language.get_block_idx()`划分各执行组处理的GM数据和输出范围。`block_dim`的完整说明参见[Kernel核函数](../development/kernel_function.md#blockdim的含义与设置)。
+> - 本示例按单个1:2 CV执行组设计，因此`block_dim`设置为1。扩展为多个执行组时，需要通过`pypto_pro.language.get_block_idx()`划分各执行组处理的GM数据和输出范围。`block_dim`的完整说明参见[Kernel核函数](../kernel_function.md#blockdim的含义与设置)。

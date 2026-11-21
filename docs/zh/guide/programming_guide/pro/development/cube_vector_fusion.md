@@ -70,7 +70,7 @@ with pl.section_vector():
 
 ### 自动同步与并行流水
 
-自动同步与并行流水的配置和使用方法参见[自动CV并行流水](../advanced_programming/auto_parallel_pipeline.md)。使用自动流水需要满足该文档中的使用约束；不满足时，应手动编排流水，并使用上述`set_cross_core`和`wait_cross_core`显式配置核间同步。
+自动同步与并行流水的配置和使用方法参见[自动CV并行流水](advanced_programming/auto_parallel_pipeline.md)。使用自动流水需要满足该文档中的使用约束；不满足时，应手动编排流水，并使用上述`set_cross_core`和`wait_cross_core`显式配置核间同步。
 
 ## 基础示例：Matmul+Softmax
 

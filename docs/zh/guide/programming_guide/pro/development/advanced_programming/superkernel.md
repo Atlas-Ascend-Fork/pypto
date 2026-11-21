@@ -10,7 +10,7 @@ PyPTO Pro通过pypto_pro.language.jit的sk_cap参数声明Kernel的SK能力。�
 
 ### 声明SK能力（sk_cap）
 
-在pypto_pro.language.jit中通过sk_cap声明能力位，取值为pypto_pro.language.SkCap的成员或其按位或组合，只接受枚举成员，不接受裸整数。各能力位的位值与含义见[JIT编译：JIT装饰器参数](../development/compilation_and_execution/JIT_compilation.md#jit装饰器参数)。
+在pypto_pro.language.jit中通过sk_cap声明能力位，取值为pypto_pro.language.SkCap的成员或其按位或组合，只接受枚举成员，不接受裸整数。各能力位的位值与含义见[JIT编译：JIT装饰器参数](../compilation_and_execution/JIT_compilation.md#jit装饰器参数)。
 
 ```python
 import pypto_pro.language as pl
@@ -65,7 +65,7 @@ model = torch.compile(
 - 每个核、每个TilingKey分支中必须且只能调用一次，避免在运行时if/for中按不同条件调用；所有可能运行的TilingKey分支都应调用，否则同步指令数量不匹配可能卡住。
 - force参数为编译期bool常量，默认True；SK子核上下文中非强制形式会被编译优化掉。
 
-详细说明见[pypto_pro.language.system.wait_pre_task_end](../../../../api/pro_api/SIMD-API/synchronization/wait_pre_task_end.md)与[pypto_pro.language.system.set_next_task_start](../../../../api/pro_api/SIMD-API/synchronization/set_next_task_start.md)。
+详细说明见[pypto_pro.language.system.wait_pre_task_end](../../../../../api/pro_api/SIMD-API/synchronization/wait_pre_task_end.md)与[pypto_pro.language.system.set_next_task_start](../../../../../api/pro_api/SIMD-API/synchronization/set_next_task_start.md)。
 
 ### 调度模式（schedmode）
 
@@ -79,6 +79,18 @@ schedmode=1时，JIT在`__global__`入口生成`__schedmode__(1)`限定符（bat
 
 SIMD外层调用SIMT VF时，VF内不得读取`pypto_pro.language.simt.grid_dim()`或`pypto_pro.language.simt.block_idx()`。应由外层SIMD使用`pypto_pro.language.get_block_num() * pypto_pro.language.get_subblock_num()`和`pypto_pro.language.get_block_idx()`计算核数与核索引，并作为标量参数传入VF；helper调用链需要继续传递这些参数。
 
+### AI CPU Kernel与SuperKernel的关系
+
+SuperKernel融合的对象是AI Core子核函数的二进制：容器Kernel运行在AI Core上，通过`SK_BIND`记录以子函数调用方式整合各子核。AI CPU Kernel（mode="aicpu_kernel"）运行在SoC控制CPU上，以独立AI CPU任务下发，不参与SuperKernel融合：
+
+- AI CPU工具链没有SK绑定基础设施：`__sk__`入口与`SK_BIND`记录是AI Core编译产物，AI CPU编译不生成对应构造；sk_cap各能力位（DCCI、早启同步、扩核）依赖的均为AI Core硬件机制，在控制CPU上不存在。
+- 装饰器在mode="aicpu_kernel"下拒绝sk_cap与schedmode（抛出NotSupported），参见[JIT编译](../compilation_and_execution/JIT_compilation.md#jit装饰器参数)。
+- 图调度层面，AI CPU节点是天然的融合边界：开启SuperKernel优化后，图编译只把可融合的AI Core节点编入容器，容器在AI CPU节点处断开；先后顺序由正常的Stream/图任务依赖保证，早启握手只发生在容器内相邻AI Core子核之间。
+- 数据衔接依靠GM与缓存一致性：AI CPU在控制CPU上直接写GM（不经过AI Core的DCache）；容器内子核通过GetValue等标量读接口消费时，SK编译会自动插入单Cache Line的DataCacheCleanAndInvalid，保证读到AI CPU刚写入的值。
+- 容器启动核数取容器内所有AI Core子核的最大启动核数，AI CPU任务不计入，也无需能力位声明。
+
+典型协作形态：AI CPU元数据Kernel产出规划表（如多核任务切分metadata），下游AI Core Kernel（可参与融合）按规划表执行计算。
+
 ## 约束说明
 
 - SIMD外层调用SIMT VF时，VF内不得残留`pypto_pro.language.simt.grid_dim()`/`pypto_pro.language.simt.block_idx()`跨核读取，否则SK容器下可能使用容器级核数或核索引。
@@ -86,3 +98,4 @@ SIMD外层调用SIMT VF时，VF内不得读取`pypto_pro.language.simt.grid_dim(
 - 图编译侧需开启SuperKernel优化，融合才会实际发生（详见[在torch.compile中开启SuperKernel](#enable-superkernel)一节）。
 - 早启的两个接口应在相邻子核中配合使用，详见[早启（Early-Start）交互](#early-start)一节。
 - sk_cap必须为pypto_pro.language.SkCap成员或其按位或组合，传入裸整数或非法位会被前端拒绝。
+- AI CPU Kernel不参与SuperKernel融合，mode="aicpu_kernel"下传入sk_cap或schedmode会在装饰时抛出NotSupported，详见[AI CPU Kernel与SuperKernel的关系](#ai-cpu-kernel与superkernel的关系)。

@@ -8,14 +8,14 @@ PyPTO Pro Kernel出现功能问题时，先固定可复现的输入Shape、数�
 
 被`@pypto_pro.language.jit()`装饰的Kernel在需要生成新编译实例时依次完成参数绑定、前端解析与校验、代码生成和编译。首先查看异常中的用户源码位置、错误描述和调用栈，判断失败环节。参数绑定、Python前端解析或IR校验失败时，重点检查接口参数、Shape、数据类型、内存空间及编译期约束。
 
-如果报错带有PyPTO错误码，可结合[错误码参考](../../../appendix/trouble_shooting/)判断所属组件并查阅处理建议。报错位置和错误描述仍是定位用户代码问题的直接依据。代码生成或工具链编译失败时，还应检查完整编译日志和生成代码。
+如果报错带有PyPTO错误码，可结合[错误码参考](../../../../appendix/trouble_shooting/)判断所属组件并查阅处理建议。报错位置和错误描述仍是定位用户代码问题的直接依据。代码生成或工具链编译失败时，还应检查完整编译日志和生成代码。
 
 JIT编译产物默认位于当前工作目录下的`build`目录；设置`ASCEND_WORK_PATH`后，位于`${ASCEND_WORK_PATH}/PYPTO_PRO/build`目录。可重点查看以下文件：
 
 | 文件 | 用途 |
 | --- | --- |
 | `kernel.cpp` | 编译器生成的设备侧Kernel源码，可用于检查参数类型、控制流、地址计算和数据搬运。 |
-| `pipeline_generated.py` | 启用[自动CV并行流水](../advanced_programming/auto_parallel_pipeline.md)后生成的自动核间流水排布代码，可用于检查stage排布、preload和核间同步。 |
+| `pipeline_generated.py` | 启用[自动CV并行流水](../../development/advanced_programming/auto_parallel_pipeline.md)后生成的自动核间流水排布代码，可用于检查stage排布、preload和核间同步。 |
 
 以上文件均为编译器生成的诊断产物。定位到问题后，应修改原始Python Kernel并重新编译，不要直接修改生成文件。
 
@@ -23,7 +23,7 @@ JIT编译产物默认位于当前工作目录下的`build`目录；设置`ASCEND
 
 当Kernel能够正常执行，但输出与参考实现不一致时，先确认输入、Shape、数据类型、布局和比较阈值一致，并在设备同步后读取结果。固定失败用例，再按[pypto-pro-precision-debug Skill](https://gitcode.com/cann/pypto-gym/blob/master/cannbot-skills/ops/pypto-pro-precision-debug/SKILL.md)提供的流程，沿实际数据路径查找第一个出错环节。
 
-需要检查多核切分、循环边界、运行时参数或搬运偏移时，可使用[`pypto_pro.language.printf`](../../../../api/pro_api/Utils-API/debugging/printf.md)打印Core编号、偏移、Shape和分支标志等标量信息。多核场景建议通过`pypto_pro.language.get_block_idx()`限制打印的Core，避免日志大量交错。该接口会引入运行时开销，仅用于功能调试，不应用于性能测试。
+需要检查多核切分、循环边界、运行时参数或搬运偏移时，可使用[`pypto_pro.language.printf`](../../../../../api/pro_api/Utils-API/debugging/printf.md)打印Core编号、偏移、Shape和分支标志等标量信息。多核场景建议通过`pypto_pro.language.get_block_idx()`限制打印的Core，避免日志大量交错。该接口会引入运行时开销，仅用于功能调试，不应用于性能测试。
 
 如果结果错乱、偶发错误，或怀疑GM/Tile访问越界、Tile内存区间重叠、mutex或sync未正确配对、相位使用错误，可在核函数装饰器上设置`@pypto_pro.language.jit(sanitizer=True)`，使用[异常检测工具](sanitizer.md)辅助定位。检出问题时，结果写入报告文件；工具的覆盖范围和使用约束详见该文档。异常检测会产生额外的运行时开销，完成排查后应关闭。
 

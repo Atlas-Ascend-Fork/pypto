@@ -24,22 +24,22 @@ Matmul系列接口的`phase`参数使用`pypto_pro.language.AccPhase`，Fixpipe�
 
 相关枚举说明请参见：
 
-- [`pypto_pro.language.AccPhase`](../../../../api/pro_api/SIMD-API/basic_data_structures/AccPhase.md)
-- [`pypto_pro.language.STPhase`](../../../../api/pro_api/SIMD-API/basic_data_structures/STPhase.md)
+- [`pypto_pro.language.AccPhase`](../../../../../api/pro_api/SIMD-API/basic_data_structures/AccPhase.md)
+- [`pypto_pro.language.STPhase`](../../../../../api/pro_api/SIMD-API/basic_data_structures/STPhase.md)
 
 支持配置AccPhase的接口包括：
 
-- [`pypto_pro.language.matmul`](../../../../api/pro_api/SIMD-API/cube_computation/matmul.md)
-- [`pypto_pro.language.matmul_acc`](../../../../api/pro_api/SIMD-API/cube_computation/matmul_acc.md)
-- [`pypto_pro.language.matmul_mx`](../../../../api/pro_api/SIMD-API/cube_computation/matmul_mx.md)
-- [`pypto_pro.language.matmul_mx_acc`](../../../../api/pro_api/SIMD-API/cube_computation/matmul_mx_acc.md)
+- [`pypto_pro.language.matmul`](../../../../../api/pro_api/SIMD-API/cube_computation/matmul.md)
+- [`pypto_pro.language.matmul_acc`](../../../../../api/pro_api/SIMD-API/cube_computation/matmul_acc.md)
+- [`pypto_pro.language.matmul_mx`](../../../../../api/pro_api/SIMD-API/cube_computation/matmul_mx.md)
+- [`pypto_pro.language.matmul_mx_acc`](../../../../../api/pro_api/SIMD-API/cube_computation/matmul_mx_acc.md)
 
 支持配置STPhase的接口包括：
 
-- [`pypto_pro.language.store`](../../../../api/pro_api/SIMD-API/memory_data_movement/store.md)
-- [`pypto_pro.language.store_tile`](../../../../api/pro_api/SIMD-API/memory_data_movement/store_tile.md)
-- [`pypto_pro.language.move`](../../../../api/pro_api/SIMD-API/memory_data_movement/move.md)
-- [`pypto_pro.language.insert`](../../../../api/pro_api/SIMD-API/memory_data_movement/insert.md)
+- [`pypto_pro.language.store`](../../../../../api/pro_api/SIMD-API/memory_data_movement/store.md)
+- [`pypto_pro.language.store_tile`](../../../../../api/pro_api/SIMD-API/memory_data_movement/store_tile.md)
+- [`pypto_pro.language.move`](../../../../../api/pro_api/SIMD-API/memory_data_movement/move.md)
+- [`pypto_pro.language.insert`](../../../../../api/pro_api/SIMD-API/memory_data_movement/insert.md)
 
 ### AccPhase
 

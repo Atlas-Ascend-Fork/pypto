@@ -1,4 +1,4 @@
-# 算子开发
+# AI Core算子开发
 
 ```{toctree}
 :maxdepth: 2
@@ -12,4 +12,5 @@ cube_computation
 cube_vector_fusion
 tiling/index
 compilation_and_execution/index
+advanced_programming/index
 ```

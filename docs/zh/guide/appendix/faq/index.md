@@ -17,4 +17,9 @@ uninitialized-tensor
 view-assemble-cycle
 symbolic-scalar-no-increment
 aicore-exception
+aicpu-no-blockdim-sk
+aicpu-stream-task-failed
+aicpu-launch-requires-npu-tensors
+aicpu-unsupported-tensor-op
+aicpu-compile-failed
 ```

@@ -152,6 +152,36 @@ compiled = torch.compile(model, backend=npugraph_ex.get_npu_backend(compiler_con
 以及SuperKernel优化前后的节点变化。部分图后端在再次编译失败后会继续运行普通binary；
 单独的精度通过或图级开关开启不能证明静态编译或融合已生效。
 
+## AI CPU Kernel离线交付 <a id="aicpu-kernel离线交付"></a>
+
+mode="aicpu_kernel"的Kernel走独立的离线交付链路，产物与手写AI CPU算子（CpuKernel）完全同构，
+合入ops-transformer风格的自定义算子包：
+
+1. 算子工程CMake在配置阶段调用PyPTO提供的AI CPU代码生成入口
+   （`pypto_pro/runtime/opc/pypto_aicpu_codegen_cli.py`，由`enable_pypto_aicpu_kernel`触发）：
+
+   ```bash
+   python pypto_aicpu_codegen_cli.py --py-file <op>.py --out-dir <gen> \
+       --op-file <op_file> --soc ascend950 [--arch 3510] [--op-type <T>]
+   ```
+
+2. 生成三类产物：
+   - Args头文件：扁平参数结构，Host与Device共用；
+   - 适配TU：`REGISTER_CPU_KERNEL`形态的CpuKernel适配代码（`RunCpuKernel`入口），
+     内部包裹与JIT fast-launch同源的裸函数体；
+   - opInfo json：`functionName`为`RunCpuKernel`、`kernelSo`指向目标库的算子注册项。
+3. 编译、链接（`--whole-archive`合入`libtransformer_aicpu_kernels.so`）、json合并
+   （`cust_aicpu_kernel.json`）与安装全部复用算子工程既有的AI CPU自定义包链路，
+   与手写AI CPU算子一致。
+
+约束：
+
+- 离线交付的AI CPU Kernel参数仅支持Tensor与指针类（运行时None按空指针打包，Kernel体内用
+  `is not None`判断在位性）；TILING、WINDOW参数无离线通道，参数校验阶段拒绝。
+- soc当前仅支持ascend950（默认arch为3510），其他soc需显式指定--arch且以工具链支持为准。
+- AI CPU Kernel不参与SuperKernel融合，离线链路不生成SK相关构造，
+  参见[SuperKernel](../advanced_programming/superkernel.md#ai-cpu-kernel与superkernel的关系)。
+
 ## 配置CMakeLists.txt
 
 在`op_host/CMakeLists.txt`中调用`enable_pypto_kernel(<op_file>)`，并将该调用放在`add_modules_sources`或`add_modules_sources_with_soc`之前：
