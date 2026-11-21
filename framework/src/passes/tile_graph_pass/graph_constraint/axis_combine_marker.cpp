@@ -57,6 +57,11 @@ void UpdateCopyinStatus(Operation* op, std::unordered_map<LogicalTensorPtr, Axis
         return;
     }
     if (outputTensor->GetShape().back() == inputTensor->GetShape().back()) {
+        if (tensorStatus.find(inputTensor) != tensorStatus.end() &&
+            tensorStatus[inputTensor] == AxisReorderStatus::DISABLE) {
+            tensorStatus[outputTensor] = AxisReorderStatus::DISABLE;
+            return;
+        }
         tensorStatus[outputTensor] = AxisReorderStatus::ENABLE;
         return;
     }

@@ -1181,3 +1181,32 @@ TEST_F(TestAxisCombineMarker, assemble_independent_rawmagic_no_propagation)
     EXPECT_EQ(marker.IsTensorEnableAxisCombine(t2), false);
     EXPECT_EQ(marker.IsTensorEnableAxisCombine(t4), true);
 }
+
+/*
+before:
+    gm[-1,-1](DDR, 动态形状父张量, 如 GDR 用例的 beta[TT,heads])
+      |
+    view → vw[8,1](DDR, 列切片)
+      |
+    copy_in → ub[8,1]
+
+after:
+    view 判 vw DISABLE(父末维-1≠视图末维1); copy_in 继承 DISABLE, ub 不合轴。
+    修复前 copy_in 无视输入状态按形状重判 ENABLE, 合轴后跨步列切片被线性连读, 数据错。
+*/
+TEST_F(TestAxisCombineMarker, strided_view_copyin_inherit_disable)
+{
+    ComputationalGraphBuilder graph;
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP32, {-1, -1}, MemoryType::MEM_DEVICE_DDR, "gm"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP32, {8, 1}, MemoryType::MEM_DEVICE_DDR, "vw"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP32, {8, 1}, MemoryType::MEM_UB, "ub"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_VIEW, {"gm"}, {"vw"}, "view", true), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_COPY_IN, {"vw"}, {"ub"}, "copy_in", true), true);
+
+    auto* rootFuncPtr = graph.GetFunction();
+    AxisCombineMarker marker;
+    marker.Run(*rootFuncPtr);
+
+    EXPECT_EQ(marker.IsTensorEnableAxisCombine(graph.GetTensor("vw")), false);
+    EXPECT_EQ(marker.IsTensorEnableAxisCombine(graph.GetTensor("ub")), false);
+}
