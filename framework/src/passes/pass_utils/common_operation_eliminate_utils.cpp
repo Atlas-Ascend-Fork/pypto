@@ -388,10 +388,16 @@ std::string CommonOperationEliminateUtils::DumpAttr(const Operation& op)
     // Excluded attribute keys: graph-merge attributes are annotated by merge passes (L1CopyInReuse /
     // CubeNBuffer / VecNBuffer) with merge-group identifiers (e.g. "func<magic>_<order>") that differ
     // across equivalent producer groups, so they must not participate in the common-operation hash.
+    // unrollBranchId is a scheduling hint only read by VFFusionClusterIdentify and must likewise not
+    // affect equivalence (hashing it would keep identical cross-branch duplicates apart). After a
+    // cross-band merge the survivor keeps its own band, so the VF gate conservatively refuses to
+    // fuse that shared producer into either branch's cluster (no wrong results, only lost fusion
+    // benefit for this shared op); this is the documented expected behavior.
     static const std::unordered_set<std::string> excludedAttrKeys = {
         OpAttributeKey::l1ReuseHashOrder,   OpAttributeKey::l1ReuseSubgraphCount,
         OpAttributeKey::cubeMergeHashOrder, OpAttributeKey::cubeMergeSubgraphCount,
         OpAttributeKey::vecMergeHashOrder,  OpAttributeKey::vecMergeSubgraphCount,
+        OpAttributeKey::unrollBranchId,
     };
     std::ostringstream oss;
     size_t index = 0;

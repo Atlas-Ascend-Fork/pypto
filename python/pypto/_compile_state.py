@@ -19,6 +19,7 @@ class CompileState:
     _loop_idx_generator = itertools.count(0)
     in_function = False
     _atomic_scope_iter_id = 0
+    _unroll_branch_id_generator = itertools.count(0)
 
     @classmethod
     def init_atomic_scope_iter(cls):
@@ -35,6 +36,18 @@ class CompileState:
     @classmethod
     def get_atomic_scope_iter(cls) -> int:
         return cls._atomic_scope_iter_id
+
+    @classmethod
+    def next_unroll_branch_id(cls) -> int:
+        """Assign a fresh id for the unrolled-loop branch copy being dispatched.
+
+        Mirrors the (scopeId, iter) encoding of sg_set_atomic_scope: each branch copy
+        of an unrolled loop gets a unique id, stamped onto ops created during its
+        dispatch (pypto_impl.SetUnrollBranchId / Function::AddRawOperation) so later
+        passes can refuse fusing ops from different branches. The current id lives in
+        the C++ thread-local; Python only owns id generation.
+        """
+        return next(cls._unroll_branch_id_generator)
 
     @classmethod
     def begin_function(cls):

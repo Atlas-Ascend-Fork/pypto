@@ -1095,6 +1095,10 @@ bool VFFusionClusterIdentify::CanMergeToCluster(const GraphContext& graph, size_
                           clusterIter->second.size() + 1, VF_CLUSTER_SIZE_LIMIT);
         return false;
     }
+    // Unroll-band gate: a cluster may not span unroll branches (wildcards unrestricted).
+    if (!IsUnrollBandMergeAllowed({consumer}, clusterIter->second, consumer, clusterId)) {
+        return false;
+    }
     auto clusterOpIndices = GetClusterOpIndices(graph, clusterIter->second);
     if (!PrefixCompatibleForMerge(prefixCtx, {consumerIndex}, clusterOpIndices)) {
         APASS_LOG_DEBUG_F(Elements::Operation, "Cannot merge %s[%d] into VF cluster %d: cube-task prefix misaligned.",
@@ -1156,6 +1160,11 @@ bool VFFusionClusterIdentify::CanMergeClusterIntoTarget(
                           inputClusterId, targetClusterId, graph.ops[consumerIndex]->GetOpcodeStr().c_str(),
                           graph.ops[consumerIndex]->GetOpMagic(), targetIter->second.size() + inputIter->second.size(),
                           VF_CLUSTER_SIZE_LIMIT);
+        return false;
+    }
+    // Unroll-band gate (cluster-merge path): both clusters must resolve to the same band
+    // (a -1 wildcard merges with any band); a mixed band on either side also refuses.
+    if (!IsUnrollBandMergeAllowed(inputIter->second, targetIter->second, graph.ops[consumerIndex], targetClusterId)) {
         return false;
     }
 
@@ -1478,6 +1487,59 @@ bool VFFusionClusterIdentify::InitializeLeafSchedule(const GraphContext& graph, 
         scheduleOrder_.emplace_back(graph.ops[opIndex]);
     }
     RefreshScheduleIndex();
+    return true;
+}
+
+int64_t VFFusionClusterIdentify::GetUnrollBand(const Operation* op)
+{
+    int64_t band = -1;
+    op->GetAttr(OpAttributeKey::unrollBranchId, band);
+    return band;
+}
+
+bool VFFusionClusterIdentify::GetClusterUnrollBand(const std::vector<Operation*>& clusterOps, int64_t& band)
+{
+    band = -1;
+    const Operation* firstBanded = nullptr;
+    for (auto* member : clusterOps) {
+        int64_t memberBand = GetUnrollBand(member);
+        if (memberBand < 0) {
+            continue;
+        }
+        if (firstBanded == nullptr) {
+            firstBanded = member;
+            band = memberBand;
+        } else if (memberBand != band) {
+            // Only reachable when the single-band cluster invariant is already broken; WARN so
+            // the offending cluster is directly locatable in regular regression logs.
+            APASS_LOG_WARN_F(Elements::Operation,
+                             "VF cluster mixes unroll bands (%s[%d] band %lld vs %s[%d] band %lld); refusing to "
+                             "merge this cluster further.",
+                             firstBanded->GetOpcodeStr().c_str(), firstBanded->GetOpMagic(),
+                             static_cast<long long>(band), member->GetOpcodeStr().c_str(), member->GetOpMagic(),
+                             static_cast<long long>(memberBand));
+            return false;
+        }
+    }
+    return true;
+}
+
+bool VFFusionClusterIdentify::IsUnrollBandMergeAllowed(const std::vector<Operation*>& inputSideOps,
+                                                       const std::vector<Operation*>& targetSideOps,
+                                                       const Operation* mergeConsumer, int targetClusterId)
+{
+    int64_t inputBand = -1;
+    int64_t targetBand = -1;
+    if (!GetClusterUnrollBand(inputSideOps, inputBand) || !GetClusterUnrollBand(targetSideOps, targetBand)) {
+        return false; // A side mixes bands: invariant broken, already logged at WARN.
+    }
+    if (inputBand >= 0 && targetBand >= 0 && inputBand != targetBand) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Cannot merge %s[%d] into VF cluster %d: unroll branch mismatch (%lld vs %lld).",
+                          mergeConsumer->GetOpcodeStr().c_str(), mergeConsumer->GetOpMagic(), targetClusterId,
+                          static_cast<long long>(inputBand), static_cast<long long>(targetBand));
+        return false;
+    }
     return true;
 }
 

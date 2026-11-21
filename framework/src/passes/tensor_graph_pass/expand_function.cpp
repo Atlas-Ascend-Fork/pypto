@@ -771,6 +771,9 @@ void ExpandFunction::ProcessForNotExpandOp(Function& function, Operation& op) co
     if (op.HasAttribute(OpAttributeKey::rmwMode)) {
         newOp.SetAttribute(OpAttributeKey::rmwMode, op.GetIntAttribute(OpAttributeKey::rmwMode));
     }
+    if (op.HasAttribute(OpAttributeKey::unrollBranchId)) {
+        newOp.SetAttribute(OpAttributeKey::unrollBranchId, op.GetIntAttribute(OpAttributeKey::unrollBranchId));
+    }
     // ATOMIC_RMW is kept as-is (not sliced into SLICE/CONTRACT). Semantic READ/WRITE
     // tokens must still become the paired NORMAL tokens so later expanded ops share
     // the same tile-graph dependency.
@@ -1476,6 +1479,15 @@ Status ExpandFunction::ExpandTensorOperations(Function& function, const std::vec
             PreserveIncastGatherLoads(opListPost, opListPreSize, incastGatherOutputs);
         }
         CopyEmuOpAttrsForAdds(opListPost, op, opListPreSize);
+        // 展开产生的 tile op 继承源语义 op 的 unroll 分支 id (拒绝跨分支簇融合, 见
+        // VFFusionClusterIdentify)。该属性是调度提示, 不参与任何等价/hash 判定
+        // (common_operation_eliminate_utils 已排除)。
+        if (op->HasAttribute(OpAttributeKey::unrollBranchId)) {
+            int64_t unrollBranchId = op->GetIntAttribute(OpAttributeKey::unrollBranchId);
+            for (size_t i = opListPreSize; i < opListPost.size(); i++) {
+                opListPost[i].SetAttribute(OpAttributeKey::unrollBranchId, unrollBranchId);
+            }
+        }
         InheritTokenContract(opListPost, op, opListPreSize);
         ir::Span::ClearCurrent();
     }

@@ -176,7 +176,21 @@ public:
     static const std::string kL0TileSize;
     static const std::string writeConflict;
     static const std::string parallel;
+    static const std::string unrollBranchId;
 };
+
+// Unroll branch context: the frontend sets this thread-local around the dispatch of each
+// unrolled-loop branch copy (pypto_impl.SetUnrollBranchId); Function::AddRawOperation stamps
+// it onto newly created ops as the OpAttributeKey::unrollBranchId attribute. Ops carrying
+// different ids originate from different unroll branches (or different loops) and must not be
+// fused into one VF cluster: cross-branch dataflow only runs through loop-carried accumulator
+// chains, and the cluster gate would otherwise require every branch's input chains to be
+// resident at the same time. -1 means "not inside an unrolled loop branch" (wildcard).
+// NOTE: the thread-local lives out-of-line in operation.cpp behind these exported accessors
+// (same pattern as CurrentSpan in pypto_pro/error.cpp), so every shared library resolves to
+// one instance instead of a header-inlined per-TU copy.
+void SetUnrollBranchId(int64_t id);
+int64_t GetUnrollBranchId();
 
 const std::string CONV_GROUPS_ATTR = "op_attr_groups";
 const std::string FAKE_TRANS_IN_FORMAT_ATTR = "op_attr_fake_trans_in_format";

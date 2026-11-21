@@ -353,14 +353,24 @@ def _add_jump_stmt(ctx: BuildContext, jump, operands: Optional[list[ir.Expr]] = 
 def _static_for(body: Block, iterator):
     scope = Scope.current()
     loop_var = body.args[0]
-    for item in iterator:
-        scope.varmap[loop_var.id] = item
-        try:
-            dispatch_block(body, True)
-        except BreakSignal:
-            break
-        except ContinueSignal:
-            continue
+    # Each compile-time iteration of the loop body is an unrolled branch copy (pypto.loop
+    # with unroll_list dispatches one copy per yielded loop var). Assign a fresh unroll
+    # branch id per copy so ops created during the dispatch are stamped
+    # (Function::AddRawOperation) and VFFusionClusterIdentify can refuse fusing ops from
+    # different branches; restore the enclosing branch id afterwards for nested loops.
+    saved_branch_id = pypto_impl.GetUnrollBranchId()
+    try:
+        for item in iterator:
+            scope.varmap[loop_var.id] = item
+            pypto_impl.SetUnrollBranchId(CompileState.next_unroll_branch_id())
+            try:
+                dispatch_block(body, True)
+            except BreakSignal:
+                break
+            except ContinueSignal:
+                continue
+    finally:
+        pypto_impl.SetUnrollBranchId(saved_branch_id)
 
 
 def _static_while(body: Block, cond: Cond):
@@ -421,10 +431,24 @@ def _loop_unroll(body: Block, loop: LoopRange, factor, nstart, nstop, ctx: Build
             dispatch_block(body, False)
         else:
             ctx.in_loop_unroll = factor != 1
-            for i in range(factor):
-                scope.varmap[loop_val.id] = loop_var + i * loop.step
-                CompileState.bump_atomic_scope_iter()
-                dispatch_block(body, False)
+            saved_branch_id = pypto_impl.GetUnrollBranchId()
+            try:
+                for i in range(factor):
+                    scope.varmap[loop_val.id] = loop_var + i * loop.step
+                    CompileState.bump_atomic_scope_iter()
+                    if factor != 1:
+                        # Unrolled loop: the body is dispatched once per branch copy. Each
+                        # copy gets a unique unroll branch id (thread-local in C++), stamped
+                        # by Function::AddRawOperation onto every op created during the
+                        # dispatch and inherited by ExpandFunction, so
+                        # VFFusionClusterIdentify can refuse fusing ops from different
+                        # branches into one VF cluster. factor == 1 dispatches the single
+                        # body copy in the enclosing context (no band).
+                        pypto_impl.SetUnrollBranchId(CompileState.next_unroll_branch_id())
+                    dispatch_block(body, False)
+            finally:
+                # Restore the enclosing branch id (nested loops keep their outer branch).
+                pypto_impl.SetUnrollBranchId(saved_branch_id)
             ctx.in_loop_unroll = False
         if is_positive:
             loop_conds.append(loop_var + (factor - 1) * loop.step < loop.stop)

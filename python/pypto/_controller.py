@@ -601,6 +601,11 @@ class _LoopFunction:
             setattr(scalar, "_loop_begin", self._begin)
             setattr(scalar, "_loop_end", self._end)
             CompileState.bump_atomic_scope_iter()
+            # Each yielded loop var drives one compile-time body copy (an unroll branch when
+            # the loop is unrolled): give it a fresh branch id so ops recorded during the
+            # body are stamped (Function::AddRawOperation) and later passes can refuse
+            # fusing ops from different branches into one VF cluster.
+            pypto_impl.SetUnrollBranchId(CompileState.next_unroll_branch_id())
             return scalar
 
     def __init__(self, name, loop_name, loop_range, unroll_list, submit_before_loop, parallel):
@@ -629,6 +634,7 @@ def _loop_function(
     else:
         unroll_set = set(unroll_list)
     rlf = None
+    saved_branch_id = pypto_impl.GetUnrollBranchId()
     try:
         set_source_location(level=3)
         frame = sys._getframe(3)
@@ -637,6 +643,9 @@ def _loop_function(
         clear_source_location()
         yield rlf
     finally:
+        # Loop finished: ops recorded after the loop belong to the enclosing context, not to
+        # the last unroll branch (nested loops restore their outer branch id here).
+        pypto_impl.SetUnrollBranchId(saved_branch_id)
         del rlf
         pypto_impl.EndScope()
 

@@ -236,6 +236,29 @@ private:
     bool IsVfFusionCluster(const Operation& op) const;
     void SetVfFusionCluster(Operation& op, bool isVfFusionCluster);
 
+    // Unroll-band gate: one VF cluster may not span unroll branches. After unrolling, the
+    // vector-op dataflow of different branches is connected only through loop-carried
+    // accumulator chains, so a cross-branch cluster would make the cluster gate hold every
+    // branch's input chains resident at once and push the sequential residency peak past the
+    // on-chip pool. The branch id is set by the frontend around each branch-copy dispatch
+    // (SetUnrollBranchId), stamped onto ops by Function::AddRawOperation and inherited to
+    // tile ops by ExpandFunction; ops recorded outside any unrolled loop carry no id (-1).
+    static int64_t GetUnrollBand(const Operation* op);
+
+    // Resolve a cluster's overall unroll band: all banded members must agree. Returns false
+    // when the cluster mixes bands (invariant broken, logged at WARN), in which case merging
+    // must be refused. A cluster without any banded member resolves to -1 (wildcard).
+    static bool GetClusterUnrollBand(const std::vector<Operation*>& clusterOps, int64_t& band);
+
+    // Unroll-band merge gate shared by both cluster-merge paths (consumer-merge and
+    // cluster-merge): each side must resolve to a single band (a -1 wildcard side merges with
+    // any band); the merge is refused when either side mixes bands (invariant broken, logged
+    // by GetClusterUnrollBand) or when both sides carry different bands. `mergeConsumer` and
+    // `targetClusterId` name the refused merge in the DEBUG log.
+    static bool IsUnrollBandMergeAllowed(const std::vector<Operation*>& inputSideOps,
+                                         const std::vector<Operation*>& targetSideOps, const Operation* mergeConsumer,
+                                         int targetClusterId);
+
     std::vector<Operation*> scheduleOrder_;
     std::unordered_map<Operation*, size_t> schedulePosition_;
     std::unordered_set<const Operation*> vfFusionClusterOps_;

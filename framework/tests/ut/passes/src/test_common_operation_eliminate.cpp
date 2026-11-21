@@ -184,6 +184,47 @@ TEST_F(CommonOperationEliminateTest, EliminateRedundantOps)
     EXPECT_EQ(function->Operations().size(), validOpNum);
 }
 
+TEST_F(CommonOperationEliminateTest, EliminateOpsDifferingOnlyInUnrollBand)
+{
+    // unrollBranchId is excluded from the equivalence hash: two ops differing only in their
+    // unroll band stay equivalent. The survivor keeps its own band, so the VF unroll-band gate
+    // conservatively refuses to fuse that shared producer into either branch's cluster (see
+    // the documented semantics at the exclusion site in common_operation_eliminate_utils.cpp).
+    ComputationalGraphBuilder graph;
+    BuildRedundantAbsGraph(graph);
+    auto* abs1 = graph.GetOp("ABS1");
+    auto* abs2 = graph.GetOp("ABS2");
+    ASSERT_NE(abs1, nullptr);
+    ASSERT_NE(abs2, nullptr);
+    abs1->SetAttribute(OpAttributeKey::unrollBranchId, int64_t(0));
+    abs2->SetAttribute(OpAttributeKey::unrollBranchId, int64_t(1));
+    ExpectCommonOperationEliminateOpCount(graph, 2);
+    Operation* kept = FindKeptAbsProducer(*graph.GetFunction());
+    ASSERT_NE(kept, nullptr);
+    int64_t keptBand = -1;
+    kept->GetAttr(OpAttributeKey::unrollBranchId, keptBand);
+    EXPECT_GE(keptBand, 0);
+}
+
+TEST_F(CommonOperationEliminateTest, KeepUnrollBandOnSameBandMerge)
+{
+    // Merging equivalent ops within one unroll band must keep the survivor's band.
+    ComputationalGraphBuilder graph;
+    BuildRedundantAbsGraph(graph);
+    auto* abs1 = graph.GetOp("ABS1");
+    auto* abs2 = graph.GetOp("ABS2");
+    ASSERT_NE(abs1, nullptr);
+    ASSERT_NE(abs2, nullptr);
+    abs1->SetAttribute(OpAttributeKey::unrollBranchId, int64_t(3));
+    abs2->SetAttribute(OpAttributeKey::unrollBranchId, int64_t(3));
+    ExpectCommonOperationEliminateOpCount(graph, 2);
+    Operation* kept = FindKeptAbsProducer(*graph.GetFunction());
+    ASSERT_NE(kept, nullptr);
+    int64_t keptBand = -1;
+    kept->GetAttr(OpAttributeKey::unrollBranchId, keptBand);
+    EXPECT_EQ(keptBand, 3);
+}
+
 TEST_F(CommonOperationEliminateTest, EliminateRedundantMultiInputOp)
 {
     ComputationalGraphBuilder G;

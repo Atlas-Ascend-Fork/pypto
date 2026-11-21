@@ -158,6 +158,19 @@ const std::string OpAttributeKey::n0Idx = "ConvBP_n0Idx";
 const std::string OpAttributeKey::kL0TileSize = "ConvBP_KL0TileSize";
 const std::string OpAttributeKey::writeConflict = "write_conflict";
 const std::string OpAttributeKey::parallel = "parallel";
+const std::string OpAttributeKey::unrollBranchId = "UNROLL_BRANCH_ID";
+
+namespace {
+int64_t& UnrollBranchIdTLS()
+{
+    static thread_local int64_t id = -1;
+    return id;
+}
+} // namespace
+
+void SetUnrollBranchId(int64_t id) { UnrollBranchIdTLS() = id; }
+
+int64_t GetUnrollBranchId() { return UnrollBranchIdTLS(); }
 
 const std::string ConvOpAttributeKey::cin = "CIN";
 const std::string ConvOpAttributeKey::cout = "COUT";
@@ -565,6 +578,10 @@ void Operation::DumpAttributesJson(Json& opDump) const
     for (const auto& pair : GetAllAttr()) {
         opDump["op_attr"][pair.first] = DumpAttrJson(pair.first);
     }
+    // 调度提示属性提为一等字段: unroll 分支号 (无则 -1), 排查跨分支融合问题时无需再翻 op_attr。
+    int64_t unrollBand = -1;
+    GetAttr(OpAttributeKey::unrollBranchId, unrollBand);
+    opDump["unrollBand"] = unrollBand;
     opDump["sync_queue"] = syncQueue_.ToJson();
     opDump["static"]["sync_queue"] = opDump["sync_queue"];
 }

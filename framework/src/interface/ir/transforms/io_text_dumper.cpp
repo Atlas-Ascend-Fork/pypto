@@ -246,6 +246,11 @@ void IRTextDumper::PrintTokenList(const std::vector<VarPtr>& tokenList)
 // The loader rebuilds this key as a symbol vector, so it is dumped by key rather than by type.
 bool IsSymbolicScalarListOpAttr(const std::string& key) { return key == npu::tile_fwk::OP_ATTR_PREFIX + "validShape"; }
 
+// The unroll band is a transient scheduling hint, not part of the serialized IR semantics: it
+// stays observable via the first-class "unrollBand" field in the op JSON dump instead, so the
+// text IR (and golden snapshots) remain independent of band assignment.
+bool IsTextDumpExcludedOpAttr(const std::string& key) { return key == npu::tile_fwk::OpAttributeKey::unrollBranchId; }
+
 // ---------------------------------------------------------------------------
 // Attr dict printing (attr is the leaf layer of the traversal)
 // ---------------------------------------------------------------------------
@@ -626,6 +631,9 @@ void IRTextDumper::VisitStmt_(const TensorOpStmtPtr& op)
         }
         // Generic op attrs (SCALAR/AXIS/mode/...) that downstream passes read back via GetAttr.
         for (const auto& [key, value] : operation->GetAllAttr()) {
+            if (IsTextDumpExcludedOpAttr(key)) {
+                continue;
+            }
             if (IsRoundTrippableGenericAttr(value) || IsSymbolicScalarListOpAttr(key)) {
                 PrintAttr(key, value);
             }

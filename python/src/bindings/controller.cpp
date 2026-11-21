@@ -14,6 +14,7 @@
  */
 
 #include "pybind_common.h"
+#include "interface/operation/operation.h"
 #include "tilefwk/pypto_fwk_log.h"
 
 #include <utility>
@@ -222,6 +223,12 @@ void BindControllerLoop(py::module_& m)
 
     m.def("IsLoopBegin", &IsLoopBegin, py::arg("symbol"), py::arg("begin"));
     m.def("IsLoopEnd", &IsLoopEnd, py::arg("symbol"), py::arg("end"));
+
+    // Unroll branch context: set by the PIL frontend around each unrolled-loop branch copy
+    // dispatch; Function::AddRawOperation stamps it onto newly created ops as the
+    // OpAttributeKey::unrollBranchId attribute. -1 clears the context (outside any branch).
+    m.def("SetUnrollBranchId", [](int64_t branchId) { SetUnrollBranchId(branchId); }, py::arg("branch_id"));
+    m.def("GetUnrollBranchId", []() { return GetUnrollBranchId(); });
 }
 
 void BindControllerUtils(py::module_& m)

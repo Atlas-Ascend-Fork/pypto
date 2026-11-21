@@ -36,6 +36,13 @@ class VFFusionClusterIdentifyTestAccessor {
 public:
     static void MarkVfFusionCluster(VFFusionClusterIdentify& pass, Operation& op) { pass.SetVfFusionCluster(op, true); }
 
+    static int64_t GetUnrollBand(const Operation* op) { return VFFusionClusterIdentify::GetUnrollBand(op); }
+
+    static bool GetClusterUnrollBand(const std::vector<Operation*>& clusterOps, int64_t& band)
+    {
+        return VFFusionClusterIdentify::GetClusterUnrollBand(clusterOps, band);
+    }
+
     static bool IsPrefixSetCompatible(VFFusionClusterIdentify& pass,
                                       const std::vector<std::vector<uint64_t>>& taskPrefix,
                                       const std::vector<uint64_t>& prefixA, const std::vector<uint64_t>& prefixB)
@@ -158,6 +165,12 @@ void MarkCubeOps(ComputationalGraphBuilder& graph)
         }
     }
 }
+
+// Mirror of the frontend stamping: Function::AddRawOperation stamps the current
+// SetUnrollBranchId context onto every newly created op. Tests that need ops to look like
+// they were recorded inside an unrolled-loop branch can either wrap graph.AddOp with
+// SetUnrollBranchId or stamp existing ops directly with this helper.
+void StampUnrollBand(Operation* op, int64_t band) { op->SetAttribute(OpAttributeKey::unrollBranchId, band); }
 
 } // namespace
 
@@ -475,6 +488,180 @@ TEST_F(VFFusionClusterIdentifyTest, MergesConsumerWithMultipleInputClusters)
     EXPECT_EQ(bExp->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST);
     EXPECT_EQ(bSqrt->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST);
     EXPECT_EQ(joinAdd->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST);
+}
+
+TEST_F(VFFusionClusterIdentifyTest, StampsRecordedOpsWithCurrentUnrollBranchId)
+{
+    // Function::AddRawOperation must stamp the thread-local unroll branch context onto every
+    // newly recorded op and must not stamp anything once the context is cleared back to -1.
+    SetUnrollBranchId(-1);
+    auto rootFunc = CreateRootFunction("TestVFStampBandRoot");
+    auto leafFunc = CreateLeafFunction(*rootFunc, "TestVFStampBandLeaf");
+    ComputationalGraphBuilder graph(leafFunc.get());
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {16, 16}, {"t0", "t1", "t2", "t3"}));
+    SetUnrollBranchId(4);
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"t0"}, {"t1"}, "BandedExp"));
+    SetUnrollBranchId(-1);
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"t1"}, {"t2"}, "PlainExp"));
+    auto* bandedExp = graph.GetOp("BandedExp");
+    auto* plainExp = graph.GetOp("PlainExp");
+    ASSERT_NE(bandedExp, nullptr);
+    ASSERT_NE(plainExp, nullptr);
+
+    EXPECT_EQ(VFFusionClusterIdentifyTestAccessor::GetUnrollBand(bandedExp), 4);
+    EXPECT_EQ(VFFusionClusterIdentifyTestAccessor::GetUnrollBand(plainExp), -1);
+    EXPECT_TRUE(bandedExp->HasAttribute(OpAttributeKey::unrollBranchId));
+    EXPECT_FALSE(plainExp->HasAttribute(OpAttributeKey::unrollBranchId));
+}
+
+TEST_F(VFFusionClusterIdentifyTest, ClassifiesClusterUnrollBand)
+{
+    SetUnrollBranchId(-1);
+    auto rootFunc = CreateRootFunction("TestVFBandClassRoot");
+    auto leafFunc = CreateLeafFunction(*rootFunc, "TestVFBandClassLeaf");
+    ComputationalGraphBuilder graph(leafFunc.get());
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {16, 16}, {"t0", "t1", "t2", "t3", "t4", "t5", "t6"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"t0"}, {"t1"}, "Band5First"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"t1"}, {"t2"}, "Band5Second"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"t2"}, {"t3"}, "Band7"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"t3"}, {"t4"}, "Wildcard"));
+    auto* band5First = graph.GetOp("Band5First");
+    auto* band5Second = graph.GetOp("Band5Second");
+    auto* band7 = graph.GetOp("Band7");
+    auto* wildcard = graph.GetOp("Wildcard");
+    ASSERT_NE(band5First, nullptr);
+    ASSERT_NE(band5Second, nullptr);
+    ASSERT_NE(band7, nullptr);
+    ASSERT_NE(wildcard, nullptr);
+    StampUnrollBand(band5First, 5);
+    StampUnrollBand(band5Second, 5);
+    StampUnrollBand(band7, 7);
+
+    int64_t band = -1;
+    EXPECT_TRUE(VFFusionClusterIdentifyTestAccessor::GetClusterUnrollBand({}, band));
+    EXPECT_EQ(band, -1);
+    EXPECT_TRUE(VFFusionClusterIdentifyTestAccessor::GetClusterUnrollBand({wildcard}, band));
+    EXPECT_EQ(band, -1);
+    EXPECT_TRUE(VFFusionClusterIdentifyTestAccessor::GetClusterUnrollBand({wildcard, band5First}, band));
+    EXPECT_EQ(band, 5);
+    EXPECT_TRUE(VFFusionClusterIdentifyTestAccessor::GetClusterUnrollBand({band5First, band5Second, wildcard}, band));
+    EXPECT_EQ(band, 5);
+    EXPECT_FALSE(VFFusionClusterIdentifyTestAccessor::GetClusterUnrollBand({band5First, band7}, band));
+}
+
+TEST_F(VFFusionClusterIdentifyTest, MergesChainWithinSameUnrollBand)
+{
+    SetUnrollBranchId(-1);
+    auto rootFunc = CreateRootFunction("TestVFSameBandRoot");
+    auto leafFunc = CreateLeafFunction(*rootFunc, "TestVFSameBandLeaf");
+    ComputationalGraphBuilder graph(leafFunc.get());
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {16, 16}, {"t0", "t1", "t2", "t3"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"t0"}, {"t1"}, "BandExp"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_SQRT, {"t1"}, {"t2"}, "BandSqrt"));
+    auto* bandExp = graph.GetOp("BandExp");
+    auto* bandSqrt = graph.GetOp("BandSqrt");
+    ASSERT_NE(bandExp, nullptr);
+    ASSERT_NE(bandSqrt, nullptr);
+    StampUnrollBand(bandExp, 7);
+    StampUnrollBand(bandSqrt, 7);
+
+    VFFusionClusterIdentify pass;
+    EXPECT_EQ(pass.RunOnFunction(*rootFunc), SUCCESS);
+
+    EXPECT_EQ(bandExp->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST);
+    EXPECT_EQ(bandSqrt->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST);
+}
+
+TEST_F(VFFusionClusterIdentifyTest, RejectsChainAcrossUnrollBands)
+{
+    SetUnrollBranchId(-1);
+    auto rootFunc = CreateRootFunction("TestVFCrossBandRoot");
+    auto leafFunc = CreateLeafFunction(*rootFunc, "TestVFCrossBandLeaf");
+    ComputationalGraphBuilder graph(leafFunc.get());
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {16, 16}, {"t0", "t1", "t2", "t3"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"t0"}, {"t1"}, "Band0Exp"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_SQRT, {"t1"}, {"t2"}, "Band1Sqrt"));
+    auto* band0Exp = graph.GetOp("Band0Exp");
+    auto* band1Sqrt = graph.GetOp("Band1Sqrt");
+    ASSERT_NE(band0Exp, nullptr);
+    ASSERT_NE(band1Sqrt, nullptr);
+    StampUnrollBand(band0Exp, 0);
+    StampUnrollBand(band1Sqrt, 1);
+
+    VFFusionClusterIdentify pass;
+    EXPECT_EQ(pass.RunOnFunction(*rootFunc), SUCCESS);
+
+    // The band mismatch forbids the merge; both ops end as dissolved singleton clusters.
+    EXPECT_EQ(band0Exp->GetAtomicScopeId(), -1);
+    EXPECT_EQ(band1Sqrt->GetAtomicScopeId(), -1);
+}
+
+TEST_F(VFFusionClusterIdentifyTest, AllowsWildcardConsumerIntoBandedCluster)
+{
+    SetUnrollBranchId(-1);
+    auto rootFunc = CreateRootFunction("TestVFWildcardConsumerRoot");
+    auto leafFunc = CreateLeafFunction(*rootFunc, "TestVFWildcardConsumerLeaf");
+    ComputationalGraphBuilder graph(leafFunc.get());
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {16, 16}, {"t0", "t1", "t2", "t3", "t4"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"t0"}, {"t1"}, "BandExp"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_SQRT, {"t1"}, {"t2"}, "BandSqrt"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_RSQRT, {"t2"}, {"t3"}, "WildcardRsqrt"));
+    auto* bandExp = graph.GetOp("BandExp");
+    auto* bandSqrt = graph.GetOp("BandSqrt");
+    auto* wildcardRsqrt = graph.GetOp("WildcardRsqrt");
+    ASSERT_NE(bandExp, nullptr);
+    ASSERT_NE(bandSqrt, nullptr);
+    ASSERT_NE(wildcardRsqrt, nullptr);
+    StampUnrollBand(bandExp, 3);
+    StampUnrollBand(bandSqrt, 3);
+
+    VFFusionClusterIdentify pass;
+    EXPECT_EQ(pass.RunOnFunction(*rootFunc), SUCCESS);
+
+    // Ops without a band (recorded outside any unrolled loop) stay fusible with a banded cluster.
+    EXPECT_EQ(bandExp->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST);
+    EXPECT_EQ(bandSqrt->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST);
+    EXPECT_EQ(wildcardRsqrt->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST);
+}
+
+TEST_F(VFFusionClusterIdentifyTest, RejectsClusterMergeAcrossUnrollBands)
+{
+    // Band-gated variant of MergesConsumerWithMultipleInputClusters: two input chains from
+    // different unroll branches may not be pulled into one cluster through their join consumer.
+    SetUnrollBranchId(-1);
+    auto rootFunc = CreateRootFunction("TestVFBandClusterMergeRoot");
+    auto leafFunc = CreateLeafFunction(*rootFunc, "TestVFBandClusterMergeLeaf");
+    ComputationalGraphBuilder graph(leafFunc.get());
+    ASSERT_TRUE(graph.AddTensors(DataType::DT_FP32, {16, 16}, {"a0", "a1", "a2", "b0", "b1", "b2", "out"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"a0"}, {"a1"}, "AExp"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_SQRT, {"a1"}, {"a2"}, "ASqrt"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_EXP, {"b0"}, {"b1"}, "BExp"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_SQRT, {"b1"}, {"b2"}, "BSqrt"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ADD, {"a2", "b2"}, {"out"}, "JoinAdd"));
+    auto* aExp = graph.GetOp("AExp");
+    auto* aSqrt = graph.GetOp("ASqrt");
+    auto* bExp = graph.GetOp("BExp");
+    auto* bSqrt = graph.GetOp("BSqrt");
+    auto* joinAdd = graph.GetOp("JoinAdd");
+    ASSERT_NE(aExp, nullptr);
+    ASSERT_NE(aSqrt, nullptr);
+    ASSERT_NE(bExp, nullptr);
+    ASSERT_NE(bSqrt, nullptr);
+    ASSERT_NE(joinAdd, nullptr);
+    StampUnrollBand(aExp, 0);
+    StampUnrollBand(aSqrt, 0);
+    StampUnrollBand(bExp, 1);
+    StampUnrollBand(bSqrt, 1);
+
+    VFFusionClusterIdentify pass;
+    EXPECT_EQ(pass.RunOnFunction(*rootFunc), SUCCESS);
+
+    // Each branch keeps its own cluster; the wildcard join may only follow one of them.
+    EXPECT_EQ(aExp->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST);
+    EXPECT_EQ(aSqrt->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST);
+    EXPECT_EQ(joinAdd->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST);
+    EXPECT_EQ(bExp->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST + 1);
+    EXPECT_EQ(bSqrt->GetAtomicScopeId(), VF_CLUSTER_ID_START_FOR_TEST + 1);
 }
 
 TEST_F(VFFusionClusterIdentifyTest, RejectsMergeWhenExternalMemoryExceedsUbThreshold)

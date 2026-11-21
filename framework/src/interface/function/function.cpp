@@ -2219,6 +2219,13 @@ Operation& Function::AddRawOperation(const Opcode opCode, const LogicalTensors& 
 
     operations_.back()->SetAtomicScopeId(config::GetAtomicScopeId());
 
+    // unroll 分支标识: 前端在分发每个 unroll 分支拷贝时设置 (SetUnrollBranchId 绑定),
+    // 在此盖章到新建 op 上, 供 VFFusionClusterIdentify 拒绝跨分支簇融合。
+    int64_t unrollBranchId = GetUnrollBranchId();
+    if (unrollBranchId >= 0) {
+        operations_.back()->SetAttribute(OpAttributeKey::unrollBranchId, unrollBranchId);
+    }
+
     if (!span.IsUnknown()) {
         operations_.back()->SetSpan(span);
     }
