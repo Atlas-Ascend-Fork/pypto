@@ -279,7 +279,8 @@ struct InputOutputAliasGraph {
     Operation* assemble;
 };
 
-InputOutputAliasGraph BuildInputOutputAliasGraph(const Shape& viewShape = {8, 512}, DataType dtype = DT_FP16)
+InputOutputAliasGraph BuildInputOutputAliasGraph(const Shape& viewShape = {8, 512}, DataType dtype = DT_FP16,
+                                                 Opcode matmulOpcode = Opcode::OP_A_MUL_B)
 {
     InputOutputAliasGraph graph;
     graph.function = std::make_shared<Function>(Program::GetInstance(), "TestInplaceAlias", "TestInplaceAlias",
@@ -299,7 +300,7 @@ InputOutputAliasGraph BuildInputOutputAliasGraph(const Shape& viewShape = {8, 51
     graph.function->outCasts_ = {graph.output};
     graph.viewOp = &PassOperationUtils::AddOperation(*graph.function, Opcode::OP_VIEW, {graph.input}, {graph.view});
     graph.viewOp->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset(viewShape.size(), 0), MEM_UNKNOWN));
-    graph.matmul = &PassOperationUtils::AddOperation(*graph.function, Opcode::OP_A_MUL_B, {graph.view, graph.weight},
+    graph.matmul = &PassOperationUtils::AddOperation(*graph.function, matmulOpcode, {graph.view, graph.weight},
                                                      {graph.result});
     graph.assemble = &PassOperationUtils::AddOperation(*graph.function, Opcode::OP_ASSEMBLE, {graph.result},
                                                        {graph.output});
@@ -308,6 +309,39 @@ InputOutputAliasGraph BuildInputOutputAliasGraph(const Shape& viewShape = {8, 51
     tile.SetVecTile({8, 128});
     graph.matmul->UpdateTileShape(tile);
     return graph;
+}
+
+struct IndependentOutcastAliasGraph {
+    InputOutputAliasGraph first;
+    LogicalTensorPtr secondOutput;
+    Operation* secondWriter;
+    Operation* firstReader;
+    Operation* secondReader;
+};
+
+IndependentOutcastAliasGraph BuildIndependentOutcastAliasGraph()
+{
+    auto first = BuildInputOutputAliasGraph();
+    auto& function = *first.function;
+    const auto& shape = first.output->GetShape();
+    const auto& validShape = first.output->GetDynValidShape();
+    const Offset zeroOffset(shape.size(), 0);
+    auto writeSource = IRBuilder().CreateTensorVar(DT_FP16, shape, validShape);
+    writeSource->GetRawTensor()->memoryId = 0;
+    function.inCasts_.push_back(writeSource);
+    auto secondOutput = IRBuilder().CreateTensorVar(first.output->GetRawTensor(), zeroOffset, shape, validShape);
+    function.outCasts_ = {secondOutput, first.output};
+    auto& secondWriter = PassOperationUtils::AddOperation(function, Opcode::OP_ASSEMBLE, {writeSource}, {secondOutput});
+    secondWriter.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, zeroOffset));
+    auto addReader = [&](const LogicalTensorPtr& output) {
+        auto result = IRBuilder().CreateTensorVar(DT_FP16, shape, validShape);
+        auto& reader = PassOperationUtils::AddOperation(function, Opcode::OP_A_MUL_B, {output, first.weight}, {result});
+        reader.UpdateTileShape(first.matmul->GetTileShape());
+        return &reader;
+    };
+    auto* firstReader = addReader(first.output);
+    auto* secondReader = addReader(secondOutput);
+    return {std::move(first), secondOutput, &secondWriter, firstReader, secondReader};
 }
 
 Status RunAliasMemoryConflictPass(Function& function)
@@ -341,6 +375,20 @@ TEST_F(PassTest, InferMemoryConflictInplaceInputOutputCopiesViewInput)
     EXPECT_EQ(graph.viewOp->GetIOperands().front(), graph.input);
     EXPECT_EQ(graph.matmul->GetIOperands()[1], graph.weight);
     EXPECT_EQ(graph.assemble->GetIOperands().front(), graph.result);
+}
+
+TEST_F(PassTest, InferMemoryConflictCopiesAliasedMatmulTransposedRhs)
+{
+    for (auto opcode : {Opcode::OP_A_MUL_BT, Opcode::OP_A_MUL_BT_EPILOGUE}) {
+        SCOPED_TRACE(static_cast<int>(opcode));
+        auto graph = BuildInputOutputAliasGraph({8, 512}, DT_FP16, opcode);
+        graph.weight->GetRawTensor()->actualRawmagic = graph.output->GetRawMagic();
+
+        ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+        EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+        ExpectInputSnapshot(*graph.matmul, 1, graph.weight);
+        EXPECT_EQ(graph.matmul->GetIOperands()[0], graph.view);
+    }
 }
 
 TEST_F(PassTest, InferMemoryConflictAlignsAliasSnapshotTile)
@@ -379,6 +427,84 @@ TEST_F(PassTest, InferMemoryConflictCopiesInputSharingOutputSlot)
     EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
     ExpectInputSnapshot(*graph.matmul, 0, graph.view);
     EXPECT_EQ(graph.matmul->GetIOperands()[1], graph.weight);
+}
+
+TEST_F(PassTest, InferMemoryConflictCopiesInputLinkedToOutput)
+{
+    auto graph = BuildInputOutputAliasGraph();
+    ASSERT_NE(graph.input->GetRawMagic(), graph.output->GetRawMagic());
+    graph.function->outIncastLinkMap.emplace(graph.output->GetRawTensor(), graph.input->GetRawTensor());
+
+    ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+    ExpectInputSnapshot(*graph.matmul, 0, graph.view);
+}
+
+TEST_F(PassTest, InferMemoryConflictCopiesEarlierAliasedOutcast)
+{
+    auto graph = BuildInputOutputAliasGraph();
+    const auto& shape = graph.output->GetShape();
+    const Offset zeroOffset(shape.size(), 0);
+    auto createTensor = [&]() { return IRBuilder().CreateTensorVar(DT_FP16, shape, graph.output->GetDynValidShape()); };
+    auto secondResult = createTensor();
+    auto secondOutput = IRBuilder().CreateTensorVar(graph.output->GetRawTensor(), zeroOffset, shape,
+                                                    graph.output->GetDynValidShape());
+    // 故意逆序登记两个 outcast，验证末次写回由计算依赖决定。
+    graph.function->outCasts_ = {secondOutput, graph.output};
+    auto& secondMatmul = PassOperationUtils::AddOperation(*graph.function, Opcode::OP_A_MUL_B,
+                                                          {graph.output, graph.weight}, {secondResult});
+    secondMatmul.UpdateTileShape(graph.matmul->GetTileShape());
+    auto& secondAssemble = PassOperationUtils::AddOperation(*graph.function, Opcode::OP_ASSEMBLE, {secondResult},
+                                                            {secondOutput});
+    secondAssemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, zeroOffset));
+    auto& lastReader = PassOperationUtils::AddOperation(*graph.function, Opcode::OP_A_MUL_B,
+                                                        {secondOutput, graph.weight}, {createTensor()});
+    lastReader.UpdateTileShape(graph.matmul->GetTileShape());
+
+    ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 1);
+    ExpectInputSnapshot(secondMatmul, 0, graph.output);
+    EXPECT_EQ(lastReader.GetIOperands().front(), secondOutput);
+}
+
+TEST_F(PassTest, InferMemoryConflictCopiesBothUnorderedAliasedOutcasts)
+{
+    const auto graph = BuildIndependentOutcastAliasGraph();
+    auto& function = *graph.first.function;
+    ASSERT_EQ(graph.secondWriter->ProducerOps().count(graph.first.assemble), 0);
+    ASSERT_TRUE(graph.secondWriter->ProducerOpsByToken().empty());
+
+    ASSERT_EQ(RunAliasMemoryConflictPass(function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(&function), 2);
+    ExpectInputSnapshot(*graph.firstReader, 0, graph.first.output);
+    ExpectInputSnapshot(*graph.secondReader, 0, graph.secondOutput);
+}
+
+TEST_F(PassTest, InferMemoryConflictCopiesEarlierTokenOrderedAliasedOutcast)
+{
+    const auto graph = BuildIndependentOutcastAliasGraph();
+    auto& function = *graph.first.function;
+    // 两次写回之间只有 token 边，末次写回仍由依赖关系确定。
+    PassTokenUtils::LinkTokenDependency(function, *graph.first.assemble, *graph.secondWriter);
+    ASSERT_EQ(graph.secondWriter->ProducerOps().count(graph.first.assemble), 0);
+    ASSERT_EQ(graph.secondWriter->ProducerOpsByToken().count(graph.first.assemble), 1);
+
+    ASSERT_EQ(RunAliasMemoryConflictPass(function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(&function), 1);
+    ExpectInputSnapshot(*graph.firstReader, 0, graph.first.output);
+    EXPECT_EQ(graph.secondReader->GetIOperands().front(), graph.secondOutput);
+}
+
+TEST_F(PassTest, InferMemoryConflictSkipsAliasedInputWithoutConsumers)
+{
+    auto graph = BuildInputOutputAliasGraph();
+    auto unused = IRBuilder().CreateTensorVar(DT_FP16, graph.output->GetShape(), graph.output->GetDynValidShape());
+    graph.function->inCasts_.push_back(unused);
+    graph.function->outIncastLinkMap.emplace(graph.output->GetRawTensor(), unused->GetRawTensor());
+
+    ASSERT_EQ(RunAliasMemoryConflictPass(*graph.function), SUCCESS);
+    EXPECT_EQ(CountRegisterCopy(graph.function.get()), 0);
+    EXPECT_EQ(graph.matmul->GetIOperands().front(), graph.view);
 }
 
 TEST_F(PassTest, InferMemoryConflictIgnoresMatchingTensorNames)
@@ -483,12 +609,11 @@ TEST_F(PassTest, InferMemoryConflictPreservesInplaceInput)
         EXPECT_EQ(inplaceOp.GetIOperands(), inputs);
         EXPECT_EQ(inplaceOp.GetOOperands(), outputs);
 
-        // 同一算子的普通读取输入仍需缓存，只有原地目标输入保持不变。
+        // 白名单外算子的普通读取输入即使复用输出地址，也无需缓存。
         values->GetRawTensor()->actualRawmagic = input->GetRawMagic();
         ASSERT_EQ(RunAliasMemoryConflictPass(*function), SUCCESS);
-        EXPECT_EQ(CountRegisterCopy(function.get()), 1);
-        EXPECT_EQ(inplaceOp.GetIOperands()[inplaceIndex], input);
-        ExpectInputSnapshot(inplaceOp, inplaceIndex == 2 ? 0 : 1, values);
+        EXPECT_EQ(CountRegisterCopy(function.get()), 0);
+        EXPECT_EQ(inplaceOp.GetIOperands(), inputs);
     }
 }
 

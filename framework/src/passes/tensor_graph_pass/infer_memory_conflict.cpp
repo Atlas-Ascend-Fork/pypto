@@ -19,6 +19,7 @@
 #include "passes/pass_log/pass_log.h"
 #include "passes/pass_utils/pass_utils.h"
 #include <limits>
+#include <numeric>
 #include <unordered_set>
 
 #define MODULE_NAME "InferMemoryConflict"
@@ -463,34 +464,144 @@ bool IsEffectiveValidShapeAligned(Operation& viewOp, Operation& reshapeOp, const
     return IsTrailingValidFull(inValid, reshapeIn->GetShape()) && IsTrailingValidFull(outValid, reshapeOut->GetShape());
 }
 
-std::vector<LogicalTensorPtr> FindAliasedInputs(Function& function)
+// 矩阵乘沿不同轴切分时，同一片输入可能被多个 tile op 读取，需要防止写回提前覆写。
+// MULACC 由 ExpandFunction 在后续 K 分片上生成并读取部分和，需要快照的读取在展开前的 MatMul 上处理。
+const std::unordered_set<Opcode> kAliasSnapshotConsumers = {Opcode::OP_A_MUL_B, Opcode::OP_A_MUL_B_EPILOGUE,
+                                                            Opcode::OP_A_MUL_BT, Opcode::OP_A_MUL_BT_EPILOGUE};
+
+LogicalTensorPtr FindLastOutcast(const Function& function, const LogicalTensors& outcasts)
 {
-    std::unordered_set<int> outputRawMagics;
-    for (const auto& outcast : function.GetOutcast()) {
-        outputRawMagics.insert(outcast->GetRawMagic());
+    if (outcasts.size() == 1) {
+        return outcasts.front();
     }
-    // SSA 改写可能改变 raw magic，共同的 IO slot 仍能标识输入输出的存储复用关系。
+    std::unordered_set<const Operation*> writers;
+    std::vector<const Operation*> pending;
+    auto appendPredecessors = [&](const Operation& op) {
+        for (const auto* producer : op.ProducerOps()) {
+            pending.push_back(producer);
+        }
+        for (const auto& token : op.tokens_) {
+            for (const auto& stmt : function.GetVarDependency().GetProducers(token)) {
+                const auto* producer = dynamic_cast<const Operation*>(stmt.get());
+                if (producer != nullptr && producer->BelongTo() == &function) {
+                    pending.push_back(producer);
+                }
+            }
+        }
+    };
+    for (const auto& outcast : outcasts) {
+        const auto& producers = outcast->GetProducers();
+        if (producers.size() != 1 || !writers.insert(*producers.begin()).second) {
+            return nullptr;
+        }
+        appendPredecessors(**producers.begin());
+    }
+
+    // 只有能由数据边或 token 确定唯一末次写回时，才排除该 outcast。
+    std::unordered_set<const Operation*> visited;
+    while (!pending.empty()) {
+        auto* op = pending.back();
+        pending.pop_back();
+        if (visited.insert(op).second) {
+            writers.erase(op);
+            appendPredecessors(*op);
+        }
+    }
+    if (writers.size() != 1) {
+        return nullptr;
+    }
+    for (const auto& outcast : outcasts) {
+        if (*outcast->GetProducers().begin() == *writers.begin()) {
+            return outcast;
+        }
+    }
+    return nullptr;
+}
+
+size_t FindAliasRoot(std::vector<size_t>& parents, size_t index)
+{
+    while (parents[index] != index) {
+        parents[index] = parents[parents[index]];
+        index = parents[index];
+    }
+    return index;
+}
+
+std::vector<size_t> GroupAliasedBoundaryTensors(const Function& function, const LogicalTensors& tensors,
+                                                size_t incastCount)
+{
+    std::vector<size_t> parents(tensors.size());
+    std::iota(parents.begin(), parents.end(), 0);
+    auto merge = [&](size_t lhs, size_t rhs) { parents[FindAliasRoot(parents, lhs)] = FindAliasRoot(parents, rhs); };
+    auto mergeByKey = [&](size_t index, int key, std::unordered_map<int, size_t>& indices) {
+        auto [entry, inserted] = indices.emplace(key, index);
+        if (!inserted) {
+            merge(index, entry->second);
+        }
+    };
+    std::unordered_map<int, size_t> rawIndices;
+    std::unordered_map<int, size_t> slotIndices;
+    auto mergeByRawMagic = [&](size_t index) { mergeByKey(index, tensors[index]->GetRawMagic(), rawIndices); };
+    auto mergeByIoSlot = [&](size_t index, const std::vector<std::vector<int>>& slots, size_t slotIndex) {
+        if (slotIndex >= slots.size()) {
+            return;
+        }
+        for (int slot : slots[slotIndex]) {
+            mergeByKey(index, slot, slotIndices);
+        }
+    };
+    auto mergeByOutIncastLink = [&]() {
+        for (const auto& [out, in] : function.outIncastLinkMap) {
+            const auto outEntry = rawIndices.find(out->GetRawMagic());
+            const auto inEntry = rawIndices.find(in->GetRawMagic());
+            if (outEntry != rawIndices.end() && inEntry != rawIndices.end()) {
+                merge(outEntry->second, inEntry->second);
+            }
+        }
+    };
     const auto& scope = function.GetSlotScope();
-    std::unordered_set<int> outputSlots;
-    if (scope != nullptr) {
-        for (const auto& slots : scope->ioslot.outcastSlot) {
-            outputSlots.insert(slots.begin(), slots.end());
+    for (size_t i = 0; i < tensors.size(); ++i) {
+        mergeByRawMagic(i);
+        if (scope != nullptr) {
+            const bool isIncast = i < incastCount;
+            const auto& slots = isIncast ? scope->ioslot.incastSlot : scope->ioslot.outcastSlot;
+            mergeByIoSlot(i, slots, isIncast ? i : i - incastCount);
         }
     }
-    std::vector<LogicalTensorPtr> aliasedInputs;
+    mergeByOutIncastLink();
+    return parents;
+}
+
+LogicalTensors FindAliasSnapshotSources(const Function& function)
+{
     const auto& incasts = function.GetIncast();
+    const auto& outcasts = function.GetOutcast();
+    LogicalTensors tensors = incasts;
+    tensors.insert(tensors.end(), outcasts.begin(), outcasts.end());
+    auto parents = GroupAliasedBoundaryTensors(function, tensors, incasts.size());
+
+    std::vector<LogicalTensors> groupedOutcasts(tensors.size());
+    for (size_t i = incasts.size(); i < tensors.size(); ++i) {
+        groupedOutcasts[FindAliasRoot(parents, i)].push_back(tensors[i]);
+    }
+    LogicalTensors sources;
     for (size_t i = 0; i < incasts.size(); ++i) {
-        bool aliased = outputRawMagics.count(incasts[i]->GetRawMagic()) != 0;
-        if (!aliased && scope != nullptr && i < scope->ioslot.incastSlot.size()) {
-            const auto& slots = scope->ioslot.incastSlot[i];
-            aliased = std::any_of(slots.begin(), slots.end(),
-                                  [&outputSlots](int slot) { return outputSlots.count(slot) != 0; });
-        }
-        if (aliased) {
-            aliasedInputs.push_back(incasts[i]);
+        if (!groupedOutcasts[FindAliasRoot(parents, i)].empty() && !incasts[i]->GetConsumers().empty()) {
+            sources.push_back(incasts[i]);
         }
     }
-    return aliasedInputs;
+    for (const auto& group : groupedOutcasts) {
+        if (group.size() < 2) {
+            continue;
+        }
+        const auto last = FindLastOutcast(function, group);
+        for (const auto& outcast : group) {
+            if (outcast != last && !outcast->GetConsumers().empty()) {
+                sources.push_back(outcast);
+            }
+        }
+    }
+    return sources;
 }
 
 } // namespace
@@ -540,8 +651,8 @@ Status InferMemoryConflict::InsertInputOutputAliasCopys(Function& function)
     // 本函数不为原图中互相独立的读写分支建立新的顺序，原有 WAR/token 约束仍需保留。
     // 如果 VIEW 链始终包含动态 shape，则无法展开 REGISTER_COPY，本轮不插入快照。
     std::queue<LogicalTensorPtr> pending;
-    for (const auto& incast : FindAliasedInputs(function)) {
-        pending.push(incast);
+    for (const auto& source : FindAliasSnapshotSources(function)) {
+        pending.push(source);
     }
     std::unordered_set<LogicalTensorPtr> visited;
     std::vector<std::pair<Operation*, LogicalTensorPtr>> copies;
@@ -556,8 +667,8 @@ Status InferMemoryConflict::InsertInputOutputAliasCopys(Function& function)
             const auto opcode = consumer->GetOpcode();
             if (opcode == Opcode::OP_VIEW || opcode == Opcode::OP_VIEW_TYPE) {
                 pending.push(consumer->GetOOperands().front());
-            } else if (opcode == Opcode::OP_REGISTER_COPY || IsInplaceInput(consumer, tensor)) {
-                // 已有缓存无需重复插入；原地目标输入必须与输出同址，不能替换成独立缓存。
+            } else if (kAliasSnapshotConsumers.count(opcode) == 0 || IsInplaceInput(consumer, tensor)) {
+                // 只缓存白名单算子的读取输入，保留原地目标的同址关系。
                 continue;
             } else if (concreteShape) {
                 copies.emplace_back(consumer, tensor);
