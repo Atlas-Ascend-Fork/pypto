@@ -378,6 +378,8 @@ void GenerateMoveOp::SetL0C2UBCopyConvAttr(Operation& op, const Shape& realShape
     copyAttr->SetToOffset(toOffset);
     op.SetOpAttribute(copyAttr);
     op.SetAttribute(OpAttributeKey::isConv, true);
+    // CopyMode 仅用于本 pass 内的路径判定，ApplyL0CCopyUBConvResult 中不保留
+    op.SetAttribute(OpAttributeKey::localCopyLocalMode, static_cast<int64_t>(Matrix::CopyMode::EXTRACT));
 }
 
 void GenerateMoveOp::SetUB2L1CopyAttr(Operation& op, const Shape& copyShape, const std::vector<OpImmediate>& fromOffset,
@@ -633,11 +635,9 @@ Status RefreshConvCopyFromOffset(const Operation& op, const std::shared_ptr<Copy
     // 刷新源偏移: 合并后 src 直连 L0C 原始 (M, N) tensor，VIEW 路径携带的 4/5 维 NCHW(NCDHW)
     // 源偏移需折算为 L0C (m, n) 二维坐标继承到新 copy attr 上；否则大搬小 (一个 L0C 块跨
     // 多个 UB tile) 时各 copy 均从块首读取，且相互因属性一致被公共算子消除误删。
-    // INSERT (小搬大) 路径的源偏移为二维零偏移，原样保留。
+    // INSERT (小搬大) 从整个 L0C 源块读取，源偏移归一为二维零偏移。
     if (!isViewPath) {
-        if (!ubFromOffset.empty()) {
-            copyAttr->SetFromOffset(ubFromOffset);
-        }
+        copyAttr->SetFromOffset(OpImmediate::Specified(Offset(SHAPE_DIM2, 0)));
         return SUCCESS;
     }
     const Shape& tfShape = transFormatOutput->GetShape();
@@ -756,7 +756,17 @@ Status GenerateMoveOp::ProcessL0CCopyUBConv(Operation& op) const
     auto transFormatOutput = transFormatOp->GetOOperands().front();
     auto transFormatInput = transFormatOp->GetIOperands().front();
     const auto& ubFromOffset = copyAttrUb->GetFromOffset();
-    bool isViewPath = ubFromOffset.size() >= SHAPE_DIM4;
+    int64_t copyMode = static_cast<int64_t>(Matrix::CopyMode::UNKNOWN);
+    op.GetAttr(OpAttributeKey::localCopyLocalMode, copyMode);
+    const bool isExtract = copyMode == static_cast<int64_t>(Matrix::CopyMode::EXTRACT);
+    if (!isExtract && copyMode != static_cast<int64_t>(Matrix::CopyMode::INSERT)) {
+        APASS_LOG_ERROR_F(
+            Elements::Operation,
+            "ProcessL0CCopyUBConv: op[%d] requires attribute '%s' set to INSERT or EXTRACT (resolved value %lld).",
+            op.GetOpMagic(), OpAttributeKey::localCopyLocalMode.c_str(), static_cast<long long>(copyMode));
+        return FAILED;
+    }
+    const bool isViewPath = isExtract && ubFromOffset.size() >= SHAPE_DIM4;
 
     auto copyAttr = CreateConvCopyAttrBase(copyAttrUb, transFormatInput, ubDst);
     if (RefreshConvCopyFromOffset(op, copyAttr, ubFromOffset, transFormatOutput, isViewPath) != SUCCESS) {

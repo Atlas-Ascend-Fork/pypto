@@ -1326,6 +1326,7 @@ TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvMergeTransFormatL0C)
     auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(l0cCopyUbOp.GetOpAttribute());
     copyAttr->SetToOffset(toOffset);
     l0cCopyUbOp.SetOpAttribute(copyAttr);
+    l0cCopyUbOp.SetAttribute(OpAttributeKey::localCopyLocalMode, static_cast<int64_t>(Matrix::CopyMode::INSERT));
 
     GenerateMoveOp pass;
     EXPECT_EQ(pass.ProcessL0CCopyUBConv(l0cCopyUbOp), SUCCESS);
@@ -1339,7 +1340,7 @@ TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvMergeTransFormatL0C)
 
     auto mergedAttr = std::dynamic_pointer_cast<CopyOpAttribute>(l0cCopyUbOp.GetOpAttribute());
     ASSERT_NE(mergedAttr, nullptr);
-    // INSERT 路径 (2 维源偏移) 合并后应原样保留在新 copy attr 上
+    // INSERT 路径从整个 L0C 源块读取，合并后的源偏移为二维零偏移。
     auto mergedFromOffset = OpImmediate::ToSpecified(mergedAttr->GetFromOffset());
     ASSERT_EQ(mergedFromOffset.size(), 2);
     EXPECT_TRUE(mergedFromOffset[0].ConcreteValid());
@@ -1391,6 +1392,7 @@ TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvViewPathRefreshSrcOffset)
         {OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(0)),
          OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(0))});
     l0cCopyUbOp.SetOpAttribute(viewAttr);
+    l0cCopyUbOp.SetAttribute(OpAttributeKey::localCopyLocalMode, static_cast<int64_t>(Matrix::CopyMode::EXTRACT));
 
     GenerateMoveOp pass;
     EXPECT_EQ(pass.ProcessL0CCopyUBConv(l0cCopyUbOp), SUCCESS);
@@ -1464,6 +1466,7 @@ TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvViewPathUpdatesRealCutW)
         {OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(0)),
          OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(0))});
     l0cCopyUbOp.SetOpAttribute(viewAttr);
+    l0cCopyUbOp.SetAttribute(OpAttributeKey::localCopyLocalMode, static_cast<int64_t>(Matrix::CopyMode::EXTRACT));
 
     GenerateMoveOp pass;
     EXPECT_EQ(pass.ProcessL0CCopyUBConv(l0cCopyUbOp), SUCCESS);
@@ -1522,6 +1525,7 @@ TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvInsertPathRecordsLandingTile)
         {OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(16)),
          OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(0))});
     l0cCopyUbOp.SetOpAttribute(insertAttr);
+    l0cCopyUbOp.SetAttribute(OpAttributeKey::localCopyLocalMode, static_cast<int64_t>(Matrix::CopyMode::INSERT));
 
     GenerateMoveOp pass;
     EXPECT_EQ(pass.ProcessL0CCopyUBConv(l0cCopyUbOp), SUCCESS);
@@ -1529,6 +1533,85 @@ TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvInsertPathRecordsLandingTile)
     EXPECT_EQ(l0cCopyUbOp.GetOpcode(), Opcode::OP_L0C_COPY_UB_CONV);
     EXPECT_EQ(l0cCopyUbOp.GetVectorIntAttribute(OpAttributeKey::l0cTileShape), tileShape);
     EXPECT_NE(l0cCopyUbOp.GetVectorIntAttribute(OpAttributeKey::l0cTileShape), wholeShape);
+}
+
+TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvViewSetsExtractMode)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "ConvViewExtract", "ConvViewExtract", nullptr);
+    auto convOutput = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_NZ, {64, 32});
+    auto transFormatOutput = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_ND, {1, 32, 4, 4, 4});
+    const Shape ubShape{1, 16, 2, 4, 4};
+    auto ubOutput = CreateTestLogicalTensor(MEM_UB, TileOpFormat::TILEOP_ND, ubShape);
+
+    auto& transFormat = func->AddOperation(Opcode::OP_TRANS_FORMAT_L0C, {convOutput}, {transFormatOutput});
+    transFormat.SetAttribute(OpAttributeKey::isConv, true);
+    auto& view = func->AddOperation(Opcode::OP_VIEW, {transFormatOutput}, {ubOutput});
+    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 16, 2, 0, 0}));
+
+    GenerateMoveOp pass;
+    ASSERT_EQ(pass.A5CreateMoveOpForView(*func, view), SUCCESS);
+    ASSERT_EQ(view.GetOpcode(), Opcode::OP_L0C_COPY_UB_CONV);
+    ASSERT_EQ(view.GetIntAttribute(OpAttributeKey::localCopyLocalMode),
+              static_cast<int64_t>(Matrix::CopyMode::EXTRACT));
+    ASSERT_EQ(pass.ProcessL0CCopyUBConv(view), SUCCESS);
+
+    auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(view.GetOpAttribute());
+    ASSERT_NE(copyAttr, nullptr);
+    auto fromOffset = OpImmediate::ToSpecified(copyAttr->GetFromOffset());
+    ASSERT_EQ(fromOffset.size(), 2);
+    EXPECT_EQ(fromOffset[0].Concrete(), 32);
+    EXPECT_EQ(fromOffset[1].Concrete(), 16);
+    EXPECT_EQ(view.GetVectorIntAttribute(OpAttributeKey::l0cTileShape), ubShape);
+}
+
+TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvInsertPreservesDestinationOffset)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "ConvAssembleInsert", "ConvAssembleInsert", nullptr);
+    const Shape tileShape{1, 16, 8, 8};
+    const Offset destinationOffset{0, 16, 0, 8};
+    auto convOutput = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_NZ, {64, 16});
+    auto transFormatOutput = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_ND, tileShape);
+    auto ubOutput = CreateTestLogicalTensor(MEM_UB, TileOpFormat::TILEOP_ND, {1, 32, 8, 16});
+
+    auto& transFormat = func->AddOperation(Opcode::OP_TRANS_FORMAT_L0C, {convOutput}, {transFormatOutput});
+    transFormat.SetAttribute(OpAttributeKey::isConv, true);
+    const std::vector<SymbolicScalar> blockValidMN{SymbolicScalar(64), SymbolicScalar(16)};
+    transFormat.SetAttribute(OpAttributeKey::l0cValidMN, blockValidMN);
+    transFormat.SetAttribute(Conv::LoadStoreConvOpAttributeKey::realCutW, SymbolicScalar(8));
+    auto& assemble = func->AddOperation(Opcode::OP_CONTRACT, {transFormatOutput}, {ubOutput});
+    assemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(destinationOffset));
+
+    GenerateMoveOp pass;
+    ASSERT_EQ(pass.CreateMoveOpForAssemble(*func, assemble), SUCCESS);
+    ASSERT_EQ(assemble.GetOpcode(), Opcode::OP_L0C_COPY_UB_CONV);
+    ASSERT_EQ(assemble.GetIntAttribute(OpAttributeKey::localCopyLocalMode),
+              static_cast<int64_t>(Matrix::CopyMode::INSERT));
+    auto insertAttr = std::dynamic_pointer_cast<CopyOpAttribute>(assemble.GetOpAttribute());
+    ASSERT_NE(insertAttr, nullptr);
+    ASSERT_EQ(insertAttr->GetFromOffset().size(), tileShape.size());
+    ASSERT_EQ(pass.ProcessL0CCopyUBConv(assemble), SUCCESS);
+
+    auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(assemble.GetOpAttribute());
+    ASSERT_NE(copyAttr, nullptr);
+    auto fromOffset = OpImmediate::ToSpecified(copyAttr->GetFromOffset());
+    ASSERT_EQ(fromOffset.size(), 2);
+    EXPECT_EQ(fromOffset[0].Concrete(), 0);
+    EXPECT_EQ(fromOffset[1].Concrete(), 0);
+    auto toOffset = OpImmediate::ToSpecified(copyAttr->GetToOffset());
+    ASSERT_EQ(toOffset.size(), destinationOffset.size());
+    for (size_t dim = 0; dim < destinationOffset.size(); ++dim) {
+        EXPECT_EQ(toOffset[dim].Concrete(), destinationOffset[dim]);
+    }
+
+    auto validMN = assemble.GetAttr<std::vector<SymbolicScalar>>(OpAttributeKey::l0cValidMN);
+    ASSERT_NE(validMN, nullptr);
+    ASSERT_EQ(validMN->size(), blockValidMN.size());
+    EXPECT_EQ((*validMN)[0].Concrete(), blockValidMN[0].Concrete());
+    EXPECT_EQ((*validMN)[1].Concrete(), blockValidMN[1].Concrete());
+    SymbolicScalar realCutW;
+    ASSERT_TRUE(assemble.GetAttr(Conv::LoadStoreConvOpAttributeKey::realCutW, realCutW));
+    EXPECT_EQ(realCutW.Concrete(), 8);
+    EXPECT_EQ(assemble.GetVectorIntAttribute(OpAttributeKey::l0cTileShape), tileShape);
 }
 
 TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvSkipNonTransFormatProducer)
@@ -1612,6 +1695,35 @@ TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvFailNullCopyAttr)
     EXPECT_FALSE(transFormatOp.IsDeleted());
 }
 
+TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvRejectsMissingOrInvalidCopyMode)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "l0CCopyUBConvMode", "l0CCopyUBConvMode", nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("l0CCopyUBConvMode", func);
+
+    const std::vector<int64_t> shape{32, 64};
+    auto convOutput = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_NZ, shape);
+    auto transFormatOutput = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_NZ, shape);
+    auto ubOutput = CreateTestLogicalTensor(MEM_UB, TileOpFormat::TILEOP_ND, shape);
+
+    auto& transFormatOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_TRANS_FORMAT_L0C, {convOutput},
+                                                         {transFormatOutput});
+    transFormatOp.SetAttribute(OpAttributeKey::isConv, true);
+    auto& l0cCopyUbOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_L0C_COPY_UB_CONV, {transFormatOutput},
+                                                       {ubOutput});
+    const auto shapeImm = OpImmediate::Specified(shape);
+    const auto zeroOffset = OpImmediate::Specified(std::vector<int64_t>(shape.size(), 0));
+    l0cCopyUbOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(zeroOffset, MEM_UB, shapeImm, shapeImm, shapeImm));
+
+    GenerateMoveOp pass;
+    ASSERT_FALSE(l0cCopyUbOp.HasAttribute(OpAttributeKey::localCopyLocalMode));
+    ASSERT_EQ(pass.ProcessL0CCopyUBConv(l0cCopyUbOp), FAILED);
+
+    l0cCopyUbOp.SetAttribute(OpAttributeKey::localCopyLocalMode, static_cast<int64_t>(Matrix::CopyMode::MOVE));
+    EXPECT_EQ(pass.ProcessL0CCopyUBConv(l0cCopyUbOp), FAILED);
+    EXPECT_FALSE(transFormatOp.IsDeleted());
+    EXPECT_EQ(l0cCopyUbOp.GetIOperands().front(), transFormatOutput);
+}
+
 TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvMergeWithDynRawShape)
 {
     auto func = std::make_shared<Function>(Program::GetInstance(), "l0CCopyUBConvDynRaw", "l0CCopyUBConvDynRaw",
@@ -1637,6 +1749,7 @@ TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvMergeWithDynRawShape)
     l0cCopyUbOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(
         fromOffset, MEM_UB, l0cShapeImm, OpImmediate::Specified(transFormatOutput->tensor->GetDynRawShape()),
         l0cShapeImm));
+    l0cCopyUbOp.SetAttribute(OpAttributeKey::localCopyLocalMode, static_cast<int64_t>(Matrix::CopyMode::INSERT));
 
     GenerateMoveOp pass;
     EXPECT_EQ(pass.ProcessL0CCopyUBConv(l0cCopyUbOp), SUCCESS);
