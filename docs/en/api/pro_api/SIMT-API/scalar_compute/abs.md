@@ -1,0 +1,72 @@
+# pypto_pro.language.simt.abs
+
+## Applicable Products
+
+<!-- npu="950" id1 -->
+- Ascend 950PR&950DT products: Supported
+<!-- end id1 -->
+<!-- npu="A3" id2 -->
+- Atlas A3 products: Not supported
+<!-- end id2 -->
+<!-- npu="910b" id3 -->
+- Atlas A2 products: Not supported
+<!-- end id3 -->
+
+## Description
+
+Computes the absolute value of the source operand. The computation formula is as follows:
+
+$$result = |value|$$
+
+## Prototype
+
+```python
+pypto_pro.language.simt.abs(
+    value: Union[int, float],
+) -> Scalar
+```
+
+## Parameters
+
+| Parameter| Input/Output| Description|
+|---|---|---|
+| value | Input| Source operand, which can be an integer or floating-point constant, or a runtime scalar expression of the corresponding type. DT_FP16, DT_BF16, DT_FP32, DT_INT32, and DT_INT64 are supported. The tensor or tile element needs to be accessed by subscript before being passed.|
+
+## Constraints
+
+This API can only be called in the SIMT kernel, SIMT vector function, or SIMT helper.
+
+## Return Value
+
+Returns the absolute value of the source operand. The data type is the same as that of the input.
+
+For DT_FP16 and DT_BF16 inputs, only the sign bit is cleared, and other bits remain unchanged.
+
+| value| Return Value|
+|---|---|
+| ±0 | +0 |
+| ±Inf | +Inf |
+| NaN | NaN after the sign bit is cleared, with the payload and other bits retained.|
+
+## Examples
+
+```python
+import pypto_pro.language as pl
+
+@pl.vector_function(mode="simt", max_threads=256)
+def abs_fp32(
+    source: pl.Tensor[[1, 256], pl.DT_FP32],
+    output: pl.Tensor[[1, 256], pl.DT_FP32],
+):
+    tid = pl.simt.linear_thread_idx()
+    output[0, tid] = pl.simt.abs(source[0, tid])
+
+
+@pl.jit()
+def simt_abs_kernel(
+    source: pl.Tensor[[1, 256], pl.DT_FP32],
+    output: pl.Tensor[[1, 256], pl.DT_FP32],
+):
+    with pl.section_vector():
+        abs_fp32[256](source, output)
+```
