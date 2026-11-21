@@ -1524,6 +1524,29 @@ Status AssignMemoryType::TryInferViewTypeFromProducerMoveIn(Operation& operation
     return SUCCESS;
 }
 
+// Batch matmul 的 batch 轴偏移会导致 L0C2UB 精度异常，跳过 UB 推导
+static bool HasBatchMatmulContractInput(const LogicalTensorPtr& input, const Operation& reshape)
+{
+    for (auto* contract : input->GetProducers()) {
+        for (const auto& tile : contract->iOperand) {
+            if (tile == nullptr || tile->GetShape().size() <= SHAPE_DIM2) {
+                continue;
+            }
+            for (auto* source : tile->GetProducers()) {
+                if (source != nullptr && OpChecker::check(source, OpChecker::CalcTypeChecker(OpCalcType::MATMUL))) {
+                    APASS_LOG_DEBUG_F(Elements::Operation,
+                                      "Skip split reshape[%d] UB retention: contract[%d] input tensor[%d] "
+                                      "shape=%s comes from batch matmul[%d].",
+                                      reshape.GetOpMagic(), contract->GetOpMagic(), tile->GetMagic(),
+                                      IntVecToStr(tile->GetShape()).c_str(), source->GetOpMagic());
+                    return true;
+                }
+            }
+        }
+    }
+    return false;
+}
+
 Status AssignMemoryType::KeepSplitReshapeUb(Operation& operation, const LogicalTensorPtr& input,
                                             const LogicalTensorPtr& output, bool& kept)
 {
@@ -1571,6 +1594,9 @@ Status AssignMemoryType::KeepSplitReshapeUb(Operation& operation, const LogicalT
     int64_t inputDataSize = input->GetDataSize();
     if (allProducersContract && allConsumersSlice && inputDataSize >= 0 &&
         static_cast<size_t>(inputDataSize) <= ubThreshold) {
+        if (HasBatchMatmulContractInput(input, operation)) {
+            return SUCCESS;
+        }
         bool canKeepProducers = false;
         RETURN_IF_NOT_SUCCESS(CanKeepContractProducersInUb(input, canKeepProducers));
         if (canKeepProducers) {

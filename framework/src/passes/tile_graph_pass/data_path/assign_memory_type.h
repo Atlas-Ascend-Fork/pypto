@@ -211,9 +211,11 @@ private:
         bool requireMatrixShape;
         bool checkUbTileShape;
         bool checkUb2L1Constraints;
+        bool isConvConsumer = false;
+        bool isConvProducer = false;
     };
     bool CheckContractSliceTopology(const ContractSlicePath& path) const;
-    bool CheckContractSliceStorage(const ContractSlicePath& path, bool isLiteNpu) const;
+    bool CheckContractSliceStorage(ContractSlicePath& path, bool isLiteNpu) const;
     bool CheckContractSliceProducers(const ContractSlicePath& path, bool isLiteNpu);
     bool IsContractSliceSourceDtypeSupported(const LogicalTensorPtr& input, MemoryType sourceType,
                                              MemoryType targetType, bool isLiteNpu) const;

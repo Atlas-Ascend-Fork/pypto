@@ -3903,6 +3903,43 @@ TEST_F(AssignMemoryTypeTest, SplitReshapeParallelUbSliceAvoidsDdrRoundTrip)
     }
 }
 
+TEST_F(AssignMemoryTypeTest, SplitReshapeSkipsBatchMatmulUbRetention)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    for (bool batched : {false, true}) {
+        SCOPED_TRACE(batched);
+        ComputationalGraphBuilder G;
+        Shape tileShape = batched ? Shape{1, NUM_16, NUM_16} : Shape{NUM_16, NUM_16};
+        Shape assembledShape = batched ? Shape{1, NUM_16, NUM_32} : Shape{NUM_16, NUM_32};
+        G.AddTensor(DT_FP32, tileShape, MemoryType::MEM_L0A, "a");
+        G.AddTensor(DT_FP32, tileShape, MemoryType::MEM_L0B, "b");
+        G.AddTensor(DT_FP32, tileShape, MemoryType::MEM_L0C, "tile");
+        G.AddTensor(DT_FP32, assembledShape, MemoryType::MEM_UNKNOWN, "assembled");
+        G.AddTensor(DT_FP32, {NUM_32, NUM_16}, MemoryType::MEM_UNKNOWN, "reshaped");
+        G.AddTensor(DT_FP32, {NUM_32, NUM_16}, MemoryType::MEM_UB, "out");
+        G.AddOp(Opcode::OP_A_MUL_B, {"a", "b"}, {"tile"}, "matmul");
+        G.AddOp(Opcode::OP_CONTRACT, {"tile"}, {"assembled"}, "contract");
+        Offset offset(tileShape.size(), 0);
+        G.GetOp("contract")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_L0C, offset));
+        G.AddOp(Opcode::OP_RESHAPE, {"assembled"}, {"reshaped"}, "reshape");
+        G.AddOp(Opcode::OP_SLICE, {"reshaped"}, {"out"}, "slice");
+        G.GetOp("slice")->SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{0, 0}, MemoryType::MEM_UB));
+
+        AssignMemoryType pass;
+        auto input = G.GetTensor("assembled");
+        auto output = G.GetTensor("reshaped");
+        auto& reshape = *G.GetOp("reshape");
+        pass.inserter.UpdateTensorTobeMap(input, reshape, MemoryType::MEM_DEVICE_DDR);
+        bool kept = false;
+        ASSERT_EQ(pass.KeepSplitReshapeUb(reshape, input, output, kept), SUCCESS);
+        EXPECT_EQ(kept, !batched);
+        EXPECT_EQ(input->GetMemoryTypeOriginal(), batched ? MemoryType::MEM_UNKNOWN : MemoryType::MEM_UB);
+        EXPECT_EQ(output->GetMemoryTypeOriginal(), batched ? MemoryType::MEM_UNKNOWN : MemoryType::MEM_UB);
+        EXPECT_EQ(pass.inserter.GetRequirementOrUnknown(input, reshape),
+                  batched ? MemoryType::MEM_DEVICE_DDR : MemoryType::MEM_UB);
+    }
+}
+
 TEST_F(AssignMemoryTypeTest, SplitReshapeRejectedProducerPreservesParallelSliceRequirement)
 {
     ComputationalGraphBuilder G;

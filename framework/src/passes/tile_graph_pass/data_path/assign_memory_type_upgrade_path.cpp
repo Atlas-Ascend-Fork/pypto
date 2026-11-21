@@ -1019,15 +1019,15 @@ Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp
     if (contractOp.GetOpcode() != Opcode::OP_CONTRACT || contractOp.iOperand.empty() || contractOp.oOperand.empty()) {
         return SUCCESS;
     }
-    const ContractSlicePath path{contractOp,
-                                 contractOp.iOperand.front(),
-                                 contractOp.oOperand.front(),
-                                 sourceType,
-                                 targetType,
-                                 reason,
-                                 requireMatrixShape,
-                                 checkUbTileShape,
-                                 checkUb2L1Constraints};
+    ContractSlicePath path{contractOp,
+                           contractOp.iOperand.front(),
+                           contractOp.oOperand.front(),
+                           sourceType,
+                           targetType,
+                           reason,
+                           requireMatrixShape,
+                           checkUbTileShape,
+                           checkUb2L1Constraints};
     if (!CheckContractSliceTopology(path)) {
         return SUCCESS;
     }
@@ -1075,7 +1075,7 @@ bool AssignMemoryType::CheckContractSliceTopology(const ContractSlicePath& path)
     return true;
 }
 
-bool AssignMemoryType::CheckContractSliceStorage(const ContractSlicePath& path, bool isLiteNpu) const
+bool AssignMemoryType::CheckContractSliceStorage(ContractSlicePath& path, bool isLiteNpu) const
 {
     const auto& middle = path.middle;
     const auto& middleShape = middle->GetShape();
@@ -1085,8 +1085,10 @@ bool AssignMemoryType::CheckContractSliceStorage(const ContractSlicePath& path, 
         return true;
     }
     if (path.sourceType == MemoryType::MEM_UB) {
-        const bool isConv = MemoryPathUtils::HasConvConsumer(middle);
-        if (middleShape.size() > SHAPE_DIM2 && (isConv || !MemoryPathUtils::AllBatchAxesAreOne(middleShape))) {
+        // 卷积和普通 Matmul 的 UB2L1 通路要求中间张量至少为二维，低于二维的早退有意保留 isConvConsumer 为 false
+        path.isConvConsumer = MemoryPathUtils::HasConvConsumer(middle);
+        if (middleShape.size() > SHAPE_DIM2 &&
+            (path.isConvConsumer || !MemoryPathUtils::AllBatchAxesAreOne(middleShape))) {
             APASS_LOG_DEBUG_F(Elements::Operation,
                               "Skip %s: op[%d] middle tensor[%d], rank>2 conv tile or non-unit batch axes.",
                               path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic());
@@ -1094,17 +1096,17 @@ bool AssignMemoryType::CheckContractSliceStorage(const ContractSlicePath& path, 
         }
         const size_t ubLimit = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB) *
                                                    UB_THRESHOLD_NORMAL);
-        if (CalcNZTensorSize(middle, isConv) > ubLimit) {
+        if (CalcNZTensorSize(middle, path.isConvConsumer) > ubLimit) {
             APASS_LOG_DEBUG_F(Elements::Operation,
                               "Skip %s: op[%d] middle tensor[%d], storage %zu bytes exceeds UB limit %zu bytes.",
                               path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic(),
-                              CalcNZTensorSize(middle, isConv), ubLimit);
+                              CalcNZTensorSize(middle, path.isConvConsumer), ubLimit);
             return false;
         }
     } else if (path.sourceType == MemoryType::MEM_L0C) {
-        const bool isConv = MemoryPathUtils::HasConvProducer(path.input);
+        path.isConvProducer = MemoryPathUtils::HasConvProducer(path.input);
         // 高维直连支持卷积，以及 LiteNPU 上所有批次维度均为 1 的批量矩阵乘。
-        if (middleShape.size() > SHAPE_DIM2 && !isConv &&
+        if (middleShape.size() > SHAPE_DIM2 && !path.isConvProducer &&
             !(isLiteNpu && MemoryPathUtils::AllBatchAxesAreOne(middleShape))) {
             APASS_LOG_DEBUG_F(Elements::Operation, "Skip %s: op[%d] middle tensor[%d], rank>2 non-unit batch axes.",
                               path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic());
@@ -1112,11 +1114,11 @@ bool AssignMemoryType::CheckContractSliceStorage(const ContractSlicePath& path, 
         }
         const size_t l0cLimit = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_L0C) *
                                                     L0C_THRESHOLD);
-        if (CalcNzStorageSize(middle, isConv) > l0cLimit) {
+        if (CalcNzStorageSize(middle, path.isConvProducer) > l0cLimit) {
             APASS_LOG_DEBUG_F(Elements::Operation,
                               "Skip %s: op[%d] middle tensor[%d], storage %zu bytes exceeds L0C limit %zu bytes.",
                               path.reason.c_str(), path.contract.GetOpMagic(), middle->GetMagic(),
-                              CalcNzStorageSize(middle, isConv), l0cLimit);
+                              CalcNzStorageSize(middle, path.isConvProducer), l0cLimit);
             return false;
         }
     }
@@ -1247,7 +1249,7 @@ bool AssignMemoryType::CheckContractSliceUB2L1(const ContractSlicePath& path, co
                                 !(slice.GetAttr<int64_t>(OpAttributeKey::isGemv, consumerIsGemv) &&
                                   consumerIsGemv != 0);
     // MXMatmul 的 K 轴未按 64 对齐时需要经 DDR 补齐。
-    if (CalcNZTensorSize(path.input, MemoryPathUtils::HasConvConsumer(path.middle)) > ubLimit || ndCopyInReject ||
+    if (CalcNZTensorSize(path.input, path.isConvConsumer) > ubLimit || ndCopyInReject ||
         MemoryPathUtils::IsMxPaddingMode(slice)) {
         APASS_LOG_DEBUG_F(Elements::Operation,
                           "Skip %s: op[%d] middle tensor[%d], UB-to-L1 size, copy mode or MX padding constraints.",
