@@ -60,6 +60,28 @@ static bool IsValidMergeGroup(const std::vector<int>& mergeGroup, const std::uno
     return true;
 }
 
+static void LogSubgraphLatencies(const std::vector<int>& aicLatency, const std::vector<int>& aivLatency)
+{
+    for (size_t i = 0; i < aicLatency.size(); i++) {
+        APASS_LOG_INFO_F(Elements::Operation, "Subgraph %zu : AIC Latency %d cycles, AIV Latency %d cycles.", i,
+                         aicLatency[i], aivLatency[i]);
+    }
+}
+
+// 合并阶段仅更新 op 的 subgraphID, 不增删 op、不改 latency, 旧 per-subgraph 统计可直接按新 ID 累加,
+// 无需为日志重建全图; 若后续 Merge 引入 op 增删或 latency 修改, 需改回重算 BuildGraph
+static void LogMergedSubgraphLatencies(const MergeInput& mergeInput, const MergeOutput& output)
+{
+    std::vector<int> mergedAICLatency(output.numSubgraphUpdated, 0);
+    std::vector<int> mergedAIVLatency(output.numSubgraphUpdated, 0);
+    for (size_t src = 0; src < output.subgraphIdUpdated.size(); ++src) {
+        const auto dst = output.subgraphIdUpdated[src];
+        mergedAICLatency[dst] += mergeInput.subgraphAICLatency[src];
+        mergedAIVLatency[dst] += mergeInput.subgraphAIVLatency[src];
+    }
+    LogSubgraphLatencies(mergedAICLatency, mergedAIVLatency);
+}
+
 Status ReduceCopyMerge::RunOnFunction(Function& function)
 {
     APASS_LOG_DEBUG_F(Elements::Operation,
@@ -96,9 +118,8 @@ Status ReduceCopyMerge::RunOnFunction(Function& function)
         }
         op.UpdateSubgraphID(output.subgraphIdUpdated[src]);
     }
-    MergeInput mergeInputTmp;
     APASS_LOG_DEBUG_F(Elements::Operation, "Subgraph Info after ReduceCopy Pass:");
-    BuildGraph(function, mergeInputTmp);
+    LogMergedSubgraphLatencies(mergeInput, output);
     // 存在 CV 混合 scope 时 auto-mix 被有意跳过, 不属于"性能评估后不合并"的场景, 不告警
     if (enableAutoMix && !mergeInput.hasScopedOp && function.GetTotalSubGraphCount() == subgraphNumBefore) {
         APASS_LOG_WARN_F(Elements::Operation, "CV mix merging was not performed, since fusion would degrade "
@@ -461,10 +482,7 @@ Status ReduceCopyMerge::BuildGraph(Function& function, MergeInput& mergeInput)
             }
         }
     }
-    for (int i = 0; i < subgraphNum; i++) {
-        APASS_LOG_INFO_F(Elements::Operation, "Subgraph %d : AIC Latency %d cycles, AIV Latency %d cycles.", i,
-                         mergeInput.subgraphAICLatency[i], mergeInput.subgraphAIVLatency[i]);
-    }
+    LogSubgraphLatencies(mergeInput.subgraphAICLatency, mergeInput.subgraphAIVLatency);
     return SUCCESS;
 }
 
