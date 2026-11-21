@@ -93,5 +93,34 @@ TEST_F(TestDeadOperationEliminatePass, DeadOperationEliminateUTest1)
     EXPECT_EQ(operations.Contains(view1), false);
     EXPECT_EQ(view_num, kNumOne);
 }
+
+TEST_F(TestDeadOperationEliminatePass, InplaceReshapeKeepsOnlyLiveAliases)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "TestInplaceReshapeAliases",
+                                               "TestInplaceReshapeAliases", nullptr);
+    const Shape shape{kNumEight, kNumEight};
+    const Offset offset{0, 0};
+    IRBuilder builder;
+    auto input = builder.CreateTensorVar(*function, DT_FP32, shape);
+    auto liveReshapeOutput = builder.CreateTensorVar(*function, DT_FP32, shape);
+    auto deadReshapeOutput = builder.CreateTensorVar(*function, DT_FP32, shape);
+    auto liveAlias = builder.CreateTensorVar(*function, liveReshapeOutput->GetRawTensor(), offset, shape);
+    auto unusedAlias = builder.CreateTensorVar(*function, deadReshapeOutput->GetRawTensor(), offset, shape);
+
+    auto& liveReshape = builder.CreateTensorOpStmt(*function, Opcode::OP_RESHAPE, {input}, {liveReshapeOutput});
+    liveReshape.SetAttribute(OP_ATTR_PREFIX + "isInplace", true);
+    auto& deadReshape = builder.CreateTensorOpStmt(*function, Opcode::OP_RESHAPE, {input}, {deadReshapeOutput});
+    deadReshape.SetAttribute(OP_ATTR_PREFIX + "isInplace", true);
+    builder.CreateTensorOpStmt(*function, Opcode::OP_VIEW, {input}, {liveAlias});
+    function->inCasts_ = {input, unusedAlias};
+    function->outCasts_ = {liveAlias};
+
+    ASSERT_EQ(DeadOperationEliminator::EliminateDeadOperation(*function), SUCCESS);
+
+    EXPECT_EQ(function->Operations(false).size(), 2U);
+    EXPECT_EQ(liveReshapeOutput->GetProducers().size(), 1U);
+    EXPECT_TRUE(deadReshapeOutput->GetProducers().empty());
+    EXPECT_EQ(liveAlias->GetProducers().size(), 1U);
+}
 } // namespace tile_fwk
 } // namespace npu

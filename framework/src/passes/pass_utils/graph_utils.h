@@ -16,6 +16,7 @@
 #pragma once
 #ifndef GRAPH_UTILS_H
 #define GRAPH_UTILS_H
+#include <optional>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -51,6 +52,9 @@ using RawMagicTensorMap = std::unordered_map<int64_t, TensorSet>;
 
 class GraphUtils {
 public:
+    // Populate lazily and reuse only while the graph and its tensor links are unchanged.
+    using InplaceReshapeAliasCache = std::optional<std::unordered_multimap<int, int>>;
+
     /**
      * @brief Add an operation and set the DynValidShape of the output.
      *
@@ -211,7 +215,8 @@ public:
     // True if removing this inplace reshape would break a downstream alias: a sibling tensor still
     // shares its output raw storage. RemoveRedundantReshape and DeadOperationEliminator must keep it.
     static bool InplaceReshapeRemovalBreaksAlias(Function& function, Operation& op, const LogicalTensorPtr& in,
-                                                 const LogicalTensorPtr& out);
+                                                 const LogicalTensorPtr& out,
+                                                 InplaceReshapeAliasCache* cache = nullptr);
 };
 } // namespace tile_fwk
 } // namespace npu

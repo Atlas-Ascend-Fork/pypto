@@ -366,7 +366,7 @@ bool GraphUtils::IsCrossCoreMoveOp(Operation* op)
     return false;
 }
 bool GraphUtils::InplaceReshapeRemovalBreaksAlias(Function& function, Operation& op, const LogicalTensorPtr& in,
-                                                  const LogicalTensorPtr& out)
+                                                  const LogicalTensorPtr& out, InplaceReshapeAliasCache* cache)
 {
     if (!op.GetBoolAttribute(OP_ATTR_PREFIX + "isInplace")) {
         return false;
@@ -380,9 +380,26 @@ bool GraphUtils::InplaceReshapeRemovalBreaksAlias(Function& function, Operation&
         return false;
     }
     const int aliasRawMagic = outRaw->rawmagic;
+    const auto isLinked = [](const LogicalTensorPtr& tensor) {
+        return !tensor->GetProducers().empty() || !tensor->GetConsumers().empty();
+    };
+    const auto isSibling = [&](int magic) { return magic != out->GetMagic() && magic != in->GetMagic(); };
+    if (cache != nullptr) {
+        if (!cache->has_value()) {
+            auto& aliases = cache->emplace();
+            for (const auto& tensor : GraphUtils::GetAllTensors(function)) {
+                const auto& raw = tensor->GetRawTensor();
+                if (raw != nullptr && isLinked(tensor)) {
+                    aliases.emplace(raw->rawmagic, tensor->GetMagic());
+                }
+            }
+        }
+        const auto [begin, end] = cache->value().equal_range(aliasRawMagic);
+        return std::any_of(begin, end, [&](const auto& alias) { return isSibling(alias.second); });
+    }
     const auto tensors = GraphUtils::GetAllTensors(function);
     for (const auto& tensor : tensors) {
-        if (tensor == nullptr || tensor->GetMagic() == out->GetMagic() || tensor->GetMagic() == in->GetMagic()) {
+        if (!isSibling(tensor->GetMagic())) {
             continue;
         }
         auto raw = tensor->GetRawTensor();
@@ -390,7 +407,7 @@ bool GraphUtils::InplaceReshapeRemovalBreaksAlias(Function& function, Operation&
             continue;
         }
         // A sibling still uses the alias storage independently: removal would orphan it.
-        if (!tensor->GetProducers().empty() || !tensor->GetConsumers().empty()) {
+        if (isLinked(tensor)) {
             return true;
         }
     }

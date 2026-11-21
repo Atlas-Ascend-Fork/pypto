@@ -84,6 +84,7 @@ void DeadOperationEliminator::EliminateOperation(Function& function, bool useSor
     }
     // Keep inplace reshapes that anchor a downstream alias (a sibling still shares the output raw):
     // they are live alias links, not dead code. Seed them as liveness roots.
+    GraphUtils::InplaceReshapeAliasCache aliasCache;
     for (auto& op : function.Operations(false)) {
         if (op.GetOpcode() != Opcode::OP_RESHAPE || visited.count(&op) != 0) {
             continue;
@@ -96,7 +97,7 @@ void DeadOperationEliminator::EliminateOperation(Function& function, bool useSor
         if (in == nullptr || out == nullptr) {
             continue;
         }
-        if (GraphUtils::InplaceReshapeRemovalBreaksAlias(function, op, in, out)) {
+        if (GraphUtils::InplaceReshapeRemovalBreaksAlias(function, op, in, out, &aliasCache)) {
             visited.emplace(&op);
             q.emplace(&op);
         }
