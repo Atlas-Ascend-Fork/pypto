@@ -231,13 +231,12 @@ private:
                                   std::unordered_set<int>& visitedAssOps, Operation& op, Function& function);
     Status FindNeedToCopyReshape(std::unordered_set<Operation*>& forwardInsertCopy,
                                  std::unordered_set<int>& visitedReshapeOps, Operation& op, Function& function);
+    bool HasLargerNonZeroOffsetViewProducerInput(const LogicalTensorPtr& tensor, int64_t tensorSize);
     Status FindForwardInsertCopy(Operation& op, std::unordered_set<Operation*>& forwardInsertCopy);
-    Status FindBackwardInsertCopy(Operation& op, std::unordered_set<Operation*>& backwardInsertCopy);
     int GetUbSizeThreshold();
     bool IsCopyToUBOverSize(const LogicalTensorPtr& tensor);
-    Status CollectNeedInsertCopyOps(Function& function, std::unordered_set<Operation*>& forwardInsertCopy,
-                                    std::unordered_set<Operation*>& backwardInsertCopy);
-    Status InsertCopyForOps(Function& function, const std::unordered_set<Operation*>& ops, bool afterOp);
+    Status CollectNeedInsertCopyOps(Function& function, std::unordered_set<Operation*>& forwardInsertCopy);
+    Status InsertCopyForOps(Function& function, const std::unordered_set<Operation*>& ops);
     Status InsertNeedCopy(Function& function);
     bool isBoundTensor(LogicalTensorPtr& curTensor);
 

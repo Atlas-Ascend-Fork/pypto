@@ -1589,6 +1589,52 @@ Status ReplaceTensor::FindNeedToCopyReshape(std::unordered_set<Operation*>& forw
     return SUCCESS;
 }
 
+bool ReplaceTensor::HasLargerNonZeroOffsetViewProducerInput(const LogicalTensorPtr& tensor, int64_t tensorSize)
+{
+    for (auto* producer : tensor->GetProducers()) {
+        if (producer == nullptr || producer->GetOpcode() != Opcode::OP_VIEW) {
+            continue;
+        }
+        auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(producer->GetOpAttribute());
+        if (viewAttr == nullptr) {
+            continue;
+        }
+        const auto& dynamicViewOffset = viewAttr->GetFromDynOffset();
+        bool hasNonZeroViewOffset = false;
+        if (!dynamicViewOffset.empty()) {
+            hasNonZeroViewOffset = std::any_of(
+                dynamicViewOffset.begin(), dynamicViewOffset.end(),
+                [](const SymbolicScalar& offset) { return offset.ConcreteValid() && offset.Concrete() != 0; });
+        } else {
+            const auto& viewOffset = viewAttr->GetFromOffset();
+            hasNonZeroViewOffset = std::any_of(viewOffset.begin(), viewOffset.end(),
+                                               [](int64_t offset) { return offset != 0; });
+        }
+        if (!hasNonZeroViewOffset) {
+            continue;
+        }
+
+        const auto inplaceTensorPairs = GetInplaceTensorPairs(*producer);
+        const bool producerHasNegativeOneShapeInput = std::any_of(
+            inplaceTensorPairs.begin(), inplaceTensorPairs.end(), [&tensor](const auto& pair) {
+                const auto& [inplaceInput, inplaceOutput] = pair;
+                return inplaceOutput == tensor && inplaceInput != nullptr && inplaceInput->tensor != nullptr &&
+                       CommonUtils::ContainsNegativeOne(inplaceInput->GetShape());
+            });
+        if (producerHasNegativeOneShapeInput) {
+            continue;
+        }
+        if (std::any_of(inplaceTensorPairs.begin(), inplaceTensorPairs.end(), [&tensor, tensorSize](const auto& pair) {
+                const auto& [inplaceInput, inplaceOutput] = pair;
+                return inplaceOutput == tensor && inplaceInput != nullptr && inplaceInput->tensor != nullptr &&
+                       inplaceInput->GetDataSize() > tensorSize;
+            })) {
+            return true;
+        }
+    }
+    return false;
+}
+
 /**
  * @brief Find Reshape operations that require a copy before the in-place producer chain.
  */
@@ -1601,106 +1647,18 @@ Status ReplaceTensor::FindForwardInsertCopy(Operation& op, std::unordered_set<Op
     if (reshapeInput == nullptr || reshapeInput->tensor == nullptr) {
         return SUCCESS;
     }
-    const int64_t reshapeInputSize = reshapeInput->GetDataSize();
-    std::unordered_set<LogicalTensorPtr> visited;
-    std::function<bool(const LogicalTensorPtr&)> hasLargerInplaceProducerInput = [&](const LogicalTensorPtr& tensor) {
-        if (tensor == nullptr || !visited.insert(tensor).second) {
-            return false;
-        }
-        for (auto* producer : tensor->GetProducers()) {
-            if (producer == nullptr || !IsInplaceOperation(*producer)) {
-                continue;
-            }
-            const auto inplaceTensorPairs = GetInplaceTensorPairs(*producer);
-            const bool producerHasNegativeOneShapeInput = std::any_of(
-                inplaceTensorPairs.begin(), inplaceTensorPairs.end(), [&tensor](const auto& pair) {
-                    const auto& [inplaceInput, inplaceOutput] = pair;
-                    return inplaceOutput == tensor && inplaceInput != nullptr && inplaceInput->tensor != nullptr &&
-                           CommonUtils::ContainsNegativeOne(inplaceInput->GetShape());
-                });
-            if (producerHasNegativeOneShapeInput) {
-                continue;
-            }
-            for (const auto& [inplaceInput, inplaceOutput] : inplaceTensorPairs) {
-                if (inplaceOutput != tensor || inplaceInput == nullptr || inplaceInput->tensor == nullptr) {
-                    continue;
-                }
-                if (inplaceInput->GetDataSize() > reshapeInputSize || hasLargerInplaceProducerInput(inplaceInput)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    };
-    if (hasLargerInplaceProducerInput(reshapeInput)) {
-        if (IsCopyToUBOverSize(reshapeInput)) {
-            const int ubSizeThreshold = GetUbSizeThreshold();
-            APASS_LOG_ERROR_F(Elements::Tensor,
-                              "Cannot insert forward copy for Reshape[%d]: padded copy of DDR tensor[%d] exceeds "
-                              "UB size [%d] (raw data size [%ld]).",
-                              op.GetOpMagic(), reshapeInput->GetMagic(), ubSizeThreshold, reshapeInput->GetDataSize());
-            return FAILED;
-        }
-        forwardInsertCopy.insert(&op);
-    }
-    return SUCCESS;
-}
-
-/**
- * @brief Find Reshape operations that require a copy after the in-place consumer chain.
- */
-Status ReplaceTensor::FindBackwardInsertCopy(Operation& op, std::unordered_set<Operation*>& backwardInsertCopy)
-{
-    if (op.GetOpcode() != Opcode::OP_RESHAPE || op.GetIOperands().empty() || op.GetOOperands().empty()) {
+    if (!HasLargerNonZeroOffsetViewProducerInput(reshapeInput, reshapeInput->GetDataSize())) {
         return SUCCESS;
     }
-    auto reshapeOutput = op.GetOOperands().front();
-    if (reshapeOutput == nullptr || reshapeOutput->tensor == nullptr) {
-        return SUCCESS;
+    if (IsCopyToUBOverSize(reshapeInput)) {
+        const int ubSizeThreshold = GetUbSizeThreshold();
+        APASS_LOG_ERROR_F(Elements::Tensor,
+                          "Cannot insert forward copy for Reshape[%d]: padded copy of DDR tensor[%d] exceeds "
+                          "UB size [%d] (raw data size [%ld]).",
+                          op.GetOpMagic(), reshapeInput->GetMagic(), ubSizeThreshold, reshapeInput->GetDataSize());
+        return FAILED;
     }
-    const int64_t reshapeOutputSize = reshapeOutput->GetDataSize();
-    std::unordered_set<LogicalTensorPtr> visited;
-    std::function<bool(const LogicalTensorPtr&)> hasLargerInplaceConsumerOutput = [&](const LogicalTensorPtr& tensor) {
-        if (tensor == nullptr || !visited.insert(tensor).second) {
-            return false;
-        }
-        for (auto* consumer : tensor->GetConsumers()) {
-            if (consumer == nullptr || !IsInplaceOperation(*consumer)) {
-                continue;
-            }
-            const auto inplaceTensorPairs = GetInplaceTensorPairs(*consumer);
-            const bool consumerHasNegativeOneShapeOutput = std::any_of(
-                inplaceTensorPairs.begin(), inplaceTensorPairs.end(), [&tensor](const auto& pair) {
-                    const auto& [inplaceInput, inplaceOutput] = pair;
-                    return inplaceInput == tensor && inplaceOutput != nullptr && inplaceOutput->tensor != nullptr &&
-                           CommonUtils::ContainsNegativeOne(inplaceOutput->GetShape());
-                });
-            if (consumerHasNegativeOneShapeOutput) {
-                continue;
-            }
-            for (const auto& [inplaceInput, inplaceOutput] : inplaceTensorPairs) {
-                if (inplaceInput != tensor || inplaceOutput == nullptr || inplaceOutput->tensor == nullptr) {
-                    continue;
-                }
-                if (inplaceOutput->GetDataSize() > reshapeOutputSize || hasLargerInplaceConsumerOutput(inplaceOutput)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    };
-    if (hasLargerInplaceConsumerOutput(reshapeOutput)) {
-        if (IsCopyToUBOverSize(reshapeOutput)) {
-            const int ubSizeThreshold = GetUbSizeThreshold();
-            APASS_LOG_ERROR_F(Elements::Tensor,
-                              "Cannot insert backward copy for Reshape[%d]: padded copy of DDR tensor[%d] exceeds "
-                              "UB size [%d] (raw data size [%ld]).",
-                              op.GetOpMagic(), reshapeOutput->GetMagic(), ubSizeThreshold,
-                              reshapeOutput->GetDataSize());
-            return FAILED;
-        }
-        backwardInsertCopy.insert(&op);
-    }
+    forwardInsertCopy.insert(&op);
     return SUCCESS;
 }
 
@@ -1711,11 +1669,8 @@ Status ReplaceTensor::FindBackwardInsertCopy(Operation& op, std::unordered_set<O
  *         ---> Assemble ---> Tensor4
 
  * Tensor1 ---> View ---> Reshape ---> OP(非CopyIn) ---> Tensor2
-
- * Tensor1 ---> Reshape ---> Assemble ---> Tensor2(可能造成CopyOut+Reshape+Assemble的一些场景性能损失)
  */
-Status ReplaceTensor::CollectNeedInsertCopyOps(Function& function, std::unordered_set<Operation*>& forwardInsertCopy,
-                                               std::unordered_set<Operation*>& backwardInsertCopy)
+Status ReplaceTensor::CollectNeedInsertCopyOps(Function& function, std::unordered_set<Operation*>& forwardInsertCopy)
 {
     std::unordered_set<int> visitedAssOps;
     std::unordered_set<int> visitedReshapeOps;
@@ -1728,18 +1683,15 @@ Status ReplaceTensor::CollectNeedInsertCopyOps(Function& function, std::unordere
             if (forwardInsertCopy.count(&op) == 0 && FindForwardInsertCopy(op, forwardInsertCopy) == FAILED) {
                 return FAILED;
             }
-            if (FindBackwardInsertCopy(op, backwardInsertCopy) == FAILED) {
-                return FAILED;
-            }
         }
     }
     return SUCCESS;
 }
 
 /**
- * @brief Insert a copy chain on the input or output side of each selected operation.
+ * @brief Insert a copy chain before each selected operation.
  */
-Status ReplaceTensor::InsertCopyForOps(Function& function, const std::unordered_set<Operation*>& ops, bool afterOp)
+Status ReplaceTensor::InsertCopyForOps(Function& function, const std::unordered_set<Operation*>& ops)
 {
     constexpr size_t kMaxCopyShapeDim = 5;
     std::vector<Operation*> sortedOps(ops.begin(), ops.end());
@@ -1749,33 +1701,25 @@ Status ReplaceTensor::InsertCopyForOps(Function& function, const std::unordered_
         if (op == nullptr) {
             continue;
         }
-        if ((afterOp && (op->GetOOperands().empty() || op->GetOOperands()[0] == nullptr)) ||
-            (!afterOp && (op->GetIOperands().empty() || op->GetIOperands()[0] == nullptr))) {
+        if (op->GetIOperands().empty() || op->GetIOperands()[0] == nullptr) {
             continue;
         }
-        auto tensor = afterOp ? op->GetOOperands()[0] : op->GetIOperands()[0];
+        auto tensor = op->GetIOperands()[0];
         if (tensor->GetShape().size() > kMaxCopyShapeDim) {
-            const char* tensorSide = afterOp ? "output" : "input";
             APASS_LOG_WARN_F(Elements::Tensor,
-                             "Skip inserting copy for op [%s:%d]: %s [%d] shape dim [%zu] exceeds pto-isa copy "
+                             "Skip inserting copy for op [%s:%d]: input [%d] shape dim [%zu] exceeds pto-isa copy "
                              "limit [%zu].",
-                             op->GetOpcodeStr().c_str(), op->GetOpMagic(), tensorSide, tensor->GetMagic(),
+                             op->GetOpcodeStr().c_str(), op->GetOpMagic(), tensor->GetMagic(),
                              tensor->GetShape().size(), kMaxCopyShapeDim);
             continue;
         }
-        LogicalTensorPtr input;
         LogicalTensorPtr output;
-        if (afterOp) {
-            output = tensor;
-        } else {
-            input = tensor;
-        }
         if (tensor->GetMemoryTypeOriginal() == MemoryType::MEM_UB) {
-            if (InsertCopyUBToDDRAndDDRToUB(function, op, input, output) == FAILED) {
+            if (InsertCopyUBToDDRAndDDRToUB(function, op, tensor, output) == FAILED) {
                 return FAILED;
             }
         } else if (tensor->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR) {
-            if (InsertCopyDDRToUBAndUBToDDR(function, op, input, output) == FAILED) {
+            if (InsertCopyDDRToUBAndUBToDDR(function, op, tensor, output) == FAILED) {
                 return FAILED;
             }
         }
@@ -1786,12 +1730,11 @@ Status ReplaceTensor::InsertCopyForOps(Function& function, const std::unordered_
 Status ReplaceTensor::InsertNeedCopy(Function& function)
 {
     std::unordered_set<Operation*> forwardInsertCopy;
-    std::unordered_set<Operation*> backwardInsertCopy;
-    if (CollectNeedInsertCopyOps(function, forwardInsertCopy, backwardInsertCopy) == FAILED ||
-        InsertCopyForOps(function, forwardInsertCopy, false) == FAILED) {
+    if (CollectNeedInsertCopyOps(function, forwardInsertCopy) == FAILED ||
+        InsertCopyForOps(function, forwardInsertCopy) == FAILED) {
         return FAILED;
     }
-    return InsertCopyForOps(function, backwardInsertCopy, true);
+    return SUCCESS;
 }
 
 void ReplaceTensor::RebuildTokenProducer(Function& function)
