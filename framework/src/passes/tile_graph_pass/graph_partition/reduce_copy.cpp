@@ -1529,24 +1529,22 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
             }
         }
         if (!hasDependentPair) {
-            // 规模豁免: 独立分支的串行化损失(Σbranch − max)不超过 hinge 端点 root 总 latency 的
-            // kSerialLossRatio 倍时, 损失可被 hinge 规模消化, 放行(轻量准备段扇入: gather/索引/
-            // 反量化碎片, sparse_attention_antiquant: 64 碎片致 65 kernel vs 基线 5, 边界与调度
-            // 收益远大于微小串行损失)。判据与 sink 串行损失门同标尺, 不再按分支是否含 cube
-            // 一票否决: 含 cube 但损失可消化的扇入同样放行, 损失不可消化的实质并行分支
-            // (mla 型 Unroll 体, 串行损失远超 hinge 规模)仍被拒绝。
-            int64_t hingeLatency = 0;
+            // Aggregate latency by current root: a branch may already contain multiple subgraphs.
+            std::unordered_map<int, int64_t> rootLatency;
+            for (int i = 0; i < mInput.numSubgraph; ++i) {
+                const int root = FindParent(i);
+                if (root == kv.first || kv.second.count(root) > 0) {
+                    rootLatency[root] += static_cast<int64_t>(mInput.subgraphAICLatency[i]) +
+                                         mInput.subgraphAIVLatency[i];
+                }
+            }
+            const int64_t hingeLatency = rootLatency[kv.first];
             int64_t sumBranchLatency = 0;
             int64_t maxBranchLatency = 0;
-            for (size_t i = 0; i < static_cast<size_t>(mInput.numSubgraph); ++i) {
-                int root = FindParent(static_cast<int>(i));
-                int64_t lat = static_cast<int64_t>(mInput.subgraphAICLatency[i]) + mInput.subgraphAIVLatency[i];
-                if (root == kv.first) {
-                    hingeLatency += lat;
-                } else if (kv.second.count(root) > 0) {
-                    sumBranchLatency += lat;
-                    maxBranchLatency = std::max(maxBranchLatency, lat);
-                }
+            for (int branch : kv.second) {
+                const int64_t latency = rootLatency[branch];
+                sumBranchLatency += latency;
+                maxBranchLatency = std::max(maxBranchLatency, latency);
             }
             // A direct-path 1:N hinge can remove a shared GM round trip for every branch.
             // Charge the hinge's parallel-loss budget only when its latency is comparable to
@@ -1559,7 +1557,18 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                                   kv.second.size());
                 continue;
             }
-            if (sumBranchLatency - maxBranchLatency <= kSerialLossRatio * hingeLatency) {
+            // Include the longest parallel branch in the hinge execution baseline.
+            const int64_t baselineLatency = hingeLatency + maxBranchLatency;
+            const int64_t serialLoss = sumBranchLatency - maxBranchLatency;
+            const int64_t budget = kSerialLossRatio * baselineLatency;
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Hinge serial-loss gate: hinge=%d branchSum=%lld branchMax=%lld "
+                              "baseline=%lld serialLoss=%lld budget=%lld decision=%s.",
+                              kv.first, static_cast<long long>(sumBranchLatency),
+                              static_cast<long long>(maxBranchLatency), static_cast<long long>(baselineLatency),
+                              static_cast<long long>(serialLoss), static_cast<long long>(budget),
+                              serialLoss <= budget ? "allow" : "reject");
+            if (serialLoss <= budget) {
                 continue;
             }
             APASS_LOG_DEBUG_F(Elements::Operation,

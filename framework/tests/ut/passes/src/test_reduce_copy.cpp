@@ -1377,22 +1377,40 @@ TEST_F(ReduceCopyTest, MixGraphMerger_LoopPathConsistencyCrossRingDataEdgeReject
     EXPECT_FALSE(merger.CheckLoopPathConsistency({0, 1}));
 }
 
-// hinge guard(扇出): 扇出源 sg0 喂 3 个互不可达的组内分支(>= kHingeBranchThreshold),
-// 串行化损失(3000-1000=2000)超过 8xhinge(100)=800, 独立并行分支拒绝保持 4;
-// 组内含简单 tensor edge(0->1/0->2/0->3), 无 hinge guard 时本组合并归 1
+// Ten independent branches are enough to exceed 8 * (hinge + branchMax).
+static constexpr int kWideFanoutBranchCount = 10;
+
+static MergeInput BuildWideHingeFanoutInput()
+{
+    const int numSubgraphs = kWideFanoutBranchCount + 1;
+    std::vector<std::set<int>> outGraph(numSubgraphs);
+    std::vector<int> group{0};
+    for (int branch = 1; branch < numSubgraphs; ++branch) {
+        outGraph[0].insert(branch);
+        group.push_back(branch);
+    }
+    MergeInput input = BuildSimpleMergeInput(numSubgraphs, outGraph, {group});
+    input.isEnforceMergeGroup = {false};
+    input.subgraphToBoundaryTensorIds.resize(numSubgraphs);
+    for (int branch = 1; branch < numSubgraphs; ++branch) {
+        const int tensorIdx = branch - 1;
+        input.boundaryTensors.push_back({100 + tensorIdx, {0}, {branch}, true, {}, {}});
+        input.subgraphToBoundaryTensorIds[0].push_back(tensorIdx);
+        input.subgraphToBoundaryTensorIds[branch] = {tensorIdx};
+    }
+    return input;
+}
+
+// Independent mixed branches exceed the relative budget: 9 * 1000 > 8 * (100 + 1000).
 TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardRejectsParallelFanout)
 {
-    std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
-    MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
-    input.isEnforceMergeGroup = {false};
-    input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
-    input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
-    input.subgraphAICLatency = {50, 500, 500, 500}; // hinge 100, 分支各 1000, 损失 2000 > 800
-    input.subgraphAIVLatency = {50, 500, 500, 500};
+    auto input = BuildWideHingeFanoutInput();
+    input.subgraphAICLatency.assign(input.numSubgraph, 500);
+    input.subgraphAIVLatency.assign(input.numSubgraph, 500);
+    input.subgraphAICLatency[0] = 50;
+    input.subgraphAIVLatency[0] = 50;
     MixGraphMerger merger;
-    MergeOutput output = merger.Merge(input);
-    EXPECT_EQ(output.numSubgraphUpdated, 4); // 分支互不可达且损失超限, 保持独立
+    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, input.numSubgraph);
 }
 
 // hinge guard(链式): 扇出源 sg0 -> sg1 -> sg2 -> sg3 链式依赖(组内可达),
@@ -1703,14 +1721,14 @@ TEST_F(ReduceCopyTest, SinkBoundaryLossEqualRatioAllows)
 // ============================================================================
 // 本次修改 UT: hinge guard 分支规模豁免(移除纯 V 一票否决)
 // 对应 reduce_copy.cpp CheckMergeBenefitByStructuralPattern 的豁免分支:
-// 独立分支的串行损失(Σbranch − max) <= kSerialLossRatio(8) × hinge 端点 root 总
-// latency 时放行, 不再要求分支纯 V; 含 C 但损失可消化的扇入/扇出同样放行,
+// 独立分支的串行损失(Σbranch − max) <= 8 × (hinge latency + max branch latency)
+// 时放行, 不再要求分支纯 V; 含 C 但损失可消化的扇入/扇出同样放行,
 // 损失超限(纯 V 或含 C 均同标尺)仍拒绝
 // ============================================================================
 
 // 豁免放行(扇出): hinge 端点 sg0(含 C, 900) 扇出 3 个互不可达纯 V 轻量分支(各 50),
-// 串行损失 150-50=100 <= 8x900 -> 豁免放行归 1
-// (损失超限被拒保持 4, 见 MixGraphMerger_HingeGuardRejectsHeavyPureVecFanout)
+// 串行损失 150-50=100 <= 8 × (900 + 50) -> 豁免放行归 1
+// 超预算拒绝见 MixGraphMerger_HingeGuardRejectsHeavyPureVecFanout
 TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardExemptsPureVecLightFanout)
 {
     std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
@@ -1727,7 +1745,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardExemptsPureVecLightFanout)
     EXPECT_EQ(output.numSubgraphUpdated, 1);
 }
 
-// 含 C 轻量分支豁免放行(扇出): 分支 sg1 含 AIC op, 串行损失 100 <= 8x900 可消化,
+// 含 C 轻量分支豁免放行(扇出): 分支 sg1 含 AIC op, 串行损失 100 <= 8 × (900 + 100),
 // 豁免不再按分支是否含 cube 一票否决 -> 归 1 (修复含 C 微损失扇入被误杀)
 TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardExemptsLightCubeBranchFanout)
 {
@@ -1745,63 +1763,56 @@ TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardExemptsLightCubeBranchFanout)
     EXPECT_EQ(output.numSubgraphUpdated, 1);
 }
 
-// 含 C 实质分支拒绝(扇出, mla 型 Unroll 体): 分支全含 AIC 且各 5100, 串行损失
-// 15300-5100=10200 > 8x900=7200, 损失不可被 hinge 规模消化 -> 拒绝保持 4
-// (钉住豁免判据的损失子句对含 C 分支同样生效)
+// Cube-containing branches exceed the relative budget: 9 * 5100 > 8 * (500 + 5100).
 TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardRejectsHeavyCubeBranchFanout)
 {
-    std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
-    MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
-    input.isEnforceMergeGroup = {false};
-    input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
-    input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
-    input.subgraphAICOpNum = {2, 1, 1, 1}; // 分支全部含 AIC op
-    input.subgraphAICLatency = {800, 5000, 5000, 5000};
-    input.subgraphAIVLatency = {100, 100, 100, 100};
+    auto input = BuildWideHingeFanoutInput();
+    input.subgraphAICOpNum[0] = 2;
+    input.subgraphAICLatency.assign(input.numSubgraph, 5000);
+    input.subgraphAICLatency[0] = 400;
+    input.subgraphAIVLatency.assign(input.numSubgraph, 100);
     MixGraphMerger merger;
-    MergeOutput output = merger.Merge(input);
-    EXPECT_EQ(output.numSubgraphUpdated, 4);
+    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, input.numSubgraph);
 }
 
-// 纯 V 但串行损失超限(扇出): hinge 40, 分支 500/400/300, 损失 1200-500=700 > 8x40=320
-// -> 不豁免拒绝保持 4 (钉住豁免判据的损失子句)
+// Pure Vector branches also exceed the relative budget: 9 * 500 > 8 * (40 + 500).
 TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardRejectsHeavyPureVecFanout)
 {
-    std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
-    MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
-    input.isEnforceMergeGroup = {false};
-    input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
-    input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
-    input.subgraphAICOpNum = {2, 0, 0, 0};
-    input.subgraphAICLatency = {20, 0, 0, 0};
-    input.subgraphAIVLatency = {20, 500, 400, 300};
+    auto input = BuildWideHingeFanoutInput();
+    input.subgraphAICOpNum.assign(input.numSubgraph, 0);
+    input.subgraphAICOpNum[0] = 2;
+    input.subgraphAICLatency.assign(input.numSubgraph, 0);
+    input.subgraphAICLatency[0] = 20;
+    input.subgraphAIVLatency.assign(input.numSubgraph, 500);
+    input.subgraphAIVLatency[0] = 20;
     MixGraphMerger merger;
-    MergeOutput output = merger.Merge(input);
-    EXPECT_EQ(output.numSubgraphUpdated, 4);
+    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, input.numSubgraph);
 }
 
-// 边界(扇出): hinge 25, 分支 500/100/100, 损失 700-500=200 == 8x25, 等号放行归 1
+static MergeInput BuildWideDirectHingeFanoutInput(int hingeLatency, int branchLatency, int directBranchCount)
+{
+    auto input = BuildWideHingeFanoutInput();
+    input.subgraphAICOpNum.assign(input.numSubgraph, 0);
+    input.subgraphAICOpNum[0] = 2;
+    input.subgraphAIVOpNum[0] = 0;
+    input.subgraphAICLatency.assign(input.numSubgraph, 0);
+    input.subgraphAICLatency[0] = hingeLatency;
+    input.subgraphAIVLatency.assign(input.numSubgraph, branchLatency);
+    input.subgraphAIVLatency[0] = 0;
+    for (int i = 0; i < kWideFanoutBranchCount; ++i) {
+        input.boundaryTensors[i].producers = {{0, EndpointCoreKind::AIC, false}};
+        input.boundaryTensors[i].consumers = {{i + 1, EndpointCoreKind::AIV, i < directBranchCount}};
+    }
+    return input;
+}
+
+// Loss equals the budget: 9 * 800 == 8 * (100 + 800).
+// One direct branch satisfies the cross-core gate without qualifying for the all-direct exemption.
 TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardPureVecBoundaryEqualRatioAllows)
 {
-    std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
-    MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
-    input.isEnforceMergeGroup = {false};
-    input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
-    // 纯 C hinge -> 纯 V 分支的边界仍属跨核, 注入组内直连命中使直连门放行, 聚焦 hinge 等比判定
-    for (int i = 0; i < 3; ++i) {
-        input.boundaryTensors[i].producers = {{0, EndpointCoreKind::AIC, false}};
-        input.boundaryTensors[i].consumers = {{i + 1, EndpointCoreKind::AIV, true}};
-    }
-    input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
-    input.subgraphAICOpNum = {2, 0, 0, 0};
-    input.subgraphAICLatency = {25, 0, 0, 0};
-    input.subgraphAIVLatency = {0, 500, 100, 100};
+    auto input = BuildWideDirectHingeFanoutInput(100, 800, 1);
     MixGraphMerger merger;
-    MergeOutput output = merger.Merge(input);
-    EXPECT_EQ(output.numSubgraphUpdated, 1);
+    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, 1);
 }
 
 // 扇入含 C 轻量分支豁免放行(sparse_attention_antiquant 型): 3 个分支产 tensor 汇入
@@ -1990,113 +2001,112 @@ TEST_F(ReduceCopyTest, MixGraphMerger_TwoStageNmExemptsIntraStructureHinge)
     EXPECT_EQ(output.numSubgraphUpdated, 2);
 }
 
-// 组外 hinge 护栏恢复: N:M 本身达标, 但组外轻量 hinge 5 扇出 3 个互不可达生产 root
-// (串行损失 200 > 8*2=16), 结构外条目不被豁免, 仍拒绝
+// The 10:2 stage fits both budgets (900 <= 8 * 200 and 200 <= 8 * 100).
+// The external fanout loses 900, exceeding the budget at hinge cost 2 (816) but not at 13 (904).
 TEST_F(ReduceCopyTest, MixGraphMerger_TwoStageNmHingeStillGuardsForeignFanout)
 {
-    MergeInput input = BuildSimpleMergeInput(7, {{3, 4}, {3, 4}, {3, 4}, {6}, {6}, {0, 1, 2}, {}}, {{0, 1, 2, 3, 4}});
+    const int firstConsumer = kWideFanoutBranchCount;
+    const int secondConsumer = firstConsumer + 1;
+    const int foreignHinge = secondConsumer + 1;
+    const int sink = foreignHinge + 1;
+    const int numSubgraphs = sink + 1;
+    std::vector<int> producers;
+    std::vector<int> group;
+    std::vector<std::set<int>> outGraph(numSubgraphs);
+    for (int producer = 0; producer < firstConsumer; ++producer) {
+        producers.push_back(producer);
+        outGraph[producer] = {firstConsumer, secondConsumer};
+        outGraph[foreignHinge].insert(producer);
+    }
+    group = producers;
+    group.push_back(firstConsumer);
+    group.push_back(secondConsumer);
+    outGraph[firstConsumer] = {sink};
+    outGraph[secondConsumer] = {sink};
+
+    auto input = BuildSimpleMergeInput(numSubgraphs, outGraph, {group});
     input.isEnforceMergeGroup = {false};
-    input.boundaryTensors = {
-        {300,
-         {0, 1, 2},
-         {3, 4},
-         true,
-         {},
-         {},
-         {{0, EndpointCoreKind::AIC, true}, {1, EndpointCoreKind::AIC, true}, {2, EndpointCoreKind::AIC, true}},
-         {{3, EndpointCoreKind::AIV, true}, {4, EndpointCoreKind::AIV, true}}},
-        {301, {5}, {0, 1, 2}, true, {}, {}},
-        {302, {3, 4}, {6}, true, {}, {}}};
-    input.subgraphToBoundaryTensorIds = {{0, 1}, {0, 1}, {0, 1}, {0, 2}, {0, 2}, {1}, {2}};
-    input.subgraphAICLatency = {50, 50, 50, 50, 50, 1, 50};
-    input.subgraphAIVLatency = {50, 50, 50, 50, 50, 1, 50};
-    MixGraphMerger merger;
-    MergeOutput output = merger.Merge(input);
-    EXPECT_EQ(output.numSubgraphUpdated, 7);
+    input.boundaryTensors = {{300, producers, {firstConsumer, secondConsumer}, true, {}, {}},
+                             {301, {foreignHinge}, producers, true, {}, {}},
+                             {302, {firstConsumer, secondConsumer}, {sink}, true, {}, {}}};
+    for (int producer : producers) {
+        input.boundaryTensors[0].producers.push_back({producer, EndpointCoreKind::AIC, true});
+    }
+    input.boundaryTensors[0].consumers = {{firstConsumer, EndpointCoreKind::AIV, true},
+                                          {secondConsumer, EndpointCoreKind::AIV, true}};
+    input.subgraphToBoundaryTensorIds.assign(numSubgraphs, {0, 1});
+    input.subgraphToBoundaryTensorIds[firstConsumer] = {0, 2};
+    input.subgraphToBoundaryTensorIds[secondConsumer] = {0, 2};
+    input.subgraphToBoundaryTensorIds[foreignHinge] = {1};
+    input.subgraphToBoundaryTensorIds[sink] = {2};
+    input.subgraphAIVLatency[firstConsumer] = 150;
+    input.subgraphAIVLatency[secondConsumer] = 150;
+    input.subgraphAIVLatency[foreignHinge] = 0;
+    for (int hingeLatency : {2, 13}) {
+        SCOPED_TRACE(hingeLatency);
+        input.subgraphAICLatency[foreignHinge] = hingeLatency;
+        MixGraphMerger merger;
+        EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, hingeLatency == 2 ? numSubgraphs : 3);
+    }
 }
 
-// 直连豁免放行(扇出): hinge sg0(40) 扇出 3 个互不可达分支(500/400/300), 每个分支都有
-// hinge->branch 的直连边界端点(全直连 1:N, 搬运收益按分支数放大), 且 hinge(40) <=
-// 最大分支(500) 非规模主导 -> 豁免放行归 1 (旧规模标尺下损失 700 > 8x40 应拒;
-// 同拓扑无直连端点被拒, 见 MixGraphMerger_HingeGuardRejectsHeavyPureVecFanout)
+// All ten branches are direct, so the exemption allows merging despite 4500 > 4320.
 TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardExemptsDirectPathFanoutBeyondScale)
 {
-    std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
-    MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
-    input.isEnforceMergeGroup = {false};
-    input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
-    for (int i = 0; i < 3; ++i) {
-        input.boundaryTensors[i].producers = {{0, EndpointCoreKind::AIC, false}};
-        input.boundaryTensors[i].consumers = {{i + 1, EndpointCoreKind::AIV, true}};
-    }
-    input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
-    input.subgraphAICOpNum = {2, 0, 0, 0};
-    input.subgraphAICLatency = {40, 0, 0, 0};
-    input.subgraphAIVLatency = {0, 500, 400, 300};
+    auto input = BuildWideDirectHingeFanoutInput(40, 500, kWideFanoutBranchCount);
     MixGraphMerger merger;
-    MergeOutput output = merger.Merge(input);
-    EXPECT_EQ(output.numSubgraphUpdated, 1);
+    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, 1);
 }
 
-// 部分直连回落旧判据(扇出): 仅 2/3 分支有直连边界端点, allBranchesDirect 不成立,
-// 走规模标尺: 损失 700 > 8x40 拒绝保持 4 (豁免要求全部分支直连, 一条不满足即回落)
+// With one direct branch missing, the same fanout must fall back to the budget and reject.
 TEST_F(ReduceCopyTest, MixGraphMerger_HingeGuardPartialDirectPathFallsBackToScale)
 {
-    std::vector<std::set<int>> outGraph{{1, 2, 3}, {}, {}, {}};
-    MergeInput input = BuildSimpleMergeInput(4, outGraph, {{0, 1, 2, 3}});
-    input.isEnforceMergeGroup = {false};
-    input.boundaryTensors = {
-        {100, {0}, {1}, true, {}, {}}, {101, {0}, {2}, true, {}, {}}, {102, {0}, {3}, true, {}, {}}};
-    for (int i = 0; i < 2; ++i) {
-        input.boundaryTensors[i].producers = {{0, EndpointCoreKind::AIC, false}};
-        input.boundaryTensors[i].consumers = {{i + 1, EndpointCoreKind::AIV, true}};
-    }
-    input.subgraphToBoundaryTensorIds = {{0, 1, 2}, {0}, {1}, {2}};
-    input.subgraphAICOpNum = {2, 0, 0, 0};
-    input.subgraphAICLatency = {40, 0, 0, 0};
-    input.subgraphAIVLatency = {0, 500, 400, 300};
+    auto input = BuildWideDirectHingeFanoutInput(40, 500, kWideFanoutBranchCount - 1);
     MixGraphMerger merger;
-    MergeOutput output = merger.Merge(input);
-    EXPECT_EQ(output.numSubgraphUpdated, 4);
+    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, input.numSubgraph);
 }
 
 // Shared preparation roots feed four independent Cube branches, as in cases
 // 51/52/62/64/67/69/82. Root 1 stays outside the candidate: its direct paths
 // must still be considered by the hinge guard. Root 6 is a heavy downstream sink, outside the candidate.
-static MergeInput BuildDirectPathHingeInput(int hingeLatency, int branchLatency)
+static MergeInput BuildDirectPathHingeInput(int hingeLatency, int branchLatency, int branchCount)
 {
-    MergeInput input = BuildSimpleMergeInput(7, {{2, 3, 4, 5}, {2, 3, 4, 5}, {6}, {6}, {6}, {6}, {}},
-                                             {{0, 2, 3, 4, 5}});
+    const int sink = branchCount + 2;
+    const int numSubgraphs = sink + 1;
+    std::vector<int> branches;
+    std::vector<int> group{0};
+    std::vector<std::set<int>> outGraph(numSubgraphs);
+    for (int branch = 2; branch < sink; ++branch) {
+        branches.push_back(branch);
+        group.push_back(branch);
+        outGraph[0].insert(branch);
+        outGraph[1].insert(branch);
+        outGraph[branch] = {sink};
+    }
+    auto input = BuildSimpleMergeInput(numSubgraphs, outGraph, {group});
     input.isEnforceMergeGroup = {false};
-    input.subgraphAICLatency = {0, 0, branchLatency, branchLatency, branchLatency, branchLatency, 0};
-    input.subgraphAIVLatency = {hingeLatency, hingeLatency, 0, 0, 0, 0, 10000};
-    input.subgraphAICOpNum = {0, 0, 1, 1, 1, 1, 0};
-    input.subgraphAIVOpNum = {1, 1, 0, 0, 0, 0, 1};
-    input.boundaryTensors = {{400,
-                              {0},
-                              {2, 3, 4, 5},
-                              true,
-                              {},
-                              {},
-                              {{0, EndpointCoreKind::AIV, false}},
-                              {{2, EndpointCoreKind::AIC, true},
-                               {3, EndpointCoreKind::AIC, true},
-                               {4, EndpointCoreKind::AIC, true},
-                               {5, EndpointCoreKind::AIC, true}}},
-                             {401,
-                              {1},
-                              {2, 3, 4, 5},
-                              true,
-                              {},
-                              {},
-                              {{1, EndpointCoreKind::AIV, false}},
-                              {{2, EndpointCoreKind::AIC, true},
-                               {3, EndpointCoreKind::AIC, true},
-                               {4, EndpointCoreKind::AIC, true},
-                               {5, EndpointCoreKind::AIC, true}}},
-                             {402, {2, 3, 4, 5}, {6}, true, {}, {}}};
-    input.subgraphToBoundaryTensorIds = {{0}, {1}, {0, 1, 2}, {0, 1, 2}, {0, 1, 2}, {0, 1, 2}, {2}};
+    input.subgraphAICLatency.assign(numSubgraphs, branchLatency);
+    input.subgraphAIVLatency.assign(numSubgraphs, 0);
+    input.subgraphAICOpNum.assign(numSubgraphs, 1);
+    input.subgraphAIVOpNum.assign(numSubgraphs, 0);
+    for (int root : {0, 1, sink}) {
+        input.subgraphAICLatency[root] = 0;
+        input.subgraphAIVLatency[root] = hingeLatency;
+        input.subgraphAICOpNum[root] = 0;
+        input.subgraphAIVOpNum[root] = 1;
+    }
+    input.subgraphAIVLatency[sink] = 10000;
+    input.boundaryTensors = {{400, {0}, branches, true, {}, {}, {{0, EndpointCoreKind::AIV, false}}, {}},
+                             {401, {1}, branches, true, {}, {}, {{1, EndpointCoreKind::AIV, false}}, {}},
+                             {402, branches, {sink}, true, {}, {}}};
+    for (int branch : branches) {
+        input.boundaryTensors[0].consumers.push_back({branch, EndpointCoreKind::AIC, true});
+        input.boundaryTensors[1].consumers.push_back({branch, EndpointCoreKind::AIC, true});
+    }
+    input.subgraphToBoundaryTensorIds.assign(numSubgraphs, {0, 1, 2});
+    input.subgraphToBoundaryTensorIds[0] = {0};
+    input.subgraphToBoundaryTensorIds[1] = {1};
+    input.subgraphToBoundaryTensorIds[sink] = {2};
     return input;
 }
 
@@ -2106,7 +2116,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_DirectPathHingeAllowsFourCubeBranches)
     // Their serial losses exceed the old 8 * hinge budget.
     for (int branchLatency : {435, 267}) {
         SCOPED_TRACE(branchLatency);
-        MergeInput input = BuildDirectPathHingeInput(1, branchLatency);
+        MergeInput input = BuildDirectPathHingeInput(1, branchLatency, 4);
         MixGraphMerger merger;
         MergeOutput output = merger.Merge(input);
         EXPECT_EQ(output.numSubgraphUpdated, 3);
@@ -2119,7 +2129,7 @@ TEST_F(ReduceCopyTest, MixGraphMerger_DirectPathHingePreservesExistingBudgetAllo
     // These satisfy the old budget too and must remain mergeable.
     for (const auto& latency : std::vector<std::pair<int, int>>{{366, 845}, {480, 517}}) {
         SCOPED_TRACE(latency.first);
-        MergeInput input = BuildDirectPathHingeInput(latency.first, latency.second);
+        MergeInput input = BuildDirectPathHingeInput(latency.first, latency.second, 4);
         MixGraphMerger merger;
         EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, 3);
     }
@@ -2127,27 +2137,104 @@ TEST_F(ReduceCopyTest, MixGraphMerger_DirectPathHingePreservesExistingBudgetAllo
 
 TEST_F(ReduceCopyTest, MixGraphMerger_DirectPathHingeRejectsOneMissingBranch)
 {
-    MergeInput input = BuildDirectPathHingeInput(1, 435);
+    // Without the all-direct exemption, 9 * 435 > 8 * (1 + 435).
+    auto input = BuildDirectPathHingeInput(1, 435, kWideFanoutBranchCount);
     input.boundaryTensors[0].consumers.back().directPath = false;
     MixGraphMerger merger;
-    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, 7);
+    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, input.numSubgraph);
 }
 
 TEST_F(ReduceCopyTest, MixGraphMerger_DirectPathHingeRejectsForeignMissingBranch)
 {
-    MergeInput input = BuildDirectPathHingeInput(1, 435);
+    // Without the all-direct exemption, 9 * 435 > 8 * (1 + 435).
+    auto input = BuildDirectPathHingeInput(1, 435, kWideFanoutBranchCount);
     input.boundaryTensors[1].consumers.back().directPath = false;
     MixGraphMerger merger;
-    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, 7);
+    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, input.numSubgraph);
 }
 
-TEST_F(ReduceCopyTest, MixGraphMerger_DirectPathHingeFallsBackToOriginalBudget)
+TEST_F(ReduceCopyTest, MixGraphMerger_DirectPathHingeFallsBackToRelativeBudget)
 {
-    // A heavier hinge fails the new shortcut, but the original loss budget
-    // still allows the merge: 3 * 435 <= 8 * 436.
-    MergeInput input = BuildDirectPathHingeInput(436, 435);
+    // A heavier hinge fails the direct-path shortcut. Loss 3915 exceeds the old budget
+    // of 3488, and fits the relative budget of 6968.
+    auto input = BuildDirectPathHingeInput(436, 435, kWideFanoutBranchCount);
     MixGraphMerger merger;
     EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, 3);
+}
+
+// case24: a 1-cycle preparation root feeds four 910-cycle Cube branches,
+// which converge at an external 137-cycle RESHAPE.
+TEST_F(ReduceCopyTest, MixGraphMerger_Case24LightReshapeUsesRelativeHingeBudget)
+{
+    MergeInput input = BuildDirectPathHingeInput(1, 910, 4);
+    input.subgraphAIVLatency[6] = 137;
+    MixGraphMerger merger;
+    const auto output = merger.Merge(input);
+    ASSERT_EQ(output.numSubgraphUpdated, 3);
+    for (int branch : {2, 3, 4, 5}) {
+        EXPECT_EQ(output.subgraphIdUpdated[0], output.subgraphIdUpdated[branch]);
+    }
+    EXPECT_NE(output.subgraphIdUpdated[0], output.subgraphIdUpdated[1]);
+    EXPECT_NE(output.subgraphIdUpdated[0], output.subgraphIdUpdated[6]);
+}
+
+// case59 / Unroll1 PATH0: sg22 -> sg23..26 -> sg40 (external RESHAPE).
+// The external hinge budget is 8 * (25 + 116) = 1128, exceeding the loss of 348.
+TEST_F(ReduceCopyTest, MixGraphMerger_Case59ExternalReshapeUsesRelativeHingeBudget)
+{
+    MergeInput input = BuildSimpleMergeInput(6, {{1, 2, 3, 4}, {5}, {5}, {5}, {5}, {}}, {{0, 1, 2, 3, 4}});
+    input.isEnforceMergeGroup = {false};
+    input.subgraphAICLatency = {173, 0, 0, 0, 0, 0};
+    input.subgraphAIVLatency = {0, 116, 116, 116, 116, 25};
+    input.subgraphAICOpNum = {1, 0, 0, 0, 0, 0};
+    input.subgraphAIVOpNum = {0, 8, 8, 8, 8, 1};
+    input.boundaryTensors = {{1145, {0}, {1, 2, 3, 4}, true, {}, {}}, {46, {1, 2, 3, 4}, {5}, true, {}, {}}};
+    input.boundaryTensors[0].producers = {{0, EndpointCoreKind::AIC, true}};
+    input.boundaryTensors[0].consumers = {{1, EndpointCoreKind::AIV, false},
+                                          {2, EndpointCoreKind::AIV, false},
+                                          {3, EndpointCoreKind::AIV, false},
+                                          {4, EndpointCoreKind::AIV, false}};
+    input.subgraphToBoundaryTensorIds = {{0}, {0, 1}, {0, 1}, {0, 1}, {0, 1}, {1}};
+
+    MixGraphMerger merger;
+    const auto output = merger.Merge(input);
+    ASSERT_EQ(output.numSubgraphUpdated, 2);
+    for (int branch = 1; branch <= 4; ++branch) {
+        EXPECT_EQ(output.subgraphIdUpdated[0], output.subgraphIdUpdated[branch]);
+    }
+    EXPECT_NE(output.subgraphIdUpdated[0], output.subgraphIdUpdated[5]);
+}
+
+TEST_F(ReduceCopyTest, MixGraphMerger_HingeUsesAggregatedBranchLatencyAtBudgetBoundary)
+{
+    // Merge 1 -> 2 first. The ten resulting branches have costs 200 and 9 * branchLatency.
+    // At 180 the loss is 1620 <= 8 * (3 + 200); taking max over original subgraphs
+    // instead would reject. At 181 the loss is 1629 > 1624 and must still be rejected.
+    for (int branchLatency : {180, 181}) {
+        SCOPED_TRACE(branchLatency);
+        std::vector<std::set<int>> outGraph(12);
+        outGraph[0] = {1, 3, 4, 5, 6, 7, 8, 9, 10, 11};
+        outGraph[1] = {2};
+        MergeInput input = BuildSimpleMergeInput(12, outGraph, {{1, 2}, {0, 1, 3, 4, 5, 6, 7, 8, 9, 10, 11}});
+        input.isEnforceMergeGroup = {true, false};
+        input.subgraphAICLatency.assign(12, 0);
+        input.subgraphAIVLatency.assign(12, branchLatency);
+        input.subgraphAICLatency[0] = 3;
+        input.subgraphAIVLatency[0] = 0;
+        input.subgraphAIVLatency[1] = 100;
+        input.subgraphAIVLatency[2] = 100;
+        input.boundaryTensors = {{100, {0}, {1, 3, 4, 5, 6, 7, 8, 9, 10, 11}, true, {}, {}},
+                                 {101, {1}, {2}, true, {}, {}}};
+        input.subgraphToBoundaryTensorIds.assign(12, {0});
+        input.subgraphToBoundaryTensorIds[1] = {0, 1};
+        input.subgraphToBoundaryTensorIds[2] = {1};
+
+        MixGraphMerger merger;
+        const auto output = merger.Merge(input);
+        EXPECT_EQ(output.numSubgraphUpdated, branchLatency == 180 ? 1 : 11);
+        ASSERT_EQ(output.subgraphIdUpdated.size(), 12U);
+        EXPECT_EQ(output.subgraphIdUpdated[1], output.subgraphIdUpdated[2]);
+    }
 }
 
 // 对照: 同上拓扑无 slotScope 时门控不启用, 全部合并到 1 子图 (mla / gqa-PATH0 场景)
