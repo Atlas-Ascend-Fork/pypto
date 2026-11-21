@@ -157,6 +157,20 @@ bool IsExactOutputProducer(const Operation& producer, const std::shared_ptr<Logi
            producer.GetOOperands().front()->GetMagic() == tensor->GetMagic();
 }
 
+bool HasRawVersionProducer(const std::vector<Operation*>& producers, const std::shared_ptr<LogicalTensor>& tensor)
+{
+    return std::any_of(producers.begin(), producers.end(), [&tensor](const Operation* producer) {
+        return producer != nullptr && !IsExactOutputProducer(*producer, tensor);
+    });
+}
+
+bool AreAllContractProducers(const std::set<Operation*, LogicalTensor::CompareOp>& producers)
+{
+    return std::all_of(producers.begin(), producers.end(), [](const Operation* producer) {
+        return producer != nullptr && IsContractOpcode(producer->GetOpcode());
+    });
+}
+
 bool HasRawExternalConsumer(Function& function, const std::shared_ptr<LogicalTensor>& tensor, const Operation& atomicOp)
 {
     auto rawProducers = CollectRawAssembleProducers(function, tensor);
@@ -417,13 +431,8 @@ std::shared_ptr<LogicalTensor> CloneRawAssembleSetForAtomic(Function& function, 
     return clonedInput;
 }
 
-Status MigrateFoldedOpTokenDependency(Function& function, Operation& foldedOp,
-                                      const std::vector<Operation*>& replacementProducers)
+Status MigrateFoldedOpInputTokens(Function& function, Operation& foldedOp, const std::vector<Operation*>& replacements)
 {
-    std::vector<Operation*> replacements;
-    for (auto* producer : replacementProducers) {
-        AddUnique(replacements, producer);
-    }
     auto& dependency = function.GetVarDependency();
     auto foldedStmt = ToStmtPtr(foldedOp);
 
@@ -448,11 +457,17 @@ Status MigrateFoldedOpTokenDependency(Function& function, Operation& foldedOp,
         }
     }
     foldedOp.tokens_.clear();
+    return SUCCESS;
+}
 
+Status MigrateFoldedOpResultTokens(Function& function, Operation& foldedOp, const std::vector<Operation*>& replacements)
+{
     auto oldResultTokens = foldedOp.result_token_;
     if (oldResultTokens.empty()) {
         return SUCCESS;
     }
+    auto& dependency = function.GetVarDependency();
+    auto foldedStmt = ToStmtPtr(foldedOp);
     std::vector<Operation*> externalConsumers;
     for (const auto& oldResultToken : oldResultTokens) {
         for (const auto& consumerStmt : dependency.GetConsumers(oldResultToken)) {
@@ -482,6 +497,19 @@ Status MigrateFoldedOpTokenDependency(Function& function, Operation& foldedOp,
     }
     foldedOp.result_token_.clear();
     return SUCCESS;
+}
+
+Status MigrateFoldedOpTokenDependency(Function& function, Operation& foldedOp,
+                                      const std::vector<Operation*>& replacementProducers)
+{
+    std::vector<Operation*> replacements;
+    for (auto* producer : replacementProducers) {
+        AddUnique(replacements, producer);
+    }
+    if (MigrateFoldedOpInputTokens(function, foldedOp, replacements) != SUCCESS) {
+        return FAILED;
+    }
+    return MigrateFoldedOpResultTokens(function, foldedOp, replacements);
 }
 
 } // namespace
@@ -677,16 +705,8 @@ Status ProcessAtomic::ProcessAtomicInput(Operation& atomicOp, const std::shared_
     }
     auto producersBackup = input->GetProducers();
     auto rawProducers = CollectRawAssembleProducers(*function, input);
-    bool hasRawVersionProducer = std::any_of(rawProducers.begin(), rawProducers.end(), [&input](const auto* producer) {
-        return producer != nullptr && !IsExactOutputProducer(*producer, input);
-    });
-    bool allContractProducers = !producersBackup.empty() &&
-                                std::all_of(producersBackup.begin(), producersBackup.end(),
-                                            [](const auto* producer) {
-                                                return producer != nullptr && IsContractOpcode(producer->GetOpcode());
-                                            }) &&
-                                !hasRawVersionProducer;
-    if (allContractProducers) {
+    if (!producersBackup.empty() && AreAllContractProducers(producersBackup) &&
+        !HasRawVersionProducer(rawProducers, input)) {
         for (auto* producerOp : producersBackup) {
             if (ProcessAtomicContractProducer(atomicOp, *producerOp, output, rmwMode, rmwOffset, rmwDynOffset,
                                               replacementProducers) != SUCCESS) {
@@ -854,10 +874,7 @@ Status ProcessAtomic::CollectTerminalAssembles(const std::shared_ptr<LogicalTens
     if (producers.empty()) {
         return FAILED;
     }
-    bool allAssemble = std::all_of(producers.begin(), producers.end(), [](const Operation* producer) {
-        return producer != nullptr && IsContractOpcode(producer->GetOpcode());
-    });
-    if (!allAssemble) {
+    if (!AreAllContractProducers(producers)) {
         return SUCCESS;
     }
     auto* function = (*producers.begin())->BelongTo();

@@ -1482,17 +1482,21 @@ void MergeViewAssembleUtils::InitOperationChain(Operation& operation, std::vecto
     chain.emplace_back(&operation);
 }
 
+bool MergeViewAssembleUtils::HasActiveAssembleConsumer(const ConsumerCacheEntry& consumers) const
+{
+    return std::any_of(
+        consumers.assembleConsumers.begin(), consumers.assembleConsumers.end(),
+        [this](const Operation* op) { return op != nullptr && visitedOp_.count(op->GetOpMagic()) == 0; });
+}
+
 Status MergeViewAssembleUtils::ProcessConsumerChain(Function& function, const ConsumerCacheEntry& consumers,
                                                     std::vector<Operation*>& chain, bool& chainEnd,
                                                     int effectiveScopeId)
 {
-    bool hasActiveAssembleConsumer = std::any_of(
-        consumers.assembleConsumers.begin(), consumers.assembleConsumers.end(),
-        [this](Operation* op) { return op != nullptr && visitedOp_.count(op->GetOpMagic()) == 0; });
     // Keep dependency-sensitive side readers as barriers. An unused result token
     // does not prevent bypassing a view while retaining it for ordinary side readers.
     if (consumers.viewConsumers.empty() || (useTokenSemantics_ && HasChainTokenDependency(chain, consumers) &&
-                                            (consumers.hasViewChainStopper || hasActiveAssembleConsumer))) {
+                                            (consumers.hasViewChainStopper || HasActiveAssembleConsumer(consumers)))) {
         return SUCCESS;
     }
     Operation* currentOp = chain.back();
@@ -1506,11 +1510,7 @@ Status MergeViewAssembleUtils::ProcessConsumerChain(Function& function, const Co
         if (!op) {
             return FAILED;
         }
-        if (IsTokenSemanticOperation(*op) != useTokenSemantics_) {
-            chainEnd = true;
-            continue;
-        }
-        if (!IsViewLikeOpcode(op->GetOpcode())) {
+        if (IsTokenSemanticOperation(*op) != useTokenSemantics_ || !IsViewLikeOpcode(op->GetOpcode())) {
             chainEnd = true;
             continue;
         }

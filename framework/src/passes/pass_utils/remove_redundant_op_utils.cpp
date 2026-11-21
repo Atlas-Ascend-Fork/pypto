@@ -594,14 +594,20 @@ struct ViewCopyoutBranch {
     std::vector<SymbolicScalar> copyOffset;
 };
 
+bool HasViewCopyoutOperands(const LogicalTensorPtr& viewInput, const LogicalTensorPtr& copyOutOutput,
+                            const Operation& viewOp, const Operation& copyOutOp)
+{
+    return viewInput != nullptr && copyOutOutput != nullptr && viewOp.GetOpcode() == Opcode::OP_VIEW &&
+           viewOp.GetIOperands().size() == 1 && viewOp.GetOOperands().size() == 1 &&
+           viewOp.GetIOperands().front() == viewInput && copyOutOp.GetIOperands().size() == 1 &&
+           copyOutOp.GetOOperands().size() == 1 && copyOutOp.GetOOperands().front() == copyOutOutput &&
+           OpcodeManager::Inst().IsCopyOut(copyOutOp.GetOpcode());
+}
+
 bool BuildViewCopyoutBranch(const LogicalTensorPtr& viewInput, const LogicalTensorPtr& copyOutOutput, Operation& viewOp,
                             Operation& copyOutOp, ViewCopyoutBranch& branch)
 {
-    if (viewInput == nullptr || copyOutOutput == nullptr || viewOp.GetOpcode() != Opcode::OP_VIEW ||
-        viewOp.GetIOperands().size() != 1 || viewOp.GetOOperands().size() != 1 ||
-        viewOp.GetIOperands().front() != viewInput || copyOutOp.GetIOperands().size() != 1 ||
-        copyOutOp.GetOOperands().size() != 1 || copyOutOp.GetOOperands().front() != copyOutOutput ||
-        !OpcodeManager::Inst().IsCopyOut(copyOutOp.GetOpcode())) {
+    if (!HasViewCopyoutOperands(viewInput, copyOutOutput, viewOp, copyOutOp)) {
         return false;
     }
     auto viewOutput = viewOp.GetOOperands().front();
@@ -696,14 +702,20 @@ struct CopyinAssembleBranch {
     std::vector<int64_t> assembleOffset;
 };
 
+bool HasCopyinAssembleOperands(const LogicalTensorPtr& copyInInput, const LogicalTensorPtr& assembleOutput,
+                               const Operation& copyInOp, const Operation& assembleOp)
+{
+    return copyInInput != nullptr && assembleOutput != nullptr && assembleOp.GetOpcode() == Opcode::OP_ASSEMBLE &&
+           assembleOp.GetIOperands().size() == 1 && assembleOp.GetOOperands().size() == 1 &&
+           assembleOp.GetOOperands().front() == assembleOutput && copyInOp.GetIOperands().size() == 1 &&
+           copyInOp.GetOOperands().size() == 1 && copyInOp.GetIOperands().front() == copyInInput &&
+           OpcodeManager::Inst().IsCopyIn(copyInOp.GetOpcode());
+}
+
 bool BuildCopyinAssembleBranch(const LogicalTensorPtr& copyInInput, const LogicalTensorPtr& assembleOutput,
                                Operation& copyInOp, Operation& assembleOp, CopyinAssembleBranch& branch)
 {
-    if (copyInInput == nullptr || assembleOutput == nullptr || assembleOp.GetOpcode() != Opcode::OP_ASSEMBLE ||
-        assembleOp.GetIOperands().size() != 1 || assembleOp.GetOOperands().size() != 1 ||
-        assembleOp.GetOOperands().front() != assembleOutput || copyInOp.GetIOperands().size() != 1 ||
-        copyInOp.GetOOperands().size() != 1 || copyInOp.GetIOperands().front() != copyInInput ||
-        !OpcodeManager::Inst().IsCopyIn(copyInOp.GetOpcode())) {
+    if (!HasCopyinAssembleOperands(copyInInput, assembleOutput, copyInOp, assembleOp)) {
         return false;
     }
     auto copyInOutput = copyInOp.GetOOperands().front();
@@ -1178,6 +1190,137 @@ bool MigratePrefixTokensToConsumers(Function& function, Operation* precedingSlic
     return true;
 }
 
+bool IsLiveUnarySlice(const Operation* op)
+{
+    return op != nullptr && !op->IsDeleted() && op->GetOpcode() == Opcode::OP_SLICE && op->GetIOperands().size() == 1 &&
+           op->GetOOperands().size() == 1;
+}
+
+bool IsExclusiveSliceProducer(const Operation* slice, const LogicalTensorPtr& output, const Operation& consumer)
+{
+    return IsLiveUnarySlice(slice) && slice->GetOOperands().front() == output && GetViewAttr(*slice) != nullptr &&
+           output->GetConsumers().size() == 1 && *output->GetConsumers().begin() == &consumer;
+}
+
+using CopyBranchGroups = std::unordered_map<LogicalTensorPtr, std::vector<std::pair<Operation*, Operation*>>>;
+
+bool CollectViewCopyoutGroups(const LogicalTensorPtr& viewInput, std::unordered_set<int>& visitedViewMagics,
+                              CopyBranchGroups& outputGroups)
+{
+    for (auto* siblingView : viewInput->GetConsumers()) {
+        if (siblingView == nullptr || siblingView->IsDeleted() || siblingView->GetOpcode() != Opcode::OP_VIEW) {
+            continue;
+        }
+        visitedViewMagics.insert(siblingView->GetOpMagic());
+        if (siblingView->GetOOperands().size() != 1 || siblingView->GetOOperands().front() == nullptr) {
+            continue;
+        }
+        const auto& viewOutput = siblingView->GetOOperands().front();
+        std::vector<Operation*> copyOutConsumers;
+        for (auto* consumer : viewOutput->GetConsumers()) {
+            if (consumer != nullptr && !consumer->IsDeleted() &&
+                OpcodeManager::Inst().IsCopyOut(consumer->GetOpcode())) {
+                copyOutConsumers.push_back(consumer);
+            }
+        }
+        if (copyOutConsumers.empty()) {
+            continue;
+        }
+        auto* copyOutOp = copyOutConsumers.front();
+        if (viewOutput->GetConsumers().size() != 1 || copyOutConsumers.size() != 1 ||
+            copyOutOp->GetOOperands().size() != 1 || copyOutOp->GetOOperands().front() == nullptr) {
+            return false;
+        }
+        outputGroups[copyOutOp->GetOOperands().front()].push_back({siblingView, copyOutOp});
+    }
+    return true;
+}
+
+void CollectCopyinAssembleGroups(const LogicalTensorPtr& assembleOutput, std::unordered_set<int>& visitedAssembleMagics,
+                                 CopyBranchGroups& inputGroups, std::unordered_set<LogicalTensorPtr>& invalidInputs)
+{
+    for (auto* siblingAssemble : assembleOutput->GetProducers()) {
+        if (siblingAssemble == nullptr || siblingAssemble->IsDeleted() ||
+            siblingAssemble->GetOpcode() != Opcode::OP_ASSEMBLE) {
+            continue;
+        }
+        visitedAssembleMagics.insert(siblingAssemble->GetOpMagic());
+        if (siblingAssemble->GetIOperands().size() != 1 || siblingAssemble->GetIOperands().front() == nullptr) {
+            continue;
+        }
+        const auto& copyInOutput = siblingAssemble->GetIOperands().front();
+        if (copyInOutput->GetProducers().size() != 1) {
+            continue;
+        }
+        auto* copyInOp = *copyInOutput->GetProducers().begin();
+        if (copyInOp == nullptr || copyInOp->IsDeleted() || !OpcodeManager::Inst().IsCopyIn(copyInOp->GetOpcode()) ||
+            copyInOp->GetIOperands().size() != 1 || copyInOp->GetIOperands().front() == nullptr) {
+            continue;
+        }
+        const auto& copyInInput = copyInOp->GetIOperands().front();
+        if (copyInOutput->GetConsumers().size() != 1 || *copyInOutput->GetConsumers().begin() != siblingAssemble) {
+            invalidInputs.insert(copyInInput);
+            continue;
+        }
+        inputGroups[copyInInput].push_back({copyInOp, siblingAssemble});
+    }
+}
+
+bool HasCompleteOutcastCoverage(const LogicalTensorPtr& startTensor, const LogicalTensorPtr& endTensor)
+{
+    // Redirecting every producer to the outcast also redirects writes outside the copied regions.
+    // Equal endpoint shapes and offsets alone do not prove that the whole output is overwritten.
+    std::vector<RegionMapping> mappings;
+    std::vector<int64_t> translation;
+    bool hasDynOffset = false;
+    if (!CollectRegionMappings(startTensor, endTensor, mappings, translation, hasDynOffset)) {
+        APASS_LOG_DEBUG_F(Elements::Tensor,
+                          "Cannot collect region mappings from startTensor[%d] to outcast endTensor[%d].",
+                          startTensor->magic, endTensor->magic);
+        return false;
+    }
+    if (!HasCompleteRegionCoverage(mappings, endTensor->GetShape())) {
+        APASS_LOG_DEBUG_F(Elements::Tensor,
+                          "Region mappings from startTensor[%d] do not fully cover outcast endTensor[%d].",
+                          startTensor->magic, endTensor->magic);
+        return false;
+    }
+    return true;
+}
+
+template <typename MatchView>
+bool AllViewAssembleBranchesMatch(const LogicalTensor& endTensor, const MatchView& matchView)
+{
+    for (const auto* assembleOp : endTensor.GetProducers()) {
+        if (assembleOp != nullptr && assembleOp->IsDeleted()) {
+            continue;
+        }
+        if (assembleOp == nullptr || !IsAssembleLikeOpcode(assembleOp->GetOpcode()) ||
+            assembleOp->GetIOperands().empty()) {
+            return false;
+        }
+        const auto& assembleInput = assembleOp->GetIOperands().front();
+        if (assembleInput == nullptr) {
+            return false;
+        }
+        bool hasLiveProducer = false;
+        for (const auto* viewOp : assembleInput->GetProducers()) {
+            if (viewOp != nullptr && viewOp->IsDeleted()) {
+                continue;
+            }
+            if (viewOp == nullptr || viewOp->GetIOperands().empty() || !IsViewLikeOpcode(viewOp->GetOpcode()) ||
+                !matchView(*viewOp, *assembleOp)) {
+                return false;
+            }
+            hasLiveProducer = true;
+        }
+        if (!hasLiveProducer) {
+            return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
 
 bool RemoveRedundantOpUtils::CollectSliceContractSliceChain(const Operation& contractOp, SliceContractSliceChain& chain)
@@ -1198,12 +1341,7 @@ bool RemoveRedundantOpUtils::CollectSliceContractSliceChain(const Operation& con
     }
 
     chain.precedingSlice = *chain.contractInput->GetProducers().begin();
-    if (chain.precedingSlice == nullptr || chain.precedingSlice->IsDeleted() ||
-        chain.precedingSlice->GetOpcode() != Opcode::OP_SLICE || chain.precedingSlice->GetIOperands().size() != 1 ||
-        chain.precedingSlice->GetOOperands().size() != 1 ||
-        chain.precedingSlice->GetOOperands().front() != chain.contractInput ||
-        GetViewAttr(*chain.precedingSlice) == nullptr || chain.contractInput->GetConsumers().size() != 1 ||
-        *chain.contractInput->GetConsumers().begin() != &contractOp) {
+    if (!IsExclusiveSliceProducer(chain.precedingSlice, chain.contractInput, contractOp)) {
         return false;
     }
     chain.sourceTensor = chain.precedingSlice->GetIOperands().front();
@@ -1212,9 +1350,8 @@ bool RemoveRedundantOpUtils::CollectSliceContractSliceChain(const Operation& con
     }
 
     for (auto* consumer : chain.contractOutput->GetConsumers()) {
-        if (consumer == nullptr || consumer->IsDeleted() || consumer->GetOpcode() != Opcode::OP_SLICE ||
-            consumer->GetIOperands().size() != 1 || consumer->GetOOperands().size() != 1 ||
-            consumer->GetIOperands().front() != chain.contractOutput || GetViewAttr(*consumer) == nullptr) {
+        if (!IsLiveUnarySlice(consumer) || consumer->GetIOperands().front() != chain.contractOutput ||
+            GetViewAttr(*consumer) == nullptr) {
             return false;
         }
         chain.consumers.push_back(consumer);
@@ -1295,37 +1432,8 @@ Status RemoveRedundantOpUtils::ProcessViewCopyout(Function& function, bool& oper
         if (viewInput == nullptr) {
             continue;
         }
-        std::unordered_map<LogicalTensorPtr, std::vector<std::pair<Operation*, Operation*>>> outputGroups;
-        bool familyValid = true;
-        for (auto* siblingView : viewInput->GetConsumers()) {
-            if (siblingView == nullptr || siblingView->IsDeleted() || siblingView->GetOpcode() != Opcode::OP_VIEW) {
-                continue;
-            }
-            visitedViewMagics.insert(siblingView->GetOpMagic());
-            if (siblingView->GetOOperands().size() != 1 || siblingView->GetOOperands().front() == nullptr) {
-                continue;
-            }
-            const auto& viewOutput = siblingView->GetOOperands().front();
-            std::vector<Operation*> copyOutConsumers;
-            for (auto* consumer : viewOutput->GetConsumers()) {
-                if (consumer != nullptr && !consumer->IsDeleted() &&
-                    OpcodeManager::Inst().IsCopyOut(consumer->GetOpcode())) {
-                    copyOutConsumers.push_back(consumer);
-                }
-            }
-            if (copyOutConsumers.empty()) {
-                continue;
-            }
-            if (viewOutput->GetConsumers().size() != 1 || copyOutConsumers.size() != 1 ||
-                copyOutConsumers.front()->GetOOperands().size() != 1 ||
-                copyOutConsumers.front()->GetOOperands().front() == nullptr) {
-                familyValid = false;
-                break;
-            }
-            outputGroups[copyOutConsumers.front()->GetOOperands().front()].push_back(
-                {siblingView, copyOutConsumers.front()});
-        }
-        if (!familyValid) {
+        CopyBranchGroups outputGroups;
+        if (!CollectViewCopyoutGroups(viewInput, visitedViewMagics, outputGroups)) {
             continue;
         }
         for (auto& [copyOutOutput, candidates] : outputGroups) {
@@ -1354,34 +1462,9 @@ Status RemoveRedundantOpUtils::ProcessCopyinAssemble(Function& function, bool& o
         if (assembleOutput == nullptr) {
             continue;
         }
-        std::unordered_map<LogicalTensorPtr, std::vector<std::pair<Operation*, Operation*>>> inputGroups;
+        CopyBranchGroups inputGroups;
         std::unordered_set<LogicalTensorPtr> invalidInputs;
-        for (auto* siblingAssemble : assembleOutput->GetProducers()) {
-            if (siblingAssemble == nullptr || siblingAssemble->IsDeleted() ||
-                siblingAssemble->GetOpcode() != Opcode::OP_ASSEMBLE) {
-                continue;
-            }
-            visitedAssembleMagics.insert(siblingAssemble->GetOpMagic());
-            if (siblingAssemble->GetIOperands().size() != 1 || siblingAssemble->GetIOperands().front() == nullptr) {
-                continue;
-            }
-            const auto& copyInOutput = siblingAssemble->GetIOperands().front();
-            if (copyInOutput->GetProducers().size() != 1) {
-                continue;
-            }
-            auto* copyInOp = *copyInOutput->GetProducers().begin();
-            if (copyInOp == nullptr || copyInOp->IsDeleted() ||
-                !OpcodeManager::Inst().IsCopyIn(copyInOp->GetOpcode()) || copyInOp->GetIOperands().size() != 1 ||
-                copyInOp->GetIOperands().front() == nullptr) {
-                continue;
-            }
-            const auto& copyInInput = copyInOp->GetIOperands().front();
-            if (copyInOutput->GetConsumers().size() != 1 || *copyInOutput->GetConsumers().begin() != siblingAssemble) {
-                invalidInputs.insert(copyInInput);
-                continue;
-            }
-            inputGroups[copyInInput].push_back({copyInOp, siblingAssemble});
-        }
+        CollectCopyinAssembleGroups(assembleOutput, visitedAssembleMagics, inputGroups, invalidInputs);
         for (auto& [copyInInput, candidates] : inputGroups) {
             if (invalidInputs.count(copyInInput) != 0) {
                 continue;
@@ -1605,24 +1688,8 @@ bool RemoveRedundantOpUtils::ProcessPerfectMatch(Function& function, LogicalTens
         APASS_LOG_DEBUG_F(Elements::Tensor, "Not valid view-assemble-like case.");
         return false;
     }
-    if (endTensorIsOutcast) {
-        // Redirecting every producer to the outcast also redirects writes outside the copied regions.
-        // Equal endpoint shapes and offsets alone do not prove that the whole output is overwritten.
-        std::vector<RegionMapping> mappings;
-        std::vector<int64_t> translation;
-        bool hasDynOffset = false;
-        if (!CollectRegionMappings(startTensor, endTensor, mappings, translation, hasDynOffset)) {
-            APASS_LOG_DEBUG_F(Elements::Tensor,
-                              "Cannot collect region mappings from startTensor[%d] to outcast endTensor[%d].",
-                              startTensor->magic, endTensor->magic);
-            return false;
-        }
-        if (!HasCompleteRegionCoverage(mappings, endTensor->GetShape())) {
-            APASS_LOG_DEBUG_F(Elements::Tensor,
-                              "Region mappings from startTensor[%d] do not fully cover outcast endTensor[%d].",
-                              startTensor->magic, endTensor->magic);
-            return false;
-        }
+    if (endTensorIsOutcast && !HasCompleteOutcastCoverage(startTensor, endTensor)) {
+        return false;
     }
     auto removedOps = remove_redundant_op_internal::CollectViewAssembleCascadeOps(startTensor, endTensor);
     bool dependencyUpdated = false;
@@ -1675,49 +1742,16 @@ const RemoveRedundantOpUtils::ViewInputSummary& RemoveRedundantOpUtils::GetViewI
     }
 
     ViewInputSummary summary;
-    summary.valid = true;
-    for (auto& assembleOp : endTensor->GetProducers()) {
-        if (assembleOp != nullptr && assembleOp->IsDeleted()) {
-            continue;
+    summary.valid = AllViewAssembleBranchesMatch(*endTensor, [&summary](const Operation& viewOp, const Operation&) {
+        const auto& viewInput = viewOp.GetIOperands().front();
+        if (viewInput == nullptr) {
+            return false;
         }
-        if (assembleOp == nullptr || !IsAssembleLikeOpcode(assembleOp->GetOpcode()) ||
-            assembleOp->GetIOperands().empty()) {
-            summary.valid = false;
-            break;
+        if (!summary.startMagic.has_value()) {
+            summary.startMagic = viewInput->magic;
         }
-        const auto& tempTensor = assembleOp->GetIOperands().front();
-        if (tempTensor == nullptr || tempTensor->GetProducers().empty()) {
-            summary.valid = false;
-            break;
-        }
-        bool hasLiveProducer = false;
-        for (auto& producerOp : tempTensor->GetProducers()) {
-            if (producerOp != nullptr && producerOp->IsDeleted()) {
-                continue;
-            }
-            hasLiveProducer = true;
-            if (producerOp == nullptr || producerOp->GetIOperands().empty() ||
-                !IsViewLikeOpcode(producerOp->GetOpcode())) {
-                summary.valid = false;
-                break;
-            }
-            const auto& inTensor = producerOp->GetIOperands().front();
-            if (inTensor == nullptr) {
-                summary.valid = false;
-                break;
-            }
-            if (!summary.startMagic.has_value()) {
-                summary.startMagic = inTensor->magic;
-            } else if (summary.startMagic.value() != inTensor->magic) {
-                summary.valid = false;
-                break;
-            }
-        }
-        if (!hasLiveProducer || !summary.valid) {
-            summary.valid = false;
-            break;
-        }
-    }
+        return summary.startMagic.value() == viewInput->magic;
+    });
     return viewInputSummaryCache_.emplace(magic, summary).first->second;
 }
 
@@ -1735,47 +1769,12 @@ bool RemoveRedundantOpUtils::GetDataReplace(const LogicalTensorPtr& endTensor) c
         return iter->second;
     }
 
-    bool isDataReplace = false;
-    for (auto& assembleOp : endTensor->GetProducers()) {
-        if (assembleOp != nullptr && assembleOp->IsDeleted()) {
-            continue;
-        }
-        if (assembleOp == nullptr || !IsAssembleLikeOpcode(assembleOp->GetOpcode()) ||
-            assembleOp->GetIOperands().empty()) {
-            isDataReplace = true;
-            break;
-        }
-        const auto& tempTensor = assembleOp->GetIOperands().front();
-        if (tempTensor == nullptr || tempTensor->GetProducers().empty()) {
-            isDataReplace = true;
-            break;
-        }
-        bool hasLiveProducer = false;
-        for (auto& viewOp : tempTensor->GetProducers()) {
-            if (viewOp != nullptr && viewOp->IsDeleted()) {
-                continue;
-            }
-            hasLiveProducer = true;
-            if (viewOp == nullptr || viewOp->GetIOperands().empty() || !IsViewLikeOpcode(viewOp->GetOpcode())) {
-                isDataReplace = true;
-                break;
-            }
-            auto viewOpAttribute = GetViewAttr(*viewOp);
-            auto assembleOpAttribute = GetAssembleAttr(*assembleOp);
-            if (viewOpAttribute == nullptr || assembleOpAttribute == nullptr) {
-                isDataReplace = true;
-                break;
-            }
-            if (viewOpAttribute->GetFrom() != assembleOpAttribute->GetToOffset()) {
-                isDataReplace = true;
-                break;
-            }
-        }
-        if (!hasLiveProducer || isDataReplace) {
-            isDataReplace = true;
-            break;
-        }
-    }
+    bool isDataReplace = !AllViewAssembleBranchesMatch(
+        *endTensor, [](const Operation& viewOp, const Operation& assembleOp) {
+            auto viewAttr = GetViewAttr(viewOp);
+            auto assembleAttr = GetAssembleAttr(assembleOp);
+            return viewAttr != nullptr && assembleAttr != nullptr && viewAttr->GetFrom() == assembleAttr->GetToOffset();
+        });
     dataReplaceCache_.emplace(magic, isDataReplace);
     return isDataReplace;
 }

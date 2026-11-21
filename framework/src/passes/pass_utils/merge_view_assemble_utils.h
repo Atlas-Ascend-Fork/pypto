@@ -278,6 +278,8 @@ public:
     Status CleanUp(Function& function);
 
 private:
+    bool HasActiveAssembleConsumer(const ConsumerCacheEntry& consumers) const;
+
     // Current chain semantics. It is reset at each candidate chain start.
     bool useTokenSemantics_ = false;
     // Whole-graph preparation state; it does not select the semantics of a chain.

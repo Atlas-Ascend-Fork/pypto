@@ -29,6 +29,7 @@
 #include "ut_json/ut_json_tool.h"
 #include "computational_graph_builder.h"
 #include "passes/pass_utils/pass_utils.h"
+#include "passes/pass_utils/remove_redundant_op_utils.h"
 #include "interface/tensor/irbuilder.h"
 #define private public
 
@@ -2081,6 +2082,29 @@ TEST_F(PreGraphTest, TestKeepViewCopyoutWhenTargetTranslationMismatch)
     EXPECT_EQ(G.GetOp("COPYOUT1")->GetIOperands().front(), G.GetTensor("view_output1"));
 }
 
+TEST_F(PreGraphTest, TestKeepViewCopyoutFamilyWithSideConsumer)
+{
+    ComputationalGraphBuilder graph;
+    graph.AddTensor(DataType::DT_FP16, {64, 64}, MemoryType::MEM_L0C, "view_input");
+    for (const std::string suffix : {"0", "1"}) {
+        graph.AddTensor(DataType::DT_FP16, {64, 64}, MemoryType::MEM_L0C, "view_output" + suffix);
+        graph.AddTensor(DataType::DT_FP16, {64, 64}, MemoryType::MEM_DEVICE_DDR, "copyout_output" + suffix);
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_VIEW, {"view_input"}, {"view_output" + suffix}, "VIEW" + suffix));
+        graph.GetOp("VIEW" + suffix)->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_COPY_OUT, {"view_output" + suffix}, {"copyout_output" + suffix},
+                                "COPYOUT" + suffix));
+    }
+    graph.AddTensor(DataType::DT_FP16, {64, 64}, MemoryType::MEM_L0C, "side_output");
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_RESHAPE, {"view_output1"}, {"side_output"}, "SIDE"));
+
+    bool operationUpdated = false;
+    EXPECT_EQ(RemoveRedundantOpUtils::ProcessViewCopyout(*graph.GetFunction(), operationUpdated), SUCCESS);
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(graph.GetOp("COPYOUT0")->GetInputOperand(0), graph.GetTensor("view_output0"));
+    EXPECT_EQ(graph.GetOp("COPYOUT1")->GetInputOperand(0), graph.GetTensor("view_output1"));
+    EXPECT_EQ(graph.GetOp("SIDE")->GetInputOperand(0), graph.GetTensor("view_output1"));
+}
+
 TEST_F(PreGraphTest, TestMergeCompleteCopyinAssembleFamily)
 {
     ComputationalGraphBuilder G;
@@ -2124,6 +2148,36 @@ TEST_F(PreGraphTest, TestMergeCompleteCopyinAssembleFamily)
     CompareOpImmediateVector(retainedAttr->GetShape(), {64, 128});
     CompareOpImmediateVector(retainedAttr->GetRawShape(), {64, 128});
     CompareOpImmediateVector(retainedAttr->GetToDynValidShape(), {64, 128});
+}
+
+TEST_F(PreGraphTest, TestKeepCopyinAssembleWithSideConsumer)
+{
+    ComputationalGraphBuilder graph;
+    graph.AddTensor(DataType::DT_FP16, {64, 128}, MemoryType::MEM_DEVICE_DDR, "copyin_input");
+    graph.AddTensor(DataType::DT_FP16, {64, 128}, MemoryType::MEM_L1, "assemble_output");
+    for (const std::string suffix : {"0", "1"}) {
+        graph.AddTensor(DataType::DT_FP16, {64, 64}, MemoryType::MEM_L1, "copyin_output" + suffix);
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_COPY_IN, {"copyin_input"}, {"copyin_output" + suffix}, "COPYIN" + suffix));
+        const std::vector<int64_t> offset{0, suffix == "0" ? 0 : 64};
+        graph.GetOp("COPYIN" + suffix)
+            ->SetOpAttribute(std::make_shared<CopyOpAttribute>(
+                OpImmediate::Specified(offset), MemoryType::MEM_L1, OpImmediate::Specified({64, 64}),
+                OpImmediate::Specified({64, 128}), OpImmediate::Specified({64, 64})));
+        ASSERT_TRUE(
+            graph.AddOp(Opcode::OP_ASSEMBLE, {"copyin_output" + suffix}, {"assemble_output"}, "ASSEMBLE" + suffix));
+        graph.GetOp("ASSEMBLE" + suffix)
+            ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_L1, offset));
+    }
+    graph.AddTensor(DataType::DT_FP16, {64, 64}, MemoryType::MEM_L1, "side_output");
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_RESHAPE, {"copyin_output1"}, {"side_output"}, "SIDE"));
+
+    bool operationUpdated = false;
+    EXPECT_EQ(RemoveRedundantOpUtils::ProcessCopyinAssemble(*graph.GetFunction(), operationUpdated), SUCCESS);
+    EXPECT_FALSE(operationUpdated);
+    EXPECT_EQ(graph.GetTensor("assemble_output")->GetProducers().size(), 2);
+    EXPECT_EQ(graph.GetOp("COPYIN0")->GetOutputOperand(0), graph.GetTensor("copyin_output0"));
+    EXPECT_EQ(graph.GetOp("COPYIN1")->GetOutputOperand(0), graph.GetTensor("copyin_output1"));
+    EXPECT_EQ(graph.GetOp("SIDE")->GetInputOperand(0), graph.GetTensor("copyin_output1"));
 }
 
 TEST_F(PreGraphTest, TestKeepCopyinAssembleWhenRegionsOverlap)

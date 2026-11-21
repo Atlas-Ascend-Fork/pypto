@@ -25,6 +25,8 @@
 namespace npu::tile_fwk::remove_redundant_op_internal {
 namespace {
 
+using DependencyAdjacency = std::unordered_map<Operation*, std::unordered_set<Operation*>>;
+
 bool IsViewLikeOpcode(Opcode opcode) { return opcode == Opcode::OP_VIEW || opcode == Opcode::OP_SLICE; }
 
 bool IsAssembleLikeOpcode(Opcode opcode) { return opcode == Opcode::OP_ASSEMBLE || opcode == Opcode::OP_CONTRACT; }
@@ -122,8 +124,7 @@ std::vector<Operation*> GetExternalTokenProducers(Function& function, const ir::
     return producers;
 }
 
-void AddDependencyEdge(std::unordered_map<Operation*, std::unordered_set<Operation*>>& adjacency, Operation* producer,
-                       Operation* consumer)
+void AddDependencyEdge(DependencyAdjacency& adjacency, Operation* producer, Operation* consumer)
 {
     if (producer == nullptr || consumer == nullptr || producer == consumer) {
         return;
@@ -132,7 +133,7 @@ void AddDependencyEdge(std::unordered_map<Operation*, std::unordered_set<Operati
     adjacency.try_emplace(consumer);
 }
 
-bool HasDependencyCycle(const std::unordered_map<Operation*, std::unordered_set<Operation*>>& adjacency)
+bool HasDependencyCycle(const DependencyAdjacency& adjacency)
 {
     std::unordered_map<Operation*, size_t> indegree;
     indegree.reserve(adjacency.size());
@@ -166,12 +167,9 @@ bool HasDependencyCycle(const std::unordered_map<Operation*, std::unordered_set<
     return visited != indegree.size();
 }
 
-bool WouldCreateCycleAfterTokenMigration(Function& function, const std::vector<Operation*>& removedOps,
-                                         const std::vector<Operation*>& targetConsumers,
-                                         const std::vector<Operation*>& targetProducers)
+void AddTensorDependencyEdges(Function& function, const std::unordered_set<Operation*>& removedSet,
+                              DependencyAdjacency& adjacency)
 {
-    std::unordered_set<Operation*> removedSet(removedOps.begin(), removedOps.end());
-    std::unordered_map<Operation*, std::unordered_set<Operation*>> adjacency;
     for (auto& op : function.Operations(false)) {
         if (removedSet.count(&op) != 0) {
             continue;
@@ -189,6 +187,11 @@ bool WouldCreateCycleAfterTokenMigration(Function& function, const std::vector<O
             }
         }
     }
+}
+
+void AddExistingTokenDependencyEdges(Function& function, const std::unordered_set<Operation*>& removedSet,
+                                     DependencyAdjacency& adjacency)
+{
     for (const auto& [token, entry] : function.GetVarDependency().GetAllDependencies()) {
         (void)token;
         for (const auto& producerStmt : entry.producers) {
@@ -205,11 +208,13 @@ bool WouldCreateCycleAfterTokenMigration(Function& function, const std::vector<O
             }
         }
     }
-    for (auto* producer : targetProducers) {
-        for (auto* consumer : targetConsumers) {
-            AddDependencyEdge(adjacency, producer, consumer);
-        }
-    }
+}
+
+void AddMigratedTokenDependencyEdges(Function& function, const std::vector<Operation*>& removedOps,
+                                     const std::unordered_set<Operation*>& removedSet,
+                                     const std::vector<Operation*>& targetConsumers,
+                                     const std::vector<Operation*>& targetProducers, DependencyAdjacency& adjacency)
+{
     for (auto* removedOp : removedOps) {
         if (removedOp == nullptr) {
             continue;
@@ -232,7 +237,79 @@ bool WouldCreateCycleAfterTokenMigration(Function& function, const std::vector<O
             }
         }
     }
+}
+
+bool WouldCreateCycleAfterTokenMigration(Function& function, const std::vector<Operation*>& removedOps,
+                                         const std::vector<Operation*>& targetConsumers,
+                                         const std::vector<Operation*>& targetProducers)
+{
+    std::unordered_set<Operation*> removedSet(removedOps.begin(), removedOps.end());
+    DependencyAdjacency adjacency;
+    AddTensorDependencyEdges(function, removedSet, adjacency);
+    AddExistingTokenDependencyEdges(function, removedSet, adjacency);
+    for (auto* producer : targetProducers) {
+        for (auto* consumer : targetConsumers) {
+            AddDependencyEdge(adjacency, producer, consumer);
+        }
+    }
+    AddMigratedTokenDependencyEdges(function, removedOps, removedSet, targetConsumers, targetProducers, adjacency);
     return HasDependencyCycle(adjacency);
+}
+
+void MigrateInputTokens(Function& function, Operation& removedOp, const std::unordered_set<Operation*>& removedSet,
+                        const std::vector<Operation*>& targetConsumers)
+{
+    auto& dependency = function.GetVarDependency();
+    auto inputTokens = removedOp.tokens_;
+    for (const auto& token : inputTokens) {
+        dependency.RemoveConsumer(token, ToStmtPtr(removedOp));
+        RemoveToken(removedOp, token);
+        if (IsTokenProducedByRemovedOp(function, token, removedSet)) {
+            continue;
+        }
+        for (auto* consumer : targetConsumers) {
+            AddTokenConsumer(function, token, *consumer);
+        }
+    }
+    removedOp.tokens_.clear();
+}
+
+void MigrateResultTokens(Function& function, Operation& removedOp, const std::unordered_set<Operation*>& removedSet,
+                         const std::vector<Operation*>& targetProducers)
+{
+    auto& dependency = function.GetVarDependency();
+    auto oldTokens = removedOp.result_token_;
+    if (oldTokens.empty()) {
+        return;
+    }
+    std::vector<Operation*> externalConsumers;
+    for (const auto& oldToken : oldTokens) {
+        for (const auto& consumerStmt : dependency.GetConsumers(oldToken)) {
+            auto* consumer = ToOperation(consumerStmt);
+            if (consumer != nullptr && removedSet.count(consumer) == 0) {
+                AddUnique(externalConsumers, consumer);
+            }
+        }
+    }
+    for (auto* producer : targetProducers) {
+        auto newToken = EnsureResultToken(function, *producer);
+        for (auto* consumer : externalConsumers) {
+            AddTokenConsumer(function, newToken, *consumer);
+        }
+    }
+    for (const auto& oldToken : oldTokens) {
+        auto oldTokenConsumers = dependency.GetConsumers(oldToken);
+        for (const auto& consumerStmt : oldTokenConsumers) {
+            auto* consumer = ToOperation(consumerStmt);
+            dependency.RemoveConsumer(oldToken, consumerStmt);
+            if (consumer != nullptr) {
+                RemoveToken(*consumer, oldToken);
+            }
+        }
+        dependency.RemoveProducer(oldToken, ToStmtPtr(removedOp));
+        dependency.RemoveVar(oldToken);
+    }
+    removedOp.result_token_.clear();
 }
 } // namespace
 
@@ -346,62 +423,15 @@ void MigrateRemovedOpsTokenDependency(Function& function, const std::vector<Oper
                                       const std::vector<Operation*>& targetProducers)
 {
     std::unordered_set<Operation*> removedSet(removedOps.begin(), removedOps.end());
-    auto& dependency = function.GetVarDependency();
-
     for (auto* removedOp : removedOps) {
-        if (removedOp == nullptr) {
-            continue;
+        if (removedOp != nullptr) {
+            MigrateInputTokens(function, *removedOp, removedSet, targetConsumers);
         }
-        auto inputTokens = removedOp->tokens_;
-        for (const auto& token : inputTokens) {
-            dependency.RemoveConsumer(token, ToStmtPtr(*removedOp));
-            RemoveToken(*removedOp, token);
-            if (IsTokenProducedByRemovedOp(function, token, removedSet)) {
-                continue;
-            }
-            for (auto* consumer : targetConsumers) {
-                AddTokenConsumer(function, token, *consumer);
-            }
-        }
-        removedOp->tokens_.clear();
     }
-
     for (auto* removedOp : removedOps) {
-        if (removedOp == nullptr) {
-            continue;
+        if (removedOp != nullptr) {
+            MigrateResultTokens(function, *removedOp, removedSet, targetProducers);
         }
-        auto oldTokens = removedOp->result_token_;
-        if (oldTokens.empty()) {
-            continue;
-        }
-        std::vector<Operation*> externalConsumers;
-        for (const auto& oldToken : oldTokens) {
-            for (const auto& consumerStmt : function.GetVarDependency().GetConsumers(oldToken)) {
-                auto* consumer = ToOperation(consumerStmt);
-                if (consumer != nullptr && removedSet.count(consumer) == 0) {
-                    AddUnique(externalConsumers, consumer);
-                }
-            }
-        }
-        for (auto* producer : targetProducers) {
-            auto newToken = EnsureResultToken(function, *producer);
-            for (auto* consumer : externalConsumers) {
-                AddTokenConsumer(function, newToken, *consumer);
-            }
-        }
-        for (const auto& oldToken : oldTokens) {
-            auto oldTokenConsumers = function.GetVarDependency().GetConsumers(oldToken);
-            for (const auto& consumerStmt : oldTokenConsumers) {
-                auto* consumer = ToOperation(consumerStmt);
-                dependency.RemoveConsumer(oldToken, consumerStmt);
-                if (consumer != nullptr) {
-                    RemoveToken(*consumer, oldToken);
-                }
-            }
-            dependency.RemoveProducer(oldToken, ToStmtPtr(*removedOp));
-            dependency.RemoveVar(oldToken);
-        }
-        removedOp->result_token_.clear();
     }
 }
 
