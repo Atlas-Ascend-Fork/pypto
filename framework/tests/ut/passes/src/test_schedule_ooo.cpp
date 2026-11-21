@@ -5303,4 +5303,316 @@ TEST_F(ScheduleOoOTest, PostCheckWithoutPreCheckShouldSkipNewTensorCheck)
     EXPECT_EQ(oooSchedule.PostCheck(*rootFuncPtr), SUCCESS);
 }
 
+/*
+跨核 alloc 屏障(cvmix): UB_COPY_L1 等跨核 op 的异核 alloc 前驱阻塞本核各 mem 队列中
+位于其后的最近一个 alloc, 保证本核执行不越过跨核同步点。
+UB_COPY_L1: UB -> L1, 输入在 AIV、输出 alloc 在 AIC; 其 L1_ALLOC 阻塞下一个 UB_ALLOC。
+*/
+TEST_F(ScheduleOoOTest, CrossCoreBarrierBasic)
+{
+    ComputationalGraphBuilder subGraph;
+    subGraph.AddTensors(DT_FP32, {64, 64}, {MEM_DEVICE_DDR, MEM_UB, MEM_UB, MEM_L1}, {"DDR1", "UB1", "UB2", "L1_1"}, 0);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB1"}, "ubAlloc1", true);
+    subGraph.AddOp(Opcode::OP_COPY_IN, {"DDR1"}, {"UB1"}, "copyin1", true);
+    subGraph.AddOp(Opcode::OP_L1_ALLOC, {}, {"L1_1"}, "l1Alloc1", true);
+    subGraph.AddOp(Opcode::OP_UB_COPY_L1, {"UB1"}, {"L1_1"}, "ubToL1", true);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB2"}, "ubAlloc2", true);
+    Function* function = subGraph.GetFunction();
+    ASSERT_NE(function, nullptr);
+    auto* ubToL1 = subGraph.GetOp("ubToL1");
+    ubToL1->SetOpAttribute(std::make_shared<CopyOpAttribute>(OpImmediate::Specified({0, 0}), MemoryType::MEM_L1,
+                                                             OpImmediate::Specified({64, 64}),
+                                                             OpImmediate::Specified({64, 64})));
+    subGraph.GetOp("ubAlloc1")->UpdateInternalSubgraphID(1);
+    subGraph.GetOp("copyin1")->UpdateInternalSubgraphID(1);
+    ubToL1->UpdateInternalSubgraphID(1);
+    subGraph.GetOp("ubAlloc2")->UpdateInternalSubgraphID(1);
+    subGraph.GetOp("l1Alloc1")->UpdateInternalSubgraphID(0);
+    EXPECT_TRUE(OoOScheduler::IsCrossCoreCopyOp(ubToL1));
+    EXPECT_FALSE(OoOScheduler::IsCrossCoreCopyOp(subGraph.GetOp("copyin1")));
+
+    OoOScheduler scheduler(*function);
+    std::vector<Operation*> ordered{subGraph.GetOp("ubAlloc1"), subGraph.GetOp("copyin1"), subGraph.GetOp("l1Alloc1"),
+                                    ubToL1, subGraph.GetOp("ubAlloc2")};
+    ASSERT_EQ(scheduler.Init(ordered), SUCCESS);
+    scheduler.BuildAllocBarriers();
+
+    auto* follower = subGraph.GetOp("ubAlloc2");
+    auto* blocker = subGraph.GetOp("l1Alloc1");
+    ASSERT_EQ(scheduler.allocBlockers_.size(), 1U);
+    auto pairIt = scheduler.allocBlockers_.find(follower);
+    ASSERT_NE(pairIt, scheduler.allocBlockers_.end());
+    ASSERT_EQ(pairIt->second.size(), 1U);
+    EXPECT_EQ(pairIt->second[0], blocker);
+
+    // blocker 未执行 -> 受阻; 退休 -> 放行; 被删除(无调度记录) -> 视为已执行
+    EXPECT_TRUE(scheduler.IsAllocBarrierBlocked(follower));
+    scheduler.state_.schedInfoMap[blocker].isRetired = true;
+    EXPECT_FALSE(scheduler.IsAllocBarrierBlocked(follower));
+    scheduler.state_.schedInfoMap[blocker].isRetired = false;
+    EXPECT_TRUE(scheduler.IsAllocBarrierBlocked(follower));
+    scheduler.state_.schedInfoMap.erase(blocker);
+    EXPECT_FALSE(scheduler.IsAllocBarrierBlocked(follower));
+
+    // follower 位于 UB alloc 队列队首时, ExecuteAllocIssue 应在屏障处 break 而非分配
+    OoOScheduler scheduler2(*function);
+    ASSERT_EQ(scheduler2.Init(ordered), SUCCESS);
+    scheduler2.BuildAllocBarriers();
+    scheduler2.LaunchReadyIssue();
+    uint64_t commitCnt = 0;
+    auto& ubQueue = scheduler2.state_.allocIssueQueue[CoreLocationType::AIV0][MemoryType::MEM_UB];
+    ASSERT_EQ(ubQueue.Size(), 2U);
+    ASSERT_EQ(scheduler2.ExecuteAllocIssue(commitCnt, MemoryType::MEM_UB, ubQueue), SUCCESS);
+    EXPECT_EQ(ubQueue.Front(), follower);
+    EXPECT_EQ(commitCnt, 1U);
+}
+
+// 两个跨核 op 之间没有 UB alloc 时, 两者的异核 alloc 阻塞者合并到同一个 follower 上。
+TEST_F(ScheduleOoOTest, CrossCoreBarrierMergeBlockers)
+{
+    ComputationalGraphBuilder subGraph;
+    subGraph.AddTensors(DT_FP32, {64, 64}, {MEM_DEVICE_DDR, MEM_DEVICE_DDR, MEM_UB, MEM_UB, MEM_L1, MEM_L1, MEM_UB},
+                        {"DDR1", "DDR2", "UB1", "UB2", "L1_1", "L1_2", "UB3"}, 0);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB1"}, "ubAlloc1", true);
+    subGraph.AddOp(Opcode::OP_COPY_IN, {"DDR1"}, {"UB1"}, "copyin1", true);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB2"}, "ubAlloc2", true);
+    subGraph.AddOp(Opcode::OP_COPY_IN, {"DDR2"}, {"UB2"}, "copyin2", true);
+    subGraph.AddOp(Opcode::OP_L1_ALLOC, {}, {"L1_1"}, "l1Alloc1", true);
+    subGraph.AddOp(Opcode::OP_UB_COPY_L1, {"UB1"}, {"L1_1"}, "ubToL11", true);
+    subGraph.AddOp(Opcode::OP_L1_ALLOC, {}, {"L1_2"}, "l1Alloc2", true);
+    subGraph.AddOp(Opcode::OP_UB_COPY_L1, {"UB2"}, {"L1_2"}, "ubToL12", true);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB3"}, "ubAlloc3", true);
+    Function* function = subGraph.GetFunction();
+    ASSERT_NE(function, nullptr);
+    for (auto* op :
+         {subGraph.GetOp("ubAlloc1"), subGraph.GetOp("copyin1"), subGraph.GetOp("ubAlloc2"), subGraph.GetOp("copyin2"),
+          subGraph.GetOp("ubToL11"), subGraph.GetOp("ubToL12"), subGraph.GetOp("ubAlloc3")}) {
+        op->UpdateInternalSubgraphID(1);
+    }
+    subGraph.GetOp("l1Alloc1")->UpdateInternalSubgraphID(0);
+    subGraph.GetOp("l1Alloc2")->UpdateInternalSubgraphID(0);
+    for (auto* op : {subGraph.GetOp("ubToL11"), subGraph.GetOp("ubToL12")}) {
+        op->SetOpAttribute(std::make_shared<CopyOpAttribute>(OpImmediate::Specified({0, 0}), MemoryType::MEM_L1,
+                                                             OpImmediate::Specified({64, 64}),
+                                                             OpImmediate::Specified({64, 64})));
+    }
+
+    OoOScheduler scheduler(*function);
+    std::vector<Operation*> ordered{subGraph.GetOp("ubAlloc1"), subGraph.GetOp("copyin1"),  subGraph.GetOp("ubAlloc2"),
+                                    subGraph.GetOp("copyin2"),  subGraph.GetOp("l1Alloc1"), subGraph.GetOp("ubToL11"),
+                                    subGraph.GetOp("l1Alloc2"), subGraph.GetOp("ubToL12"),  subGraph.GetOp("ubAlloc3")};
+    ASSERT_EQ(scheduler.Init(ordered), SUCCESS);
+    scheduler.BuildAllocBarriers();
+
+    auto* follower = subGraph.GetOp("ubAlloc3");
+    ASSERT_EQ(scheduler.allocBlockers_.size(), 1U);
+    auto pairIt = scheduler.allocBlockers_.find(follower);
+    ASSERT_NE(pairIt, scheduler.allocBlockers_.end());
+    ASSERT_EQ(pairIt->second.size(), 2U);
+    EXPECT_EQ(pairIt->second[0], subGraph.GetOp("l1Alloc1"));
+    EXPECT_EQ(pairIt->second[1], subGraph.GetOp("l1Alloc2"));
+    EXPECT_TRUE(scheduler.IsAllocBarrierBlocked(follower));
+}
+
+// 无跨核 op 的纯 AIV 图不产生屏障; 跨核 op 与阻塞者同核时不组对。
+TEST_F(ScheduleOoOTest, CrossCoreBarrierNoAnchor)
+{
+    ComputationalGraphBuilder subGraph;
+    subGraph.AddTensors(DT_FP32, {64, 64}, {MEM_DEVICE_DDR, MEM_UB, MEM_UB}, {"DDR1", "UB1", "UB2"}, 0);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB1"}, "ubAlloc1", true);
+    subGraph.AddOp(Opcode::OP_COPY_IN, {"DDR1"}, {"UB1"}, "copyin1", true);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB2"}, "ubAlloc2", true);
+    subGraph.AddOp(Opcode::OP_ADD, {"UB1"}, {"UB2"}, "add1", true);
+    Function* function = subGraph.GetFunction();
+    ASSERT_NE(function, nullptr);
+    for (auto* op :
+         {subGraph.GetOp("ubAlloc1"), subGraph.GetOp("copyin1"), subGraph.GetOp("ubAlloc2"), subGraph.GetOp("add1")}) {
+        op->UpdateInternalSubgraphID(1);
+    }
+    EXPECT_FALSE(OoOScheduler::IsCrossCoreCopyOp(subGraph.GetOp("add1")));
+
+    OoOScheduler scheduler(*function);
+    std::vector<Operation*> ordered{subGraph.GetOp("ubAlloc1"), subGraph.GetOp("copyin1"), subGraph.GetOp("ubAlloc2"),
+                                    subGraph.GetOp("add1")};
+    ASSERT_EQ(scheduler.Init(ordered), SUCCESS);
+    scheduler.BuildAllocBarriers();
+    EXPECT_TRUE(scheduler.allocBlockers_.empty());
+
+    // 跨核 op 与 L1 alloc 同核(AIC)时, 异核阻塞者不存在, 同样不组对
+    ComputationalGraphBuilder sameCoreGraph;
+    sameCoreGraph.AddTensors(DT_FP32, {64, 64}, {MEM_DEVICE_DDR, MEM_UB, MEM_UB, MEM_L1},
+                             {"DDR1", "UB1", "UB2", "L1_1"}, 0);
+    sameCoreGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB1"}, "ubAlloc1", true);
+    sameCoreGraph.AddOp(Opcode::OP_COPY_IN, {"DDR1"}, {"UB1"}, "copyin1", true);
+    sameCoreGraph.AddOp(Opcode::OP_L1_ALLOC, {}, {"L1_1"}, "l1Alloc1", true);
+    sameCoreGraph.AddOp(Opcode::OP_UB_COPY_L1, {"UB1"}, {"L1_1"}, "ubToL1", true);
+    sameCoreGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB2"}, "ubAlloc2", true);
+    Function* sameCoreFunc = sameCoreGraph.GetFunction();
+    ASSERT_NE(sameCoreFunc, nullptr);
+    for (auto* op : {sameCoreGraph.GetOp("ubAlloc1"), sameCoreGraph.GetOp("copyin1"), sameCoreGraph.GetOp("ubAlloc2"),
+                     sameCoreGraph.GetOp("l1Alloc1"), sameCoreGraph.GetOp("ubToL1")}) {
+        op->UpdateInternalSubgraphID(0);
+    }
+    OoOScheduler sameCoreScheduler(*sameCoreFunc);
+    std::vector<Operation*> sameCoreOrdered{sameCoreGraph.GetOp("ubAlloc1"), sameCoreGraph.GetOp("copyin1"),
+                                            sameCoreGraph.GetOp("l1Alloc1"), sameCoreGraph.GetOp("ubToL1"),
+                                            sameCoreGraph.GetOp("ubAlloc2")};
+    ASSERT_EQ(sameCoreScheduler.Init(sameCoreOrdered), SUCCESS);
+    sameCoreScheduler.BuildAllocBarriers();
+    EXPECT_TRUE(sameCoreScheduler.allocBlockers_.empty());
+}
+
+// 白名单: 四个跨核搬运 op 均识别为锚点。
+TEST_F(ScheduleOoOTest, CrossCoreCopyOpWhitelist)
+{
+    ComputationalGraphBuilder subGraph;
+    subGraph.AddTensors(DT_FP32, {64, 64}, {MEM_UB, MEM_L1, MEM_L0C}, {"UB1", "L1_1", "L0C1"}, 0);
+    subGraph.AddOp(Opcode::OP_UB_COPY_L1, {"UB1"}, {"L1_1"}, "ubCopyL1", true);
+    subGraph.AddOp(Opcode::OP_UB_COPY_L1_ND, {"UB1"}, {"L1_1"}, "ubCopyL1Nd", true);
+    subGraph.AddOp(Opcode::OP_L1_COPY_UB, {"L1_1"}, {"UB1"}, "l1CopyUb", true);
+    subGraph.AddOp(Opcode::OP_L0C_COPY_UB, {"UB1"}, {"L0C1"}, "l0cCopyUb", true);
+    EXPECT_TRUE(OoOScheduler::IsCrossCoreCopyOp(subGraph.GetOp("ubCopyL1")));
+    EXPECT_TRUE(OoOScheduler::IsCrossCoreCopyOp(subGraph.GetOp("ubCopyL1Nd")));
+    EXPECT_TRUE(OoOScheduler::IsCrossCoreCopyOp(subGraph.GetOp("l1CopyUb")));
+    EXPECT_TRUE(OoOScheduler::IsCrossCoreCopyOp(subGraph.GetOp("l0cCopyUb")));
+}
+
+// newOperations 为空时找不到 spillMemid 的携带者, InsertSpillCopyoutOp 走 insertOp == nullptr 分支失败。
+TEST_F(ScheduleOoOTest, InsertSpillCopyoutOpNoProducerInNewOps)
+{
+    ComputationalGraphBuilder subGraph;
+    subGraph.AddTensors(DT_FP32, {64, 64}, {MEM_DEVICE_DDR, MEM_UB}, {"DDR1", "UB1"}, 0);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB1"}, "ubAlloc1", true);
+    subGraph.AddOp(Opcode::OP_COPY_IN, {"DDR1"}, {"UB1"}, "copyin1", true);
+    Function* function = subGraph.GetFunction();
+    ASSERT_NE(function, nullptr);
+    OoOScheduler scheduler(*function);
+    std::vector<Operation*> ordered{subGraph.GetOp("ubAlloc1"), subGraph.GetOp("copyin1")};
+    ASSERT_EQ(scheduler.Init(ordered), SUCCESS);
+    EXPECT_EQ(scheduler.InsertSpillCopyoutOp(subGraph.GetOp("copyin1")), FAILED);
+}
+
+// vf scope 分支三态: scope 已完整发射 -> copyout 紧跟 scope 末 op 插入成功;
+// Init 后补打 scope id (无登记) -> FAILED; scope 登记 2 个 op 但只发射 1 个 -> FAILED。
+TEST_F(ScheduleOoOTest, InsertSpillCopyoutOpVfScope)
+{
+    ComputationalGraphBuilder subGraph;
+    subGraph.AddTensors(DT_FP32, {64, 64}, {MEM_DEVICE_DDR, MEM_DEVICE_DDR, MEM_UB, MEM_UB, MEM_UB},
+                        {"DDR1", "DDR2", "UB1", "UB2", "UB3"}, 0);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB1"}, "ubAlloc1", true);
+    subGraph.AddOp(Opcode::OP_COPY_IN, {"DDR1"}, {"UB1"}, "copyin1", true);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB2"}, "ubAlloc2", true);
+    subGraph.AddOp(Opcode::OP_ADD, {"UB1"}, {"UB2"}, "scopeAdd", true);
+    subGraph.AddOp(Opcode::OP_COPY_OUT, {"UB2"}, {"DDR2"}, "ghostCopyout", true);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB3"}, "ubAlloc3", true);
+    subGraph.AddOp(Opcode::OP_ADD, {"UB1"}, {"UB3"}, "scopeAdd2", true);
+    Function* function = subGraph.GetFunction();
+    ASSERT_NE(function, nullptr);
+    auto* scopeAdd = subGraph.GetOp("scopeAdd");
+    auto* scopeAdd2 = subGraph.GetOp("scopeAdd2");
+    auto* ghost = subGraph.GetOp("ghostCopyout");
+    scopeAdd->SetAtomicScopeId(VF_CLUSTER_ID_START);
+    scopeAdd2->SetAtomicScopeId(VF_CLUSTER_ID_START);
+
+    // scope 已完整发射: copyout 紧跟 scope 末 op 之后
+    OoOScheduler scheduler(*function);
+    std::vector<Operation*> orderedMain{subGraph.GetOp("ubAlloc1"), subGraph.GetOp("copyin1"),
+                                        subGraph.GetOp("ubAlloc2"), scopeAdd};
+    ASSERT_EQ(scheduler.Init(orderedMain), SUCCESS);
+    scheduler.state_.newOperations.push_back(scopeAdd);
+    ASSERT_EQ(scheduler.InsertSpillCopyoutOp(ghost), SUCCESS);
+    ASSERT_EQ(scheduler.state_.newOperations.size(), 2U);
+    EXPECT_EQ(scheduler.state_.newOperations[0], scopeAdd);
+    EXPECT_EQ(scheduler.state_.newOperations[1], ghost);
+
+    // Init 后才补打 scope id: vfScopeOpsByScope 无登记 -> FAILED
+    scopeAdd->SetAtomicScopeId(-1);
+    scopeAdd2->SetAtomicScopeId(-1);
+    OoOScheduler scheduler2(*function);
+    std::vector<Operation*> orderedFull{subGraph.GetOp("ubAlloc1"),
+                                        subGraph.GetOp("copyin1"),
+                                        subGraph.GetOp("ubAlloc2"),
+                                        subGraph.GetOp("ubAlloc3"),
+                                        scopeAdd,
+                                        scopeAdd2};
+    ASSERT_EQ(scheduler2.Init(orderedFull), SUCCESS);
+    scopeAdd->SetAtomicScopeId(VF_CLUSTER_ID_START);
+    scheduler2.state_.newOperations.push_back(scopeAdd);
+    EXPECT_EQ(scheduler2.InsertSpillCopyoutOp(ghost), FAILED);
+
+    // scope 登记 2 个 op 但只发射 1 个: 未完整发射 -> FAILED
+    scopeAdd2->SetAtomicScopeId(VF_CLUSTER_ID_START);
+    OoOScheduler scheduler3(*function);
+    ASSERT_EQ(scheduler3.Init(orderedFull), SUCCESS);
+    scheduler3.state_.newOperations.push_back(scopeAdd);
+    EXPECT_EQ(scheduler3.InsertSpillCopyoutOp(ghost), FAILED);
+}
+
+TEST_F(ScheduleOoOTest, PrintSpillFailedInfoBasic)
+{
+    ComputationalGraphBuilder subGraph;
+    subGraph.AddTensors(DT_FP32, {64, 64}, {MEM_DEVICE_DDR, MEM_UB}, {"DDR1", "UB1"}, 0);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB1"}, "ubAlloc1", true);
+    subGraph.AddOp(Opcode::OP_COPY_IN, {"DDR1"}, {"UB1"}, "copyin1", true);
+    Function* function = subGraph.GetFunction();
+    ASSERT_NE(function, nullptr);
+    OoOScheduler scheduler(*function);
+    std::vector<Operation*> ordered{subGraph.GetOp("ubAlloc1"), subGraph.GetOp("copyin1")};
+    ASSERT_EQ(scheduler.Init(ordered), SUCCESS);
+    EXPECT_EQ(scheduler.PrintSpillFailedInfo(subGraph.GetOp("ubAlloc1")), SUCCESS);
+}
+
+// 池中缓冲无 occupy 记录时 RearrangeBuffer 失败仅告警; 剩余空间充足时走 HasEnoughBuffer 通过的 SUCCESS 路径。
+TEST_F(ScheduleOoOTest, FinalizeSingleSideSpillSuccess)
+{
+    ComputationalGraphBuilder subGraph;
+    subGraph.AddTensors(DT_FP32, {64, 64}, {MEM_DEVICE_DDR, MEM_UB}, {"DDR1", "UB1"}, 0);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB1"}, "ubAlloc1", true);
+    subGraph.AddOp(Opcode::OP_COPY_IN, {"DDR1"}, {"UB1"}, "copyin1", true);
+    Function* function = subGraph.GetFunction();
+    ASSERT_NE(function, nullptr);
+    subGraph.GetOp("ubAlloc1")->UpdateInternalSubgraphID(1);
+    subGraph.GetOp("copyin1")->UpdateInternalSubgraphID(1);
+    OoOScheduler scheduler(*function);
+    std::vector<Operation*> ordered{subGraph.GetOp("ubAlloc1"), subGraph.GetOp("copyin1")};
+    ASSERT_EQ(scheduler.Init(ordered), SUCCESS);
+    // 直接向池中放置 UB1 但不写 tensorOccupyMap: RearrangeBuffer 找不到 occupy op, 告警后继续
+    int memId = subGraph.GetTensor("UB1")->memoryrange.memId;
+    ASSERT_EQ(scheduler.state_.bufferManagerMap[CoreLocationType::AIV0][MemoryType::MEM_UB].Allocate(
+                  scheduler.state_.localBufferMap[memId]),
+              SUCCESS);
+    uint64_t reqSize = scheduler.state_.localBufferMap[memId]->size;
+    EXPECT_EQ(scheduler.FinalizeSingleSideSpill(subGraph.GetOp("copyin1"), MemoryType::MEM_UB, reqSize), SUCCESS);
+}
+
+// 剩余空间不足时走 "Spill all buffer failed" 分支: PrintSpillFailedInfo 成功后 NotifyAllocFail 并返回 FAILED。
+TEST_F(ScheduleOoOTest, FinalizeSingleSideSpillInsufficientSpace)
+{
+    ComputationalGraphBuilder subGraph;
+    subGraph.AddTensors(DT_FP32, {256, 128}, {MEM_DEVICE_DDR, MEM_DEVICE_DDR, MEM_UB, MEM_UB},
+                        {"DDR1", "DDR2", "UB1", "UB2"}, 0);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB1"}, "ubAlloc1", true);
+    subGraph.AddOp(Opcode::OP_COPY_IN, {"DDR1"}, {"UB1"}, "copyin1", true);
+    subGraph.AddOp(Opcode::OP_UB_ALLOC, {}, {"UB2"}, "ubAlloc2", true);
+    subGraph.AddOp(Opcode::OP_COPY_IN, {"DDR2"}, {"UB2"}, "copyin2", true);
+    Function* function = subGraph.GetFunction();
+    ASSERT_NE(function, nullptr);
+    for (auto* op : {subGraph.GetOp("ubAlloc1"), subGraph.GetOp("copyin1"), subGraph.GetOp("ubAlloc2"),
+                     subGraph.GetOp("copyin2")}) {
+        op->UpdateInternalSubgraphID(1);
+    }
+    OoOScheduler scheduler(*function);
+    std::vector<Operation*> ordered{subGraph.GetOp("ubAlloc1"), subGraph.GetOp("copyin1"), subGraph.GetOp("ubAlloc2"),
+                                    subGraph.GetOp("copyin2")};
+    ASSERT_EQ(scheduler.Init(ordered), SUCCESS);
+    // UB1 占掉 128KB, UB2(128KB) 在 192KB UB 池中放不下
+    int memId1 = subGraph.GetTensor("UB1")->memoryrange.memId;
+    int memId2 = subGraph.GetTensor("UB2")->memoryrange.memId;
+    ASSERT_EQ(scheduler.state_.bufferManagerMap[CoreLocationType::AIV0][MemoryType::MEM_UB].Allocate(
+                  scheduler.state_.localBufferMap[memId1]),
+              SUCCESS);
+    uint64_t reqSize = scheduler.state_.localBufferMap[memId2]->size;
+    EXPECT_EQ(scheduler.FinalizeSingleSideSpill(subGraph.GetOp("copyin2"), MemoryType::MEM_UB, reqSize), FAILED);
+}
+
 } // namespace npu::tile_fwk

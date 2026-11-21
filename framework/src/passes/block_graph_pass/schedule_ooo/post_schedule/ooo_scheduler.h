@@ -17,6 +17,7 @@
 #define PASS_SCHEDULER_H
 
 #include <climits>
+#include <string>
 #include <unordered_set>
 
 #include "interface/tensor/irbuilder.h"
@@ -32,6 +33,20 @@
 #include "passes/statistics/schedule_observer.h"
 
 namespace npu::tile_fwk {
+
+inline std::string coreTypeToString(CoreLocationType coreLocation)
+{
+    switch (coreLocation) {
+        case CoreLocationType::AIV0:
+            return "AIV0";
+        case CoreLocationType::AIV1:
+            return "AIV1";
+        case CoreLocationType::AIC:
+            return "AIC";
+        default:
+            return "MEM_UNKNOWN";
+    }
+}
 
 class OoOScheduler {
 public:
@@ -87,6 +102,19 @@ private:
     std::unordered_map<int, std::vector<std::pair<uint64_t, uint64_t>>> scopeTensorRanges_;
     // 本次 alloc 下发后是否激活了后继 op（就绪进 launch 队列），用于 vf alloc 的"激活即停"节流
     bool allocActivatedOp_{false};
+
+    // 跨核 alloc 屏障 (cvmix): follower ALLOC -> 阻塞它的远程 ALLOC 集合, follower 须先等全部阻断者执行
+    std::unordered_map<Operation*, std::vector<Operation*>> allocBlockers_;
+    // (core, memType) -> 按 execOrder 有序的 alloc 序列
+    using AllocTrays = std::map<std::pair<CoreLocationType, MemoryType>, std::vector<std::pair<int, Operation*>>>;
+
+    static bool IsCrossCoreCopyOp(Operation* op);
+    void BuildAllocBarriers();
+    void CollectAllocTrays(AllocTrays& trays);
+    std::vector<Operation*> GetCrossCoreBlockAllocs(Operation* op);
+    void AddBarrierFollowers(Operation* op, const std::vector<Operation*>& blockAllocs, const AllocTrays& trays);
+    void DumpBarrierPairs(size_t anchorCnt);
+    bool IsAllocBarrierBlocked(Operation* allocOp);
 
     void NotifyOpLaunch(Operation* op, int cycleEnd);
     void NotifyOpRetire(Operation* op, const std::vector<int>& freedMemIds);
@@ -146,6 +174,8 @@ private:
     Status FreeBuffer(Operation* op, std::vector<int>& freedMemIds);
     Status BufferAllocStage(uint64_t& commitCnt);
     Status ExecuteAivUbAllocRound(uint64_t& commitCnt);
+    Status ExecuteAivUbDualDstStage(uint64_t& commitCnt, OpQueue& queue0, OpQueue& queue1, Operation* front0,
+                                    Operation* front1);
     Status ExecuteAivRegularAllocStage(uint64_t& commitCnt, OpQueue& queue0, OpQueue& queue1);
     Status CheckAivUbPoolSlicesEqual();
     Status ExecuteAllocIssue(uint64_t& commitCnt, MemoryType memType, OpQueue& pipe);
