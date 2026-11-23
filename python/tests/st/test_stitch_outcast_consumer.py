@@ -40,7 +40,7 @@ class StitchConfig:
     seed: int = 42
 
 
-@pypto.frontend.jit(create_new_logical_tensor=True)
+@pypto.frontend.jit
 def write_read_write_kernel_2(
     a: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8),
     b: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_INT8),

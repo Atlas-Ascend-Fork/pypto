@@ -23,7 +23,6 @@ VALUE = 3.0
 
 
 @pypto.frontend.jit(
-    create_new_logical_tensor=True,
     pass_options={"enable_slice": True},
 )
 def index_put_write_after_read_kernel(

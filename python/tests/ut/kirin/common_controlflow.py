@@ -42,7 +42,6 @@ def _jit_kernel(soc_version, name):
         kernel = pypto.frontend.jit(
             codegen_options={"soc_version": soc_version},
             runtime_options={"run_mode": pypto.RunMode.SIM},
-            create_new_logical_tensor=True,
         )(fn)
         kernel.__name__ = name
         return kernel
