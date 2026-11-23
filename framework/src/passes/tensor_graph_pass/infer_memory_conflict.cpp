@@ -464,6 +464,13 @@ bool IsEffectiveValidShapeAligned(Operation& viewOp, Operation& reshapeOp, const
     return IsTrailingValidFull(inValid, reshapeIn->GetShape()) && IsTrailingValidFull(outValid, reshapeOut->GetShape());
 }
 
+// MatchConvReshapePattern 各守卫分支的统一拒绝出口：记录豁免失败原因并返回 false。
+bool RejectConvReshapeExemption(Operation* reshapeOp, const char* reason)
+{
+    APASS_LOG_DEBUG_F(Elements::Operation, "Reshape op [%d] not exempted: %s", reshapeOp->GetOpMagic(), reason);
+    return false;
+}
+
 // 矩阵乘沿不同轴切分时，同一片输入可能被多个 tile op 读取，需要防止写回提前覆写。
 // MULACC 由 ExpandFunction 在后续 K 分片上生成并读取部分和，需要快照的读取在展开前的 MatMul 上处理。
 const std::unordered_set<Opcode> kAliasSnapshotConsumers = {Opcode::OP_A_MUL_B, Opcode::OP_A_MUL_B_EPILOGUE,
@@ -590,8 +597,10 @@ LogicalTensors FindAliasSnapshotSources(const Function& function)
             sources.push_back(incasts[i]);
         }
     }
+    // 别名组内至少两个边界张量才存在互相覆写的别名对，单成员组无需快照。
+    constexpr size_t kMinAliasGroupSize = 2;
     for (const auto& group : groupedOutcasts) {
-        if (group.size() < 2) {
+        if (group.size() < kMinAliasGroupSize) {
             continue;
         }
         const auto last = FindLastOutcast(function, group);
@@ -913,57 +922,33 @@ bool InferMemoryConflict::MatchConvReshapePattern(Operation* reshapeOp, const Lo
         return false;
     }
     if (!IsSupportedReshapeFormat(reshapeIn, reshapeOut)) { // 后续判断内存连续性依赖 ND 格式
-        APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Reshape op [%d] not exempted: reshape pair is not ND format or dtypes differ.",
-                          reshapeOp->GetOpMagic());
-        return false;
+        return RejectConvReshapeExemption(reshapeOp, "reshape pair is not ND format or dtypes differ.");
     }
-
     Operation* viewOp = TryGetDirectViewProducer(reshapeIn);
     if (viewOp == nullptr) {
-        APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Reshape op [%d] not exempted: input is not directly produced by a single view op.",
-                          reshapeOp->GetOpMagic());
-        return false;
+        return RejectConvReshapeExemption(reshapeOp, "input is not directly produced by a single view op.");
     }
     // VIEW 输出仅被当前 RESHAPE 消费：豁免后输入输出共享内存，多消费者会使别名逸散到其他分支。
     if (reshapeIn->GetConsumers().size() != 1) {
-        APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Reshape op [%d] not exempted: view output is consumed by other ops besides this reshape.",
-                          reshapeOp->GetOpMagic());
-        return false;
+        return RejectConvReshapeExemption(reshapeOp, "view output is consumed by other ops besides this reshape.");
     }
     // 首轴静态或 -1 均可（行块地址映射不依赖首轴取值，静态首轴可覆盖"静态窗口 + 动态 raw"场景），尾轴须静态。
     if (!HasAtMostFirstNegativeDim(viewOp->GetIOperands().front())) {
-        APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Reshape op [%d] not exempted: view input has dynamic dims beyond the leading axis.",
-                          reshapeOp->GetOpMagic());
-        return false;
+        return RejectConvReshapeExemption(reshapeOp, "view input has dynamic dims beyond the leading axis.");
     }
     if (!IsViewHopTrailingAligned(*viewOp, reshapeIn)) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "Reshape op [%d] not exempted: view hop cuts or offsets trailing axes.",
-                          reshapeOp->GetOpMagic());
-        return false;
+        return RejectConvReshapeExemption(reshapeOp, "view hop cuts or offsets trailing axes.");
     }
     if (!IsOnlyConsumedByTransData(reshapeOut)) {
-        APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Reshape op [%d] not exempted: output is not directly consumed by transdata ops only.",
-                          reshapeOp->GetOpMagic());
-        return false;
+        return RejectConvReshapeExemption(reshapeOp, "output is not directly consumed by transdata ops only.");
     }
-
     int64_t trailingProduct = 0;
     if (!IsTrailingFlattenReshape(reshapeIn, reshapeOut, trailingProduct)) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "Reshape op [%d] not exempted: not a leading-axis-preserving flatten.",
-                          reshapeOp->GetOpMagic());
-        return false;
+        return RejectConvReshapeExemption(reshapeOp, "not a leading-axis-preserving flatten.");
     }
     if (!IsEffectiveValidShapeAligned(*viewOp, *reshapeOp, reshapeIn, reshapeOut)) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "Reshape op [%d] not exempted: effective valid shapes inconsistent.",
-                          reshapeOp->GetOpMagic());
-        return false;
+        return RejectConvReshapeExemption(reshapeOp, "effective valid shapes inconsistent.");
     }
-
     APASS_LOG_DEBUG_F(Elements::Operation,
                       "Reshape op [%d] exempted: shares memory with view op [%d], trailing block size %ld.",
                       reshapeOp->GetOpMagic(), viewOp->GetOpMagic(), static_cast<long>(trailingProduct));

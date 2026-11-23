@@ -1038,10 +1038,27 @@ void ResolveIncastColumnLoad(Function& function, Operation& load)
     load.SetOpAttribute(replacement);
 }
 
+bool IsSingleIOOp(Operation* op)
+{
+    return op != nullptr && op->GetIOperands().size() == 1 && op->GetOOperands().size() == 1;
+}
+
+bool HasToken(Operation* op) { return op != nullptr && (!op->tokens_.empty() || !op->result_token_.empty()); }
+
+bool IsIoPairAliasCompatible(const LogicalTensorPtr& input, const LogicalTensorPtr& output)
+{
+    return input != nullptr && output != nullptr && input->Datatype() == output->Datatype() &&
+           input->Format() == output->Format() && input->GetShape().size() == output->GetShape().size();
+}
+
+bool IsDdrOrUnknown(MemoryType memory)
+{
+    return memory == MemoryType::MEM_UNKNOWN || memory == MemoryType::MEM_DEVICE_DDR;
+}
+
 bool IsDdrAlias(Operation* op)
 {
-    if (op == nullptr || !op->tokens_.empty() || !op->result_token_.empty() || op->GetIOperands().size() != 1 ||
-        op->GetOOperands().size() != 1) {
+    if (!IsSingleIOOp(op) || HasToken(op)) {
         return false;
     }
     bool needCopy = false;
@@ -1051,13 +1068,12 @@ bool IsDdrAlias(Operation* op)
     }
     const auto& input = op->GetIOperands().front();
     const auto& output = op->GetOOperands().front();
-    if (input == nullptr || output == nullptr || input->Datatype() != output->Datatype() ||
-        input->Format() != output->Format() || input->GetShape().size() != output->GetShape().size()) {
+    if (!IsIoPairAliasCompatible(input, output)) {
         return false;
     }
     for (const auto& tensor : {input, output}) {
         for (auto memory : {tensor->GetMemoryTypeOriginal(), tensor->GetMemoryTypeToBe()}) {
-            if (memory != MemoryType::MEM_UNKNOWN && memory != MemoryType::MEM_DEVICE_DDR) {
+            if (!IsDdrOrUnknown(memory)) {
                 return false;
             }
         }
@@ -1065,7 +1081,7 @@ bool IsDdrAlias(Operation* op)
     auto view = std::dynamic_pointer_cast<ViewOpAttribute>(op->GetOpAttribute());
     auto assemble = std::dynamic_pointer_cast<AssembleOpAttribute>(op->GetOpAttribute());
     auto memory = view != nullptr ? view->GetTo() : assemble != nullptr ? assemble->GetFrom() : MemoryType::MEM_UB;
-    return memory == MemoryType::MEM_UNKNOWN || memory == MemoryType::MEM_DEVICE_DDR;
+    return IsDdrOrUnknown(memory);
 }
 
 bool CollectIncastViewChain(Function& function, LogicalTensorPtr input, std::unordered_set<Operation*>& viewChain)
