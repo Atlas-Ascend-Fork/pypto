@@ -48,6 +48,5 @@ def run_cos_onboard_test(case: dict):
 
 
 @pytest.mark.parametrize("case", COS_ONBOARD_TESTS, ids=[case["case_name"] for case in COS_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_cos_onboard(case: dict):
     run_cos_onboard_test(case)

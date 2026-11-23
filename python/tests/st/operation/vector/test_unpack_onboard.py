@@ -52,6 +52,5 @@ def run_unpack_onboard_test(case: dict):
 
 
 @pytest.mark.parametrize("case", UNPACK_ONBOARD_TESTS, ids=[case["case_name"] for case in UNPACK_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_unpack_onboard(case: dict):
     run_unpack_onboard_test(case)

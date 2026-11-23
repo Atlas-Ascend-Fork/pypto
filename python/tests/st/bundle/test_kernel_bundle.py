@@ -51,7 +51,6 @@ import tempfile
 import pytest
 
 from conftest import duration_estimate
-import pypto
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
@@ -135,7 +134,6 @@ def _bundle_path():
 
 
 @duration_estimate(40)
-@pypto.options(pass_options={"enable_slice": True})
 def test_bundle_static_add(bundle_path):
     """Non-value-dependent, static, zero-workspace op: the baseline pack -> load -> launch round trip.
 
@@ -158,7 +156,6 @@ def test_bundle_static_add(bundle_path):
 
 
 @duration_estimate(30)
-@pypto.options(pass_options={"enable_slice": True})
 def test_bundle_dynamic_cellmatch(bundle_path):
     """Dynamically shaped op: workspace is evaluated from the launch shapes, not read off a baked constant.
 
@@ -185,7 +182,6 @@ def test_bundle_dynamic_cellmatch(bundle_path):
 
 
 @duration_estimate(28)
-@pypto.options(pass_options={"enable_slice": True})
 def test_bundle_standalone_delivery(bundle_path, tmp_path):
     """The self-contained delivery form: ONE .so + ONE .pyptokb + configs/, with no pypto install in reach.
 

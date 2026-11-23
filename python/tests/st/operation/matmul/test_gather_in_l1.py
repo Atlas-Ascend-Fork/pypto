@@ -103,7 +103,6 @@ def run_gather_in_l1_test(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in GATHER_IN_L1_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": True})
 def test_gather_in_l1_basic(case: dict):
     run_gather_in_l1_test(case)
 

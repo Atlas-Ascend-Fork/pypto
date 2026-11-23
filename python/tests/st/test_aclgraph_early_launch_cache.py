@@ -68,7 +68,6 @@ class LayerStack(torch.nn.Module):
         return x
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_aclgraph_early_launch_host_cache_slot_reuse():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)

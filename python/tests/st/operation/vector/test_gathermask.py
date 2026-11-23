@@ -85,6 +85,5 @@ def run_gathermask_test(case: dict):
 
 
 @pytest.mark.parametrize("case", GATHERMASK_TESTS, ids=[case["case_name"] for case in GATHERMASK_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_gathermask(case: dict):
     run_gathermask_test(case)

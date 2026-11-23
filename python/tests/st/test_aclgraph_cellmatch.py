@@ -37,7 +37,6 @@ from numpy.testing import assert_allclose
 import torch
 import torch_npu
 
-import pypto
 from st.test_cellmatch_case import B_STATIC, D_STATIC, H_STATIC, k_tmp_to_d_emb
 
 WARM_L = 64  # eager warmup: pool is sized for this L, H2D reset runs outside capture
@@ -52,7 +51,6 @@ def _golden_d_emb_only(dy: torch.Tensor, weight: torch.Tensor) -> torch.Tensor:
     return (dy[:, :, 0, :].reshape(-1, dy.shape[-1]) @ weight[0].T).reshape(dy.shape[0], dy.shape[1], dy.shape[-1])
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_aclgraph_dynamic_cellmatch_pool_h2d_in_capture():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", "0"))
     torch.npu.set_device(device_id)

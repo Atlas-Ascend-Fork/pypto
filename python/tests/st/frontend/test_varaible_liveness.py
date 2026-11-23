@@ -68,12 +68,10 @@ def run_kernel_test(kernel_func):
     assert torch.allclose(result_cpu, expected, atol=0.0001, rtol=0.0078125)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_if_variable_scope():
     run_kernel_test(kernel_if)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_range_unroll():
     run_kernel_test(kernel_loop)
 

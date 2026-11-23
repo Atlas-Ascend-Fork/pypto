@@ -488,7 +488,6 @@ def run_fp4_test(case: dict):
 
 
 @pytest.mark.parametrize("case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in MXFP4_TESTS])
-@pypto.options(pass_options={"enable_slice": False})
 def test_fp4(case: dict):
     run_fp4_test(case)
 

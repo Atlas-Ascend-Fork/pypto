@@ -69,7 +69,6 @@ def run_migrated_indexput_test(case: dict):
 
 
 @pytest.mark.parametrize("case", INDEXPUT_ONBOARD_TESTS, ids=[case["case_name"] for case in INDEXPUT_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_migrated_indexput(case: dict):
     run_migrated_indexput_test(case)
 
@@ -154,7 +153,6 @@ def indexput_comm_test_body(indexput_para, test_func):
     pypto.runtime._device_fini
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_index_put__onboard():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

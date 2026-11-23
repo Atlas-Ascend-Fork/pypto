@@ -19,7 +19,6 @@ import pypto
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_add():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -66,7 +65,6 @@ def test_vector_operation_1d_add():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_sub():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -113,7 +111,6 @@ def test_vector_operation_1d_sub():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_mul():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -160,7 +157,6 @@ def test_vector_operation_1d_mul():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_div():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -207,7 +203,6 @@ def test_vector_operation_1d_div():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_abs():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -244,7 +239,6 @@ def test_vector_operation_1d_abs():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_sqrt():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -281,7 +275,6 @@ def test_vector_operation_1d_sqrt():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_ceil():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -320,7 +313,6 @@ def test_vector_operation_1d_ceil():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_floor():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -359,7 +351,6 @@ def test_vector_operation_1d_floor():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_trunc():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -398,7 +389,6 @@ def test_vector_operation_1d_trunc():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_exp():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -435,7 +425,6 @@ def test_vector_operation_1d_exp():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_neg():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -472,7 +461,6 @@ def test_vector_operation_1d_neg():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_reciprocal():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -509,7 +497,6 @@ def test_vector_operation_1d_reciprocal():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_rsqrt():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -546,7 +533,6 @@ def test_vector_operation_1d_rsqrt():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_relu():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -583,7 +569,6 @@ def test_vector_operation_1d_relu():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_lrelu():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -620,7 +605,6 @@ def test_vector_operation_1d_lrelu():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_bitwise_not():
     dtype = pypto.DT_INT16
     tiling = 32
@@ -657,7 +641,6 @@ def test_vector_operation_1d_bitwise_not():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_bitwise_and():
     dtype = pypto.DT_INT16
     tiling = 32
@@ -704,7 +687,6 @@ def test_vector_operation_1d_bitwise_and():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_bitwise_or():
     dtype = pypto.DT_INT16
     tiling = 32
@@ -751,7 +733,6 @@ def test_vector_operation_1d_bitwise_or():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_bitwise_xor():
     dtype = pypto.DT_INT16
     tiling = 32
@@ -798,7 +779,6 @@ def test_vector_operation_1d_bitwise_xor():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_bitwise_left_shift():
     dtype = pypto.DT_INT16
     tiling = 32
@@ -845,7 +825,6 @@ def test_vector_operation_1d_bitwise_left_shift():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_bitwise_right_shift():
     dtype = pypto.DT_INT16
     tiling = 32
@@ -892,7 +871,6 @@ def test_vector_operation_1d_bitwise_right_shift():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_eq():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -939,7 +917,6 @@ def test_vector_operation_1d_eq():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_ne():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -986,7 +963,6 @@ def test_vector_operation_1d_ne():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_ge():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1033,7 +1009,6 @@ def test_vector_operation_1d_ge():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_gt():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1080,7 +1055,6 @@ def test_vector_operation_1d_gt():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_le():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1127,7 +1101,6 @@ def test_vector_operation_1d_le():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_lt():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1174,7 +1147,6 @@ def test_vector_operation_1d_lt():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_logical_and():
     tiling = 32
     n = tiling * 4
@@ -1221,7 +1193,6 @@ def test_vector_operation_1d_logical_and():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_maximum():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1268,7 +1239,6 @@ def test_vector_operation_1d_maximum():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_minimum():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1315,7 +1285,6 @@ def test_vector_operation_1d_minimum():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_cbrt():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1352,7 +1321,6 @@ def test_vector_operation_1d_cbrt():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_clip():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1389,7 +1357,6 @@ def test_vector_operation_1d_clip():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_copysign():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1436,7 +1403,6 @@ def test_vector_operation_1d_copysign():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_fmod():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1483,7 +1449,6 @@ def test_vector_operation_1d_fmod():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_gcd():
     dtype = pypto.DT_INT32
     tiling = 32
@@ -1530,7 +1495,6 @@ def test_vector_operation_1d_gcd():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_hypot():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1577,7 +1541,6 @@ def test_vector_operation_1d_hypot():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_floor_div():
     dtype = pypto.DT_INT32
     tiling = 32
@@ -1624,7 +1587,6 @@ def test_vector_operation_1d_floor_div():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_expand_exp_dif():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1665,7 +1627,6 @@ def test_vector_operation_1d_expand_exp_dif():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_ceil_div():
     dtype = pypto.DT_INT32
     tiling = 32
@@ -1712,7 +1673,6 @@ def test_vector_operation_1d_ceil_div():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_argsort():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1752,7 +1712,6 @@ def test_vector_operation_1d_argsort():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_index_put():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1808,7 +1767,6 @@ def test_vector_operation_1d_index_put():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_where():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1863,7 +1821,6 @@ def test_vector_operation_1d_where():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_topk():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1907,7 +1864,6 @@ def test_vector_operation_1d_topk():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_expand():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1939,7 +1895,6 @@ def test_vector_operation_1d_expand():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_sum():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -1976,7 +1931,6 @@ def test_vector_operation_1d_sum():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_max():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -2013,7 +1967,6 @@ def test_vector_operation_1d_max():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_min():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -2050,7 +2003,6 @@ def test_vector_operation_1d_min():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_prod():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -2087,7 +2039,6 @@ def test_vector_operation_1d_prod():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_argmax():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -2124,7 +2075,6 @@ def test_vector_operation_1d_argmax():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_argmin():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -2161,7 +2111,6 @@ def test_vector_operation_1d_argmin():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_logicnot():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -2198,7 +2147,6 @@ def test_vector_operation_1d_logicnot():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_sign():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -2235,7 +2183,6 @@ def test_vector_operation_1d_sign():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_signbit():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -2272,7 +2219,6 @@ def test_vector_operation_1d_signbit():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_log1p():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -2309,7 +2255,6 @@ def test_vector_operation_1d_log1p():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_var():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -2346,7 +2291,6 @@ def test_vector_operation_1d_var():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_exp2():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -2383,7 +2327,6 @@ def test_vector_operation_1d_exp2():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_round():
     dtype = pypto.DT_FP32
     tiling = 32
@@ -2420,7 +2363,6 @@ def test_vector_operation_1d_round():
 
 
 @pytest.mark.skip(reason="only local test")
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_1d_expm1():
     dtype = pypto.DT_FP32
     tiling = 32

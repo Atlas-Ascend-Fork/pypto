@@ -38,7 +38,6 @@ def clone_kernel_func(
             pypto.assemble(a3, [b_idx, s_idx, 0], out_tensor)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_clone():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

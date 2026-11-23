@@ -151,7 +151,6 @@ def test_with_tensor_scalar_maximum(
     pypto.runtime._device_fini()
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def test_with_tensor_tensor_minimum(
     shape: List[int] = None,
     data_type: pypto.DataType = pypto.DT_INT32,

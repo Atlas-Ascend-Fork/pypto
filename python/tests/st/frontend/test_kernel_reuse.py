@@ -70,7 +70,6 @@ def test_kernel_reuse():
     logging.info(f"✓ Cache reused, speedup {t1 / t2:.1f}x")
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def test_kernel_recompile():
     """STATIC axis change triggers recompile, both calls take similar time."""
     torch.npu.set_device(DEVICE_ID)

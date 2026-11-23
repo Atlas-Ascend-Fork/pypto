@@ -17,8 +17,6 @@ import pytest
 import torch
 import torch_npu  # noqa: F401 - installs torch.npu
 
-import pypto
-
 DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 DEVICE = f"npu:{DEVICE_ID}"
 
@@ -89,7 +87,6 @@ def icache_preload_cube_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_icache_preload_aiv_execution():
     torch.npu.set_device(DEVICE)
     torch.manual_seed(0)
@@ -103,7 +100,6 @@ def test_icache_preload_aiv_execution():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_icache_preload_aic_execution():
     torch.npu.set_device(DEVICE)
     lhs = torch.arange(64 * 64, device=DEVICE, dtype=torch.float16).reshape(64, 64) % 17

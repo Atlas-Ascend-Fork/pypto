@@ -65,7 +65,6 @@ def device_run(is_run_add):
         assert torch.allclose(golden.int(), sub_result.cpu(), atol=1e-5)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_run_multi_jit():
     device_run(True)
     device_run(False)

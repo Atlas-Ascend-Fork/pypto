@@ -41,7 +41,6 @@ def dyn_loop_with_loop_begin(
                 pypto.assemble(a1, [b_idx, s_idx, 0, 0], out_tensor)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_is_loop_begin():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -89,7 +88,6 @@ def dyn_loop_with_loop_end(
                 pypto.assemble(a1, [b_idx, s_idx, 0, 0], out_tensor)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_is_loop_end():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

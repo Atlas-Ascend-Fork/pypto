@@ -381,8 +381,6 @@ TEST_P(MatmulOperationTest, TestMatmul)
 {
     TestCaseDesc testCase;
     auto test_data = GetParam().test_data_;
-    ConfigManagerNg::JitScopeGuard configGuard(
-        "matmul_test", std::map<std::string, std::any>{{"pass." + std::string(ENABLE_SLICE), false}});
     testCase.inputTensors = GetMatmulTensors(test_data, "input_tensors");
     testCase.outputTensors = GetMatmulTensors(test_data, "output_tensors");
     auto args = MatmulOpFuncArgs(GetViewShape(test_data), GetMatmulTileShape(test_data), GetMatmulParam(test_data));

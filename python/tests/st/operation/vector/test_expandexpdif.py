@@ -52,6 +52,5 @@ def run_expandexpdif_test(case: dict):
 
 
 @pytest.mark.parametrize("case", EXPANDEXPDIF_TESTS, ids=[case["case_name"] for case in EXPANDEXPDIF_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_expandexpdif(case: dict):
     run_expandexpdif_test(case)

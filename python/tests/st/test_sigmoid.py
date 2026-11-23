@@ -18,7 +18,6 @@ import torch
 import pypto
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sigmoid_shape_dim():
     """Test whether the output shape is correct"""
 
@@ -34,7 +33,6 @@ def test_sigmoid_shape_dim():
         assert res.shape == list(torch_case_res.shape)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sigmoid_fp32():
     """Test whether the output of FP32 is correct"""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -63,7 +61,6 @@ def test_sigmoid_fp32():
     pypto.runtime._device_fini()
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sigmoid_fp16():
     """Test whether the output of FP16 shape is correct"""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -91,7 +88,6 @@ def test_sigmoid_fp16():
     pypto.runtime._device_fini()
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_tensor_sigmoid_fp32():
     """Test whether the output of FP32 is correct"""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))

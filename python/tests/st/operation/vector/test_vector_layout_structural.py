@@ -12,11 +12,6 @@ import pypto
 pytestmark = [pytest.mark.soc("950"), pytest.mark.forked]
 
 
-@pytest.fixture(scope='session', autouse=True)
-def configure():
-    pypto.pypto_impl.SetGlobalConfig({'pass.enable_slice': True})
-
-
 @pypto.frontend.jit(debug_options={'runtime_debug_mode': 0, 'compile_debug_mode': 0})
 def structural(
     x: pypto.Tensor(), out: pypto.Tensor(), index_out: pypto.Tensor(), op: str, h: int, w: int

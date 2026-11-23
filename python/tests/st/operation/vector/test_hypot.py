@@ -50,6 +50,5 @@ def run_hypot_test(case: dict):
 
 
 @pytest.mark.parametrize("case", HYPOT_TESTS, ids=[case["case_name"] for case in HYPOT_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_hypot(case: dict):
     run_hypot_test(case)

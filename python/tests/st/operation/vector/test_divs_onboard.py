@@ -100,6 +100,5 @@ def run_divs_onboard_test(case: dict):
 
 
 @pytest.mark.parametrize("case", DIVS_ONBOARD_TESTS, ids=[case["case_name"] for case in DIVS_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_divs_onboard(case: dict):
     run_divs_onboard_test(case)

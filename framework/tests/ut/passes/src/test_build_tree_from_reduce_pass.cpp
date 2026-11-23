@@ -460,7 +460,6 @@ TEST_F(BuildTreeFromReduceTest, SplitsLargeInputAndKeepsAtomicAddForExplicitRmw)
 
 TEST_F(BuildTreeFromReduceTest, UsesConfiguredSliceOpcodeForLargeInputSplit)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     ASSERT_EQ(config::GetSliceOpcode(), Opcode::OP_SLICE);
 
     ComputationalGraphBuilder graph;
@@ -483,7 +482,6 @@ TEST_F(BuildTreeFromReduceTest, UsesConfiguredSliceOpcodeForLargeInputSplit)
 
 TEST_F(BuildTreeFromReduceTest, BuildsTreeForConfiguredContractOpcode)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     ASSERT_EQ(config::GetContractOpcode(), Opcode::OP_CONTRACT);
 
     ComputationalGraphBuilder graph;

@@ -54,6 +54,5 @@ def run_scatter_onboard_test(case: dict):
 
 
 @pytest.mark.parametrize("case", SCATTER_ONBOARD_TESTS, ids=[case["case_name"] for case in SCATTER_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_migrated_scatter(case: dict):
     run_scatter_onboard_test(case)

@@ -52,7 +52,6 @@ class TanTest(TestBuilder):
         return (a_tensor,)
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def test():
     st = TanTest(((16, 16), (8, 8)), op_tan, op_tan_golden, tiling=32)
     st()

@@ -22,9 +22,7 @@ INDEX = (0, 2, 4, 6, 8, 10, 12, 14)
 VALUE = 3.0
 
 
-@pypto.frontend.jit(
-    pass_options={"enable_slice": True},
-)
+@pypto.frontend.jit
 def index_put_write_after_read_kernel(
     target: pypto.Tensor([pypto.STATIC, pypto.STATIC], pypto.DT_FP32),
     index: pypto.Tensor([pypto.STATIC], pypto.DT_INT32),

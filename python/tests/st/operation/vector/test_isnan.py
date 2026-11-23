@@ -61,7 +61,6 @@ def _run_and_check(fn, x_pt, shape, view_shape, tile_shape):
     assert torch.equal(golden, out.cpu())
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_isnan_fp32_mixed():
     shape = (32, 128)
     x_pt = _inject_mixed_special(torch.rand(*shape, dtype=torch.float32))

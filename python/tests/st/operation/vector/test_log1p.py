@@ -48,6 +48,5 @@ def run_log1p_test(case: dict):
 
 
 @pytest.mark.parametrize("case", LOG1P_TESTS, ids=[case["case_name"] for case in LOG1P_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_log1p(case: dict):
     run_log1p_test(case)

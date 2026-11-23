@@ -131,7 +131,6 @@ def device_run(device_id, pypto_home: str):
 
 
 @pytest.mark.soc("910", "950")
-@pypto.options(pass_options={"enable_slice": True})
 def test_debug_mode():
     device_id = os.environ.get("TILE_FWK_DEVICE_ID", 0)
     with tempfile.TemporaryDirectory(prefix="pypto_debug_mode_") as tmp_dir:

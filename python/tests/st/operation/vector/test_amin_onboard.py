@@ -74,6 +74,5 @@ def run_amin_onboard_test(case: dict):
 
 
 @pytest.mark.parametrize("case", AMIN_ONBOARD_TESTS, ids=[case["case_name"] for case in AMIN_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_amin_onboard(case: dict):
     run_amin_onboard_test(case)

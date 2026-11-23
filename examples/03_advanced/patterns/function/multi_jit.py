@@ -89,7 +89,6 @@ def add_kernel(
     out[:] = add_core(input0, input1, add1_flag)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_add_scalar_loop_multi_jit(device_id=None) -> None:
     device = f'npu:{device_id}' if global_run_mode == pypto.RunMode.NPU and device_id is not None else 'cpu'
 

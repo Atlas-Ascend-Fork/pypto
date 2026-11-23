@@ -116,7 +116,6 @@ def softmax(input_tensor: pypto.Tensor(), output_tensor: pypto.Tensor()):
         pypto.assemble(softmax_out, [b_offset, 0, 0, 0], output_tensor)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_softmax(cost_model_enable=True):
     """
     Run softmax with optional cost model.

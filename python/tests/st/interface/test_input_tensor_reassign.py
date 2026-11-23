@@ -29,7 +29,6 @@ def subscript_assign_ok(
         c[:] = a + b
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_subscript_assign_allowed():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -54,7 +53,6 @@ def move_assign_ok(
         c.move(a + b)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_move_assign_allowed():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -81,7 +79,6 @@ def var_reassign_ok(
         c[:] = x
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_non_input_var_reassign_allowed():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

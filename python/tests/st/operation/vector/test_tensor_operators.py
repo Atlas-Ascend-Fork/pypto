@@ -292,7 +292,6 @@ def lt_kernel(
     y.move(x < 0.5)
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def test_tensor_lt():
     """Test tensor < scalar"""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -383,7 +382,6 @@ def eq_kernel(
     y.move(x == 0.5)
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def test_tensor_eq():
     """Test tensor == scalar"""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))

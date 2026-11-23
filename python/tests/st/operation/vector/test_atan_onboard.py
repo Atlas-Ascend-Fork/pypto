@@ -48,6 +48,5 @@ def run_atan_onboard_test(case: dict):
 
 
 @pytest.mark.parametrize("case", ATAN_ONBOARD_TESTS, ids=[case["case_name"] for case in ATAN_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_atan_onboard(case: dict):
     run_atan_onboard_test(case)

@@ -796,8 +796,6 @@ TEST_P(GatherOperationTest, TestGather)
         {4, {{1, GatherOperationExeFunc4_1Dims}, {2, GatherOperationExeFunc4_2Dims}}},
     };
     auto test_data = GetParam().test_data_;
-    ConfigManagerNg::JitScopeGuard configGuard(
-        "matmul_test", std::map<std::string, std::any>{{"pass." + std::string(ENABLE_SLICE), false}});
     auto axis = static_cast<CastMode>(GetValueByName<int>(test_data, "axis"));
     auto args = GatherOpFuncArgs(GetViewShape(test_data), GetTileShape(test_data), axis);
     auto testCase = CreateTestCaseDesc<GatherOpMetaData>(GetParam(), &args);

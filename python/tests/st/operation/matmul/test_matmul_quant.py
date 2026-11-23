@@ -225,11 +225,7 @@ def run_matmul_quant_test(case: dict):
     [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in PERTENSOR_TESTS + PERCHANNEL_TESTS],
 )
 def test_matmul_quant(case: dict):
-    if case["id"] not in {"PERTENSOR01", "PERTENSOR02", "PERCHANNEL01", "PERCHANNEL03"}:
-        run_matmul_quant_test(case)
-        return
-    with pypto.options(pass_options={"enable_slice": False}):
-        run_matmul_quant_test(case)
+    run_matmul_quant_test(case)
 
 
 def run_matmul_quant_pertensor_demo():

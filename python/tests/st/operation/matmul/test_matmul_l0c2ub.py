@@ -272,7 +272,6 @@ def run_matmul_l0c2ub_test(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in L0C2UB_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_matmul_l0c2ub(case: dict):
     """pytest 参数化测试"""
     run_matmul_l0c2ub_test(case)

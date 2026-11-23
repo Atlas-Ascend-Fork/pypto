@@ -64,6 +64,5 @@ def run_scattertensor_test(case: dict):
 
 
 @pytest.mark.parametrize("case", SCATTERTENSOR_TESTS, ids=[case["case_name"] for case in SCATTERTENSOR_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_scattertensor(case: dict):
     run_scattertensor_test(case)

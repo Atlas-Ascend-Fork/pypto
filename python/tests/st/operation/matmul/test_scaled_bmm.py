@@ -876,7 +876,6 @@ def run_scaled_bmm_test(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in SCALED_BMM_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_scaled_bmm(case: dict):
     run_scaled_bmm_test(case)
 

@@ -36,7 +36,6 @@ def run_migrated_indexadd_test(case: dict):
 
 
 @pytest.mark.parametrize("case", INDEXADD_ONBOARD_TESTS, ids=[case["case_name"] for case in INDEXADD_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_migrated_indexadd(case: dict):
     run_migrated_indexadd_test(case)
 
@@ -110,7 +109,6 @@ def run_indexadd(inputs: List[torch.Tensor], args: IndexAddArgs) -> None:
     pypto.runtime._device_fini()
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def test_indexadd__onboard():
     axis = 0
     alpha = 1.3

@@ -21,7 +21,6 @@ import pypto
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_tensor_interleave():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)

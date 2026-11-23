@@ -54,6 +54,5 @@ def run_concat_test(case: dict):
 
 
 @pytest.mark.parametrize("case", CONCAT_TESTS, ids=[case["case_name"] for case in CONCAT_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_concat(case: dict):
     run_concat_test(case)

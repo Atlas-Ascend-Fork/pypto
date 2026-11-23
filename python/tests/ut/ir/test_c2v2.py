@@ -131,7 +131,6 @@ def c2v2_kernel(
 def test_c2v2_kernel():
     b = pypto.symbolic_scalar('b')
     s = pypto.symbolic_scalar('s')
-    pypto.set_pass_options(enable_slice=True)
     with npuarch("DAV_3510"):
         compile_new_ir(c2v2_kernel,
             input_tensor_a=pypto.tensor([b, s, 64], pypto.DT_FP32),

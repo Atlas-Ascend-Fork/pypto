@@ -167,6 +167,20 @@ public:
     }
 
     void TearDown() override {}
+
+protected:
+    enum class SharedAssembleTokenRejection { DifferentOutputs, MultipleWrites, ReverseDependency };
+
+    struct SharedAssembleWriteGraph {
+        Operation& firstWrite;
+        Operation& secondWrite;
+        Operation& firstAssemble;
+        Operation& secondAssemble;
+    };
+
+    static SharedAssembleWriteGraph BuildSharedAssembleWriteGraph(Function& function, IRBuilder& builder,
+                                                                  SharedAssembleTokenRejection rejection);
+    void CheckSharedAssembleWriteTokenRejected(SharedAssembleTokenRejection rejection);
 };
 
 TEST_F(ReplaceTensorTest, RawMagicIndexTracksRepeatedSiblingMigration)
@@ -479,6 +493,78 @@ TEST_F(ReplaceTensorTest, ForwardIndexPutUpdatesCopyInOffset)
     auto copyInAttr = std::dynamic_pointer_cast<CopyOpAttribute>(copyIn.GetOpAttribute());
     ASSERT_NE(copyInAttr, nullptr);
     EXPECT_EQ(OpImmediate::ToSpecified(copyInAttr->GetFromOffset()), CreateTestConstIntVector({kNumFive, kNumTwo}));
+}
+
+TEST_F(ReplaceTensorTest, ForwardViewRebasesDdrCopyIn)
+{
+    Function function(Program::GetInstance(), "ForwardViewRebasesDdrCopyIn", "ForwardViewRebasesDdrCopyIn", nullptr);
+    const std::vector<int64_t> rawShape = {16, 16};
+    const std::vector<int64_t> inputShape = {8, 8};
+    const std::vector<int64_t> tileShape = {4, 4};
+    const Offset inputOffset = {4, 2};
+    const Offset viewOffset = {2, 1};
+    const Offset zeroOffset = {0, 0};
+    const Offset expectedOffset = {6, 3};
+    IRBuilder builder;
+    auto root = builder.CreateTensorVar(std::make_shared<RawTensor>(DT_FP32, rawShape), inputOffset, inputShape,
+                                        CreateTestConstIntVector(inputShape));
+    auto viewOut = builder.CreateTensorVar(DT_FP32, tileShape, CreateTestConstIntVector(tileShape));
+    auto copyInOut = builder.CreateTensorVar(DT_FP32, tileShape, CreateTestConstIntVector(tileShape));
+    root->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    viewOut->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    copyInOut->SetMemoryTypeBoth(MEM_UB, true);
+    function.inCasts_ = {root};
+
+    auto& view = PassOperationUtils::AddOperation(function, Opcode::OP_VIEW, {root}, {viewOut});
+    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(viewOffset, MEM_DEVICE_DDR));
+    auto& copyIn = PassOperationUtils::AddOperation(function, Opcode::OP_COPY_IN, {viewOut}, {copyInOut});
+    auto copyAttr = std::make_shared<CopyOpAttribute>(OpImmediate::Specified(zeroOffset), MEM_UB,
+                                                      OpImmediate::Specified(tileShape),
+                                                      OpImmediate::Specified(tileShape));
+    copyIn.SetOpAttribute(copyAttr);
+
+    ReplaceTensor pass;
+    pass.BuildRawMagicTensorIndex(function);
+    ASSERT_EQ(pass.ForwardView(&view, root, function), SUCCESS);
+    EXPECT_EQ(viewOut->GetRawTensor(), root->GetRawTensor());
+    EXPECT_EQ(viewOut->GetOffset(), expectedOffset);
+    EXPECT_EQ(OpImmediate::ToSpecified(copyAttr->GetFromOffset()), CreateTestConstIntVector(expectedOffset));
+    EXPECT_EQ(OpImmediate::ToSpecified(copyAttr->GetRawShape()), CreateTestConstIntVector(rawShape));
+    EXPECT_TRUE(copyIn.HasAttr(COPY_IN_VIEW_OFFSET_ABSORBED));
+
+    ASSERT_EQ(pass.UpdateCopyInAttr(&copyIn), SUCCESS);
+    EXPECT_EQ(OpImmediate::ToSpecified(copyAttr->GetFromOffset()), CreateTestConstIntVector(expectedOffset));
+}
+
+TEST_F(ReplaceTensorTest, ForwardViewRebasesTransposeMoveInInput)
+{
+    Function function(Program::GetInstance(), "RebaseTransposeMoveIn", "RebaseTransposeMoveIn", nullptr);
+    const std::vector<int64_t> rawShape = {4, 8, 16, 16};
+    const std::vector<int64_t> viewShape = {2, 3, 4, 16};
+    const std::vector<int64_t> moveInShape = {2, 4, 3, 16};
+    const Offset viewOffset = {1, 2, 3, 0};
+    const std::vector<int> transposeAxes = {1, 2};
+    IRBuilder builder;
+    auto root = builder.CreateTensorVar(DT_FP16, rawShape, CreateTestConstIntVector(rawShape));
+    auto viewOut = builder.CreateTensorVar(DT_FP16, viewShape, CreateTestConstIntVector(viewShape));
+    auto moveInOut = builder.CreateTensorVar(DT_FP16, moveInShape, CreateTestConstIntVector(moveInShape));
+    root->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    viewOut->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    moveInOut->SetMemoryTypeBoth(MEM_UB, true);
+    function.inCasts_ = {root};
+
+    auto& view = builder.CreateTensorOpStmt(function, Opcode::OP_VIEW, {root}, {viewOut});
+    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(viewOffset, MEM_DEVICE_DDR));
+    auto& moveIn = builder.CreateTensorOpStmt(function, Opcode::OP_TRANSPOSE_MOVEIN, {viewOut}, {moveInOut});
+    moveIn.SetAttribute(OP_ATTR_PREFIX + "shape", transposeAxes);
+
+    ReplaceTensor pass;
+    pass.BuildRawMagicTensorIndex(function);
+    ASSERT_EQ(pass.ForwardView(&view, root, function), SUCCESS);
+    EXPECT_EQ(moveIn.GetInputOperand(0)->GetRawTensor(), root->GetRawTensor());
+    EXPECT_EQ(moveIn.GetInputOperand(0)->GetOffset(), viewOffset);
+    EXPECT_EQ(moveIn.GetVectorIntAttribute<int>(OP_ATTR_PREFIX + "shape"), transposeAxes);
+    EXPECT_FALSE(moveIn.HasAttr(COPY_IN_VIEW_OFFSET_ABSORBED));
 }
 
 TEST_F(ReplaceTensorTest, TestViewType)
@@ -1936,6 +2022,152 @@ TEST_F(ReplaceTensorTest, TestTokenProducerAndConsumerMove)
     EXPECT_TRUE(graph.function->GetVarDependency().HasConsumer(graph.exp1->result_token_.front(), ToStmt(*graph.exp2)));
     EXPECT_FALSE(graph.function->GetVarDependency().HasDependency(originalToken));
     CheckTokenDependencies(*graph.function);
+}
+
+TEST_F(ReplaceTensorTest, MovesSharedAssembleTokenToActualWrites)
+{
+    Function function(Program::GetInstance(), "SharedAssembleWriteToken", "SharedAssembleWriteToken", nullptr);
+    const std::vector<int64_t> tileShape = {4, 8};
+    const std::vector<int64_t> outputShape = {8, 8};
+    const Offset firstOffset = {0, 0};
+    const Offset secondOffset = {2, 0};
+    IRBuilder builder;
+    auto output = builder.CreateTensorVar(DT_FP32, outputShape, CreateTestConstIntVector(outputShape));
+    output->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    function.outCasts_ = {output};
+
+    auto addWrite = [&](const Offset& offset) -> Operation& {
+        auto input = builder.CreateTensorVar(DT_FP32, tileShape, CreateTestConstIntVector(tileShape));
+        input->SetMemoryTypeBoth(MEM_UB, true);
+        function.inCasts_.push_back(input);
+        auto destination = builder.CreateTensorVar(output->GetRawTensor(), offset, tileShape,
+                                                   CreateTestConstIntVector(tileShape));
+        destination->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+        return builder.CreateTensorOpStmt(function, Opcode::OP_COPY_OUT, {input}, {destination});
+    };
+    auto& firstWrite = addWrite(firstOffset);
+    auto& secondWrite = addWrite(secondOffset);
+    auto& firstAssemble = builder.CreateTensorOpStmt(function, Opcode::OP_ASSEMBLE, {firstWrite.GetOutputOperand(0)},
+                                                     {output});
+    firstAssemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, firstOffset));
+    auto& secondAssemble = builder.CreateTensorOpStmt(function, Opcode::OP_ASSEMBLE, {secondWrite.GetOutputOperand(0)},
+                                                      {output});
+    secondAssemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, secondOffset));
+    const auto token = builder.CreateTokenVar(ir::Span::Unknown());
+    firstAssemble.result_token_.push_back(token);
+    secondAssemble.tokens_.push_back(token);
+    auto& dependency = function.GetVarDependency();
+    dependency.AddProducer(token, ToStmt(firstAssemble));
+    dependency.AddConsumer(token, ToStmt(secondAssemble));
+
+    ReplaceTensor pass;
+    pass.RebuildTokenProducer(function);
+    pass.RebuildTokenConsumer(function);
+
+    EXPECT_TRUE(firstAssemble.result_token_.empty());
+    EXPECT_TRUE(secondAssemble.tokens_.empty());
+    ASSERT_EQ(firstWrite.result_token_.size(), 1U);
+    ASSERT_EQ(secondWrite.tokens_.size(), 1U);
+    EXPECT_EQ(firstWrite.result_token_.front(), token);
+    EXPECT_EQ(secondWrite.tokens_.front(), token);
+    EXPECT_TRUE(dependency.HasProducer(token, ToStmt(firstWrite)));
+    EXPECT_TRUE(dependency.HasConsumer(token, ToStmt(secondWrite)));
+    EXPECT_FALSE(dependency.HasProducer(token, ToStmt(firstAssemble)));
+    EXPECT_FALSE(dependency.HasConsumer(token, ToStmt(secondAssemble)));
+    CheckTokenDependencies(function);
+}
+
+ReplaceTensorTest::SharedAssembleWriteGraph ReplaceTensorTest::BuildSharedAssembleWriteGraph(
+    Function& function, IRBuilder& builder, SharedAssembleTokenRejection rejection)
+{
+    const Shape tileShape = {kNumFour, kNumEight};
+    const Shape outputShape = {kNumEight, kNumEight};
+    const Offset firstOffset = {kNumZero, kNumZero};
+    const Offset secondOffset = {kNumTwo, kNumZero};
+    auto firstOutput = builder.CreateTensorVar(DT_FP32, outputShape, CreateTestConstIntVector(outputShape));
+    firstOutput->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    auto secondOutput = firstOutput;
+    if (rejection == SharedAssembleTokenRejection::DifferentOutputs) {
+        secondOutput = builder.CreateTensorVar(firstOutput->GetRawTensor(), firstOffset, outputShape,
+                                               CreateTestConstIntVector(outputShape));
+        secondOutput->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    }
+
+    auto makeTile = [&](const Offset& offset) {
+        auto tile = builder.CreateTensorVar(firstOutput->GetRawTensor(), offset, tileShape,
+                                            CreateTestConstIntVector(tileShape));
+        tile->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+        return tile;
+    };
+    auto addWrite = [&](const LogicalTensorPtr& tile) -> Operation& {
+        auto input = builder.CreateTensorVar(DT_FP32, tileShape, CreateTestConstIntVector(tileShape));
+        input->SetMemoryTypeBoth(MEM_UB, true);
+        return builder.CreateTensorOpStmt(function, Opcode::OP_COPY_OUT, {input}, {tile});
+    };
+    auto firstTile = makeTile(firstOffset);
+    auto secondTile = makeTile(secondOffset);
+    auto& firstWrite = addWrite(firstTile);
+    auto& secondWrite = addWrite(secondTile);
+    if (rejection == SharedAssembleTokenRejection::MultipleWrites) {
+        addWrite(firstTile);
+    }
+    auto& firstAssemble = builder.CreateTensorOpStmt(function, Opcode::OP_ASSEMBLE, {firstTile}, {firstOutput});
+    firstAssemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, firstOffset));
+    auto& secondAssemble = builder.CreateTensorOpStmt(function, Opcode::OP_ASSEMBLE, {secondTile}, {secondOutput});
+    secondAssemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, secondOffset));
+    return {firstWrite, secondWrite, firstAssemble, secondAssemble};
+}
+
+void ReplaceTensorTest::CheckSharedAssembleWriteTokenRejected(SharedAssembleTokenRejection rejection)
+{
+    Function function(Program::GetInstance(), "RejectSharedAssembleToken", "RejectSharedAssembleToken", nullptr);
+    IRBuilder builder;
+    auto [firstWrite, secondWrite, firstAssemble, secondAssemble] = BuildSharedAssembleWriteGraph(function, builder,
+                                                                                                  rejection);
+    ASSERT_EQ(firstAssemble.GetOutputOperand(0) != secondAssemble.GetOutputOperand(0),
+              rejection == SharedAssembleTokenRejection::DifferentOutputs);
+
+    auto& dependency = function.GetVarDependency();
+    auto addToken = [&](Operation& producer, Operation& consumer) {
+        const auto token = builder.CreateTokenVar(ir::Span::Unknown());
+        producer.result_token_.push_back(token);
+        consumer.tokens_.push_back(token);
+        dependency.AddProducer(token, ToStmt(producer));
+        dependency.AddConsumer(token, ToStmt(consumer));
+        return token;
+    };
+    const auto token = addToken(firstAssemble, secondAssemble);
+    if (rejection == SharedAssembleTokenRejection::ReverseDependency) {
+        addToken(secondWrite, firstWrite);
+    }
+    const auto originalDependencies = dependency.GetAllDependencies();
+
+    EXPECT_FALSE(ReplaceTensor::MoveSharedAssembleWriteToken(firstAssemble, secondAssemble, token, function));
+
+    EXPECT_EQ(firstAssemble.result_token_, (std::vector<ir::VarPtr>{token}));
+    EXPECT_EQ(secondAssemble.tokens_, (std::vector<ir::VarPtr>{token}));
+    EXPECT_EQ(dependency.Size(), originalDependencies.size());
+    for (const auto& [originalToken, entry] : originalDependencies) {
+        EXPECT_EQ(dependency.GetProducers(originalToken), entry.producers);
+        EXPECT_EQ(dependency.GetConsumers(originalToken), entry.consumers);
+    }
+    CheckTokenDependencies(function);
+    EXPECT_TRUE(function.LoopCheck().empty());
+}
+
+TEST_F(ReplaceTensorTest, RejectsSharedAssembleTokenWithDifferentOutputs)
+{
+    CheckSharedAssembleWriteTokenRejected(SharedAssembleTokenRejection::DifferentOutputs);
+}
+
+TEST_F(ReplaceTensorTest, RejectsSharedAssembleTokenWithMultipleWrites)
+{
+    CheckSharedAssembleWriteTokenRejected(SharedAssembleTokenRejection::MultipleWrites);
+}
+
+TEST_F(ReplaceTensorTest, RejectsSharedAssembleTokenWhenWriteDependencyWouldCycle)
+{
+    CheckSharedAssembleWriteTokenRejected(SharedAssembleTokenRejection::ReverseDependency);
 }
 
 TEST_F(ReplaceTensorTest, DoesNotMoveTokenProducerToItsConsumers)

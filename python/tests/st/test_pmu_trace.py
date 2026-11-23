@@ -64,7 +64,6 @@ def _assert_mark_stamp_in_cce(log_dir: str):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_pmu_trace_codegen_inserts_mark_stamp():
     output_name = "temp_pmu_trace_codegen"
     os.environ["TILE_FWK_OUTPUT_DIR"] = f"{Path.cwd()}/{output_name}"

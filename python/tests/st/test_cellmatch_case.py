@@ -79,7 +79,6 @@ def _run_case(l_static: int, device: str, seed: int = 44) -> tuple[torch.Tensor,
     return d_emb, ref_emb
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_cellmatch_case():
     """Multiple L values in one process: dynCm pool alloc, resize, and reuse."""
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", "0"))

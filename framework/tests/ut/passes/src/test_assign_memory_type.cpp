@@ -972,7 +972,6 @@ TEST_F(AssignMemoryTypeTest, UnalignedAssembleBeforeReshapeFallbackDdr)
 
 TEST_F(AssignMemoryTypeTest, UnalignedContractIntoUbMaterializesDdr)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     ComputationalGraphBuilder G;
     Shape inputShape{NUM_8, NUM_32, 12};
     Shape outputShape{NUM_8, NUM_32, 25};
@@ -1429,7 +1428,6 @@ TEST_F(AssignMemoryTypeTest, TestL0C2L1LargeToSmallMultiContractDdrFallback)
 // input [128,256] fp16 的 NZ 大小可被 L0C 容纳，保证用例仅由 middle 超限拦截。
 TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallOversizedMiddleDdrFallback)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     Platform::Instance().ReloadMemoryPaths("3510");
     auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(),
@@ -1477,7 +1475,6 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallOversizedMiddleDdrFallback)
 // 必须回落 DDR；若误按末两维 (H,W) 估算 (65*64*4 = 16640B) 会错误放行升级。
 TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallConv4DOversizedMiddleDdrFallback)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     Platform::Instance().ReloadMemoryPaths("3510");
     auto currFunctionPtr = std::make_shared<Function>(
@@ -1531,7 +1528,6 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallConv4DOversizedMiddleDdrFallb
 // 必须回落 DDR；末两维估算同样只有 16640B，会错误放行。
 TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallConv5DOversizedMiddleDdrFallback)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     Platform::Instance().ReloadMemoryPaths("3510");
     auto currFunctionPtr = std::make_shared<Function>(
@@ -1585,7 +1581,6 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallConv5DOversizedMiddleDdrFallb
 // 保证容量修复不会误拒正常 conv 多维 tile。
 TEST_F(AssignMemoryTypeTest, TestL0C2UBSmallToLargeConv4DMiddleUpgrade)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     Platform::Instance().ReloadMemoryPaths("3510");
     auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(),
@@ -1658,7 +1653,6 @@ TEST_F(AssignMemoryTypeTest, TestCheckUBConvTileShapeDimAlignment)
 // 升级被拒, middle 回落 DDR, 与 legacy 路径的拦截行为保持一致。
 TEST_F(AssignMemoryTypeTest, TestL0C2UBSmallToLargeConv4DDim1UnalignedDdrFallback)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     Platform::Instance().ReloadMemoryPaths("3510");
     auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(),
@@ -1707,7 +1701,6 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBSmallToLargeConv4DDim1UnalignedDdrFallbac
 // 容纳（128 % 48 != 0 同时阻断 small-to-large 误升级），保证用例仅由多 contract 拦截。
 TEST_F(AssignMemoryTypeTest, TestUB2L1LargeToSmallMultiContractDdrFallback)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     Platform::Instance().ReloadMemoryPaths("3510");
     auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(),
@@ -1757,7 +1750,6 @@ TEST_F(AssignMemoryTypeTest, TestUB2L1LargeToSmallMultiContractDdrFallback)
 // 守护大搬小限制按 sourceType != targetType 收窄、不误伤 UB2UB 的修复。
 TEST_F(AssignMemoryTypeTest, TestUB2UBContractSliceMultiContractKeepsUb)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     Platform::Instance().ReloadMemoryPaths("3510");
     auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(),
@@ -2696,7 +2688,6 @@ TEST_F(AssignMemoryTypeTest, TestA5MatmulAssembleExpSliceEnabled)
     constexpr auto name = "TestA5MatmulAssembleExpSliceEnabled";
     PrepareA5Platform();
     SetFullTestStrategy();
-    config::SetPassOption(ENABLE_SLICE, true);
     config::SetDebugOption(CFG_COMPILE_DBEUG_MODE, CFG_DEBUG_ALL);
     config::SetBuildStatic(true);
     PROGRAM("AssignMemoryTest")
@@ -2771,7 +2762,6 @@ TEST_F(AssignMemoryTypeTest, TestA5MatmulViewExpSliceEnabled)
     constexpr auto name = "TestA5MatmulViewExpSliceEnabled";
     PrepareA5Platform();
     SetFullTestStrategy();
-    config::SetPassOption(ENABLE_SLICE, true);
     config::SetDebugOption(CFG_COMPILE_DBEUG_MODE, CFG_DEBUG_ALL);
     config::SetBuildStatic(true);
     PROGRAM("AssignMemoryTest")
@@ -2800,7 +2790,6 @@ TEST_F(AssignMemoryTypeTest, TestA5ExpViewMatmulSliceEnabled)
     constexpr auto name = "TestA5ExpViewMatmulSliceEnabled";
     PrepareA5Platform();
     SetFullTestStrategy();
-    config::SetPassOption(ENABLE_SLICE, true);
     config::SetDebugOption(CFG_COMPILE_DBEUG_MODE, CFG_DEBUG_ALL);
     config::SetBuildStatic(true);
     PROGRAM("AssignMemoryTest")
@@ -2830,7 +2819,6 @@ TEST_F(AssignMemoryTypeTest, TestA5MatmulViewMatmulSliceEnabled)
     constexpr auto name = "TestA5MatmulViewMatmulSliceEnabled";
     PrepareA5Platform();
     SetFullTestStrategy();
-    config::SetPassOption(ENABLE_SLICE, true);
     config::SetDebugOption(CFG_COMPILE_DBEUG_MODE, CFG_DEBUG_ALL);
     config::SetBuildStatic(true);
     PROGRAM("AssignMemoryTest")
@@ -2858,7 +2846,6 @@ TEST_F(AssignMemoryTypeTest, TestA5MatmulViewMatmulSliceEnabled)
 TEST_F(AssignMemoryTypeTest, MixedSlicePathsRequireWholeTensorContract)
 {
     PrepareA5Platform();
-    config::SetPassOption(ENABLE_SLICE, true);
     const Shape inputShape{NUM_16, NUM_48};
     const Shape smallSliceShape{NUM_16, NUM_16};
     const Shape largeSliceShape{NUM_16, NUM_32};
@@ -2910,7 +2897,6 @@ TEST_F(AssignMemoryTypeTest, MixedSlicePathsRequireWholeTensorContract)
 TEST_F(AssignMemoryTypeTest, MixedSlicePathsRespectMiddleMemoryAndConvProducer)
 {
     PrepareA5Platform();
-    config::SetPassOption(ENABLE_SLICE, true);
     const Shape inputShape{NUM_16, NUM_48};
     const Shape smallSliceShape{NUM_16, NUM_16};
     const Shape largeSliceShape{NUM_16, NUM_32};
@@ -3169,7 +3155,6 @@ TEST_F(AssignMemoryTypeTest, TestUB2L1On2201NoDirectPath)
 
 TEST_F(AssignMemoryTypeTest, TestUB2L1LargeToSmallMultiDimensional)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     Platform::Instance().ReloadMemoryPaths("3510");
     // Cover each batch axis independently, including the second batch axis in 4D.
@@ -3246,7 +3231,6 @@ TEST_F(AssignMemoryTypeTest, TestUB2L1LargeToSmallMultiDimensional)
 
 TEST_F(AssignMemoryTypeTest, TestUB2L1SmallToLargeMultiDimensional)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     Platform::Instance().ReloadMemoryPaths("3510");
     // Cover each batch axis independently, including the second batch axis in 4D.
@@ -3597,7 +3581,6 @@ TEST_F(AssignMemoryTypeTest, TestConvertOpsHaveDynValidShape)
 TEST_F(AssignMemoryTypeTest, DynamicShapeOutputFallsBackToDdr)
 {
     PrepareA5Platform();
-    config::SetPassOption(ENABLE_SLICE, true);
     auto function = std::make_shared<Function>(Program::GetInstance(), "DynamicShapeOutputFallsBackToDdr",
                                                "DynamicShapeOutputFallsBackToDdr", nullptr);
     ASSERT_NE(function, nullptr);
@@ -3762,7 +3745,6 @@ TEST_F(AssignMemoryTypeTest, ReshapeL1SlicePathIsNotKeptInUb)
 
 TEST_F(AssignMemoryTypeTest, SplitReshapeInfersUnknownSliceTargetsBeforeUbUpgrade)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     // GATHER requires DDR inputs; EXP requires UB. Keep both slice targets unknown
     // until the pass infers them, including a mixed-consumer and parallel-input case.
     for (bool hasDdrConsumer : {false, true}) {
@@ -3863,7 +3845,6 @@ TEST_F(AssignMemoryTypeTest, SplitReshapeRespectsParallelInputConsumers)
 
 TEST_F(AssignMemoryTypeTest, SplitReshapeParallelUbSliceAvoidsDdrRoundTrip)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     ComputationalGraphBuilder G;
     const Shape inputShape{NUM_16, NUM_32};
     const Shape outputShape{NUM_32, NUM_16};
@@ -4006,7 +3987,6 @@ TEST_F(AssignMemoryTypeTest, SplitReshapeParallelSlicePreservesL1SuccessorRules)
 
 TEST_F(AssignMemoryTypeTest, Conv1DGroupReshapeUsesDdr)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     for (bool groupReshape : {false, true}) {
         SCOPED_TRACE(groupReshape);
         ComputationalGraphBuilder G;
@@ -4061,7 +4041,6 @@ TEST_F(AssignMemoryTypeTest, SyncUnusedFunctionBoundaryMemoryTypes)
 TEST_F(AssignMemoryTypeTest, ExplicitUnknownGatherElementSliceFromIncastFallsBackToDdr)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
-    config::SetPassOption(ENABLE_SLICE, true);
     ComputationalGraphBuilder G;
     Shape shape{NUM_16, NUM_16};
     ASSERT_TRUE(G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_UNKNOWN, "input"));
@@ -4123,7 +4102,6 @@ TEST_F(AssignMemoryTypeTest, A6GmGatherElementRequiresSimt)
 TEST_F(AssignMemoryTypeTest, ExplicitUnknownGatherElementOffsetSliceFromIncastFallsBackToDdr)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
-    config::SetPassOption(ENABLE_SLICE, true);
     ComputationalGraphBuilder G;
     Shape shape{NUM_16, NUM_16};
     ASSERT_TRUE(G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_UNKNOWN, "input"));
@@ -4148,7 +4126,6 @@ TEST_F(AssignMemoryTypeTest, ExplicitUnknownGatherElementOffsetSliceFromIncastFa
 TEST_F(AssignMemoryTypeTest, A5UbSourceGatherElementDoesNotRequireSimt)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
-    config::SetPassOption(ENABLE_SLICE, true);
     ComputationalGraphBuilder G;
     Shape shape{NUM_16, NUM_16};
     ASSERT_TRUE(G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_UB, "source"));
@@ -4167,7 +4144,6 @@ TEST_F(AssignMemoryTypeTest, A5UbSourceGatherElementDoesNotRequireSimt)
 TEST_F(AssignMemoryTypeTest, A6UbSourceGatherElementDoesNotRequireSimt)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_9201);
-    config::SetPassOption(ENABLE_SLICE, true);
     ComputationalGraphBuilder G;
     Shape shape{NUM_16, NUM_16};
     ASSERT_TRUE(G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_UB, "source"));
@@ -4477,7 +4453,6 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBBothSideOffsetsSmallToLargeDdrFallback)
 // guard 的 dst 侧必须穿透 register_copy 链才能发现 to≠0; 双侧同时非零应拒绝升级、经 DDR 中转。
 TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallBothSideOffsetsThroughRegisterCopyDdrFallback)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     Platform::Instance().ReloadMemoryPaths("3510");
     ComputationalGraphBuilder G;
@@ -4540,7 +4515,6 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBLargeToSmallBothSideOffsetsThroughRegiste
 // 拒绝升级、经 DDR 中转。
 TEST_F(AssignMemoryTypeTest, TestL0C2UBFromOffsetDirectAssembleZeroToDdrFallback)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     Platform::Instance().ReloadMemoryPaths("3510");
     ComputationalGraphBuilder G;
@@ -4708,7 +4682,6 @@ class AssignMemoryTypeUbSliceTest : public AssignMemoryTypeTest,
 
 TEST_P(AssignMemoryTypeUbSliceTest, MaterializeUnalignedSliceBeforeVectorConsumer)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     const auto [dtype, offset] = GetParam();
     const bool aligned = (offset * BytesOf(dtype)) % 32 == 0;
     auto function = std::make_shared<Function>(Program::GetInstance(), "UbSliceAlignment", "UbSliceAlignment", nullptr);
@@ -4817,7 +4790,6 @@ TEST_F(AssignMemoryTypeTest, L1DdrL1ContractSliceDowngradeToLayoutOps)
 TEST_F(AssignMemoryTypeTest, OutcastMiddleIsNotUpgradedByContractSlicePath)
 {
     PrepareA5Platform();
-    config::SetPassOption(ENABLE_SLICE, true);
     auto function = std::make_shared<Function>(Program::GetInstance(), "OutcastMiddleIsNotUpgradedByContractSlicePath",
                                                "OutcastMiddleIsNotUpgradedByContractSlicePath", nullptr);
     ASSERT_NE(function, nullptr);
@@ -5334,7 +5306,6 @@ TEST_F(AssignMemoryTypeTest, TestL0C2UBShapeTransportEndToEndByFunctionMacro)
 // 第一个 VIEW 输入 DDR 输出 UB，表达搬入语义，被 NormalizeViewAssembleOpcodes 归一化为 SLICE。
 TEST_F(AssignMemoryTypeTest, ViewPartialReadToOutcastSplitsViewAndContract)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     auto function = std::make_shared<Function>(Program::GetInstance(), "ViewPartialReadToOutcastSplitsViewAndContract",
                                                "ViewPartialReadToOutcastSplitsViewAndContract", nullptr);
     ASSERT_NE(function, nullptr);

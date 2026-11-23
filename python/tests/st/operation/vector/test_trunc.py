@@ -48,6 +48,5 @@ def run_trunc_test(case: dict):
 
 
 @pytest.mark.parametrize("case", TRUNC_TESTS, ids=[case["case_name"] for case in TRUNC_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_trunc(case: dict):
     run_trunc_test(case)

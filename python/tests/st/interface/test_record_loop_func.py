@@ -22,7 +22,6 @@ def init_tensors():
     return a, b, c
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_dynamic_loop_nomacro():
     a, b, c = init_tensors()
     with pypto.function("MAIN", a, b, c):

@@ -89,7 +89,6 @@ def test_axpy_cpp_st_onboard(case_index, y_shape, x_shape, dtypes, view_shape, t
 
 
 @pytest.mark.skip(reason="冒烟跳过")
-@pypto.options(pass_options={"enable_slice": True})
 def test_axpy_onboard():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

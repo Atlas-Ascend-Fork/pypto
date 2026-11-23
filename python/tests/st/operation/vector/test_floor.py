@@ -48,6 +48,5 @@ def run_floor_test(case: dict):
 
 
 @pytest.mark.parametrize("case", FLOOR_TESTS, ids=[case["case_name"] for case in FLOOR_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_floor(case: dict):
     run_floor_test(case)

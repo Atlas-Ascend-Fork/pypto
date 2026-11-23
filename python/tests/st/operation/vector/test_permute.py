@@ -102,6 +102,5 @@ def run_permute_test(case: dict):
 
 
 @pytest.mark.parametrize("case", PERMUTE_TESTS, ids=[case["case_name"] for case in PERMUTE_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_permute(case: dict):
     run_permute_test(case)

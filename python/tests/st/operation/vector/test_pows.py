@@ -48,6 +48,5 @@ def run_pows_test(case: dict):
 
 
 @pytest.mark.parametrize("case", POWS_TESTS, ids=[case["case_name"] for case in POWS_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_pows(case: dict):
     run_pows_test(case)

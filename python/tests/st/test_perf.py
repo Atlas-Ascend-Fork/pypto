@@ -83,7 +83,6 @@ class ShapeConfig:
 
 @pypto.frontend.jit(
     debug_options={"runtime_debug_mode": 1},
-    pass_options={"enable_slice": False},
     runtime_options={"device_sched_mode": 2, "stitch_function_max_num": 32},
 )
 def bmm_kernel_with_no_mn_split(
@@ -167,7 +166,6 @@ def _build_experimental_config():
     return experimental_config
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_perf():
     mp.set_start_method('spawn', force=True)
     result_queue = mp.Queue()

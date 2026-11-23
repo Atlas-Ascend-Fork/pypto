@@ -33,7 +33,6 @@ def add_kernel(
     out[:] = (a + b) * 2.0
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_add(device):
     shape = (64, 64)
 
@@ -51,7 +50,6 @@ def erfc_kernel(x: pypto.Tensor[[...], pypto.DT_FP32], out: pypto.Tensor[[...], 
     out[:] = pypto.erfc(x)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_erfc(device):
     shape = (64, 64)
 
@@ -72,7 +70,6 @@ def matmul_kernel(
     out.move(pypto.matmul(a, b, a.dtype))
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_matmul(device):
     m, k, n = 64, 128, 64
 
@@ -90,7 +87,6 @@ def sum_kernel(a: pypto.Tensor[[...], pypto.DT_FP32], out: pypto.Tensor[[...], p
     out[:] = pypto.sum(a, dim=-1, keepdim=False)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sum(device):
     a = torch.tensor([[1, 2, 3], [4, 5, 6]], dtype=torch.float32, device=device)
     out = torch.empty((2), dtype=torch.float32, device=device)
@@ -133,7 +129,6 @@ def dynamic_add_kernel(
             pypto.assemble(tile, [m * block_m, n * block_n], output)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_dynamic_add(device):
     m, n = 512, 512
     block_m, block_n = 128, 128

@@ -59,6 +59,5 @@ def run_clip_test(case: dict):
 
 
 @pytest.mark.parametrize("case", CLIP_TESTS, ids=[case["case_name"] for case in CLIP_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_clip(case: dict):
     run_clip_test(case)

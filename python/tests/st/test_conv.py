@@ -32,7 +32,7 @@ def create_conv_kernel(
     dilations,
     groups=1,
 ):
-    @pypto.frontend.jit(pass_options={"enable_slice": False})
+    @pypto.frontend.jit
     def conv_kernel(
         fmap: pypto.Tensor(fmap_shape, dtype),
         weight: pypto.Tensor(weight_shape, dtype),
@@ -71,7 +71,7 @@ def test_conv1d_fp16_basic_with_bias():
     c = torch.rand(bias_shape, dtype=dtype_torch, device='npu')
     d = torch.zeros(out_shape, dtype=dtype_torch, device='npu')
 
-    @pypto.frontend.jit(pass_options={"enable_slice": False})
+    @pypto.frontend.jit
     def conv_kernel(
         fmap: pypto.Tensor(fmap_shape, dtype),
         weight: pypto.Tensor(weight_shape, dtype),
@@ -141,7 +141,7 @@ def test_conv2d_dynamic_batch_stride():
     b = torch.rand(weight_shape, dtype=dtype_torch, device='npu')
     c_out = torch.zeros(out_shape, dtype=dtype_torch, device='npu')
 
-    @pypto.frontend.jit(pass_options={"enable_slice": False})
+    @pypto.frontend.jit
     def conv2d_dynamic_batch_stride_kernel(
         input_a: pypto.Tensor([pypto.DYNAMIC, 16, 32, 32]),
         input_b: pypto.Tensor([64, 16, 3, 3]),
@@ -199,7 +199,7 @@ def test_conv2d_dynamic_hout_relu():
     b = torch.rand(weight_shape, dtype=dtype_torch, device='npu')
     c_out = torch.zeros(out_shape, dtype=dtype_torch, device='npu')
 
-    @pypto.frontend.jit(pass_options={"enable_slice": False})
+    @pypto.frontend.jit
     def conv2d_dynamic_hout_kernel(
         input_a: pypto.Tensor([1, 16, pypto.DYNAMIC, 34]),
         input_b: pypto.Tensor([64, 16, 3, 3]),
@@ -262,7 +262,7 @@ def test_conv1d_dynamic_cout():
     b = torch.rand(weight_shape, dtype=dtype_torch, device='npu')
     c_out = torch.zeros(out_shape, dtype=dtype_torch, device='npu')
 
-    @pypto.frontend.jit(pass_options={"enable_slice": False})
+    @pypto.frontend.jit
     def conv1d_dynamic_cout_kernel(
         input_a: pypto.Tensor([1, 16, 64]),
         input_b: pypto.Tensor([pypto.DYNAMIC, 16, 3]),

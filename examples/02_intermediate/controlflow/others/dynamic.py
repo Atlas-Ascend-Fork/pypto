@@ -124,7 +124,6 @@ def dynamic_mul_kernel(
         pypto.assemble(result, [b_offset, 0], output)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_dynamic_mul(device_id: int = None):
     """Test dynamic mul with different batch sizes - same kernel, no recompilation."""
     print("=" * 60)
@@ -187,7 +186,6 @@ def softmax_kernel(
         output_tensor[b_offset:b_offset_end, ...] = softmax_out
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_dynamic_partial(device_id: int = None):
     """Test softmax with partial dynamic dimensions (only batch is dynamic)."""
     print("=" * 60)
@@ -312,7 +310,6 @@ def attention_kernel(
         pypto.assemble(res, [bs_offset, 0, 0, 0], output_tensor)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_dynamic_attention(device_id: int = None):
     """Test attention with dynamic batch sizes."""
     print("=" * 60)
@@ -396,7 +393,6 @@ def dynamic_add_kernel(
             pypto.assemble(result, [b_offset, h_offset], output)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_dynamic_multi_dim(device_id: int = None):
     """Test kernel with multiple dynamic dimensions."""
     print("=" * 60)

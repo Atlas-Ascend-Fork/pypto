@@ -123,7 +123,6 @@ class MM(torch.nn.Module):
         return out
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_softmax_capture(device_id=None, dynamic: bool = True) -> None:
     if not device_id:
         device_id = torch.npu.current_device()

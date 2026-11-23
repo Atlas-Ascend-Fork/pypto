@@ -36,7 +36,6 @@ def add_kernel_list(
         c.move(pypto.add(c, b[i * 16:(i + 1) * 16, i * 16:(i + 1) * 16]))
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_range_list_iterate():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

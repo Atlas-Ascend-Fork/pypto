@@ -190,6 +190,30 @@ void AddTokenConsumer(Operation& op, const Token& token, Function& function)
 }
 } // namespace
 
+bool ReplaceTensor::MoveSharedAssembleWriteToken(Operation& producer, Operation& consumer, const Token& token,
+                                                 Function& function)
+{
+    if (producer.GetOpcode() != Opcode::OP_ASSEMBLE || consumer.GetOpcode() != Opcode::OP_ASSEMBLE ||
+        producer.GetOOperands().front() != consumer.GetOOperands().front()) {
+        return false;
+    }
+    auto producerWrites = FindFirstNonInplaceProducers(producer);
+    auto consumerWrites = FindFirstNonInplaceProducers(consumer);
+    if (producerWrites.size() != 1 || consumerWrites.size() != 1 ||
+        HasDependencyPath(*consumerWrites.front(), *producerWrites.front())) {
+        return false;
+    }
+
+    auto& producerTokens = producer.result_token_;
+    producerTokens.erase(std::remove(producerTokens.begin(), producerTokens.end(), token), producerTokens.end());
+    function.GetVarDependency().RemoveProducer(token, GetStmt(producer));
+    producerWrites.front()->result_token_.push_back(token);
+    function.GetVarDependency().AddProducer(token, GetStmt(*producerWrites.front()));
+    RemoveTokenConsumer(consumer, token, function);
+    AddTokenConsumer(*consumerWrites.front(), token, function);
+    return true;
+}
+
 /**
  * @brief Read and cache the UB capacity on first use because platform configuration remains stable during a pass.
  */
@@ -565,15 +589,30 @@ void ReplaceTensor::AddViewInputsToBoundTensors(const LogicalTensorPtr& curTenso
 
 Status ReplaceTensor::ForwardView(Operation* op, LogicalTensorPtr& rootTensor, Function& function)
 {
+    const auto& viewOut = op->GetOOperands()[0];
+    const bool rebindDdr = viewOut->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR &&
+                           viewOut->GetRawTensor() != rootTensor->GetRawTensor();
     if (ForUpdateView(op) == FAILED) {
         return FAILED;
     }
     processedOp.insert(op->GetOpMagic());
-    SetRawTensor(op->GetOOperands()[0], rootTensor->tensor);
+    SetRawTensor(viewOut, rootTensor->tensor);
+    if (rebindDdr) {
+        for (auto* consumer : viewOut->GetConsumers()) {
+            if (!IsCopyIn(consumer->GetOpcode()) ||
+                !std::dynamic_pointer_cast<CopyOpAttribute>(consumer->GetOpAttribute())) {
+                continue;
+            }
+            if (UpdateCopyInAttr(consumer) == FAILED) {
+                return FAILED;
+            }
+            consumer->SetAttr(COPY_IN_VIEW_OFFSET_ABSORBED, true);
+        }
+    }
     forwardOps.insert(op->GetOpMagic());
-    forRoots.push(op->GetOOperands()[0]);
-    if (!function.IsFromOutCast(op->GetOOperands()[0])) {
-        function.UpdateLinkMap(op->GetOOperands()[0], op->GetIOperands()[0]);
+    forRoots.push(viewOut);
+    if (!function.IsFromOutCast(viewOut)) {
+        function.UpdateLinkMap(viewOut, op->GetIOperands()[0]);
     }
     return SUCCESS;
 }
@@ -1767,6 +1806,10 @@ void ReplaceTensor::RebuildTokenProducer(Function& function)
             }
         }
         if (matchedConsumers.empty() || matchedConsumers.size() != consumers.size()) {
+            continue;
+        }
+        if (matchedConsumers.size() == 1 &&
+            MoveSharedAssembleWriteToken(*producer, *matchedConsumers.front(), token, function)) {
             continue;
         }
 

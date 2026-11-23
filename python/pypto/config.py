@@ -315,7 +315,6 @@ def set_pass_options(
     experimental: Optional[Dict[str, int]] = None,
     ooo_sched_mode: Optional[str] = None,
     sg_set_tunevf_mode: Optional[int] = None,
-    enable_slice: Optional[bool] = None,
 ) -> None:
     """
     Set pass options.
@@ -365,9 +364,6 @@ def set_pass_options(
         - 0: default behavior (no change)
         - 1: bypass TuneTileOpSeqForVF and TuneSyncForVF passes
         - 2: ignore performance modeling and maximize fusion in TuneSyncForVF
-
-    enable_slice : bool
-        Whether to enable slice-related processing. Defaults to False.
 
     sg_set_ooo_scope : int
         Control OoO scheduling manual task grouping. Connected ops with the
@@ -436,10 +432,6 @@ def set_pass_options(
         if ooo_sched_mode not in ("", "GAPMIN", "HLF"):
             raise ValueError(f"Invalid ooo_sched_mode: '{ooo_sched_mode}'. Expected '', 'GAPMIN' or 'HLF'.")
         pass_options['ooo_sched_mode'] = ooo_sched_mode
-    if enable_slice is not None:
-        if not isinstance(enable_slice, bool):
-            raise ValueError(f"Invalid enable_slice: '{enable_slice}'. Expected bool.")
-        pass_options['enable_slice'] = enable_slice
 
     if pass_options:
         set_options(pass_options=pass_options)
@@ -489,7 +481,6 @@ def get_pass_options() -> Dict[str, Union[str, int, bool, List[int], Dict[int, i
     }
     result['ooo_sched_mode'] = rst.get('ooo_sched_mode', '')
     result['sg_set_tunevf_mode'] = rst.get('sg_set_tunevf_mode', 0)
-    result['enable_slice'] = rst.get('enable_slice', False)
     return result
 
 
@@ -815,6 +806,9 @@ class _Options:
             value = getattr(self, attr)
             if isinstance(value, dict):
                 opts.update({f"{prefix}{k}": v.value if isinstance(v, enum.Enum) else v for k, v in value.items()})
+
+        if "pass.enable_slice" in opts:
+            raise ValueError("enable_slice is not configurable from Python")
 
         if self.vec_tile_shapes is not None:
             opts["vec_tile_shapes"] = self.vec_tile_shapes

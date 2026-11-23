@@ -36,7 +36,6 @@ public:
     {
         Program::GetInstance().Reset();
         config::Reset();
-        config::SetPassOption(ENABLE_SLICE, true);
         config::SetHostOption(COMPILE_STAGE, CS_EXECUTE_GRAPH);
         config::SetPlatformConfig(KEY_ENABLE_COST_MODEL, false);
     }
@@ -307,7 +306,6 @@ TEST_F(TestInferDiscontinuousInput, testViewAssembleNormalizeToSliceContract)
 
     Function* function = G.GetFunction();
     EXPECT_NE(function, nullptr);
-    config::SetPassOption(ENABLE_SLICE, true);
 
     InferDiscontinuousInput inferDiscontinuousInput;
     EXPECT_EQ(inferDiscontinuousInput.Run(*function, "", "", 0), SUCCESS);

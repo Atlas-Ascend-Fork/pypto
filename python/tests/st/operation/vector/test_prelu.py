@@ -89,6 +89,5 @@ def run_prelu_test(case: dict):
 
 
 @pytest.mark.parametrize("case", PRELU_TESTS, ids=[case["case_name"] for case in PRELU_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_prelu(case: dict):
     run_prelu_test(case)

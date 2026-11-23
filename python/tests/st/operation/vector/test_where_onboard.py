@@ -79,7 +79,6 @@ def run_migrated_where_test(case: dict):
 
 
 @pytest.mark.parametrize("case", WHERE_ONBOARD_TESTS, ids=[case["case_name"] for case in WHERE_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_migrated_where(case: dict):
     run_migrated_where_test(case)
 
@@ -93,7 +92,6 @@ import torch  # noqa: E402, F811
 import pypto  # noqa: E402, F811
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_where():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

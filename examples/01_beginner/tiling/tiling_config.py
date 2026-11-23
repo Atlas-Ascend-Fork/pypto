@@ -83,7 +83,6 @@ def compute_with_cube_tile_shapes_kernel(
     out.move(pypto.matmul(a, b, a.dtype))
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_set_cube_tile_shapes_basic(device_id: int = None):
     """Test basic usage of set_cube_tile_shapes function"""
     print("=" * 60)
@@ -152,7 +151,6 @@ def create_different_tile_shapes_kernel(run_mode=global_run_mode):
     return compute_with_different_tile_shapes
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_set_different_tile_shapes_result(device_id: int = None):
     """Test the impact of different tile shape settings on calculation results"""
     print("=" * 60)
@@ -202,7 +200,6 @@ def compute_with_tile_64_kernel(
     out.move(pypto.matmul(a, b, a.dtype, b_trans=True))
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_set_different_tile_shapes_runtime(device_id: int = None):
     """Test the impact of different tile shape settings on runtime"""
     print("=" * 60)
@@ -249,7 +246,6 @@ def compute_with_vec_tile_shapes_kernel(
     out.move(pypto.add(a, b))
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_set_vec_tile_shapes_basic(device_id: int = None):
     """Test basic usage of set_vec_tile_shapes function"""
     print("=" * 60)
@@ -314,7 +310,6 @@ def compute_with_vec_different_tile_shapes_kernel(
     out3.move(pypto.add(a, b))
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_set_vec_different_tile_shapes_result(device_id: int = None):
     """Test the impact of different tile shape settings on calculation results"""
     print("=" * 60)
@@ -349,7 +344,6 @@ def compute_with_vec_tile_kernel(a: pypto.Tensor(), b: pypto.Tensor(), out: pypt
     out.move(pypto.add(a, b))
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_set_vec_different_tile_shapes_runtime(device_id: int = None):
     """Test the impact of different tile shape settings on runtime"""
     print("=" * 60)

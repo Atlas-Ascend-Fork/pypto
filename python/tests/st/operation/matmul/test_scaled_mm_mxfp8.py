@@ -284,7 +284,6 @@ def run_scaled_mm_test(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in SCALED_MM_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_scaled_mm(case: dict):
     run_scaled_mm_test(case)
 

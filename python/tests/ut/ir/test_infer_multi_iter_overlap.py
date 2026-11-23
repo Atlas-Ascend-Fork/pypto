@@ -33,8 +33,7 @@ def _multi_iter_no_overlap(prog):
 
 
 def _run_overlap_pass(kernel, *args):
-    with pypto.options(pass_options={"enable_slice": True}):
-        prog = run_root_function(kernel, *args, create_new_logical_tensor=True)
+    prog = run_root_function(kernel, *args, create_new_logical_tensor=True)
     prog = ir.Pass.infer_multi_iter_overlap()(prog)
     return _multi_iter_no_overlap(prog)
 

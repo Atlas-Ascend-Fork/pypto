@@ -48,6 +48,5 @@ def run_erfc_onboard_test(case: dict):
 
 
 @pytest.mark.parametrize("case", ERFC_ONBOARD_TESTS, ids=[case["case_name"] for case in ERFC_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_erfc_onboard(case: dict):
     run_erfc_onboard_test(case)

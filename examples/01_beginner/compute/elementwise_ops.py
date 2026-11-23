@@ -80,7 +80,6 @@ def abs_kernel(x: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto.D
     out[:] = pypto.abs(x)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_abs_basic(device_id: int = None):
     """Test basic usage of abs function"""
     print("=" * 60)
@@ -115,7 +114,6 @@ def add_kernel(
     out[:] = pypto.add(a, b)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_add_basic(device_id: int = None):
     """Test basic usage of add function"""
     print("=" * 60)
@@ -146,7 +144,6 @@ def add_broadcast_kernel(
     out[:] = pypto.add(a, b)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_add_broadcast(device_id: int = None):
     """Test broadcasting between tensors of different shapes"""
     print("=" * 60)
@@ -175,7 +172,6 @@ def add_scalar_kernel(x: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], 
     out[:] = pypto.add(x, scalar)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_add_scalar(device_id: int = None):
     """Test adding a scalar to a tensor"""
     print("=" * 60)
@@ -214,7 +210,6 @@ def clip_kernel(
     out[:] = pypto.clip(a, min_, max_)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_clip_basic(device_id: int = None):
     """Test basic usage of clip function"""
     print("=" * 60)
@@ -249,7 +244,6 @@ def clip_broadcast_kernel(
     out[:] = pypto.clip(a, min_, max_)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_clip_broadcast(device_id: int = None):
     """Test broadcasting between tensors of different shapes"""
     print("=" * 60)
@@ -286,7 +280,6 @@ def div_kernel(
     out[:] = pypto.div(a, b)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_div_basic(device_id: int = None):
     """Test basic usage of div function"""
     print("=" * 60)
@@ -317,7 +310,6 @@ def div_broadcast_kernel(
     out[:] = pypto.div(a, b)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_div_broadcast(device_id: int = None):
     """Test broadcasting between tensors of different shapes"""
     print("=" * 60)
@@ -346,7 +338,6 @@ def div_scalar_kernel(a: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], 
     out[:] = pypto.div(a, scalar)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_div_scalar(device_id: int = None):
     """Test diving a scalar to a tensor"""
     print("=" * 60)
@@ -380,7 +371,6 @@ def exp_kernel(x: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto.D
     out[:] = pypto.exp(x)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_exp_basic(device_id: int = None):
     """Test basic usage of exp function"""
     print("=" * 60)
@@ -413,7 +403,6 @@ def exp2_kernel(x: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto.
     out[:] = pypto.exp2(x)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_exp2_basic(device_id: int = None):
     """Test basic usage of exp2 function"""
     print("=" * 60)
@@ -446,7 +435,6 @@ def expm1_kernel(x: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto
     out[:] = pypto.expm1(x)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_expm1_basic(device_id: int = None):
     """Test basic usage of expm1 function"""
     print("=" * 60)
@@ -479,7 +467,6 @@ def log_kernel(a: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto.D
     out[:] = pypto.log(a)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_log_basic(device_id: int = None):
     """Test basic usage of log function"""
     print("=" * 60)
@@ -514,7 +501,6 @@ def mul_kernel(
     out[:] = pypto.mul(a, b)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_mul_basic(device_id: int = None):
     """Test basic usage of mul function"""
     print("=" * 60)
@@ -545,7 +531,6 @@ def mul_broadcast_kernel(
     out[:] = pypto.mul(a, b)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_mul_broadcast(device_id: int = None):
     """Test broadcasting between tensors of different shapes"""
     print("=" * 60)
@@ -574,7 +559,6 @@ def mul_scalar_kernel(a: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], 
     out[:] = pypto.mul(a, scalar)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_mul_scalar(device_id: int = None):
     """Test muling a scalar to a tensor"""
     print("=" * 60)
@@ -608,7 +592,6 @@ def neg_kernel(a: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto.D
     out[:] = pypto.neg(a)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_neg_basic(device_id: int = None):
     """Test basic usage of neg function"""
     print("=" * 60)
@@ -641,7 +624,6 @@ def pow_kernel(a: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto.D
     out[:] = pypto.pow(a, b)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_pow_basic(device_id: int = None):
     """Test basic usage of pow function"""
     print("=" * 60)
@@ -675,7 +657,6 @@ def round_kernel(a: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto
     out[:] = pypto.round(a, decimals=decimals)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_round_basic(device_id: int = None):
     """Test basic usage of round function"""
     print("=" * 60)
@@ -709,7 +690,6 @@ def rsqrt_kernel(a: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto
     out[:] = pypto.rsqrt(a)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_rsqrt_basic(device_id: int = None):
     """Test basic usage of rsqrt function"""
     print("=" * 60)
@@ -742,7 +722,6 @@ def ceil_kernel(a: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto.
     out[:] = pypto.ceil(a)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_ceil_basic(device_id: int = None):
     """Test basic usage of ceil function"""
     print("=" * 60)
@@ -775,7 +754,6 @@ def floor_kernel(a: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto
     out[:] = pypto.floor(a)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_floor_basic(device_id: int = None):
     """Test basic usage of floor function"""
     print("=" * 60)
@@ -808,7 +786,6 @@ def trunc_kernel(a: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto
     out[:] = pypto.trunc(a)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_trunc_basic(device_id: int = None):
     """Test basic usage of trunc function"""
     print("=" * 60)
@@ -841,7 +818,6 @@ def sqrt_kernel(a: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], pypto.
     out[:] = pypto.sqrt(a)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sqrt_basic(device_id: int = None):
     """Test basic usage of sqrt function"""
     print("=" * 60)
@@ -876,7 +852,6 @@ def sub_kernel(
     out[:] = pypto.sub(a, b)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sub_basic(device_id: int = None):
     """Test basic usage of sub function"""
     print("=" * 60)
@@ -907,7 +882,6 @@ def sub_broadcast_kernel(
     out[:] = pypto.sub(a, b)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sub_broadcast(device_id: int = None):
     """Test broadcasting between tensors of different shapes"""
     print("=" * 60)
@@ -936,7 +910,6 @@ def sub_scalar_kernel(a: pypto.Tensor([], pypto.DT_FP32), out: pypto.Tensor([], 
     out[:] = pypto.sub(a, scalar)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sub_scalar(device_id: int = None):
     """Test subing a scalar to a tensor"""
     print("=" * 60)

@@ -52,6 +52,5 @@ def run_remainder_onboard_test(case: dict):
 
 
 @pytest.mark.parametrize("case", REMAINDER_ONBOARD_TESTS, ids=[case["case_name"] for case in REMAINDER_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_remainder_onboard(case: dict):
     run_remainder_onboard_test(case)

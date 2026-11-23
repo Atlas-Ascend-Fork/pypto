@@ -34,7 +34,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
 from pypto.pypto_impl import ir
 
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
@@ -182,7 +181,6 @@ def ssa_if_trees_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("flag", [True, False])
-@pypto.options(pass_options={"enable_slice": False})
 def test_ssa_manual_multi_and_single_id_if_trees(flag):
     def golden(source):
         result = source.clone()
@@ -239,7 +237,6 @@ def ssa_dynamic_if_kernel(
 @pytest.mark.parametrize("flag", [True, False])
 @pytest.mark.parametrize("manual_index", [0, 1])
 @pytest.mark.parametrize("auto_index", [0, 1])
-@pypto.options(pass_options={"enable_slice": False})
 def test_ssa_manual_multi_auto_dynamic_if(flag, manual_index, auto_index):
     def golden(source):
         result = source.clone()
@@ -317,7 +314,6 @@ def ssa_dynamic_tuple_kernel(
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("flag", [True, False])
 @pytest.mark.parametrize("slot", [0, 1])
-@pypto.options(pass_options={"enable_slice": False})
 def test_ssa_auto_auto_dynamic_tuple_positions(flag, slot):
     def golden(source):
         result = source.clone()
@@ -370,7 +366,6 @@ def ssa_for_tuple_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("steps", [0, 1, 2, 3, 5])
-@pypto.options(pass_options={"enable_slice": False})
 def test_ssa_manual_three_id_for_tuple_break_continue(steps):
     def golden(source):
         blocks = list(source.chunk(3))
@@ -424,7 +419,6 @@ def ssa_while_exits_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("steps", [0, 1, 3])
-@pypto.options(pass_options={"enable_slice": False})
 def test_ssa_while_header_exit_counts_and_none_are_independent(steps):
     def golden(source):
         return torch.cat([source[ROWS:], source[:ROWS] * (2 ** (steps + 1))])
@@ -469,7 +463,6 @@ def ssa_while_jumps_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("limit", [0, 1, 2, 3, 6])
-@pypto.options(pass_options={"enable_slice": False})
 def test_ssa_manual_multi_auto_while_jumps(limit):
     def golden(source):
         blocks = [source[:ROWS] * 2, source[ROWS:].clone()]
@@ -534,7 +527,6 @@ def ssa_nested_loops_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("outer_steps, inner_steps", [(0, 2), (2, 0), (2, 3), (5, 6)])
-@pypto.options(pass_options={"enable_slice": False})
 def test_ssa_nested_for_while_restore_targets_and_connect_results(outer_steps, inner_steps):
     def golden(source):
         blocks = [block.clone() for block in source.chunk(4)]
@@ -585,7 +577,6 @@ def ssa_views_kernel(
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("flag", [True, False])
 @pytest.mark.parametrize("slot", [0, 1])
-@pypto.options(pass_options={"enable_slice": False})
 def test_ssa_reinterpret_subview_and_dynamic_group(flag, slot):
     def golden(source):
         result = source.clone()
@@ -651,7 +642,6 @@ def ssa_named_state_kernel(
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("steps", [0, 1, 4])
 @pytest.mark.parametrize("reverse", [False, True])
-@pypto.options(pass_options={"enable_slice": False})
 def test_ssa_named_tuple_keeps_count_positions(steps, reverse):
     def golden(source):
         blocks = [block.clone() for block in source.chunk(4)]

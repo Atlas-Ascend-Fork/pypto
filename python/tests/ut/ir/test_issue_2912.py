@@ -58,8 +58,7 @@ def test_war_conflict():
     w = pypto.Tensor([128, 128], pypto.DT_BF16)
     out = pypto.Tensor([-1, 128], pypto.DT_BF16)
 
-    with pypto.options(pass_options={"enable_slice": True}):
-        prog = run_root_function(war_conflict_pypto, a, w, out, create_new_logical_tensor=True)
+    prog = run_root_function(war_conflict_pypto, a, w, out, create_new_logical_tensor=True)
 
     slot_info = pypto_impl.GetSlotInfo()
     out_slot = slot_info['out']

@@ -50,6 +50,5 @@ def run_cumprod_test(case: dict):
 
 
 @pytest.mark.parametrize("case", CUMPROD_TESTS, ids=[case["case_name"] for case in CUMPROD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_cumprod(case: dict):
     run_cumprod_test(case)

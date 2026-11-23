@@ -42,7 +42,6 @@ def reshape_kernel(
         pypto.assemble(a1, [b_idx * n1, 0], tmp)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_reshape():
     b = 3
     n1 = 64
@@ -78,7 +77,6 @@ def reshape_infer_shape_kernel(
     out_tensor.move(y)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_reshape_infer_shape():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

@@ -107,7 +107,6 @@ def dual_dst_split_n_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.skip(reason="large test case")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dual_dst_split_n():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -166,7 +165,6 @@ def dual_dst_split_m_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.skip(reason="large test case")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dual_dst_split_m():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -216,7 +214,6 @@ def dual_dst_chained_ops_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.skip(reason="large test case")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dual_dst_chained_ops():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -262,7 +259,6 @@ def dual_dst_asymmetric_scale_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.skip(reason="large test case")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dual_dst_asymmetric_scale():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -343,7 +339,6 @@ def dual_dst_max_gain_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.skip(reason="large test case")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dual_dst_max_gain():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -431,7 +426,6 @@ def dual_dst_long_chain_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.skip(reason="large test case")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dual_dst_long_chain():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -538,7 +532,6 @@ def dual_dst_link_chain_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.skip(reason="large test case")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dual_dst_link_chain():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -665,7 +658,6 @@ def dual_dst_mega_kernel(
 
 @pytest.mark.soc("950")
 @pytest.mark.skip(reason="large test case")
-@pypto.options(pass_options={"enable_slice": False})
 def test_dual_dst_mega():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

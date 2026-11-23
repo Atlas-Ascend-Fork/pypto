@@ -197,7 +197,6 @@ def _validate_analyze_semantics(core_list: List[Dict]) -> None:
         _validate_round_summary_rows(round_id, rows)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_dump_perf():
     """
     看护用例：DUMP_DEVICE_PERF 落盘后，对 trace JSON 跑 analyze 并校验汇总语义。

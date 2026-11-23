@@ -73,6 +73,5 @@ def run_lrelu_test(case: dict):
 
 
 @pytest.mark.parametrize("case", LRELU_TESTS, ids=[case["case_name"] for case in LRELU_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_lrelu(case: dict):
     run_lrelu_test(case)

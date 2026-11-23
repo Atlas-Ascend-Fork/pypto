@@ -315,7 +315,6 @@ def _collect_guard_errors(perf_dir):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_mix_swimlane_guard():
     perf_dir = None
     output_dir = None

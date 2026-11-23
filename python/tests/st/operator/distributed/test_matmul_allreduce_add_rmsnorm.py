@@ -260,7 +260,6 @@ def matmul_allreduce_add_rmsnorm_worker(
     kernel_name: str = 'normal',
 ):
     try:
-        pypto.set_pass_options(**_PASS_OPTIONS)
         kernel = _KERNEL_MAP[kernel_name]
         groups = config.init_hccl_comm(logical_rank_id)
         physical_device_id = config.get_physical_device_id(logical_rank_id)
@@ -339,14 +338,8 @@ def _get_soc_version():
         return None
 
 
-_PASS_OPTIONS = {
-    "enable_slice": False,
-}
-
-
 @pytest.mark.skip(reason="distributed python case")
 @pytest.mark.world_size(4)
-@pypto.options(pass_options=_PASS_OPTIONS)
 def test_matmul_allreduce_add_rmsnorm():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -372,7 +365,6 @@ def test_matmul_allreduce_add_rmsnorm():
 
 @pytest.mark.skip(reason="Performance test case")
 @pytest.mark.world_size(4)
-@pypto.options(pass_options={"enable_slice": True})
 def test_matmul_allreduce_add_rmsnorm_performance():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

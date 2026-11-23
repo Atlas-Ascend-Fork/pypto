@@ -124,7 +124,6 @@ def _run(cfg: StitchConfig):
     return out.cpu().numpy(), golden
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_stitch_outcast_consumer():
     cfg = StitchConfig(128, 256, 128, 128, 128, [64, 64], [64, 128], [128, 128])
     result, golden = _run(cfg)

@@ -18,7 +18,6 @@ import torch
 import pypto
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_slice_neg_index():
     """Test negative index"""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -48,7 +47,6 @@ def test_slice_neg_index():
     pypto.runtime._device_fini()
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_1d_assemble_to_2d():
     """1d tensor assemble to 2d tensor"""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -79,7 +77,6 @@ def test_1d_assemble_to_2d():
     pypto.runtime._device_fini()
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_2d_assemble_to_3d():
     """2d tensor assemble to 3d tensor"""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -114,7 +111,6 @@ def test_2d_assemble_to_3d():
     pypto.runtime._device_fini()
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_slice_int_index():
     """Test mix use of slice and int"""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -144,7 +140,6 @@ def test_slice_int_index():
     pypto.runtime._device_fini()
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_slice_ellipsis_index():
     """Test mix use of ellipsis, slice and int"""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))

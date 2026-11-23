@@ -17,7 +17,6 @@ import torch
 import pypto
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_unsqueeze_shape_dim():
     """Test whether the output shape is correct"""
     shape = [8, 16, 16]
@@ -34,7 +33,6 @@ def test_unsqueeze_shape_dim():
             assert res.shape == list(res_torch.shape)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_unsqueeze_content_equal():
     """Test whether the output content has changed"""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))

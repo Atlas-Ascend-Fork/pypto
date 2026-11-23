@@ -94,7 +94,6 @@ def add_scalar_loop_view_assemble_kernel(
         pypto.assemble(t3_sub, [b_offset, 0, 0, 0], output)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_add_scalar_loop_view_assemble(device_id=None, dynamic: bool = True) -> None:
     device = f'npu:{device_id}' if global_run_mode == pypto.RunMode.NPU and device_id is not None else 'cpu'
 

@@ -89,6 +89,5 @@ def run_minimum_test(case: dict):
 
 
 @pytest.mark.parametrize("case", MINIMUM_TESTS, ids=[case["case_name"] for case in MINIMUM_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_minimum(case: dict):
     run_minimum_test(case)

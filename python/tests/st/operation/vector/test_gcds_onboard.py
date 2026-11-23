@@ -49,6 +49,5 @@ def run_gcds_onboard_test(case: dict):
 
 
 @pytest.mark.parametrize("case", GCDS_ONBOARD_TESTS, ids=[case["case_name"] for case in GCDS_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_gcds_onboard(case: dict):
     run_gcds_onboard_test(case)

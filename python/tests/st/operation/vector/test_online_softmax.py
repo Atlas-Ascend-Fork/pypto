@@ -17,7 +17,6 @@ import pypto
 pytestmark = pytest.mark.soc("950")
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def test_online_softmax_experimental_shapes():
     scores = pypto.tensor([128, 128], pypto.DT_FP32, "scores")
 
@@ -33,7 +32,6 @@ def test_online_softmax_experimental_shapes():
         assert column_sum.dtype == pypto.DT_FP32
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def test_online_softmax_update_experimental_shapes():
     previous_max = pypto.tensor([1, 128], pypto.DT_FP32, "previous_max")
     previous_sum = pypto.tensor([1, 128], pypto.DT_FP32, "previous_sum")

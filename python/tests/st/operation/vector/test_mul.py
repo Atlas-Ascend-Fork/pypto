@@ -79,6 +79,5 @@ def run_mul_test(case: dict):
 
 
 @pytest.mark.parametrize("case", MUL_TESTS, ids=[case["case_name"] for case in MUL_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_mul(case: dict):
     run_mul_test(case)

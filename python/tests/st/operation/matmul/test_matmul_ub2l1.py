@@ -524,7 +524,6 @@ def run_cast_matmul_nd_test(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in SCALED_MM_UB2L1_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_cast_scaled_mm_ub2l1(case: dict):
     run_cast_scaled_mm_ub2l1_test(case)
 
@@ -532,7 +531,6 @@ def test_cast_scaled_mm_ub2l1(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in ALL_CAST_MATMUL_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": True})
 def test_cast_matmul(case: dict):
     run_cast_matmul_test(case)
 
@@ -540,7 +538,6 @@ def test_cast_matmul(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in CAST_3D_MATMUL_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": True})
 def test_cast_matmul_3d(case: dict):
     run_cast_matmul_nd_test(case)
 
@@ -548,7 +545,6 @@ def test_cast_matmul_3d(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in CAST_4D_MATMUL_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": True})
 def test_cast_matmul_4d(case: dict):
     run_cast_matmul_nd_test(case)
 

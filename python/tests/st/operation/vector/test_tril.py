@@ -50,6 +50,5 @@ def run_tril_test(case: dict):
 
 
 @pytest.mark.parametrize("case", TRIL_TESTS, ids=[case["case_name"] for case in TRIL_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_tril(case: dict):
     run_tril_test(case)

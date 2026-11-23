@@ -89,7 +89,6 @@ def test_range_cpp_st_onboard(
         pypto.runtime._device_fini()
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_vector_operation_range():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

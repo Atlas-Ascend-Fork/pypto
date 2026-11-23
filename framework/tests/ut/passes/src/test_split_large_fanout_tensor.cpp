@@ -702,7 +702,6 @@ TEST_F(SplitLargeFanoutTensorTest, EquivalentSplitRegionsServeBothBranches)
     for (int variant = 0; variant < 14; ++variant) {
         SCOPED_TRACE(variant);
         const bool shareable = variant == 0 || variant == 10 || variant == 13;
-        config::SetPassOption("enable_slice", true);
         ComputationalGraphBuilder graph;
         graph.AddTensor(DT_FP32, {1}, "controlInput");
         graph.AddTensor(DT_FP32, {1}, "controlOutput");
@@ -2549,7 +2548,6 @@ TEST_F(SplitLargeFanoutTensorTest, OneToMSharedTensor)
 
 TEST_F(SplitLargeFanoutTensorTest, AliasFanoutHasIndependentBuffersWhileCopiesAndTokensShare)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     for (const std::string mode :
          {"alias", "slice", "contract", "view_token", "assemble_token", "view_need_copy", "assemble_need_copy",
           "view_result_token", "assemble_result_token", "inplace", "rmw"}) {
@@ -3449,7 +3447,6 @@ TEST_F(SplitLargeFanoutTensorTest, SharedStorageIsNotSplitIndependently)
 
 TEST_F(SplitLargeFanoutTensorTest, PreserveSharedRawAcrossMultiProducerSplit)
 {
-    config::SetPassOption("enable_slice", true);
     ComputationalGraphBuilder graph;
     ASSERT_TRUE(graph.AddTensors(DT_FP32, {8, 16}, {"first", "second", "early_lo", "early_hi", "late_hi"}));
     ASSERT_TRUE(graph.AddTensors(DT_FP32, {16, 16}, {"before", "after"}));
@@ -3541,7 +3538,6 @@ TEST_F(SplitLargeFanoutTensorTest, ContractSliceFoldingPreservesTokenBearingAcce
 // VIEW 合并后形成的 SLICE-CONTRACT-SLICE 仍需清理，并保留 L1 消费者的有效形状。
 TEST_F(SplitLargeFanoutTensorTest, FoldContractSliceAfterMergingPrecedingViews)
 {
-    config::SetPassOption("enable_slice", true);
     ComputationalGraphBuilder graph;
     ASSERT_TRUE(graph.AddTensors(DT_FP32, {16, 16}, {"source"}));
     ASSERT_TRUE(graph.AddTensors(DT_FP32, {8, 16}, {"tile", "alias", "middle", "read", "out"}));

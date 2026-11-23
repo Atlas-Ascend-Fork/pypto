@@ -28,7 +28,6 @@ def add_kernel(
     c.move(a + b)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sched_degrade_launch_aicpu_2():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -47,7 +46,6 @@ def test_sched_degrade_launch_aicpu_2():
     assert torch.allclose(golden, c_data.cpu(), atol=1e-5)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sched_degrade_launch_aicpu_3():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -66,7 +64,6 @@ def test_sched_degrade_launch_aicpu_3():
     assert torch.allclose(golden, c_data.cpu(), atol=1e-5)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sched_degrade_launch_aicpu_4():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -85,7 +82,6 @@ def test_sched_degrade_launch_aicpu_4():
     assert torch.allclose(golden, c_data.cpu(), atol=1e-5)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sched_degrade_disable_early_launch():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -106,7 +102,6 @@ def test_sched_degrade_disable_early_launch():
     assert torch.allclose(golden, c_data.cpu(), atol=1e-5)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sched_degrade_allow_cross_cluster():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

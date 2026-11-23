@@ -178,7 +178,6 @@ def attention_kernel(q: pypto.tensor(), k: pypto.tensor(), v: pypto.tensor(), ou
     out[:] = pypto.matmul(attn_weights, v, out_dtype=out.dtype)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sequential_functions(device_id: int = None, dynamic: bool = False) -> None:
     """Test multiple functions in sequence."""
     print("=" * 60)
@@ -222,7 +221,6 @@ def test_sequential_functions(device_id: int = None, dynamic: bool = False) -> N
     print()
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_residual_connection(device_id: int = None, dynamic: bool = False) -> None:
     """Test residual connection pattern."""
     print("=" * 60)
@@ -256,7 +254,6 @@ def test_residual_connection(device_id: int = None, dynamic: bool = False) -> No
     print()
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_transformer_block(device_id: int = None, dynamic: bool = False) -> None:
     """Test a complete transformer block using multiple functions."""
     print("=" * 60)
@@ -325,7 +322,6 @@ def test_transformer_block(device_id: int = None, dynamic: bool = False) -> None
     print()
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_function_reuse(device_id: int = None, dynamic: bool = True) -> None:
     """Test reusing the same function multiple times."""
     print("=" * 60)

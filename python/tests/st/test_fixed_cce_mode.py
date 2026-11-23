@@ -58,7 +58,6 @@ def _run_kernel_once(work_path: str, device_id: int, result_queue: mp.Queue):
         os.environ["ASCEND_WORK_PATH"] = work_path
         # Fixed-CCE path must not depend on TILE_FWK_OUTPUT_DIR for device-side CCE.
         os.environ.pop("TILE_FWK_OUTPUT_DIR", None)
-        pypto.set_pass_options(enable_slice=True)
         torch.npu.set_device(int(device_id))
 
         tiling = 32

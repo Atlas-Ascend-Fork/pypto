@@ -82,7 +82,6 @@ def matmul_kernel(
     out[:] = pypto.matmul(a, b, pypto.DT_FP32)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_matmul_basic(device_id: int = None):
     """Test basic matrix multiplication"""
     print("=" * 60)
@@ -113,7 +112,6 @@ def matmul_batch_kernel(
     out[:] = pypto.matmul(a, b, pypto.DT_FP32)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_matmul_batch(device_id: int = None):
     """Test batch matrix multiplication"""
     print("=" * 60)
@@ -144,7 +142,6 @@ def matmul_broadcast_kernel(
     out[:] = pypto.matmul(a, b, pypto.DT_FP32)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_matmul_broadcast(device_id: int = None):
     """Test batch matrix multiplication with broadcasting"""
     print("=" * 60)
@@ -183,7 +180,6 @@ def matmul_trans_left_kernel(
     out[:] = pypto.matmul(a, b, pypto.DT_FP32, a_trans=True)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_matmul_trans(device_id: int = None):
     """Test matrix multiplication with transposition"""
     print("=" * 60)
@@ -246,7 +242,6 @@ def matmul_bias_kernel(
     out[:] = pypto.matmul(a, b, pypto.DT_FP32, extend_params=extend_params)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_matmul_bias(device_id: int = None):
     """Test matrix multiplication with bias"""
     print("=" * 60)

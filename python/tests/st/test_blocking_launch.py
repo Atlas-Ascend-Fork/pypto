@@ -40,7 +40,6 @@ def matmul_add(
 
 
 def device_run_data_from_device_mix_nodep():
-    pypto.set_pass_options(enable_slice=False)
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
 

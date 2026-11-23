@@ -48,6 +48,5 @@ def run_acos_test(case: dict):
 
 
 @pytest.mark.parametrize("case", ACOS_TESTS, ids=[case["case_name"] for case in ACOS_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_acos(case: dict):
     run_acos_test(case)

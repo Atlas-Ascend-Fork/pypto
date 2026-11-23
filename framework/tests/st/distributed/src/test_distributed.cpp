@@ -114,9 +114,5 @@ void GegisterOps()
 }
 
 INSTANTIATE_TEST_SUITE_P(TestDistributedOps, DistributedTest, ::testing::ValuesIn(GetOpMetaData<OpMetaData>()));
-TEST_P(DistributedTest, TestOps)
-{
-    config::SetPassOption(ENABLE_SLICE, false);
-    RunDistributedTestGeneric(GetParam().testData_, GetParam().fileName_);
-}
+TEST_P(DistributedTest, TestOps) { RunDistributedTestGeneric(GetParam().testData_, GetParam().fileName_); }
 } // namespace npu::tile_fwk::Distributed

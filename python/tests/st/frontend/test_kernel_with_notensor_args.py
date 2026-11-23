@@ -31,7 +31,6 @@ def add_kernel(
 # =============================================================================
 # 通过 kwargs 传入 non-tensor 参数
 # =============================================================================
-@pypto.options(pass_options={"enable_slice": True})
 def test_add_with_kwargs():
     device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
     torch.npu.set_device(int(device_id))
@@ -58,7 +57,6 @@ def add_npu_with_tiling(
 # # =============================================================================
 # # 混合情况
 # # =============================================================================
-@pypto.options(pass_options={"enable_slice": True})
 def test_add_npu_with_tiling():
     device_id = os.environ.get("TILE_FWK_DEVICE_ID", 0)
     torch.npu.set_device(int(device_id))

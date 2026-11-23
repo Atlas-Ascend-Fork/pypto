@@ -111,7 +111,6 @@ def softmax_kernel(
         output_tensor[b_offset:b_offset_end, ...] = softmax_out
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_softmax(device_id: int = None, dynamic: bool = True) -> None:
     device = f'npu:{device_id}' if global_run_mode == pypto.RunMode.NPU and device_id is not None else 'cpu'
 

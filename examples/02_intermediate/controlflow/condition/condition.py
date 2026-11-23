@@ -96,7 +96,6 @@ def nested_loops_with_conditions_kernel(
                 y[i:i + 1, j:j + 1] = a_view - b_view
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_nested_loops_with_conditions(device_id=None, dynamic: bool = True) -> None:
     """Test nested loops with conditional statements."""
     print("=" * 60)
@@ -167,7 +166,6 @@ def add_scalar_loop_dyn_axis_static_cond_kernel_dynamic(
     add_core(input0, input1, output, val, flag)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_add_scalar_loop_dyn_axis_static_cond(device_id=None) -> None:
     """Test dynamic axis with static (compile-time) condition."""
     print("=" * 60)
@@ -231,7 +229,6 @@ def add_scalar_loop_dyn_axis_dyn_cond_kernel(
             output[b_offset:b_offset_end, ...] = t3_sub
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_add_scalar_loop_dynamic_axis_dynamic_cond(device_id=None) -> None:
     """Test dynamic axis with dynamic (runtime) condition."""
     print("=" * 60)
@@ -291,7 +288,6 @@ def add_scalar_loop_dyn_axis_dyn_loop_cond_kernel(
             output[b_offset:b_offset_end, ...] = t3_sub
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_add_scalar_loop_dynamic_axis_dynamic_loop_cond(device_id=None) -> None:
     """Test dynamic axis with loop boundary conditions (is_loop_begin / is_loop_end)."""
     print("=" * 60)

@@ -29,7 +29,6 @@ def assemble_kernel(
     pypto.assemble(aux_mat + a, [0, 0], out)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_assemble_jit_compile():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)
@@ -68,7 +67,6 @@ def generate_f3_golden(a, b):
     return z
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_verify_jit_compile():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)

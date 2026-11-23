@@ -50,6 +50,5 @@ def run_atan2_test(case: dict):
 
 
 @pytest.mark.parametrize("case", ATAN2_TESTS, ids=[case["case_name"] for case in ATAN2_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_atan2(case: dict):
     run_atan2_test(case)

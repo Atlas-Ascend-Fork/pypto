@@ -48,6 +48,5 @@ def run_ceil_test(case: dict):
 
 
 @pytest.mark.parametrize("case", CEIL_TESTS, ids=[case["case_name"] for case in CEIL_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_ceil(case: dict):
     run_ceil_test(case)

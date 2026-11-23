@@ -61,6 +61,5 @@ def run_add_test(case: dict):
 
 
 @pytest.mark.parametrize("case", ADD_TESTS, ids=[case["case_name"] for case in ADD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_add(case: dict):
     run_add_test(case)

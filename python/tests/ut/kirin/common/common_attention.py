@@ -99,7 +99,6 @@ def _make_attention_kernel(
     @pypto.frontend.jit(
         codegen_options={"soc_version": soc_version},
         runtime_options={"run_mode": pypto.RunMode.SIM},
-        pass_options={"enable_slice": False},
     )
     def kernel(
         q: pypto.Tensor(q_shape, pypto.DT_FP16),

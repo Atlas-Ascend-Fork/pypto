@@ -76,6 +76,5 @@ def run_gatherelement_test(case: dict):
 
 
 @pytest.mark.parametrize("case", GATHERELEMENT_TESTS, ids=[case["case_name"] for case in GATHERELEMENT_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_gatherelement(case: dict):
     run_gatherelement_test(case)

@@ -45,7 +45,6 @@ def _reshape_matmul_only_torch(input_tensor_a, input_tensor_b):
     return output
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def test_reshape_validshape_matmul_pypto():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch_npu.npu.set_device(device_id)

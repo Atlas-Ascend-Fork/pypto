@@ -380,7 +380,6 @@ def run_batch_matmul_test(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in BASIC_3D_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_batch_matmul_3d_nd(case: dict):
     run_batch_matmul_test(case)
 
@@ -388,7 +387,6 @@ def test_batch_matmul_3d_nd(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in BASIC_4D_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_batch_matmul_4d_nd(case: dict):
     run_batch_matmul_test(case)
 
@@ -414,7 +412,6 @@ def run_batch_matmul_dynamic_test(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in DYNAMIC_3D_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_batch_matmul_3d_all_dynamic_nd(case: dict):
     run_batch_matmul_dynamic_test(case)
 

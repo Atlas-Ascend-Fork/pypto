@@ -24,8 +24,6 @@ import textwrap
 
 import pytest
 
-import pypto
-
 _SUBPROCESS_SCRIPT = textwrap.dedent(
     """\
     import os
@@ -98,7 +96,6 @@ _SUBPROCESS_SCRIPT = textwrap.dedent(
 )
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_onboard_dump():
     env = os.environ.copy()
     with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:

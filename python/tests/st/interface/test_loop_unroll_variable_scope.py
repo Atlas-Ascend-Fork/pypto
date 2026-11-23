@@ -26,7 +26,6 @@ import torch
 import pypto
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_loop_unroll_variable_scope():
     """Test that variables defined outside loop_unroll are accessible in all unroll blocks.
 

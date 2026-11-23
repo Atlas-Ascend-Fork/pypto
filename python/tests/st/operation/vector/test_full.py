@@ -91,6 +91,5 @@ def run_full_test(case: dict):
 
 
 @pytest.mark.parametrize("case", FULL_TESTS, ids=[case["case_name"] for case in FULL_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_full(case: dict):
     run_full_test(case)

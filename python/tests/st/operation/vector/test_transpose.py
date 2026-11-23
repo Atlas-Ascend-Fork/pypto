@@ -96,6 +96,5 @@ def run_transpose_test(case: dict):
 
 
 @pytest.mark.parametrize("case", TRANSPOSE_TESTS, ids=[case["case_name"] for case in TRANSPOSE_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_transpose(case: dict):
     run_transpose_test(case)

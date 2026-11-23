@@ -48,6 +48,5 @@ def run_sqrt_test(case: dict):
 
 
 @pytest.mark.parametrize("case", SQRT_TESTS, ids=[case["case_name"] for case in SQRT_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_sqrt(case: dict):
     run_sqrt_test(case)

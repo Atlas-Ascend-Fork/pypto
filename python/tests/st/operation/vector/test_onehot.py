@@ -63,6 +63,5 @@ def run_onehot_test(case: dict):
 
 
 @pytest.mark.parametrize("case", ONEHOT_TESTS, ids=[case["case_name"] for case in ONEHOT_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_onehot(case: dict):
     run_onehot_test(case)

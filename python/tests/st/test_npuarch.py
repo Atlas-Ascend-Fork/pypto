@@ -45,7 +45,6 @@ def add(
     c.move(a + b)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_npuarch_config():
     device_id = os.environ.get('TILE_FWK_DEVICE_ID', 0)
     torch.npu.set_device(int(device_id))

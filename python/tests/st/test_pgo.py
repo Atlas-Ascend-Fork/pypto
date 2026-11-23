@@ -44,7 +44,6 @@ _NT = _N // _TILE
 _PGO_KIND_FILES = ("per_core.json", "aicpu.json")
 
 
-@pypto.options(pass_options={"enable_slice": True})
 @pytest.mark.soc("910", "950")
 def test_pgo_update_dump():
     """pgo_update=True 时，launch 同步后应在 <tmp>/pgo 下产出 prof 数据文件。"""

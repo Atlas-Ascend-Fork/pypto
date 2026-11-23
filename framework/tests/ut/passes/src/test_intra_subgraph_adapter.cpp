@@ -599,7 +599,6 @@ TEST_F(IntraSubgraphAdapterTest, BoundaryAssembleShouldKeepAssembleWhenDisableSl
 
 TEST_F(IntraSubgraphAdapterTest, SiblingDdrRoutingAdaptsProducerAndConsumerWhenEnableSlice)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     ComputationalGraphBuilder subGraph;
     std::vector<std::string> tensorNames{"input_t", "boundary_t", "boundary_out", "sibling_source", "sibling_out"};
     std::vector<MemoryType> tensorMemTypes{MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB,
@@ -664,7 +663,6 @@ TEST_F(IntraSubgraphAdapterTest, SiblingDdrRoutingAdaptsProducerAndConsumerWhenE
 
 TEST_F(IntraSubgraphAdapterTest, A5UbOriginL1BoundaryPreservesNdStorageAndSliceOffset)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     ComputationalGraphBuilder graph;
     ASSERT_TRUE(graph.AddTensors(DataType::DT_BF16, {128, 128}, {MemoryType::MEM_UB, MemoryType::MEM_UB},
@@ -695,7 +693,6 @@ TEST_F(IntraSubgraphAdapterTest, A5UbOriginL1BoundaryPreservesNdStorageAndSliceO
 
 TEST_F(IntraSubgraphAdapterTest, A5UbOriginL1BoundaryPreservesDynamicSourceAndSliceOffsets)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     ComputationalGraphBuilder graph;
     ASSERT_TRUE(graph.AddTensors(DataType::DT_BF16, {128, 128}, {MemoryType::MEM_UB, MemoryType::MEM_UB},
@@ -739,7 +736,6 @@ TEST_F(IntraSubgraphAdapterTest, A5UbOriginL1BoundaryPreservesDynamicSourceAndSl
 
 TEST_F(IntraSubgraphAdapterTest, A5UbOriginNzBoundaryKeepsSeparateStorage)
 {
-    config::SetPassOption(ENABLE_SLICE, true);
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     ComputationalGraphBuilder graph;
     ASSERT_TRUE(graph.AddTensors(DataType::DT_BF16, {128, 128}, {MemoryType::MEM_UB, MemoryType::MEM_UB},

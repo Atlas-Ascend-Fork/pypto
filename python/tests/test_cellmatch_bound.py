@@ -68,7 +68,6 @@ def k_cellmatch_tail_valid_shape(
         pypto.assemble(tmp0 + 0.01, [loop_idx * OFFSET, 0], out)
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_cellmatch_tail_valid_shape():
     """Tail tile validShape < declared shape: cellMatch fill/read must use validShape."""
     pypto_impl.SetPassConfig("PVC2_OOO", "SplitReshape", "disable_pass", True)

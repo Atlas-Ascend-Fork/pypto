@@ -22,7 +22,6 @@ SHAPE = [8, 32]
 DTYPE = pypto.DT_FP32
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_assmble_2d():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -59,7 +58,6 @@ def test_assmble_2d():
     pypto.runtime._device_fini()
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_assmble_1d():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

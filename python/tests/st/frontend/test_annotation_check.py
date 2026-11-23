@@ -36,7 +36,6 @@ def create_compute_func(shape, dtype):
     return compute_add
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_correct_annotation():
     """Test that correct annotation causes no error."""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -53,7 +52,6 @@ def test_correct_annotation():
     logging.info("✓ Verified: Correct annotation causes no error.")
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_number_of_input_not_match():
     """Test that number of input not match causes an error."""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -72,7 +70,6 @@ def test_number_of_input_not_match():
         raise RuntimeError("Number of input not match causes no error.")
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_incorrect_number_of_dimensions_annotation():
     """Test that incorrect number of dimensions annotation causes an error."""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -93,7 +90,6 @@ def test_incorrect_number_of_dimensions_annotation():
         raise ValueError("Incorrect number of dimensions annotation causes no error.")
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_incorrect_shape_annotation():
     """Test that incorrect shape annotation causes an error."""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
@@ -113,7 +109,6 @@ def test_incorrect_shape_annotation():
         raise ValueError("Incorrect shape annotation causes no error.")
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_incorrect_dtype_annotation():
     """Test that incorrect annotation causes an error."""
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))

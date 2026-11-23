@@ -713,7 +713,6 @@ def detailed_tensor_compare(tensor1, tensor2, rtol=1e-3, atol=1e-3, verbose=True
     return result
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_chunk_gated_delta_rule():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

@@ -54,6 +54,5 @@ def run_divmod_test(case: dict):
 
 
 @pytest.mark.parametrize("case", DIVMOD_TESTS, ids=[case["case_name"] for case in DIVMOD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_divmod(case: dict):
     run_divmod_test(case)

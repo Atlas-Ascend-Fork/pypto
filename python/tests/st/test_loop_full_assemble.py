@@ -38,7 +38,6 @@ def loop_full_assemble_kernel(
         out[b_idx * TILE_B:(b_idx + 1) * TILE_B, :] = out_tensor_1
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_loop_full_then_assemble():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)

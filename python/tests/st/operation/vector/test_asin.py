@@ -48,6 +48,5 @@ def run_asin_test(case: dict):
 
 
 @pytest.mark.parametrize("case", ASIN_TESTS, ids=[case["case_name"] for case in ASIN_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_asin(case: dict):
     run_asin_test(case)

@@ -79,6 +79,5 @@ def run_fmod_test(case: dict):
 
 
 @pytest.mark.parametrize("case", FMOD_TESTS, ids=[case["case_name"] for case in FMOD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_fmod(case: dict):
     run_fmod_test(case)

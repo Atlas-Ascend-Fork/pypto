@@ -636,7 +636,6 @@ def run_fixpipe_bias_test(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in BIAS_FIXPIPE_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": True})
 def test_fixpipe_bias(case: dict):
     run_fixpipe_bias_test(case)
 

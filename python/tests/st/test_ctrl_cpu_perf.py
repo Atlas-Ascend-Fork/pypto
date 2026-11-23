@@ -73,9 +73,6 @@ _INIT_NAME = re.compile(r"^INIT_(\d+)$")
 
 @pypto.frontend.jit(
     runtime_options={"stitch_function_max_num": _STITCH_FUNCTION_MAX_NUM},
-    # 固定编译模式：测量子进程是 spawn 的独立解释器，不会继承 conftest 的全局配置，
-    # 只能靠这里传给 kernel 的 pass_options 决定 enable_slice，否则会随配置文件默认值漂移。
-    pass_options={"enable_slice": True},
 )
 def ctrl_perf_kernel(
     x: pypto.Tensor([pypto.DYNAMIC, pypto.DYNAMIC], pypto.DT_FP16),

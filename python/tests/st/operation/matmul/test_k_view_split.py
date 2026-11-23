@@ -357,7 +357,6 @@ def run_scaled_mm_k_split_test(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in K_SPLIT_2D_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_2d_k_split(case: dict):
     """Test 2D matmul with k-axis split."""
     run_2d_k_split_test(case)
@@ -366,7 +365,6 @@ def test_2d_k_split(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in K_SPLIT_3D_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_3d_bmm_k_split(case: dict):
     """Test 3D BMM with k-axis split."""
     run_3d_bmm_k_split_test(case)
@@ -375,7 +373,6 @@ def test_3d_bmm_k_split(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in SCALED_MM_K_SPLIT_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_scaled_mm_k_split(case: dict):
     """Test 2D scaled_mm with k-axis split."""
     run_scaled_mm_k_split_test(case)

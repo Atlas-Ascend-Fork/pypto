@@ -211,6 +211,8 @@ private:
 
     Status MarkTensorAsPartialMem(Function& function);
 
+    static bool MoveSharedAssembleWriteToken(Operation& producer, Operation& consumer, const ir::VarPtr& token,
+                                             Function& function);
     void RebuildTokenProducer(Function& function);
     void RebuildTokenConsumer(Function& function);
 

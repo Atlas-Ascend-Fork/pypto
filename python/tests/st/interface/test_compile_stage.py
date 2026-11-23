@@ -31,7 +31,6 @@ def test_comipile_stage(host_options=None):
     return test_func
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_all_compile_stages():
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)

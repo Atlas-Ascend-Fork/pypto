@@ -52,6 +52,5 @@ def run_copysign_test(case: dict):
 
 
 @pytest.mark.parametrize("case", COPYSIGN_TESTS, ids=[case["case_name"] for case in COPYSIGN_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_copysign(case: dict):
     run_copysign_test(case)

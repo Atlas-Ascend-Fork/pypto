@@ -56,7 +56,6 @@ def compute_golden(data1, data2):
     return data2
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_select_experts():
     # 1. 设置参数
     shape = (256, 256)

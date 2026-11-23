@@ -73,6 +73,5 @@ def run_expm1_test(case: dict):
 
 
 @pytest.mark.parametrize("case", EXPM1_TESTS, ids=[case["case_name"] for case in EXPM1_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_expm1(case: dict):
     run_expm1_test(case)

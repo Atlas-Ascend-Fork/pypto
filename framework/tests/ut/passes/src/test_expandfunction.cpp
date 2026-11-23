@@ -215,7 +215,6 @@ public:
     {
         Program::GetInstance().Reset();
         config::Reset();
-        config::SetPassOption(ENABLE_SLICE, true);
         config::SetHostOption(COMPILE_STAGE, CS_EXECUTE_GRAPH);
         config::SetHostConfig(KEY_STRATEGY, "ExpandFunctionTestStrategy");
         config::SetPlatformConfig(KEY_ENABLE_COST_MODEL, false);

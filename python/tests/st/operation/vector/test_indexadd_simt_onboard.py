@@ -33,7 +33,6 @@ def make_indexadd_simt_inputs(config: IndexaddSimtOnboardConfig):
 @pytest.mark.parametrize(
     "case", INDEXADD_SIMT_ONBOARD_TESTS, ids=[case["case_name"] for case in INDEXADD_SIMT_ONBOARD_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": True})
 def test_indexadd_simt(case: dict):
     device_id = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
     torch.npu.set_device(device_id)

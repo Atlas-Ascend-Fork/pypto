@@ -186,7 +186,6 @@ INSTANTIATE_TEST_SUITE_P(TestTransData, TransDataOperationTest,
 
 TEST_P(TransDataOperationTest, TestTransData)
 {
-    config::SetPassOption(ENABLE_SLICE, false);
     auto test_data = GetParam().test_data_;
     int type = GetValueByName<int>(test_data, "type");
     int group = GetValueByName<int>(test_data, "group");

@@ -141,7 +141,6 @@ def scaled_dot_product_attention_kernel(
     output.move(pypto.matmul(attn_weights, v, out_dtype=pypto.DT_BF16))
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_scaled_dot_product_attention(device_id=None, dynamic: bool = False) -> None:
     """Test attention function with dynamic shapes."""
     print("=" * 60)
@@ -273,7 +272,6 @@ def attention_with_projection_golden(
     return output
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_attention_with_projection(device_id=None, dynamic: bool = False) -> None:
     """Test complete attention with input/output projections."""
     print("=" * 60)

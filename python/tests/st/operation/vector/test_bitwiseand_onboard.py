@@ -52,6 +52,5 @@ def run_bitwiseand_onboard_test(case: dict):
 
 
 @pytest.mark.parametrize("case", BITWISEAND_ONBOARD_TESTS, ids=[case["case_name"] for case in BITWISEAND_ONBOARD_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_bitwiseand_onboard(case: dict):
     run_bitwiseand_onboard_test(case)

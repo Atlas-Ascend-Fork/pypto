@@ -17,8 +17,6 @@ import pypto_pro.language as pl
 import pytest
 import torch
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -77,7 +75,6 @@ def auto_mutex_two_level_vector_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_mutex_two_level_vector_containment():
     def golden(source):
         result = source.clone()
@@ -121,7 +118,6 @@ def auto_mutex_balanced_three_level_vector_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_mutex_balanced_three_level_vector_containment():
     _run_vector_case(
         auto_mutex_balanced_three_level_vector_kernel,
@@ -184,7 +180,6 @@ def auto_mutex_unbalanced_three_level_vector_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_mutex_unbalanced_three_level_vector_containment():
     def golden(source):
         result = source.clone()
@@ -222,7 +217,6 @@ def auto_mutex_four_level_vector_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_mutex_four_level_vector_containment():
     def golden(source):
         result = source.clone()
@@ -404,7 +398,6 @@ def auto_mutex_manual_containment_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_mutex_manual_two_and_three_level_containment():
     def golden(source):
         result = source.clone()
@@ -537,7 +530,6 @@ def auto_mutex_cube_vector_containment_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_mutex_cube_vector_containment():
     _require_a5(ST_DEVICE)
     torch.manual_seed(35)
@@ -589,7 +581,6 @@ def auto_mutex_balanced_three_level_four_children_vector_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_mutex_balanced_three_level_four_children_vector_containment():
     _run_vector_case(
         auto_mutex_balanced_three_level_four_children_vector_kernel,
@@ -690,7 +681,6 @@ def auto_mutex_cube_manual_three_id_root_kernel(
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_auto_mutex_cube_manual_three_id_root():
     _require_a5(ST_DEVICE)
     torch.manual_seed(39)

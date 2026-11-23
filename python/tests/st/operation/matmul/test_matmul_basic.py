@@ -128,7 +128,6 @@ def test_matmul_basic(case: dict):
 @pytest.mark.parametrize(
     "case", [pytest.param(case, marks=pytest.mark.soc(*case["products"])) for case in NZ_FORMAT_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": False})
 def test_matmul_basic(case: dict):  # noqa: F811
     run_matmul_test(case)
 

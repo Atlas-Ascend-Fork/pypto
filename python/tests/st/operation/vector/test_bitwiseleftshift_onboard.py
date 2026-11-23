@@ -57,6 +57,5 @@ def run_bitwiseleftshift_onboard_test(case: dict):
 @pytest.mark.parametrize(
     "case", BITWISELEFTSHIFT_ONBOARD_TESTS, ids=[case["case_name"] for case in BITWISELEFTSHIFT_ONBOARD_TESTS]
 )
-@pypto.options(pass_options={"enable_slice": True})
 def test_bitwiseleftshift_onboard(case: dict):
     run_bitwiseleftshift_onboard_test(case)

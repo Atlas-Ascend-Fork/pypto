@@ -34,8 +34,6 @@ import pytest
 import torch
 import torch_npu  # noqa: F401 -- registers the npu backend
 
-import pypto
-
 ST_DEVICE_ID = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
 ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 
@@ -80,7 +78,6 @@ def conv_tile_alloc_kernel(out: pl.Tensor[[OUT_NUMEL], pl.DT_FP16]):
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_conv_tile_declaration_and_allocation_runs():
     _require_a5(ST_DEVICE)
 

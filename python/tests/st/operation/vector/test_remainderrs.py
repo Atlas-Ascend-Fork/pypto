@@ -49,6 +49,5 @@ def run_remainderrs_test(case: dict):
 
 
 @pytest.mark.parametrize("case", REMAINDERRS_TESTS, ids=[case["case_name"] for case in REMAINDERRS_TESTS])
-@pypto.options(pass_options={"enable_slice": True})
 def test_remainderrs(case: dict):
     run_remainderrs_test(case)

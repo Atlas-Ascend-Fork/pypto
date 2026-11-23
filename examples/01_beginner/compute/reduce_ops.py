@@ -99,7 +99,6 @@ def sum_op(a: torch.Tensor, dim: int, keepdim: bool = False) -> torch.Tensor:
     return out
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sum_basic(device_id: int = None):
     """Test basic usage of sum function"""
     print("=" * 60)
@@ -133,7 +132,6 @@ def test_sum_basic(device_id: int = None):
     print("✓ Basic usage of sum function completed successfully")
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_sum_different_dimensions(device_id: int = None):
     """Test reducing along different dimensions"""
     print("=" * 60)
@@ -206,7 +204,6 @@ def amax_op(a: torch.Tensor, dim: int, keepdim: bool = False) -> torch.Tensor:
     return out
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_amax_basic(device_id: int = None):
     """Test basic usage of amax function"""
     print("=" * 60)
@@ -244,7 +241,6 @@ def test_amax_basic(device_id: int = None):
     print("✓ Basic usage of amax function completed successfully")
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_amax_different_dimensions(device_id: int = None):
     """Test reducing along different dimensions"""
     print("=" * 60)
@@ -317,7 +313,6 @@ def amin_op(a: torch.Tensor, dim: int, keepdim: bool = False) -> torch.Tensor:
     return out
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_amin_basic(device_id: int = None):
     """Test basic usage of amin function"""
     print("=" * 60)
@@ -355,7 +350,6 @@ def test_amin_basic(device_id: int = None):
     print("✓ Basic usage of amin function completed successfully")
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_amin_different_dimensions(device_id: int = None):
     """Test reducing along different dimensions"""
     print("=" * 60)
@@ -427,7 +421,6 @@ def maximum_op(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return out
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_maximum_basic(device_id: int = None):
     """Test basic usage of maximum function"""
     print("=" * 60)
@@ -487,7 +480,6 @@ def minimum_op(a: torch.Tensor, b: torch.Tensor) -> torch.Tensor:
     return out
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_minimum_basic(device_id: int = None):
     """Test basic usage of minimum function"""
     print("=" * 60)

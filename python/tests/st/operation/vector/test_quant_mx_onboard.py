@@ -170,7 +170,6 @@ def _run_quant_mx_onboard(case: _QuantMXOnboardCase) -> None:
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_quant_mx_fp32_2d_onboard():
     input_shape = [4, 256]
     view_shape = [2, 256]
@@ -202,7 +201,6 @@ def test_quant_mx_fp32_2d_onboard():
 
 
 @pytest.mark.soc("950")
-@pypto.options(pass_options={"enable_slice": False})
 def test_quant_mx_e2m1_nv_fp16_2d_onboard():
     input_shape = [1, 128]
     view_shape = [1, 128]
@@ -237,7 +235,6 @@ def test_quant_mx_e2m1_nv_fp16_2d_onboard():
 @pytest.mark.parametrize("mode", [pypto.ROUND_DOWN, pypto.ROUND_UP])
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize("performance_mode", [True, False])
-@pypto.options(pass_options={"enable_slice": False})
 def test_quant_mx_fp4_packed_jit_onboard(axis, mode, dtype, performance_mode):
     """Compare packed bytes across FP4 tiles and both quantization axes."""
     torch.npu.set_device(int(os.environ.get("TILE_FWK_DEVICE_ID", 0)))

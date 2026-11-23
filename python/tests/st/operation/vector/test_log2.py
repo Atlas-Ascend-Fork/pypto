@@ -53,7 +53,6 @@ class Log2Test(TestBuilder):
         return (a_tensor,)
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def test():
     st = Log2Test(((16, 16), (8, 8)), op_log2, op_log2_golden, tiling=32)
     st()

@@ -32,7 +32,6 @@ def cust_dyn_func(
             b.move(pypto.add(a, b))
 
 
-@pypto.options(pass_options={"enable_slice": True})
 def test_device_run_data_from_device():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
@@ -84,7 +83,6 @@ def matmul_add(
         d.move(pypto.add(pypto.matmul(a0, b0, pypto.DT_INT32), c))
 
 
-@pypto.options(pass_options={"enable_slice": False})
 def test_device_run_data_from_device_mix_nodep():
     device_id = int(os.environ.get('TILE_FWK_DEVICE_ID', 0))
     torch.npu.set_device(device_id)
