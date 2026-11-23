@@ -187,6 +187,22 @@ static uint32_t UpdateSlotsImpl(DeviceWorkspaceAllocator* workspace, DeviceExecu
     uint32_t retCode = 0;
 
     uint64_t* expressionList = &devRootDup.GetExpression(0);
+    // Incast (R before W) then outcast (W + trailing R) follows topo on shared slot.
+    size_t updateIncastListSize = devRootSrc->GetUpdateIncastSlotListSize();
+    for (size_t i = 0; i < updateIncastListSize; ++i) {
+        auto& entry = devRootSrc->GetUpdateIncastSlot(i);
+        auto& incast = devRootSrc->GetIncast(entry.incastIdx);
+        auto& slot = slotList[entry.slotIdx];
+        DEV_VERBOSE_DEBUG("[UpdateSlots]   Begin update Incast [%d] from slot [%3d].", entry.incastIdx, entry.slotIdx);
+        uint32_t errCode = UpdateSlotsForIncastStitch(entry.slotIdx, slot, devRootSrc, incast, devTaskId, devNextIdx,
+                                                      expressionList, cellMatchTagSeq);
+        DEV_VERBOSE_DEBUG("[UpdateSlots]   Incast [%d] from slot [%3d], ret = 0x%x.", entry.incastIdx, entry.slotIdx,
+                          errCode);
+        if (errCode != 0) {
+            return errCode;
+        }
+    }
+
     size_t updateOutCastListSize = devRootSrc->GetUpdateOutCastSlotListSize();
     for (size_t i = 0; i < updateOutCastListSize; ++i) {
         auto& entry = devRootSrc->GetUpdateOutCastSlot(i);
@@ -225,25 +241,7 @@ static uint32_t UpdateSlotsImpl(DeviceWorkspaceAllocator* workspace, DeviceExecu
             retCode = errCode;
         }
     }
-    if (retCode != 0) {
-        return retCode;
-    }
-
-    size_t updateIncastListSize = devRootSrc->GetUpdateIncastSlotListSize();
-    for (size_t i = 0; i < updateIncastListSize; ++i) {
-        auto& entry = devRootSrc->GetUpdateIncastSlot(i);
-        auto& incast = devRootSrc->GetIncast(entry.incastIdx);
-        auto& slot = slotList[entry.slotIdx];
-        DEV_VERBOSE_DEBUG("[UpdateSlots]   Begin update Incast [%d] from slot [%3d].", entry.incastIdx, entry.slotIdx);
-        uint32_t errCode = UpdateSlotsForIncastStitch(entry.slotIdx, slot, devRootSrc, incast, devTaskId, devNextIdx,
-                                                      expressionList, cellMatchTagSeq);
-        DEV_VERBOSE_DEBUG("[UpdateSlots]   Incast [%d] from slot [%3d], ret = 0x%x.", entry.incastIdx, entry.slotIdx,
-                          errCode);
-        if (errCode != 0) {
-            return errCode;
-        }
-    }
-    return 0;
+    return retCode;
 }
 
 uint32_t DeviceSlotContext::UpdateSlots(DevAscendFunctionDupped& devRootDup, uint32_t devTaskId, uint32_t devNextIdx,
