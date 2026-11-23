@@ -3204,8 +3204,15 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
         }
         DfxProcWhenDevTaskStop(&state.ctx, state.args, state.metric, state.isExectedLeafTask);
     }
+    // 退出汇合：等全部核都观察到 STOP、不再读 tail 之后再清零，避免慢核把 tail==0 误判成
+    // “尚未发布”而在 GetDrcoDeviceTask 中空等（下一轮 launch 要等本 kernel 结束才能开始）。
+    SyncAllMix();
     if (BlockDescBlockIdx(state.blockDesc) == 0) {
-        // head/tail 由 host 下一次 launch 的 Reset（原子 store）复位；设备端只发布完成信号。
+        // 清零由 slot 的上一任使用者完成，保证 ring slot 复用时队列已空；仍需 host 在下一次
+        // launch 的 Reset 中原子复位。head/tail 同 cacheline：必须字粒度原子写，避免 plain
+        // store 脏整行后回写抹掉 host 已推进的 tail（与 devTask 末尾推进 head 的方式一致）。
+        state.deviceTaskReadyQueue->head = 0;
+        state.deviceTaskReadyQueue->tail = 0;
         uint64_t finished = DrcoGmLoad(&state.runtimeDataRingBufferHeadData->indexFinished.value) + 1;
         DrcoGmStore(&state.runtimeDataRingBufferHeadData->indexFinished.value, finished);
     }
