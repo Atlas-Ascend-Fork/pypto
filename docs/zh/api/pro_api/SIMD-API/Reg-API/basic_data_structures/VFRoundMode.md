@@ -33,16 +33,7 @@ class VFRoundMode(enum.Enum):
 
 ## 约束说明
 
-不同型号支持的舍入模式有所差异：
-<!-- npu="950" id6 -->
-- Ascend 950PR&950DT系列产品：所有舍入模式均支持。
-<!-- end id6 -->
-<!-- npu="A3" id4 -->
-- Atlas A3系列产品：不支持CAST_HYBRID。
-<!-- end id4 -->
-<!-- npu="910b" id5 -->
-- Atlas A2系列产品：不支持CAST_HYBRID。
-<!-- end id5 -->
+无。
 
 ## 调用示例
 

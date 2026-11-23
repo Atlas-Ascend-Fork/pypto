@@ -195,6 +195,7 @@ static std::string VFZeroingOnly(const ir::CallPtr& op, const std::string& opNam
 // FP4 types (FP4E2M1, FP4E1M2, FP4) are b4 but stored as b8 (packed 2-per-byte),
 // so they are also treated as b8 for load/store mode selection.
 static bool IsB8Type(DataType dt) { return dt.GetBit() <= 8; }
+static bool IsB8NonInt4Type(DataType dt) { return IsB8Type(dt) && dt != DataType::INT4 && dt != DataType::UINT4; }
 
 // Integer types with a native VF arithmetic instruction form (vadd/vsub/vmax/
 // vcmp ... have no 4-bit form, so INT4/UINT4 must be rejected up front).
@@ -825,7 +826,7 @@ static std::string EmitVFCreateMask(const ir::CallPtr& op, codegen::CodegenBase&
     // MaskReg dtype must be b8/b16/b32/b64 — determines mask granularity
     // FP4 types (GetBit()==4) are b8 storage (packed 2-per-byte), treated as b8
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      IsB8Type(dtype) || dtype.GetBit() == 16 || dtype.GetBit() == 32 || dtype.GetBit() == 64)
+                      IsB8NonInt4Type(dtype) || dtype.GetBit() == 16 || dtype.GetBit() == 32 || dtype.GetBit() == 64)
         << "vf.create_mask dtype must be b8/b16/b32/b64, got " << DTypeStr(dtype);
     bool isB64 = (dtype.GetBit() == 64);
     if (isB64) {
@@ -853,7 +854,7 @@ static std::string EmitVFCreateMask(const ir::CallPtr& op, codegen::CodegenBase&
     // FP8/FP4 types are b8 storage → pset_b8
     // b64 (INT64/UINT64): pset_b32 + punpack(LOWER) — punpack expands each bit
     // into a pair to match the 2-bit-per-element mask width for 8-byte elements.
-    if (IsB8Type(dtype)) {
+    if (IsB8NonInt4Type(dtype)) {
         codegen.Emit(regName + " = pset_b8(" + pat + ");");
     } else if (dtype.GetBit() == 32 || isB64) {
         codegen.Emit(regName + " = pset_b32(" + pat + ");");
@@ -3331,7 +3332,7 @@ static std::string EmitVFInterleave(const ir::CallPtr& op, codegen::CodegenBase&
                           dtype.GetBit() == 8 || dtype.GetBit() == 16 || dtype.GetBit() == 32)
             << "vf.interleave (MaskReg) only supports b8/b16/b32, got " << DTypeStr(dtype);
         std::string pintlvOp;
-        if (dtype == DataType::UINT8 || dtype == DataType::INT8) {
+        if (dtype.GetBit() == 8) {
             pintlvOp = "pintlv_b8";
         } else if (dtype.GetBit() == 16) {
             pintlvOp = "pintlv_b16";
@@ -4524,7 +4525,12 @@ static std::string EmitVFCast(const ir::CallPtr& op, codegen::CodegenBase& codeg
         codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + part + ", " + modeValue + ");");
     } else if (isIntToFloat) {
         // vcvt(dst, src, mask, ROUND, MODE_ZEROING)
-        codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + modeValue + ");");
+        if (srcDtype == DataType::BF16 && dstDtype == DataType::FP16) {
+            codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + sat + ", " + round + ", " + modeValue +
+                         ");");
+        } else {
+            codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + modeValue + ");");
+        }
     } else if (isFloatToSameInt) {
         // vcvt(dst, src, mask, ROUND, RS, MODE_ZEROING) — no PART
         codegen.Emit("vcvt(" + dst + ", " + src + ", " + mask + ", " + round + ", " + sat + ", " + modeValue + ");");
@@ -4668,7 +4674,7 @@ static std::string EmitVFDeInterleave(const ir::CallPtr& op, codegen::CodegenBas
                           dtype.GetBit() == 8 || dtype.GetBit() == 16 || dtype.GetBit() == 32)
             << "vf.de_interleave (MaskReg) only supports b8/b16/b32, got " << DTypeStr(dtype);
         std::string pdintlvOp;
-        if (dtype == DataType::UINT8 || dtype == DataType::INT8) {
+        if (dtype.GetBit() == 8) {
             pdintlvOp = "pdintlv_b8";
         } else if (dtype.GetBit() == 16) {
             pdintlvOp = "pdintlv_b16";
@@ -4821,10 +4827,10 @@ static std::string EmitVFUpdateMask(const ir::CallPtr& op, codegen::CodegenBase&
     bool useB64 = false;
     if (op->HasKwarg("dtype")) {
         auto dtype = op->GetKwarg<DataType>("dtype");
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                          IsB8Type(dtype) || dtype.GetBit() == 16 || dtype.GetBit() == 32 || dtype.GetBit() == 64)
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, IsB8NonInt4Type(dtype) || dtype.GetBit() == 16 ||
+                                                           dtype.GetBit() == 32 || dtype.GetBit() == 64)
             << "vf.update_mask dtype must be b8/b16/b32/b64, got " << DTypeStr(dtype);
-        useB8 = (dtype == DataType::UINT8 || dtype == DataType::INT8);
+        useB8 = IsB8NonInt4Type(dtype);
         useB16 = (dtype.GetBit() == 16);
         useB64 = (dtype.GetBit() == 64);
     }
@@ -5366,13 +5372,9 @@ static std::string EmitVFStoreUnAlign(const ir::CallPtr& op, codegen::CodegenBas
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, tileDt.GetBit() == 16 || tileDt.GetBit() == 32)
             << "vf.store_unalign (mask path) only supports b16/b32 tile types, got " << DTypeStr(tileDt);
         std::string vreg = codegen.GetExprAsCode(op->args_[1]);
-        DataType maskDt = GetExprDtype(op->args_[1], DataType::UINT16);
-        int elemBytes = static_cast<int>(maskDt.GetBit() / 8);
-        if (elemBytes <= 0)
-            elemBytes = 4;
         // pstu only accepts uint16_t* or uint32_t* (DataCopyUnAlignImpl
         // casts to unsigned regardless of template T). b16→uint16_t, b32→uint32_t.
-        std::string ptrType = (elemBytes <= 2) ? "uint16_t" : "uint32_t";
+        std::string ptrType = (tileDt.GetBit() == 16) ? "uint16_t" : "uint32_t";
         // pstu modifies the pointer in-place (*&), so use post-update ref.
         // AscendC signature: pstu(ureg, mask, (__ubuf__ uint32_t*&)dstAddr)
         // The & in the cast is required so pstu advances the cursor, otherwise
@@ -6781,10 +6783,10 @@ static std::string EmitVFCreateAddrReg(const ir::CallPtr& op, codegen::CodegenBa
     }
     // vag_b8/b16/b32 support b8/b16/b32/b64 element widths (b64 uses vag_b32 with doubled stride)
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
-                      IsB8Type(dt) || dt.GetBit() == 16 || dt.GetBit() == 32 || dt.GetBit() == 64)
+                      IsB8NonInt4Type(dt) || dt.GetBit() == 16 || dt.GetBit() == 32 || dt.GetBit() == 64)
         << "vf.create_addr_reg dtype must be b8/b16/b32/b64, got " << DTypeStr(dt);
     std::string vagFn;
-    if (dt == DataType::UINT8 || dt == DataType::INT8)
+    if (IsB8NonInt4Type(dt))
         vagFn = "vag_b8";
     else if (dt.GetBit() == 16)
         vagFn = "vag_b16";

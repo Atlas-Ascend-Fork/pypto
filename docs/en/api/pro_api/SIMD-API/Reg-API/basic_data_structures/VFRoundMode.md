@@ -33,16 +33,7 @@ class VFRoundMode(enum.Enum):
 
 ## Constraints
 
-The supported rounding modes vary by product model:
-<!-- npu="950" id6 -->
-- Ascend 950PR&950DT products: All rounding modes are supported.
-<!-- end id6 -->
-<!-- npu="A3" id4 -->
-- Atlas A3 products: CAST_HYBRID is not supported.
-<!-- end id4 -->
-<!-- npu="910b" id5 -->
-- Atlas A2 products: CAST_HYBRID is not supported.
-<!-- end id5 -->
+None
 
 ## Examples
 
