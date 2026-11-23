@@ -413,21 +413,57 @@ inline uint32_t CellMatchFillEnhanceExecSlowNormalWriteOp(int cellIndex, uint64_
     int dims = desc.GetDimensionSize();
     const uint64_t rangeWordStride = static_cast<uint64_t>(dims) * 2u;
     uint64_t* rangeBase = cellMatchTableData + memBase + desc.normalWriteOpRangeBase;
+    // Slow slots store cell-local NORMAL_WRITE ranges only. Clip incoming op once.
+    uint64_t cellOffset[DEV_SHAPE_DIM_MAX] = {0};
+    CellMatchCellIndexToCellOffset(static_cast<uint64_t>(cellIndex), desc, cellOffset, dims);
+    uint64_t normalWriteOpOffsetInCell[DEV_SHAPE_DIM_MAX] = {0};
+    uint64_t normalWriteOpShapeInCell[DEV_SHAPE_DIM_MAX] = {0};
+    CellMatchClipRangeToCell(offset, shape, cellOffset, desc, normalWriteOpOffsetInCell, normalWriteOpShapeInCell,
+                             dims);
+
     uint32_t dst = 0;
-    for (uint32_t i = 0; i < existing; ++i) {
-        uint64_t* storedPairs = rangeBase + static_cast<uint64_t>(i) * rangeWordStride;
-        if (CellMatchNormalWriteOpRangesOverlap(offset, shape, storedPairs, dims)) {
-            continue;
-        }
-        if (i != dst) {
-            uint64_t opId = CellMatchGetOpId(cellMatchTableData, memBase, CELL_MATCH_OP_TYPE_NORMAL_WRITE, i, desc);
-            CellMatchAddOpId(cellMatchTableData, memBase, opId, dst, CELL_MATCH_OP_TYPE_NORMAL_WRITE, desc);
+    auto emitKeep = [&](uint64_t normalWriteOpId, const uint64_t* keepNormalWriteOpOffset,
+                        const uint64_t* keepNormalWriteOpShape, bool forceRewrite) {
+        DEV_ASSERT(CtrlErr::CELL_MATCH_FILL_OP_NOT_ENOUGH, dst < maxCount);
+        if (forceRewrite) {
+            CellMatchAddOpId(cellMatchTableData, memBase, normalWriteOpId, dst, CELL_MATCH_OP_TYPE_NORMAL_WRITE, desc);
             uint64_t* dstPairs = rangeBase + static_cast<uint64_t>(dst) * rangeWordStride;
-            for (int k = 0; k < dims * 2; ++k) {
-                dstPairs[k] = storedPairs[k];
+            for (int d = 0; d < dims; ++d) {
+                dstPairs[d * 2] = keepNormalWriteOpOffset[d];
+                dstPairs[d * 2 + 1] = keepNormalWriteOpShape[d];
             }
         }
         dst++;
+    };
+
+    for (uint32_t i = 0; i < existing; ++i) {
+        uint64_t* storedPairs = rangeBase + static_cast<uint64_t>(i) * rangeWordStride;
+        uint64_t existingNormalWriteOpId = CellMatchGetOpId(cellMatchTableData, memBase,
+                                                            CELL_MATCH_OP_TYPE_NORMAL_WRITE, i, desc);
+        uint64_t existingNormalWriteOpOffset[DEV_SHAPE_DIM_MAX] = {0};
+        uint64_t existingNormalWriteOpShape[DEV_SHAPE_DIM_MAX] = {0};
+        for (int d = 0; d < dims; ++d) {
+            existingNormalWriteOpOffset[d] = storedPairs[d * 2];
+            existingNormalWriteOpShape[d] = storedPairs[d * 2 + 1];
+        }
+
+        // No overlap with incoming: keep existing range as-is.
+        if (!CellMatchNormalWriteOpRangesOverlap(normalWriteOpOffsetInCell, normalWriteOpShapeInCell, storedPairs,
+                                                 dims)) {
+            emitKeep(existingNormalWriteOpId, existingNormalWriteOpOffset, existingNormalWriteOpShape, i != dst);
+            continue;
+        }
+
+        // Overlap: keep exact existing\incoming slabs (0/1/2+ boxes; same opId).
+        uint64_t residualNormalWriteOpOffset[CELL_MATCH_AABB_DIFF_BOX_MAX * DEV_SHAPE_DIM_MAX] = {0};
+        uint64_t residualNormalWriteOpShape[CELL_MATCH_AABB_DIFF_BOX_MAX * DEV_SHAPE_DIM_MAX] = {0};
+        const int residualBoxCount = CellMatchRangeSubtractAABB(
+            existingNormalWriteOpOffset, existingNormalWriteOpShape, normalWriteOpOffsetInCell,
+            normalWriteOpShapeInCell, residualNormalWriteOpOffset, residualNormalWriteOpShape, dims);
+        for (int bi = 0; bi < residualBoxCount; ++bi) {
+            emitKeep(existingNormalWriteOpId, residualNormalWriteOpOffset + bi * DEV_SHAPE_DIM_MAX,
+                     residualNormalWriteOpShape + bi * DEV_SHAPE_DIM_MAX, true);
+        }
     }
     DEV_ASSERT(CtrlErr::CELL_MATCH_FILL_OP_NOT_ENOUGH, dst < maxCount);
     uint32_t targetIndex = dst;
@@ -446,7 +482,8 @@ inline uint32_t CellMatchFillEnhanceExecSlowNormalWriteOp(int cellIndex, uint64_
 
     uint64_t fullTaskId = (static_cast<uint64_t>(updateTagId) << CELL_MATCH_META_TAGID_SHIFT32) | taskId;
     CellMatchAddOpId(cellMatchTableData, memBase, fullTaskId, targetIndex, CELL_MATCH_OP_TYPE_NORMAL_WRITE, desc);
-    CellMatchStoreNormalWriteOpRange(cellMatchTableData, memBase, targetIndex, offset, shape, desc);
+    CellMatchStoreNormalWriteOpRange(cellMatchTableData, memBase, targetIndex, normalWriteOpOffsetInCell,
+                                     normalWriteOpShapeInCell, desc);
     cellMatchTableData[memBase] = meta;
     DEV_VERBOSE_DEBUG(
         "Slow fill cell[%d]: kept=%u existing=%u taskId=0x%lx (Tagid=%lx, funcIdx=%u, opIdx=%u), index=%u", cellIndex,

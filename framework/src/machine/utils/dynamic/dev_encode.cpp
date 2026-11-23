@@ -3116,6 +3116,8 @@ static void FastSlowStitchCheckAccumulateReadOpShape(const DevAscendFunction& fu
     }
 }
 
+static bool HasDynamicShape(const DevCellMatchTableDesc& desc);
+
 static uint32_t FastSlowStitchCheckInitPartialUpdate(const std::vector<const DevAscendFunctionOutcast*>& outcastList,
                                                      const std::vector<Opcode>& outcastOpcodeList,
                                                      const std::vector<FastSlowStitchCheckShapeGate>& allWriteOpGates,
@@ -3167,7 +3169,7 @@ static uint32_t FastSlowStitchCheckInitPartialUpdate(const std::vector<const Dev
     partialUpdateCellMatchTableDesc->SetCellShape(cellShape);
     // Per-dim factor: 1 if cell<=1, divides, or (!hasWaw && minReadOp > maxAllWriteOp);
     // else 2. Cover→Fast must match WAW stitch gate: WAW slots keep Slow for write-write overlap.
-    // NORMAL_WRITE capacity = product (2^N). Empty write gates are skipped for divides.
+    // NORMAL_WRITE capacity = product (2^N) for static shapes; dynamic-axis Slow uses fixed cap.
     uint32_t normalWriteCount = 1;
     int dims = static_cast<int>(cellShape.size());
     for (int d = 0; d < dims && d < DEV_SHAPE_DIM_MAX; ++d) {
@@ -3213,6 +3215,10 @@ static uint32_t FastSlowStitchCheckInitPartialUpdate(const std::vector<const Dev
         strideShape.push_back(cellShape[i] != 0 ? tensorShape[i] / cellShape[i] : 0);
     }
     partialUpdateCellMatchTableDesc->SetStrideShape(strideShape);
+    // Dynamic axis (stride<=0): Slow path reserves fixed CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT.
+    if (normalWriteCount > 1 && HasDynamicShape(*partialUpdateCellMatchTableDesc)) {
+        return static_cast<uint32_t>(CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT);
+    }
     return normalWriteCount;
 }
 static void DumpFullCoverCellTableForNonPartialSlots(

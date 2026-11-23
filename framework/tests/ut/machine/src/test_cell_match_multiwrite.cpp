@@ -18,6 +18,7 @@
 #include "interface/configs/config_manager.h"
 #include "interface/configs/config_manager_ng.h"
 #include "interface/program/program.h"
+#include "machine/utils/dynamic/dev_cell_match_mem_layout.h"
 #include "machine/utils/dynamic/dev_encode_program.h"
 #include "machine/utils/dynamic/dev_stitch_dependency_enhanced.h"
 #include "tilefwk/data_type.h"
@@ -354,8 +355,9 @@ TEST(CellMatchMultiWrite, TailNotMultipleOfCellKeepsTwoWriters)
     EXPECT_EQ(WriterCount(table, desc, 0), 1u);
     EXPECT_EQ(WriterCount(table, desc, 1), 2u);
     EXPECT_EQ(WriterCount(table, desc, 2), 1u);
-    EXPECT_TRUE(HasWriteRange(table, desc, 1, 0, 0, 64, kHidden));
-    EXPECT_TRUE(HasWriteRange(table, desc, 1, 64, 0, 48, kHidden));
+    // Cell 1 is [48,96): store cell-local clips of head[0,64) and tail[64,112).
+    EXPECT_TRUE(HasWriteRange(table, desc, 1, 48, 0, 16, kHidden));
+    EXPECT_TRUE(HasWriteRange(table, desc, 1, 64, 0, 32, kHidden));
 }
 
 TEST(CellMatchMultiWrite, TwoDimCornerKeepsFourWriters)
@@ -400,10 +402,11 @@ TEST(CellMatchMultiWrite, TwoDimCornerKeepsFourWriters)
     ASSERT_TRUE(FillProducers(slot, &table));
     int corner = CellWithWriterCount(table, desc, 4);
     ASSERT_GE(corner, 0);
-    EXPECT_TRUE(HasWriteRange(table, desc, corner, 0, 0, 46, 46));
-    EXPECT_TRUE(HasWriteRange(table, desc, corner, 46, 0, 15, 46));
-    EXPECT_TRUE(HasWriteRange(table, desc, corner, 0, 46, 46, 15));
-    EXPECT_TRUE(HasWriteRange(table, desc, corner, 46, 46, 15, 15));
+    // Corner cell [45,60)x[45,60): four writers stored as cell-local clips.
+    EXPECT_TRUE(HasWriteRange(table, desc, corner, 45, 45, 1, 1));
+    EXPECT_TRUE(HasWriteRange(table, desc, corner, 46, 45, 14, 1));
+    EXPECT_TRUE(HasWriteRange(table, desc, corner, 45, 46, 1, 14));
+    EXPECT_TRUE(HasWriteRange(table, desc, corner, 46, 46, 14, 14));
 }
 
 TEST(CellMatchMultiWrite, CrossRootOverlapSelectsWriters)
@@ -568,5 +571,41 @@ TEST(CellMatchMultiWrite, MidNarrowReadKeepsTwoWriters)
 
     EncodedOutcast slot;
     ASSERT_TRUE(FindEncoded(48, 2u, 0u, &slot));
+    ExpectReaderMask(*slot.update);
+}
+
+// Dynamic axis (encode-time stride<=0) keeps Slow gate but reserves fixed 128, not 2^N.
+TEST(CellMatchMultiWrite, DynamicAxisSlowUsesFixedCap)
+{
+    PrepareTailKernel(64, kHidden);
+    Tensor in(DT_FP32, {-1, kHidden}, "in_dyn");
+    Tensor out(DT_FP32, {-1, kHidden}, "out_dyn");
+    Tensor result(DT_FP32, {96, kHidden}, "result_dyn");
+    FUNCTION("dyn_axis_slow_cap", {in}, {out, result})
+    {
+        LOOP("DY_W", FunctionType::DYNAMIC_LOOP, i, LoopRange(1))
+        {
+            (void)i;
+            auto head = View(in, {64, kHidden}, {0, 0});
+            auto tail = View(in, {48, kHidden}, {64, 0});
+            Assemble(Add(head, head), {0, 0}, out);
+            Assemble(Add(tail, tail), {64, 0}, out);
+        }
+        LOOP("DY_R", FunctionType::DYNAMIC_LOOP, j, LoopRange(1))
+        {
+            (void)j;
+            // Same Slow gate as static TailNotMultiple: min read 48 < max write 64.
+            Assemble(View(out, {48, kHidden}, {0, 0}), {0, 0}, result);
+            Assemble(View(out, {48, kHidden}, {48, 0}), {48, 0}, result);
+        }
+    }
+
+    EncodedOutcast slot;
+    ASSERT_TRUE(FindEncoded(48, CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT, 0u, &slot));
+    const DevCellMatchTableDesc& desc = slot.update->cellMatchTableDesc;
+    EXPECT_LE(desc.GetStrideShape(0), 0);
+    EXPECT_EQ(desc.GetCacheOpMaxCount(CELL_MATCH_OP_TYPE_NORMAL_WRITE),
+              static_cast<uint32_t>(CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT));
+    EXPECT_NE(desc.normalWriteOpRangeBase, 0u);
     ExpectReaderMask(*slot.update);
 }

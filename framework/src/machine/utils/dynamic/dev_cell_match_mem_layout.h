@@ -23,8 +23,9 @@
  *      - bit 42-63: Stitch devtask id
  * NORMAL_WRITE layout (partial-update cell match) is one of two paths:
  * - Fast path: normalMax == 1, normalWriteOpRangeBase == 0. One writer per cell; mutex overwrite.
- * - Slow path: normalMax == 2^N (N = dims with cell length > 1 that fail the fast gate),
- *   normalWriteOpRangeBase != 0. Multiple writers; each stores (offset, shape); overlap replace/append.
+ * - Slow path: normalMax == 2^N (static) or CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT (dynamic axis),
+ *   normalWriteOpRangeBase != 0. Multiple writers; each stores cell-local (offset, shape);
+ *   overlap replace/append with exact in-cell A\\B slabs.
  * - uint64[1 .. normalMax]:     Normal-write op-id list
  * - uint64[1+normalMax ..]:      Atomic-write op-id list
  * - uint64[1+normalMax+atomicMax ..]: Read op-id list
@@ -63,6 +64,8 @@ enum CellMatchOpType : uint32_t {
  */
 #define CELL_MATCH_METADATA_OP_COUNT_MAX 255
 #define CELL_MATCH_MAX_NORMAL_WRITE_COUNT 1
+// Slow capacity when partial-update has a dynamic axis (static Slow still uses 2^N).
+#define CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT 128
 #define CELL_MATCH_MAX_ATOMIC_WRITE_COUNT 254
 #define CELL_MATCH_MAX_READ_COUNT 128
 #define CELL_MATCH_INVALID_OP_COUNT 0xFF
@@ -215,22 +218,121 @@ inline void CellMatchStoreNormalWriteOpRange(uint64_t* cellMatchTableData, uint6
 }
 
 // NORMAL_WRITE only. Contiguous (offset,shape) vs one stored normal-write range.
-inline bool CellMatchNormalWriteOpRangesOverlap(const uint64_t* offset, const uint64_t* shape,
-                                                const uint64_t* storedPairs, int dims)
+inline bool CellMatchNormalWriteOpRangesOverlap(const uint64_t* normalWriteOpOffset, const uint64_t* normalWriteOpShape,
+                                                const uint64_t* storedNormalWriteOpPairs, int dims)
 {
     for (int d = 0; d < dims; ++d) {
-        uint64_t offB = storedPairs[d * 2];
-        uint64_t shpB = storedPairs[d * 2 + 1];
-        if (shape[d] == 0 || shpB == 0) {
-            return false;
-        }
-        uint64_t aEnd = offset[d] + shape[d];
-        uint64_t bEnd = offB + shpB;
-        if (offset[d] >= bEnd || offB >= aEnd) {
+        uint64_t storedNormalWriteOpOffset = storedNormalWriteOpPairs[d * 2];
+        uint64_t storedNormalWriteOpShape = storedNormalWriteOpPairs[d * 2 + 1];
+        uint64_t normalWriteOpEnd = normalWriteOpOffset[d] + normalWriteOpShape[d];
+        uint64_t storedNormalWriteOpEnd = storedNormalWriteOpOffset + storedNormalWriteOpShape;
+        if (normalWriteOpOffset[d] >= storedNormalWriteOpEnd || storedNormalWriteOpOffset >= normalWriteOpEnd) {
             return false;
         }
     }
     return true;
+}
+
+// Decode linear cellIndex to cellOffset in tensor space: cell covers
+// [cellOffset, cellOffset + cellShape) per dim (same coordinate system as op offset).
+inline void CellMatchCellIndexToCellOffset(uint64_t cellIndex, const DevCellMatchTableDesc& desc, uint64_t* cellOffset,
+                                           int dims)
+{
+    uint64_t remainingIndex = cellIndex;
+    for (int d = 0; d < dims - 1; ++d) {
+        uint64_t stride = desc.GetStride(d + 1);
+        uint64_t cellCoord = remainingIndex / stride;
+        remainingIndex = remainingIndex % stride;
+        cellOffset[d] = cellCoord * static_cast<uint64_t>(desc.GetCellShape(d));
+    }
+    if (dims > 0) {
+        cellOffset[dims - 1] = remainingIndex * static_cast<uint64_t>(desc.GetCellShape(dims - 1));
+    }
+}
+
+// Intersect [rangeOffset, rangeOffset+rangeShape) with [cellOffset, cellOffset+cellShape).
+// Caller guarantees non-empty (CellMatchHandle only visits intersecting cells).
+inline void CellMatchClipRangeToCell(const uint64_t* rangeOffset, const uint64_t* rangeShape,
+                                     const uint64_t* cellOffset, const DevCellMatchTableDesc& desc,
+                                     uint64_t* outOffsetInCell, uint64_t* outShapeInCell, int dims)
+{
+    for (int d = 0; d < dims; ++d) {
+        uint64_t cellShape = static_cast<uint64_t>(desc.GetCellShape(d));
+        uint64_t rangeBegin = rangeOffset[d];
+        uint64_t rangeEnd = rangeOffset[d] + rangeShape[d];
+        uint64_t cellBegin = cellOffset[d];
+        uint64_t cellEnd = cellOffset[d] + cellShape;
+        uint64_t intersectBegin = rangeBegin > cellBegin ? rangeBegin : cellBegin;
+        uint64_t intersectEnd = rangeEnd < cellEnd ? rangeEnd : cellEnd;
+        outOffsetInCell[d] = intersectBegin;
+        outShapeInCell[d] = intersectEnd - intersectBegin;
+    }
+}
+
+// Max residual AABB count for existing\incoming (at most two slabs per dim).
+#define CELL_MATCH_AABB_DIFF_BOX_MAX (2 * DEV_SHAPE_DIM_MAX)
+
+// Exact existing\incoming as disjoint AABBs (slab split).
+//
+// Per dimension d, treat remaining existing as [remainingBegin, remainingEnd) and
+// incoming as cutting [cutBegin, cutEnd) on that dim (clipped into remaining):
+//
+//   remaining:  |------------ existing ------------|
+//   incoming:           |---- cut ----|
+//   result:     |--left--|             |--right--|     // A-B-A on this dim
+//
+// Emit left (if any) and right (if any) as residual boxes, then shrink remaining
+// to the middle band and continue on the next dim. After all dims, the leftover
+// middle equals existing∩incoming and is discarded.
+//
+// Examples (1D): full cover -> 0 boxes; one-sided cut -> 1 box; middle cut -> 2 boxes.
+// Writes boxes as residual[box * DEV_SHAPE_DIM_MAX + dim]. Caller guarantees overlap.
+inline int CellMatchRangeSubtractAABB(const uint64_t* existingNormalWriteOpOffset,
+                                      const uint64_t* existingNormalWriteOpShape,
+                                      const uint64_t* incomingNormalWriteOpOffset,
+                                      const uint64_t* incomingNormalWriteOpShape, uint64_t* residualNormalWriteOpOffset,
+                                      uint64_t* residualNormalWriteOpShape, int dims)
+{
+    uint64_t remainingBegin[DEV_SHAPE_DIM_MAX];
+    uint64_t remainingEnd[DEV_SHAPE_DIM_MAX];
+    for (int d = 0; d < dims; ++d) {
+        remainingBegin[d] = existingNormalWriteOpOffset[d];
+        remainingEnd[d] = existingNormalWriteOpOffset[d] + existingNormalWriteOpShape[d];
+    }
+
+    int residualBoxCount = 0;
+    for (int d = 0; d < dims; ++d) {
+        // Incoming cut on dim d, clipped into the current remaining slab.
+        uint64_t cutBegin = incomingNormalWriteOpOffset[d] > remainingBegin[d] ? incomingNormalWriteOpOffset[d] :
+                                                                                 remainingBegin[d];
+        uint64_t cutEnd = (incomingNormalWriteOpOffset[d] + incomingNormalWriteOpShape[d]) < remainingEnd[d] ?
+                              (incomingNormalWriteOpOffset[d] + incomingNormalWriteOpShape[d]) :
+                              remainingEnd[d];
+        // Left residual: [remainingBegin, cutBegin) on dim d.
+        if (remainingBegin[d] < cutBegin) {
+            for (int k = 0; k < dims; ++k) {
+                residualNormalWriteOpOffset[residualBoxCount * DEV_SHAPE_DIM_MAX + k] = remainingBegin[k];
+                residualNormalWriteOpShape[residualBoxCount * DEV_SHAPE_DIM_MAX + k] = remainingEnd[k] -
+                                                                                       remainingBegin[k];
+            }
+            residualNormalWriteOpShape[residualBoxCount * DEV_SHAPE_DIM_MAX + d] = cutBegin - remainingBegin[d];
+            residualBoxCount++;
+            remainingBegin[d] = cutBegin;
+        }
+        // Right residual: [cutEnd, remainingEnd) on dim d.
+        if (cutEnd < remainingEnd[d]) {
+            for (int k = 0; k < dims; ++k) {
+                residualNormalWriteOpOffset[residualBoxCount * DEV_SHAPE_DIM_MAX + k] = remainingBegin[k];
+                residualNormalWriteOpShape[residualBoxCount * DEV_SHAPE_DIM_MAX + k] = remainingEnd[k] -
+                                                                                       remainingBegin[k];
+            }
+            residualNormalWriteOpOffset[residualBoxCount * DEV_SHAPE_DIM_MAX + d] = cutEnd;
+            residualNormalWriteOpShape[residualBoxCount * DEV_SHAPE_DIM_MAX + d] = remainingEnd[d] - cutEnd;
+            residualBoxCount++;
+            remainingEnd[d] = cutEnd;
+        }
+    }
+    return residualBoxCount;
 }
 
 } // namespace npu::tile_fwk::dynamic
