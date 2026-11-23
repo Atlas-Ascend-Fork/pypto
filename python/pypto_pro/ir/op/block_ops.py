@@ -1365,10 +1365,8 @@ def _ir_sels(out: Expr, mask: Expr, src: Expr, tmp: Expr, scalar: Expr, *, span:
     dt = getattr(out.type, "dtype", None)
     require_dtype_in(dt, _SEL_DTYPES, subject="sels")
     require_dtypes_match([getattr(src.type, "dtype", None)], dt, subject="sels")
+    require_scalar_with_dtype(scalar, dt, subject="pl.select scalar operand")
     actual_span = span or _span()
-    from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
-
-    check_const_expr_fits_dtype(scalar, dt, api="pl.select")
     return _ir_core.create_op_call(block_ir_op("sels"), [out, mask, src, tmp, scalar], {}, actual_span)
 
 
@@ -2273,9 +2271,7 @@ def _ir_cmp(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, cmp_mo
 def _ir_cmps(out: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, cmp_mode: int | Expr = 0) -> Expr:
     dt = getattr(lhs.type, "dtype", None)
     require_dtype_in(dt, _CMP_DTYPES, subject="cmps")
-    # A literal settles in the IR storage dtypes and is value-checked against the lhs
-    # element dtype, while a runtime comparison operand carries a declared dtype that
-    # has to match it.
+    # Constants follow the scalar type/range rules; runtime operands must match the lhs dtype.
     require_scalar_with_dtype(rhs, dt, subject="pl.cmps comparison operand")
     if _is_int(cmp_mode):
         cmp_mode = _normalize_expr(cmp_mode, span)

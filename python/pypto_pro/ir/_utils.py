@@ -243,14 +243,16 @@ def require_scalar_with_dtype(
 ) -> None:
     """Require a scalar operand and check it against *expected_dtype*.
 
-    A literal (``ConstInt``/``ConstFloat``) settles in the IR storage dtypes, so only
-    its value is checked for representability in *expected_dtype*; a runtime scalar
-    keeps the dtype it was declared with, which has to match *expected_dtype* exactly,
-    and any other operand is rejected as not a scalar. A ``None`` expected dtype
-    leaves the operand unchecked.
+    An integer *expected_dtype* requires an integer constant, even when a floating
+    constant has no fractional part. Other literal constants settle in IR storage
+    dtypes, so their values are checked for representability in *expected_dtype*.
+    A runtime scalar must match *expected_dtype* exactly; any other operand is
+    rejected as not a scalar. A ``None`` expected dtype leaves the operand unchecked.
     """
     if expected_dtype is None:
         return
+    if expected_dtype.is_int() and isinstance(value, _ir.ConstFloat):
+        raise InvalidType(f"{subject} must be an integer scalar")
     if isinstance(value, (_ir.ConstInt, _ir.ConstFloat)):
         from pypto_pro.language.parser.diagnostics import check_const_expr_fits_dtype
 

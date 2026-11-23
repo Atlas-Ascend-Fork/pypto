@@ -17,7 +17,13 @@ from pypto.pypto_impl import ir as _ir_core
 from pypto.pypto_impl.ir import Expr, Span
 
 from ..._errors import InvalidType
-from .._utils import require_dtype_in, require_dtypes_match, require_int, require_scalar_dtype
+from .._utils import (
+    require_dtype_in,
+    require_dtypes_match,
+    require_int,
+    require_scalar_dtype,
+    require_scalar_with_dtype,
+)
 from ._op_registry import op_impl, op_impl_ast
 
 
@@ -223,14 +229,15 @@ def _ir_minimum(self,
         dim = None
     dt = getattr(out.type, "dtype", None)
     require_dtype_in(dt, _BINARY_DTYPES, subject="minimum")
-    # rhs consistency is only enforced for the tile-tile path; the
-    # tile-scalar path keeps the fits-dtype contract in
-    # _create_tile_scalar_op (mirrors the AscendC same-type template).
+    # Tile operands must share one dtype; scalars use the shared constant
+    # compatibility and runtime dtype checks.
     rhs_type = getattr(rhs, "type", None)
     rhs_dt = getattr(rhs_type, "dtype", None) if isinstance(rhs_type, _ir_core.TileType) else None
     require_dtypes_match([getattr(lhs.type, "dtype", None), rhs_dt], dt, subject="minimum")
     if dim is not None:
         return _create_dim_op([out, lhs, rhs], row_op="row_min", col_op="col_min", dim=dim, span=span)
+    if not isinstance(rhs_type, _ir_core.TileType):
+        require_scalar_with_dtype(rhs, dt, subject="pl.minimum scalar operand")
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="minimum", scalar_op="mins", span=span)
 
 
@@ -248,14 +255,15 @@ def _ir_maximum(self,
         dim = None
     dt = getattr(out.type, "dtype", None)
     require_dtype_in(dt, _BINARY_DTYPES, subject="maximum")
-    # rhs consistency is only enforced for the tile-tile path; the
-    # tile-scalar path keeps the fits-dtype contract in
-    # _create_tile_scalar_op (mirrors the AscendC same-type template).
+    # Tile operands must share one dtype; scalars use the shared constant
+    # compatibility and runtime dtype checks.
     rhs_type = getattr(rhs, "type", None)
     rhs_dt = getattr(rhs_type, "dtype", None) if isinstance(rhs_type, _ir_core.TileType) else None
     require_dtypes_match([getattr(lhs.type, "dtype", None), rhs_dt], dt, subject="maximum")
     if dim is not None:
         return _create_dim_op([out, lhs, rhs], row_op="row_max", col_op="col_max", dim=dim, span=span)
+    if not isinstance(rhs_type, _ir_core.TileType):
+        require_scalar_with_dtype(rhs, dt, subject="pl.maximum scalar operand")
     return _create_tile_scalar_op(out, lhs, rhs, tile_op="maximum", scalar_op="maxs", span=span)
 
 

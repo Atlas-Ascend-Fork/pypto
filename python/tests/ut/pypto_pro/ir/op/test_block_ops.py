@@ -2807,3 +2807,156 @@ def test_cmps_accepts_runtime_scalar_matching_lhs_dtype():
 
     program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     assert "block.cmps" in str(program.get_function(main.__name__))
+
+
+# ---------------------------------------------------------------------------
+# Integer tile scalar operand contract
+# ---------------------------------------------------------------------------
+
+
+def _tile_scalar_kernel(
+    operation_name, scalar, *, use_runtime_scalar=False, tile_dtype=pl.DT_INT32, scalar_dtype=pl.DT_FP32
+):
+    operation = getattr(pl, operation_name)
+    is_comparison = operation_name in ("eq", "ne", "lt", "le", "gt", "ge")
+    is_select = operation_name == "select"
+
+    @pl.jit(auto_mutex=False)
+    def main(
+        fp32_amount: pl.DT_FP32,
+        int16_amount: pl.DT_INT16,
+        int64_amount: pl.DT_INT64,
+        uint32_amount: pl.DT_UINT32,
+        fp16_amount: pl.DT_FP16,
+        int32_amount: pl.DT_INT32,
+    ):
+        tile_type = pl.TileType(shape=[1, 64], dtype=tile_dtype, target_memory=pl.MemorySpace.Vec)
+        mask_type = pl.TileType(shape=[1, 64], dtype=pl.DT_UINT8, target_memory=pl.MemorySpace.Vec)
+        src = pl.make_tile(tile_type, addr=0x0000)
+        out = pl.make_tile(tile_type, addr=0x0400)
+        tmp = pl.make_tile(tile_type, addr=0x0800)
+        mask = pl.make_tile(mask_type, addr=0x0C00)
+        with pl.section_vector():
+            # Scalar annotations use explicit DT_* names; only runtime parameters are aliased.
+            if scalar_dtype == pl.DT_INT16:
+                amount = int16_amount
+            elif scalar_dtype == pl.DT_INT64:
+                amount = int64_amount
+            elif scalar_dtype == pl.DT_UINT32:
+                amount = uint32_amount
+            elif scalar_dtype == pl.DT_FP16:
+                amount = fp16_amount
+            elif scalar_dtype == pl.DT_INT32:
+                amount = int32_amount
+            else:
+                amount = fp32_amount
+            if is_comparison:
+                if use_runtime_scalar:
+                    operation(mask, src, amount)
+                else:
+                    operation(mask, src, scalar)
+            elif is_select:
+                # A valid comparison must not hide a missing check in select.
+                pl.eq(mask, src, 1)
+                if use_runtime_scalar:
+                    operation(out, mask, src, amount, tmp)
+                else:
+                    operation(out, mask, src, scalar, tmp)
+            else:
+                if use_runtime_scalar:
+                    operation(out, src, amount)
+                else:
+                    operation(out, src, scalar)
+
+    return main
+
+
+@pytest.mark.parametrize("operation_name", ("eq", "ne", "lt", "le", "gt", "ge", "select", "maximum", "minimum"))
+def test_integer_tile_scalar_rejects_fractional_float(operation_name, monkeypatch):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "3510")
+    with pytest.raises(InvalidType, match="must be an integer scalar"):
+        kernel = _tile_scalar_kernel(operation_name, 1.5)
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize(
+    "operation_name,scalar",
+    [("eq", 1.0), ("select", 0.0), ("maximum", -1.5), ("minimum", 1.0)],
+)
+def test_integer_tile_scalar_rejects_integral_or_negative_float(operation_name, scalar, monkeypatch):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "3510")
+    with pytest.raises(InvalidType, match="must be an integer scalar"):
+        kernel = _tile_scalar_kernel(operation_name, scalar)
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+# Comparisons already check runtime dtypes; all four entries now use exact dtype matching.
+@pytest.mark.parametrize("operation_name", ("eq", "select", "maximum"))
+def test_integer_tile_scalar_rejects_runtime_float(operation_name, monkeypatch):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "3510")
+    with pytest.raises(InvalidType, match="unsupported dtype fp32, supported: int32"):
+        kernel = _tile_scalar_kernel(operation_name, 1.5, use_runtime_scalar=True)
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.parametrize(
+    "operation_name,tile_dtype,scalar_dtype",
+    [
+        ("eq", pl.DT_INT32, pl.DT_INT16),
+        ("select", pl.DT_INT32, pl.DT_INT64),
+        ("maximum", pl.DT_INT32, pl.DT_UINT32),
+        ("minimum", pl.DT_INT32, pl.DT_FP32),
+        ("eq", pl.DT_FP32, pl.DT_FP16),
+        ("select", pl.DT_FP32, pl.DT_INT32),
+    ],
+)
+def test_tile_scalar_rejects_runtime_dtype_mismatch(operation_name, tile_dtype, scalar_dtype, monkeypatch):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "3510")
+    expected = f"unsupported dtype {scalar_dtype}, supported: {tile_dtype}"
+    with pytest.raises(InvalidType, match=expected):
+        kernel = _tile_scalar_kernel(
+            operation_name, 1, use_runtime_scalar=True, tile_dtype=tile_dtype, scalar_dtype=scalar_dtype
+        )
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_integer_tile_scalar_contract_preserves_valid_ir(monkeypatch):
+    monkeypatch.setenv("PYPTOPRO_JIT_ARCH", "3510")
+
+    @pl.jit(auto_mutex=False)
+    def main(integer_scalar: pl.DT_INT32, float_scalar: pl.DT_FP32):
+        integer_type = pl.TileType(shape=[1, 64], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
+        float_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        mask_type = pl.TileType(shape=[1, 64], dtype=pl.DT_UINT8, target_memory=pl.MemorySpace.Vec)
+        integer_src = pl.make_tile(integer_type, addr=0x0000)
+        integer_rhs = pl.make_tile(integer_type, addr=0x0400)
+        integer_out = pl.make_tile(integer_type, addr=0x0800)
+        integer_tmp = pl.make_tile(integer_type, addr=0x0C00)
+        mask = pl.make_tile(mask_type, addr=0x1000)
+        float_src = pl.make_tile(float_type, addr=0x1400)
+        float_out = pl.make_tile(float_type, addr=0x1800)
+        float_tmp = pl.make_tile(float_type, addr=0x1C00)
+        with pl.section_vector():
+            # Integer tiles retain both literal and runtime integer operands.
+            pl.eq(mask, integer_src, 1)
+            pl.eq(mask, integer_src, integer_scalar)
+            pl.select(integer_out, mask, integer_src, integer_scalar, integer_tmp)
+            pl.maximum(integer_out, integer_src, 1)
+            pl.minimum(integer_out, integer_src, integer_scalar)
+            # Integer literals are checked by value, not their IR storage INT64 dtype.
+            pl.eq(mask, float_src, 1)
+            # Floating tiles retain float constants and matching runtime scalars.
+            pl.eq(mask, float_src, 1.5)
+            pl.eq(mask, float_src, float_scalar)
+            pl.select(float_out, mask, float_src, 1.5, float_tmp)
+            pl.maximum(float_out, float_src, float_scalar)
+            pl.minimum(float_out, float_src, 1.5)
+            # Tile-Tile dispatch must not apply the scalar-only restriction.
+            pl.eq(mask, integer_src, integer_rhs)
+            pl.select(integer_out, mask, integer_src, integer_rhs, integer_tmp)
+            pl.maximum(integer_out, integer_src, integer_rhs)
+            pl.minimum(integer_out, integer_src, integer_rhs)
+
+    program, matched = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert matched
+    assert_ir_matches_dump(program, Path(__file__).with_name("test_integer_tile_scalar_contract.pypto"))

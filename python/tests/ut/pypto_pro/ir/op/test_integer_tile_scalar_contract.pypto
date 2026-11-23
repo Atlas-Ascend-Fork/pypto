@@ -1,0 +1,28 @@
+program #entry() {
+    function main incast(int32_t %integer_scalar_0, float %float_scalar_0) outcast() #entry(false) #type(pro) {
+        mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %integer_src_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=int32_t, target_memory=Vec, compact=1, memref_addr=0, memref_size=256, memref_id=<id>);
+        mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %integer_rhs_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=int32_t, target_memory=Vec, compact=1, memref_addr=1024, memref_size=256, memref_id=<id>);
+        mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %integer_out_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=int32_t, target_memory=Vec, compact=1, memref_addr=2048, memref_size=256, memref_id=<id>);
+        mutex_tile<tile<1 x 64, int32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %integer_tmp_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=int32_t, target_memory=Vec, compact=1, memref_addr=3072, memref_size=256, memref_id=<id>);
+        mutex_tile<tile<1 x 64, uint8_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %mask_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=uint8_t, target_memory=Vec, compact=1, memref_addr=4096, memref_size=64, memref_id=<id>);
+        mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %float_src_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=float, target_memory=Vec, compact=1, memref_addr=5120, memref_size=256, memref_id=<id>);
+        mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %float_out_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=float, target_memory=Vec, compact=1, memref_addr=6144, memref_size=256, memref_id=<id>);
+        mutex_tile<tile<1 x 64, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %float_tmp_0 = block.make_mutex_tile(tuple(1, 64), tuple(), tuple(), dtype=float, target_memory=Vec, compact=1, memref_addr=7168, memref_size=256, memref_id=<id>);
+        block.cmps(%mask_0, %integer_src_0, 1, cmp_mode=0);
+        block.cmps(%mask_0, %integer_src_0, %integer_scalar_0, cmp_mode=0);
+        block.sels(%integer_out_0, %mask_0, %integer_src_0, %integer_tmp_0, %integer_scalar_0);
+        block.maxs(%integer_out_0, %integer_src_0, 1);
+        block.mins(%integer_out_0, %integer_src_0, %integer_scalar_0);
+        block.cmps(%mask_0, %float_src_0, 1, cmp_mode=0);
+        block.cmps(%mask_0, %float_src_0, 1.5, cmp_mode=0);
+        block.cmps(%mask_0, %float_src_0, %float_scalar_0, cmp_mode=0);
+        block.sels(%float_out_0, %mask_0, %float_src_0, %float_tmp_0, 1.5);
+        block.maxs(%float_out_0, %float_src_0, %float_scalar_0);
+        block.mins(%float_out_0, %float_src_0, 1.5);
+        block.cmp(%mask_0, %integer_src_0, %integer_rhs_0, cmp_mode=0);
+        block.sel(%integer_out_0, %mask_0, %integer_src_0, %integer_rhs_0, %integer_tmp_0);
+        block.maximum(%integer_out_0, %integer_src_0, %integer_rhs_0);
+        block.minimum(%integer_out_0, %integer_src_0, %integer_rhs_0);
+        return;
+    }
+}
