@@ -541,7 +541,7 @@ TEST_F(BlockOpsStructTest, StructSet_WithIndex_ReturnsTupleType)
         array_type,
     });
     auto base = std::make_shared<Var>("state", struct_type, Sp());
-    auto index = std::make_shared<Var>("idx", std::make_shared<ScalarType>(DataType::INDEX), Sp());
+    auto index = std::make_shared<Var>("idx", std::make_shared<ScalarType>(DataType::INT64), Sp());
     std::vector<std::pair<std::string, std::any>> kwargs = {{"field", std::string("arr")}};
     auto call = reg.Create("struct.set", {base, index, MakeScalarVar("val", DataType::INT64)}, kwargs, Sp());
     auto rt = As<TupleType>(call->GetType());
@@ -1520,7 +1520,7 @@ ExprPtr MakeFillPadTile(const std::string& name, std::vector<int64_t> dims, Memo
                         std::optional<HardwareInfo> hardware = std::nullopt,
                         std::optional<TileView> view = std::nullopt)
 {
-    auto addrExpr = std::make_shared<ConstInt>(addr, DataType::INDEX, Sp());
+    auto addrExpr = std::make_shared<ConstInt>(addr, DataType::INT64, Sp());
     auto memref = std::make_shared<MemRef>(space, addrExpr, uint64_t(1024));
     HardwareInfo hw = hardware.value_or(space == MemorySpace::Mat ?
                                             HardwareInfo(TileLayout::col_major, TileLayout::row_major, 512, pad) :
@@ -1577,7 +1577,7 @@ TEST_F(BlockOpsOutMemoryTest, BlockFillpadInplace_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
     auto src = MakeTileVarWithMemRef("src", {16, 32}, DataType::FP16, MemorySpace::Vec, 0, 1024);
-    auto addr_expr = std::make_shared<ConstInt>(int64_t(0), DataType::INDEX, Sp());
+    auto addr_expr = std::make_shared<ConstInt>(int64_t(0), DataType::INT64, Sp());
     auto memref = std::make_shared<MemRef>(MemorySpace::Vec, addr_expr, uint64_t(1024));
     HardwareInfo hw(TileLayout::row_major, TileLayout::none_box, 512, TilePad::zero, CompactMode::null);
     auto out_type = std::make_shared<TileType>(std::vector<int64_t>{16, 32}, DataType::FP16,
@@ -1669,8 +1669,8 @@ TEST_F(BlockOpsOutMemoryTest, BlockFillpad_MatInvalidLayout_Throws)
 TEST_F(BlockOpsOutMemoryTest, BlockFillpad_VecAllowsDifferentPadAndValidShape)
 {
     auto& reg = OpRegistry::GetInstance();
-    TileView valid({std::make_shared<ConstInt>(int64_t(5), DataType::INDEX, Sp()),
-                    std::make_shared<ConstInt>(int64_t(7), DataType::INDEX, Sp())});
+    TileView valid({std::make_shared<ConstInt>(int64_t(5), DataType::INT64, Sp()),
+                    std::make_shared<ConstInt>(int64_t(7), DataType::INT64, Sp())});
     for (const std::string name : {"block.fillpad", "block.fillpad_inplace", "block.fillpad_expand"}) {
         for (auto srcPad : {TilePad::null, TilePad::zero, TilePad::max, TilePad::min}) {
             for (auto dstPad : {TilePad::zero, TilePad::max, TilePad::min}) {

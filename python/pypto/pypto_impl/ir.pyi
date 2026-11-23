@@ -45,7 +45,6 @@ class DataType:
     FP64: DataType  # 64-bit floating point (IEEE 754 double precision)
     HF4: DataType  # 4-bit Hisilicon float
     HF8: DataType  # 8-bit Hisilicon float
-    INDEX: DataType  # Machine-word integer for index computations (loop vars, dims, valid shapes)
 
     def bits(self) -> int:
         """

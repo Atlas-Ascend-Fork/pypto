@@ -19,7 +19,7 @@ import pytest
 
 
 def _const_int(value: int):
-    return pypto_pro.ir.ConstInt(value, pypto_pro.ir.DataType.INDEX, pypto_pro.ir.Span.unknown())
+    return pypto_pro.ir.ConstInt(value, pypto_pro.ir.DataType.INT64, pypto_pro.ir.Span.unknown())
 
 
 @pytest.mark.parametrize(

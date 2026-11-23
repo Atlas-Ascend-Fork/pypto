@@ -104,8 +104,6 @@ bool IsPrintfUnsignedIntegerType(const DataType& dtype)
            dtype == DataType::UINT64;
 }
 
-bool IsPrintfIndexType(const DataType& dtype) { return dtype == DataType::INDEX; }
-
 bool IsPrintfBoolType(const DataType& dtype) { return dtype == DataType::BOOL; }
 
 template <typename InputType>
@@ -174,19 +172,18 @@ TypePtr DeduceDebugPrintfType([[maybe_unused]] const std::vector<ExprPtr>& args,
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, dtype == DataType::FP32)
                 << "debug.printf conversion '%f' requires FP32 scalar, but got " << dtype.ToString();
         } else if (conversion == 'x') {
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsPrintfUnsignedIntegerType(dtype) || IsPrintfIndexType(dtype))
-                << "debug.printf conversion '%" << conversion << "' requires unsigned integer or index scalar, but got "
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsPrintfUnsignedIntegerType(dtype) || dtype == DataType::INT64)
+                << "debug.printf conversion '%" << conversion << "' requires unsigned integer scalar, but got "
                 << dtype.ToString();
         } else if (conversion == 'u') {
             PRO_IR_CHECK(ExternalError::INVALID_TYPE,
-                         IsPrintfUnsignedIntegerType(dtype) || IsPrintfBoolType(dtype) || IsPrintfIndexType(dtype))
-                << "debug.printf conversion '%" << conversion
-                << "' requires unsigned integer, bool, or index scalar, but got " << dtype.ToString();
+                         IsPrintfUnsignedIntegerType(dtype) || IsPrintfBoolType(dtype) || dtype == DataType::INT64)
+                << "debug.printf conversion '%" << conversion << "' requires unsigned integer or bool scalar, but got "
+                << dtype.ToString();
         } else {
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE,
-                         IsPrintfSignedIntegerType(dtype) || IsPrintfBoolType(dtype) || IsPrintfIndexType(dtype))
-                << "debug.printf conversion '%" << conversion
-                << "' requires signed integer, bool, or index scalar, but got " << dtype.ToString();
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsPrintfSignedIntegerType(dtype) || IsPrintfBoolType(dtype))
+                << "debug.printf conversion '%" << conversion << "' requires signed integer or bool scalar, but got "
+                << dtype.ToString();
         }
     }
 
@@ -238,19 +235,18 @@ TypePtr DeduceDebugAssertType([[maybe_unused]] const std::vector<ExprPtr>& args,
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, dtype == DataType::FP32)
                 << "debug.assert conversion '%f' requires FP32 scalar, but got " << dtype.ToString();
         } else if (conversion == 'x') {
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsPrintfUnsignedIntegerType(dtype) || IsPrintfIndexType(dtype))
-                << "debug.assert conversion '%" << conversion << "' requires unsigned integer or index scalar, but got "
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsPrintfUnsignedIntegerType(dtype) || dtype == DataType::INT64)
+                << "debug.assert conversion '%" << conversion << "' requires unsigned integer scalar, but got "
                 << dtype.ToString();
         } else if (conversion == 'u') {
             PRO_IR_CHECK(ExternalError::INVALID_TYPE,
-                         IsPrintfUnsignedIntegerType(dtype) || IsPrintfBoolType(dtype) || IsPrintfIndexType(dtype))
-                << "debug.assert conversion '%" << conversion
-                << "' requires unsigned integer, bool, or index scalar, but got " << dtype.ToString();
+                         IsPrintfUnsignedIntegerType(dtype) || IsPrintfBoolType(dtype) || dtype == DataType::INT64)
+                << "debug.assert conversion '%" << conversion << "' requires unsigned integer or bool scalar, but got "
+                << dtype.ToString();
         } else {
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE,
-                         IsPrintfSignedIntegerType(dtype) || IsPrintfBoolType(dtype) || IsPrintfIndexType(dtype))
-                << "debug.assert conversion '%" << conversion
-                << "' requires signed integer, bool, or index scalar, but got " << dtype.ToString();
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsPrintfSignedIntegerType(dtype) || IsPrintfBoolType(dtype))
+                << "debug.assert conversion '%" << conversion << "' requires signed integer or bool scalar, but got "
+                << dtype.ToString();
         }
     }
 

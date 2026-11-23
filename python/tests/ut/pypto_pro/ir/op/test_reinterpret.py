@@ -195,7 +195,7 @@ def test_footprint_shrinking_is_accepted():
 
 def test_source_without_memref_raises():
     span = _span()
-    dim = ir.ConstInt(16, ir.DataType.INDEX, span)
+    dim = ir.ConstInt(16, ir.DataType.INT64, span)
     bare_type = ir.TileType([dim], pl.DT_FP16)
     bare = ir.Var("bare_tile", bare_type, span)
     with pytest.raises(ValueError, match="no MemRef"):

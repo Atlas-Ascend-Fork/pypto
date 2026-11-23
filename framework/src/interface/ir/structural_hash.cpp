@@ -40,18 +40,6 @@
 namespace pypto {
 namespace ir {
 
-namespace {
-
-DataType CanonicalizeForSyntaxScalarDtype(const DataType& dtype)
-{
-    if (dtype == DataType::INT64 || dtype == DataType::INDEX) {
-        return DataType::INDEX;
-    }
-    return dtype;
-}
-
-} // namespace
-
 /**
  * \brief Hash combine using Boost-inspired algorithm
  */
@@ -157,18 +145,8 @@ public:
         visitOp();
     }
 
-    void PushFieldName(const char* name)
-    {
-        if (transparentDepth_ == 0) {
-            fieldNameStack_.emplace_back(name);
-        }
-    }
-    void PopFieldName()
-    {
-        if (transparentDepth_ == 0) {
-            fieldNameStack_.pop_back();
-        }
-    }
+    void PushFieldName(const char* /*name*/) {}
+    void PopFieldName() {}
 
     ResultType VisitLeafField(const int& field) { return static_cast<ResultType>(std::hash<int>{}(field)); }
 
@@ -284,12 +262,6 @@ public:
 private:
     ResultType HashNode(const IRNodePtr& node);
     ResultType HashType(const TypePtr& type);
-    bool IsLoopVarFieldContext() const { return !fieldNameStack_.empty() && fieldNameStack_.back() == "loop_var"; }
-    bool IsConstIntTypeContext() const
-    {
-        return !nodeTypeStack_.empty() && nodeTypeStack_.back() == "ConstInt" && !fieldNameStack_.empty() &&
-               fieldNameStack_.back() == "type";
-    }
 
     template <typename NodePtr>
     ResultType HashNodeImpl(const NodePtr& node);
@@ -297,9 +269,6 @@ private:
     bool enableAutoMapping_;
     std::unordered_map<IRNodePtr, ResultType> hashValueMap_;
     int64_t freeVarCounter_ = 0;
-    std::vector<std::string> fieldNameStack_;
-    std::vector<std::string> nodeTypeStack_;
-    int transparentDepth_ = 0;
 };
 
 template <typename NodePtr>
@@ -309,18 +278,6 @@ StructuralHasher::ResultType StructuralHasher::HashNodeImpl(const NodePtr& node)
 
     // Start with type discriminator
     ResultType h = static_cast<ResultType>(std::hash<std::string>{}(node->TypeName()));
-    nodeTypeStack_.emplace_back(node->TypeName());
-
-    // Mirror EQUAL_DISPATCH / EQUAL_DISPATCH_TRANSPARENT from structural_equal.cpp:
-    // - Transparent containers (Program, SeqStmts) suppress their own field names.
-    // - Non-transparent nodes reset transparentDepth_ to 0 so their fields are always tracked.
-    constexpr bool isTransparent = std::is_same_v<NodeType, Program> || std::is_same_v<NodeType, SeqStmts>;
-    int savedDepth = transparentDepth_;
-    if constexpr (isTransparent) {
-        transparentDepth_++;
-    } else {
-        transparentDepth_ = 0;
-    }
 
     // Visit all fields using reflection
     auto descriptors = NodeType::GetFieldDescriptors();
@@ -332,9 +289,6 @@ StructuralHasher::ResultType StructuralHasher::HashNodeImpl(const NodePtr& node)
         },
         descriptors);
 
-    transparentDepth_ = savedDepth;
-    nodeTypeStack_.pop_back();
-
     return HashCombine(h, fieldsHash);
 }
 
@@ -344,9 +298,6 @@ StructuralHasher::ResultType StructuralHasher::HashType(const TypePtr& type)
     ResultType h = static_cast<ResultType>(std::hash<std::string>{}(type->TypeName()));
     if (auto scalarType = As<ScalarType>(type)) {
         DataType dtype = scalarType->dtype_;
-        if (IsLoopVarFieldContext() || IsConstIntTypeContext()) {
-            dtype = CanonicalizeForSyntaxScalarDtype(dtype);
-        }
         h = HashCombine(h, static_cast<ResultType>(std::hash<uint8_t>{}(dtype.Code())));
     } else if (auto regType = As<RegType>(type)) {
         h = HashCombine(h, static_cast<ResultType>(std::hash<uint8_t>{}(static_cast<uint8_t>(regType->regtype_))));

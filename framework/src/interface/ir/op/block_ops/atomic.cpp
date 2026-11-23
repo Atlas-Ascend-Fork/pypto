@@ -65,8 +65,8 @@ void CheckAtomicTensor(const std::string& opName, const ExprPtr& tensor)
 void CheckAtomicOffset(const std::string& opName, const ExprPtr& offset)
 {
     auto offsetType = As<ScalarType>(offset->GetType());
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType != nullptr && offsetType->dtype_ != DataType::BOOL &&
-                                                  (offsetType->dtype_.IsInt() || offsetType->dtype_ == DataType::INDEX))
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE,
+                 offsetType != nullptr && offsetType->dtype_ != DataType::BOOL && (offsetType->dtype_.IsInt()))
         << opName << " offset must be a non-bool integer scalar";
 }
 

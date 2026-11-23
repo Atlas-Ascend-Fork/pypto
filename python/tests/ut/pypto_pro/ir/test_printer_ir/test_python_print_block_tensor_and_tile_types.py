@@ -21,12 +21,12 @@ from pypto_pro import DataType, ir
 def test_python_print_block_tensor_and_tile_types():
     span = ir.Span.unknown()
     tensor_type = ir.TensorType(
-        [ir.ConstInt(64, DataType.INDEX, span), ir.ConstInt(128, DataType.INDEX, span)],
+        [ir.ConstInt(64, DataType.INT64, span), ir.ConstInt(128, DataType.INT64, span)],
         DataType.FP16,
     )
-    memref = ir.MemRef(ir.MemorySpace.Vec, ir.ConstInt(0, DataType.INDEX, span), 512, 0)
+    memref = ir.MemRef(ir.MemorySpace.Vec, ir.ConstInt(0, DataType.INT64, span), 512, 0)
     tile_type = ir.TileType(
-        [ir.ConstInt(16, DataType.INDEX, span), ir.ConstInt(16, DataType.INDEX, span)],
+        [ir.ConstInt(16, DataType.INT64, span), ir.ConstInt(16, DataType.INT64, span)],
         DataType.FP16,
         memref,
     )

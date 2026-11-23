@@ -81,8 +81,8 @@ TEST_F(IRStructEqExprTest, TestCallAndTupleExprsEqual)
     EXPECT_FALSE(structural_equal(Node(t1), Node(t3)));
 
     // GetItemExpr
-    auto idx1 = std::make_shared<ConstInt>(0, DataType::INDEX, Sp());
-    auto idx2 = std::make_shared<ConstInt>(0, DataType::INDEX, Sp());
+    auto idx1 = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
+    auto idx2 = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
     auto g1 = std::make_shared<GetItemExpr>(t1, idx1, Sp());
     auto g2 = std::make_shared<GetItemExpr>(t2, idx2, Sp());
     EXPECT_TRUE(structural_equal(Node(g1), Node(g2)));
@@ -246,7 +246,7 @@ TEST_F(IRStructEqTypeTest, TestPtrTypeEqual)
 TEST_F(IRStructEqTypeTest, TestTileTypeMemoryReferencePresence)
 {
     auto dim = std::make_shared<ConstInt>(16, DataType::INT64, Sp());
-    auto offset = std::make_shared<ConstInt>(0, DataType::INDEX, Sp());
+    auto offset = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
     MemRefPtr memref = std::make_shared<MemRef>(MemorySpace::Mat, offset, 1024, Sp());
     auto known = std::make_shared<TileType>(std::vector<ExprPtr>{dim}, DataType::FP32, memref);
     auto absent = std::make_shared<TileType>(std::vector<ExprPtr>{dim}, DataType::FP32);
@@ -265,8 +265,8 @@ TEST_F(IRStructEqTypeTest, TestTileTypeMemoryReferencePresence)
 TEST_F(IRStructEqTypeTest, TestTileTypeMemorySpaceIgnoresAllocation)
 {
     auto dim = std::make_shared<ConstInt>(16, DataType::INT64, Sp());
-    auto offset = std::make_shared<ConstInt>(0, DataType::INDEX, Sp());
-    auto otherOffset = std::make_shared<ConstInt>(4096, DataType::INDEX, Sp());
+    auto offset = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
+    auto otherOffset = std::make_shared<ConstInt>(4096, DataType::INT64, Sp());
     MemRefPtr mat = std::make_shared<MemRef>(MemorySpace::Mat, offset, 1024, Sp());
     MemRefPtr otherMat = std::make_shared<MemRef>(MemorySpace::Mat, otherOffset, 2048, Sp());
     MemRefPtr vec = std::make_shared<MemRef>(MemorySpace::Vec, offset, 1024, Sp());
@@ -784,25 +784,6 @@ TEST_F(IRStructEqExprTest, TestForStmtIterArgSizeMismatch)
 }
 
 // ============================================================================
-// ScalarType INT64/INDEX equivalence in loop_var context
-// ============================================================================
-
-TEST_F(IRStructEqExprTest, TestLoopVarInt64IndexNotEquivalent)
-{
-    auto i1 = std::make_shared<Var>("i", Scalar(DataType::INT64), Sp());
-    auto i2 = std::make_shared<Var>("i", Scalar(DataType::INDEX), Sp());
-    auto zero = std::make_shared<ConstInt>(0, DataType::INT32, Sp());
-    auto ten = std::make_shared<ConstInt>(10, DataType::INT32, Sp());
-    auto one = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
-    auto yield = std::make_shared<YieldStmt>(std::vector<ExprPtr>{}, Sp());
-
-    EXPECT_FALSE(structural_equal(Node(std::make_shared<ForStmt>(i1, zero, ten, one, std::vector<IterArgPtr>{}, yield,
-                                                                 std::vector<VarPtr>{}, Sp())),
-                                  Node(std::make_shared<ForStmt>(i2, zero, ten, one, std::vector<IterArgPtr>{}, yield,
-                                                                 std::vector<VarPtr>{}, Sp()))));
-}
-
-// ============================================================================
 // MemRef assert mode mismatch
 // ============================================================================
 
@@ -990,18 +971,6 @@ TEST_F(IRStructEqExprTest, TestIterArgInitValueMismatch)
 
     EXPECT_FALSE(structural_equal(Node(for1), Node(for2)));
     EXPECT_THROW(assert_structural_equal(Node(for1), Node(for2)), npu::tile_fwk::Error);
-}
-
-// ============================================================================
-// IsConstIntTypeContext: INT64/INDEX equivalence in ConstInt type field
-// ============================================================================
-
-TEST_F(IRStructEqExprTest, TestConstIntTypeInt64IndexNotEquivalent)
-{
-    auto ci1 = std::make_shared<ConstInt>(42, DataType::INT64, Sp());
-    auto ci2 = std::make_shared<ConstInt>(42, DataType::INDEX, Sp());
-
-    EXPECT_FALSE(structural_equal(Node(ci1), Node(ci2)));
 }
 
 // ============================================================================

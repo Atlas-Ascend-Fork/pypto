@@ -76,7 +76,6 @@ public:
     static constexpr uint8_t kInt16Code = 0x12;
     static constexpr uint8_t kInt32Code = 0x13;
     static constexpr uint8_t kInt64Code = 0x14;
-    static constexpr uint8_t kIndexCode = 0x15;
     static constexpr uint8_t kSignedIntRangeEnd = 0x1F;
     // 0x15-0x1F reserved for future signed integer types
 
@@ -138,7 +137,6 @@ public:
     static const DataType BF16;      // 16-bit brain floating point
     static const DataType HF4;       // 4-bit Hisilicon float
     static const DataType HF8;       // 8-bit Hisilicon float
-    static const DataType INDEX;     // 64-bit index type
 
     /**
      * \brief Default constructor, initializes to BOOL type
@@ -190,7 +188,6 @@ public:
             case kUInt64Code:
             case kInt64Code:
             case kFp64Code:
-            case kIndexCode:
                 return 64; // These dtypes occupy 64 bits.
             default:
                 return 0;
@@ -215,8 +212,6 @@ public:
                 return "int32";
             case kInt64Code:
                 return "int64";
-            case kIndexCode:
-                return "index";
             case kUInt4Code:
                 return "uint4";
             case kUInt8Code:
@@ -267,27 +262,16 @@ public:
     static inline const npu::tile_fwk::BiMap<uint8_t>& GetDataTypeCTypeStringDict()
     {
         static npu::tile_fwk::BiMap<uint8_t> dict{{
-            {kBoolCode, IR_KW_TYPE_BOOL},
-            {kInt8Code, IR_KW_TYPE_INT8},
-            {kInt16Code, IR_KW_TYPE_INT16},
-            {kInt32Code, IR_KW_TYPE_INT32},
-            {kInt64Code, IR_KW_TYPE_INT64},
-            {kIndexCode, IR_KW_TYPE_INT64},
-            {kUInt8Code, IR_KW_TYPE_UINT8},
-            {kUInt16Code, IR_KW_TYPE_UINT16},
-            {kUInt32Code, IR_KW_TYPE_UINT32},
-            {kUInt64Code, IR_KW_TYPE_UINT64},
-            {kFp16Code, IR_KW_TYPE_FP16},
-            {kFp32Code, IR_KW_TYPE_FP32},
-            {kFp64Code, IR_KW_TYPE_FP64},
-            {kBf16Code, IR_KW_TYPE_BF16},
-            {kFp8e4m3fnCode, IR_KW_TYPE_FP8E4M3FN},
-            {kFp8e5m2Code, IR_KW_TYPE_FP8E5M2},
-            {kFp8e8m0Code, IR_KW_TYPE_FP8E8M0},
-            {kFp4e2m1Code, IR_KW_TYPE_FP4E2M1},
-            {kFp4e1m2Code, IR_KW_TYPE_FP4E1M2},
-            {kHf4Code, IR_KW_TYPE_UNKNOWN},
-            {kHf8Code, IR_KW_TYPE_HF8},
+            {kBoolCode, IR_KW_TYPE_BOOL},       {kInt8Code, IR_KW_TYPE_INT8},
+            {kInt16Code, IR_KW_TYPE_INT16},     {kInt32Code, IR_KW_TYPE_INT32},
+            {kInt64Code, IR_KW_TYPE_INT64},     {kUInt8Code, IR_KW_TYPE_UINT8},
+            {kUInt16Code, IR_KW_TYPE_UINT16},   {kUInt32Code, IR_KW_TYPE_UINT32},
+            {kUInt64Code, IR_KW_TYPE_UINT64},   {kFp16Code, IR_KW_TYPE_FP16},
+            {kFp32Code, IR_KW_TYPE_FP32},       {kFp64Code, IR_KW_TYPE_FP64},
+            {kBf16Code, IR_KW_TYPE_BF16},       {kFp8e4m3fnCode, IR_KW_TYPE_FP8E4M3FN},
+            {kFp8e5m2Code, IR_KW_TYPE_FP8E5M2}, {kFp8e8m0Code, IR_KW_TYPE_FP8E8M0},
+            {kFp4e2m1Code, IR_KW_TYPE_FP4E2M1}, {kFp4e1m2Code, IR_KW_TYPE_FP4E1M2},
+            {kHf4Code, IR_KW_TYPE_UNKNOWN},     {kHf8Code, IR_KW_TYPE_HF8},
         }};
         return dict;
     }
@@ -401,7 +385,6 @@ inline constexpr DataType DataType::FP64 = DataType(kFp64Code);
 inline constexpr DataType DataType::BF16 = DataType(kBf16Code);
 inline constexpr DataType DataType::HF4 = DataType(kHf4Code);
 inline constexpr DataType DataType::HF8 = DataType(kHf8Code);
-inline constexpr DataType DataType::INDEX = DataType(kIndexCode);
 
 /**
  * \brief Convert DataType to its canonical enum name string
@@ -428,8 +411,6 @@ inline std::string DTypeToString(const DataType& dtype)
         return "INT16";
     if (dtype == DataType::INT32)
         return "INT32";
-    if (dtype == DataType::INDEX)
-        return "INDEX";
     if (dtype == DataType::INT64)
         return "INT64";
     if (dtype == DataType::UINT4)

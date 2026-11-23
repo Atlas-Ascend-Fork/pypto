@@ -135,7 +135,7 @@ TEST(ExprTest, GetItemExpr)
     auto y = std::make_shared<Var>("y", floatType, span);
 
     auto tuple = std::make_shared<MakeTuple>(std::vector<ExprPtr>{x, y}, span);
-    auto idx = std::make_shared<ConstInt>(0, DataType::INDEX, span);
+    auto idx = std::make_shared<ConstInt>(0, DataType::INT64, span);
     auto getItem = std::make_shared<GetItemExpr>(tuple, idx, span);
 
     ASSERT_NE(getItem, nullptr);
@@ -155,7 +155,7 @@ TEST(ExprTest, GetItemSecondElement)
     auto y = std::make_shared<Var>("y", floatType, span);
 
     auto tuple = std::make_shared<MakeTuple>(std::vector<ExprPtr>{x, y}, span);
-    auto idx = std::make_shared<ConstInt>(1, DataType::INDEX, span);
+    auto idx = std::make_shared<ConstInt>(1, DataType::INT64, span);
     auto getItem = std::make_shared<GetItemExpr>(tuple, idx, span);
 
     auto ResultType = As<ScalarType>(getItem->GetType());

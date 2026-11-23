@@ -51,14 +51,13 @@ TypePtr DeduceAddPtrType([[maybe_unused]] const std::vector<ExprPtr>& args,
         << "ptr.addptr requires first argument to be a PtrType, but got " << args[0]->GetType()->TypeName()
         << ". Use pl.Ptr[dtype] to annotate pointer parameters.";
 
-    // Second argument must be ScalarType with integer or index dtype
+    // Second argument must be ScalarType with integer dtype
     auto offsetType = As<ScalarType>(args[1]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType)
         << "ptr.addptr requires second argument (offset) to be a ScalarType, but got "
         << args[1]->GetType()->TypeName();
-    PRO_IR_CHECK(ExternalError::INVALID_TYPE,
-                 offsetType->dtype_.IsInt() || offsetType->dtype_ == DataType(DataType::INDEX))
-        << "ptr.addptr offset must have integer or index dtype, but got " << offsetType->dtype_.ToString();
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType->dtype_.IsInt())
+        << "ptr.addptr offset must have an integer dtype, but got " << offsetType->dtype_.ToString();
 
     // Return the same PtrType (pointer is advanced but still points to same element type),
     // with base_ptr/offset annotations for codegen indirect-select support.
@@ -90,7 +89,7 @@ REGISTER_OP("ptr.addptr")
     .set_op_category("PtrOp")
     .set_description("Advance a pointer by an integer offset (emits pto.addptr)")
     .add_argument("ptr", "Input raw pointer (PtrType)")
-    .add_argument("offset", "Integer byte offset (ScalarType with integer/index dtype)")
+    .add_argument("offset", "Integer byte offset (ScalarType with integer dtype)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceAddPtrType(args, kwargs);

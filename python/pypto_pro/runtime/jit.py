@@ -176,7 +176,6 @@ for _pl_dtype, _torch_name in (
     (DataType.FP8E8M0, "float8_e8m0fnu"),
     (DataType.HF4, "uint8"),
     (DataType.HF8, "uint8"),
-    (DataType.INDEX, "int64"),
 ):
     _register_pl_dtype(_pl_dtype, _torch_name)
 
@@ -192,7 +191,6 @@ _PL_DTYPE_TO_CTYPE: dict[str, type] = {
     str(DataType.UINT32): ctypes.c_uint32,
     str(DataType.UINT64): ctypes.c_uint64,
     str(DataType.BOOL): ctypes.c_bool,
-    str(DataType.INDEX): ctypes.c_int64,
 }
 
 

@@ -72,7 +72,6 @@ public:
     static const DataType BF16;      // 16-bit brain floating point
     static const DataType HF4;       // 4-bit Hisilicon float
     static const DataType HF8;       // 8-bit Hisilicon float
-    static const DataType INDEX;     // 64-bit index type
 }
 ```
 

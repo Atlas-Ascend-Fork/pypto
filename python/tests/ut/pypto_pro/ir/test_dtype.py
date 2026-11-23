@@ -37,13 +37,13 @@ def test_language_dtype_aliases_are_usable_in_block_annotations():
     assert tensor_type.shape == [16, 32]
 
 
-def test_index_dtype_is_available_for_block_shape_symbols():
-    shape_var = ir.Var("m", ir.ScalarType(DataType.INDEX), ir.Span.unknown())
+def test_int64_dtype_is_available_for_block_shape_symbols():
+    shape_var = ir.Var("m", ir.ScalarType(DataType.INT64), ir.Span.unknown())
     tensor_type = ir.TensorType([shape_var], DataType.FP16)
 
     assert tensor_type.shape[0] is shape_var
-    assert shape_var.type.dtype == DataType.INDEX
-    assert DataType.INDEX.to_string() == "index"
+    assert shape_var.type.dtype == DataType.INT64
+    assert DataType.INT64.to_string() == "int64"
 
 
 # ---------------------------------------------------------------------------
@@ -72,11 +72,6 @@ def test_limits_of_bool_is_zero_to_one_not_eight_bits():
     """BOOL occupies a byte, so get_bit() reports 8; its value range is still [0, 1]."""
     assert DataType.BOOL.get_bit() == 8
     assert _limits.limits_of(DataType.BOOL) == _limits.NumericLimits(0, 1, False)
-
-
-def test_limits_of_index_matches_int64():
-    """INDEX is the uncommitted 64-bit signed placeholder."""
-    assert _limits.limits_of(DataType.INDEX) == _limits.limits_of(DataType.INT64)
 
 
 @pytest.mark.parametrize(

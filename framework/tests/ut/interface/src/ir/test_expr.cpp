@@ -71,8 +71,8 @@ TEST_F(IRExprTest, TestTupleGetItemBasic)
     std::vector<ExprPtr> elements = {elem1, elem2};
     auto tuple = std::make_shared<MakeTuple>(elements, Span::Unknown());
 
-    auto idx0 = std::make_shared<ConstInt>(0, DataType::INDEX, Span::Unknown());
-    auto idx1 = std::make_shared<ConstInt>(1, DataType::INDEX, Span::Unknown());
+    auto idx0 = std::make_shared<ConstInt>(0, DataType::INT64, Span::Unknown());
+    auto idx1 = std::make_shared<ConstInt>(1, DataType::INT64, Span::Unknown());
     auto item0 = std::make_shared<GetItemExpr>(tuple, idx0, Span::Unknown());
     auto item1 = std::make_shared<GetItemExpr>(tuple, idx1, Span::Unknown());
 
@@ -91,7 +91,7 @@ TEST_F(IRExprTest, TestTupleGetItemIndex)
     std::vector<ExprPtr> elements = {elem1, elem2};
     auto tuple = std::make_shared<MakeTuple>(elements, Span::Unknown());
 
-    auto idx = std::make_shared<ConstInt>(1, DataType::INDEX, Span::Unknown());
+    auto idx = std::make_shared<ConstInt>(1, DataType::INT64, Span::Unknown());
     auto item = std::make_shared<GetItemExpr>(tuple, idx, Span::Unknown());
     ASSERT_EQ(As<ConstInt>(item->slice_)->value_, 1);
     ASSERT_EQ(item->value_, tuple);
@@ -104,7 +104,7 @@ TEST_F(IRExprTest, TestTupleGetItemDynamicIndex)
     std::vector<ExprPtr> elements = {elem1, elem2};
     auto tuple = std::make_shared<MakeTuple>(elements, Span::Unknown());
 
-    auto idx = std::make_shared<Var>("i", std::make_shared<ScalarType>(DataType::INDEX), Span::Unknown());
+    auto idx = std::make_shared<Var>("i", std::make_shared<ScalarType>(DataType::INT64), Span::Unknown());
     auto item = std::make_shared<GetItemExpr>(tuple, idx, Span::Unknown());
 
     auto resultType = As<ScalarType>(item->GetType());

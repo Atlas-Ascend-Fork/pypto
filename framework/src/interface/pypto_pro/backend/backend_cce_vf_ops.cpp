@@ -2493,7 +2493,7 @@ static std::string EmitVFMuls(const ir::CallPtr& op, codegen::CodegenBase& codeg
                        srcDt == DataType::FP16 || srcDt == DataType::FP32))
         << "vf.muls src only supports INT16/UINT16/INT32/UINT32/INT64/UINT64/FP16/FP32, got " << DTypeStr(srcDt);
     DataType scalarDt = GetExprDtype(op->args_[2]);
-    if (scalarDt == DataType::INDEX || scalarDt == DataType::INT64) {
+    if (scalarDt == DataType::INT64) {
         scalarDt = srcDt;
     }
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
@@ -3506,8 +3506,7 @@ static std::string EmitVFAxpy(const ir::CallPtr& op, codegen::CodegenBase& codeg
     // vaxpy supports half/float/uint64_t/int64_t
     DataType scalarDt = GetExprDtype(op->args_[base + 2]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, scalarDt == DataType::FP16 || scalarDt == DataType::FP32 ||
-                                                       scalarDt == DataType::UINT64 || scalarDt == DataType::INT64 ||
-                                                       scalarDt == DataType::INDEX)
+                                                       scalarDt == DataType::UINT64 || scalarDt == DataType::INT64)
         << op->name_ << " scalar only supports FP16/FP32/UINT64/INT64, got " << DTypeStr(scalarDt);
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string src = codegen.GetExprAsCode(op->args_[base + 1]);

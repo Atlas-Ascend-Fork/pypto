@@ -141,7 +141,7 @@ TEST(CCECodegenHeaderTest, CoversHeaderOnlyStateAccessors)
 
 TEST(CCECodegenHeaderTest, GeneratesStandaloneTilingHeader)
 {
-    auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INDEX);
+    auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
     auto float_type = std::make_shared<const ir::ScalarType>(ir::DataType::FP32);
     auto bool_type = std::make_shared<const ir::ScalarType>(ir::DataType::BOOL);
     auto offsets_type = std::make_shared<const ir::TupleType>(std::vector<ir::TypePtr>(4, index_type));
@@ -783,7 +783,7 @@ TEST(CCECodegenTest, NormalizesNestedScalarConditionsToBool)
 {
     const ir::Span span("condition.py", 7, 3);
     auto body = std::make_shared<ir::SeqStmts>(std::vector<ir::StmtPtr>{}, span);
-    for (auto dtype : {ir::DataType::BOOL, ir::DataType::INT32, ir::DataType::UINT64, ir::DataType::INDEX,
+    for (auto dtype : {ir::DataType::BOOL, ir::DataType::INT32, ir::DataType::UINT64, ir::DataType::INT64,
                        ir::DataType::FP16, ir::DataType::BF16, ir::DataType::FP32}) {
         SCOPED_TRACE(dtype.ToString());
         auto condition = std::make_shared<ir::Var>("condition", std::make_shared<ir::ScalarType>(dtype), span);

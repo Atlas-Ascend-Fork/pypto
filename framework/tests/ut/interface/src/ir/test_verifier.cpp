@@ -489,14 +489,14 @@ TEST_F(VerifierTypeCheckTest, TensorType_ShapeValueMismatch_ReportsError)
     auto one = std::make_shared<ConstInt>(int64_t(1), DataType::INT32, Sp());
 
     // iter_arg is TensorType with shape [16, 32]
-    auto dim16 = std::make_shared<ConstInt>(int64_t(16), DataType::INDEX, Sp());
-    auto dim32 = std::make_shared<ConstInt>(int64_t(32), DataType::INDEX, Sp());
+    auto dim16 = std::make_shared<ConstInt>(int64_t(16), DataType::INT64, Sp());
+    auto dim32 = std::make_shared<ConstInt>(int64_t(32), DataType::INT64, Sp());
     auto tensor_type1 = std::make_shared<TensorType>(std::vector<ExprPtr>{dim16, dim32}, DataType::FP32);
     auto iter_arg = std::make_shared<IterArg>("tensor", tensor_type1,
                                               std::make_shared<ConstFloat>(0.0, DataType::FP32, Sp()), Sp());
 
     // yield is TensorType with shape [16, 64] - different second dimension
-    auto dim64 = std::make_shared<ConstInt>(int64_t(64), DataType::INDEX, Sp());
+    auto dim64 = std::make_shared<ConstInt>(int64_t(64), DataType::INT64, Sp());
     auto tensor_type2 = std::make_shared<TensorType>(std::vector<ExprPtr>{dim16, dim64}, DataType::FP32);
     auto yield_val = std::make_shared<Var>("yield_tensor", tensor_type2, Sp());
     auto yield = std::make_shared<YieldStmt>(std::vector<ExprPtr>{yield_val}, Sp());

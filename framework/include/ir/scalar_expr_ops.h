@@ -106,12 +106,6 @@ inline ExprPtr MaybeCast(const ExprPtr& expr, DataType targetDtype, const Span& 
     if (dtype == targetDtype) {
         return expr;
     }
-    // INDEX and INT64 share the same int64_t representation in block DSL scalar expressions.
-    // Keep the high-level IR clean so round-trip printing does not emit redundant casts.
-    if ((dtype == DataType::INDEX && targetDtype == DataType::INT64) ||
-        (dtype == DataType::INT64 && targetDtype == DataType::INDEX)) {
-        return expr;
-    }
     return std::make_shared<Cast>(expr, targetDtype, span);
 }
 

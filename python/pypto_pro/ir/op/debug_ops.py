@@ -58,10 +58,6 @@ def _is_unsigned_integer_dtype(dtype: DataType) -> bool:
     return dtype in _UNSIGNED_INTEGER_DTYPES
 
 
-def _is_index_dtype(dtype: DataType) -> bool:
-    return dtype == DataType.INDEX
-
-
 def _is_bool_dtype(dtype: DataType) -> bool:
     return dtype == DataType.BOOL
 
@@ -126,26 +122,25 @@ def _validate_printf_arguments(
         if conversion in {"d", "i"} and not (
             _is_signed_integer_dtype(scalar_type.dtype)
             or _is_bool_dtype(scalar_type.dtype)
-            or _is_index_dtype(scalar_type.dtype)
         ):
             raise InvalidVal(
-                f"debug.{op_name} conversion '{spec}' requires signed integer, bool, or index scalar, "
+                f"debug.{op_name} conversion '{spec}' requires signed integer or bool scalar, "
                 f"but got {scalar_type.dtype}"
             )
         if conversion == "u" and not (
             _is_unsigned_integer_dtype(scalar_type.dtype)
             or _is_bool_dtype(scalar_type.dtype)
-            or _is_index_dtype(scalar_type.dtype)
+            or scalar_type.dtype == DataType.INT64
         ):
             raise InvalidVal(
-                f"debug.{op_name} conversion '{spec}' requires unsigned integer, bool, or index scalar, "
+                f"debug.{op_name} conversion '{spec}' requires unsigned integer or bool scalar, "
                 f"but got {scalar_type.dtype}"
             )
         if conversion == "x" and not (
-            _is_unsigned_integer_dtype(scalar_type.dtype) or _is_index_dtype(scalar_type.dtype)
+            _is_unsigned_integer_dtype(scalar_type.dtype) or scalar_type.dtype == DataType.INT64
         ):
             raise InvalidVal(
-                f"debug.{op_name} conversion '{spec}' requires unsigned integer or index scalar, "
+                f"debug.{op_name} conversion '{spec}' requires unsigned integer scalar, "
                 f"but got {scalar_type.dtype}"
             )
         if conversion in _FLOAT_CONVERSIONS and scalar_type.dtype != DataType.FP32:

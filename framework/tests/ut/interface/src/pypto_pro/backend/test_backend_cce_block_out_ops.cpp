@@ -2371,7 +2371,7 @@ TEST(BackendCCEBlockOutOps, StructCreateCastsScalarInitializerToFieldType)
 {
     TestableCCECodegen codegen(ir::SectionKind::Cube);
     codegen.SetCurrentTargetVar("run_info");
-    auto index = MakeScalarType(ir::DataType::INDEX);
+    auto index = MakeScalarType(ir::DataType::INT64);
     auto tuple_type = std::make_shared<const ir::TupleType>(std::vector<ir::TypePtr>{index});
     auto call = std::make_shared<const ir::Call>("struct.create", std::vector<ir::ExprPtr>{MakeVar("work_id", index)},
                                                  std::vector<std::pair<std::string, std::any>>{

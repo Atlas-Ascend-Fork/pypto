@@ -249,7 +249,7 @@ from .pypto_impl.ir import (
 
 def tuple_get_item(value, index, span):
     if isinstance(index, int):
-        index = ConstInt(index, INDEX, span)
+        index = ConstInt(index, DataType.INT64, span)
     return GetItemExpr(value, index, span)
 
 
@@ -280,4 +280,3 @@ BF16 = DataType.BF16
 FP64 = DataType.FP64
 HF4 = DataType.HF4
 HF8 = DataType.HF8
-INDEX = DataType.INDEX

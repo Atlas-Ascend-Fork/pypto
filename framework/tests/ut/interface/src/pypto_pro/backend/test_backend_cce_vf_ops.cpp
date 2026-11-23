@@ -124,11 +124,6 @@ ir::ExprPtr Float(double value)
     return std::make_shared<const ir::ConstFloat>(value, ir::DataType::FP32, ir::Span::Unknown());
 }
 
-ir::ExprPtr IndexVal(int64_t value)
-{
-    return std::make_shared<const ir::ConstInt>(value, ir::DataType::INDEX, ir::Span::Unknown());
-}
-
 int EnumValue(ir::MergeMode value) { return static_cast<int>(value); }
 
 template <typename Enum>
@@ -2009,7 +2004,7 @@ TEST(BackendCCEVFOpsTest, DoesNotCoerceForFloatSrc)
     EXPECT_NE(emitted.find("3.5"), std::string::npos) << emitted;
 }
 
-TEST(BackendCCEVFOpsTest, MulsAcceptsIndexOrInt64ScalarConvertedToSrcType)
+TEST(BackendCCEVFOpsTest, MulsAcceptsInt64ScalarConvertedToSrcType)
 {
     CapturingCCECodegen codegen(ir::SectionKind::Vector);
     auto i32_dst = MakeVar("i32_dst", ir::DataType::INT32);
@@ -2017,8 +2012,6 @@ TEST(BackendCCEVFOpsTest, MulsAcceptsIndexOrInt64ScalarConvertedToSrcType)
     auto mask = MakeVar("mask", ir::DataType::UINT32);
     const Kwargs zeroing = {{"mode", EnumValue(ir::MergeMode::ZEROING)}};
 
-    // Keep accepting the legacy INDEX scalar and the new INT64 default integer.
-    ExpectInvoke(codegen, VF_MULS, {"vmuls("}, {i32_src, IndexVal(3), mask}, zeroing, "i32_dst");
     ExpectInvoke(codegen, VF_MULS, {"vmuls("}, {i32_src, Int(3), mask}, zeroing, "i32_dst");
 }
 

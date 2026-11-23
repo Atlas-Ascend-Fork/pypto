@@ -34,7 +34,7 @@ TEST(ScalarExprBasicTest, RejectsStorageOnlyScalarArithmetic)
         EXPECT_THROW((void)MakeAdd(value, value), ValueError);
     }
     for (auto dtype : {DataType::BOOL, DataType::INT8, DataType::UINT8, DataType::INT64, DataType::UINT64,
-                       DataType::INDEX, DataType::FP16, DataType::BF16, DataType::FP32, DataType::FP64}) {
+                       DataType::FP16, DataType::BF16, DataType::FP32, DataType::FP64}) {
         EXPECT_FALSE(dtype.IsStorageOnly());
     }
 }

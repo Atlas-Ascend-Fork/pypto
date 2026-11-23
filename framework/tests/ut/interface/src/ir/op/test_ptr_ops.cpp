@@ -64,7 +64,7 @@ TEST_F(PtrOpsTest, MakePtr_AnnotatedPtrPreservesBaseAndOffset)
 {
     auto& reg = OpRegistry::GetInstance();
     auto base = MakePtrVar("base", DataType::UINT8);
-    auto offset = MakeScalarVar("offset", DataType::INDEX);
+    auto offset = MakeScalarVar("offset", DataType::INT64);
     auto annotated_type = std::make_shared<PtrType>(DataType::UINT8, base, offset);
     auto annotated_ptr = std::make_shared<Var>("annotated", annotated_type, Sp());
     std::vector<std::pair<std::string, std::any>> kwargs = {{"dtype", DataType::FP16}};
@@ -94,7 +94,7 @@ TEST_F(PtrOpsTest, AddPtr_PtrAndOffset_ReturnsPtrType)
 {
     auto& reg = OpRegistry::GetInstance();
     auto ptr = MakePtrVar("p", DataType::FP16);
-    auto offset = MakeScalarVar("off", DataType::INDEX);
+    auto offset = MakeScalarVar("off", DataType::INT64);
     auto call = reg.Create("ptr.addptr", {ptr, offset}, Sp());
     auto rt = As<PtrType>(call->GetType());
     ASSERT_NE(rt, nullptr);
@@ -105,11 +105,11 @@ TEST_F(PtrOpsTest, AddPtr_ChainedAddPtr_ReturnsPtrType)
 {
     auto& reg = OpRegistry::GetInstance();
     auto ptr = MakePtrVar("p", DataType::FP32);
-    auto off1 = std::make_shared<ConstInt>(int64_t(16), DataType::INDEX, Sp());
+    auto off1 = std::make_shared<ConstInt>(int64_t(16), DataType::INT64, Sp());
     auto call1 = reg.Create("ptr.addptr", {ptr, off1}, Sp());
 
     // Chain: addptr on the result of addptr
-    auto off2 = std::make_shared<ConstInt>(int64_t(32), DataType::INDEX, Sp());
+    auto off2 = std::make_shared<ConstInt>(int64_t(32), DataType::INT64, Sp());
     auto call2 = reg.Create("ptr.addptr", {call1, off2}, Sp());
     auto rt = As<PtrType>(call2->GetType());
     ASSERT_NE(rt, nullptr);
@@ -126,8 +126,16 @@ TEST_F(PtrOpsTest, AddPtr_NonPtrFirst_Throws)
 {
     auto& reg = OpRegistry::GetInstance();
     EXPECT_THROW((void)reg.Create("ptr.addptr",
-                                  {MakeScalarVar("s", DataType::FP32), MakeScalarVar("off", DataType::INDEX)}, Sp()),
+                                  {MakeScalarVar("s", DataType::FP32), MakeScalarVar("off", DataType::INT64)}, Sp()),
                  npu::tile_fwk::Error);
+}
+
+TEST_F(PtrOpsTest, AddPtr_NonIntegerOffset_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    EXPECT_THROW(
+        (void)reg.Create("ptr.addptr", {MakePtrVar("p", DataType::FP16), MakeScalarVar("off", DataType::FP32)}, Sp()),
+        npu::tile_fwk::Error);
 }
 
 // ============================================================================

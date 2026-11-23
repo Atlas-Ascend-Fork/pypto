@@ -183,6 +183,22 @@ TEST_F(DebugOpsTest, Printf_FloatConversionWithInt_Throws)
                  npu::tile_fwk::Error);
 }
 
+TEST_F(DebugOpsTest, Printf_UnsignedConversionWithSignedInt_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    std::vector<std::pair<std::string, std::any>> kwargs = {{"format", std::string("%u")}};
+    EXPECT_THROW((void)reg.Create("debug.printf", {MakeScalarVar("x", DataType::INT32)}, kwargs, Sp()),
+                 npu::tile_fwk::Error);
+}
+
+TEST_F(DebugOpsTest, Printf_SignedConversionWithFloat_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    std::vector<std::pair<std::string, std::any>> kwargs = {{"format", std::string("%d")}};
+    EXPECT_THROW((void)reg.Create("debug.printf", {MakeScalarVar("x", DataType::FP32)}, kwargs, Sp()),
+                 npu::tile_fwk::Error);
+}
+
 // ============================================================================
 // debug.assert
 // ============================================================================
@@ -221,6 +237,39 @@ TEST_F(DebugOpsTest, Assert_MissingConditionText_Throws)
     std::vector<std::pair<std::string, std::any>> kwargs = {{"format", std::string("")}};
     EXPECT_THROW((void)reg.Create("debug.assert", {MakeScalarVar("c", DataType::BOOL)}, kwargs, Sp()),
                  npu::tile_fwk::Error);
+}
+
+TEST_F(DebugOpsTest, Assert_HexConversionWithFloat_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    std::vector<std::pair<std::string, std::any>> kwargs = {{"condition_text", std::string("x > 0")},
+                                                            {"format", std::string("%x")}};
+    EXPECT_THROW(
+        (void)reg.Create("debug.assert", {MakeScalarVar("c", DataType::BOOL), MakeScalarVar("x", DataType::FP32)},
+                         kwargs, Sp()),
+        npu::tile_fwk::Error);
+}
+
+TEST_F(DebugOpsTest, Assert_UnsignedConversionWithSignedInt_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    std::vector<std::pair<std::string, std::any>> kwargs = {{"condition_text", std::string("x > 0")},
+                                                            {"format", std::string("%u")}};
+    EXPECT_THROW(
+        (void)reg.Create("debug.assert", {MakeScalarVar("c", DataType::BOOL), MakeScalarVar("x", DataType::INT32)},
+                         kwargs, Sp()),
+        npu::tile_fwk::Error);
+}
+
+TEST_F(DebugOpsTest, Assert_SignedConversionWithFloat_Throws)
+{
+    auto& reg = OpRegistry::GetInstance();
+    std::vector<std::pair<std::string, std::any>> kwargs = {{"condition_text", std::string("x > 0")},
+                                                            {"format", std::string("%d")}};
+    EXPECT_THROW(
+        (void)reg.Create("debug.assert", {MakeScalarVar("c", DataType::BOOL), MakeScalarVar("x", DataType::FP32)},
+                         kwargs, Sp()),
+        npu::tile_fwk::Error);
 }
 
 // ============================================================================

@@ -16,7 +16,7 @@ import pytest
 
 def _tensor_var(name: str, dtype=DataType.FP16):
     span = ir.Span.unknown()
-    tensor_type = ir.TensorType([ir.ConstInt(64, DataType.INDEX, span)], dtype)
+    tensor_type = ir.TensorType([ir.ConstInt(64, DataType.INT64, span)], dtype)
     return ir.Var(name, tensor_type, span)
 
 
@@ -48,8 +48,8 @@ def test_block_op_kwarg_schema_is_exposed(op_name, attrs):
 def test_create_op_call_accepts_registered_kwargs():
     src = _tensor_var("src")
     span = ir.Span.unknown()
-    shape = ir.MakeTuple([ir.ConstInt(64, DataType.INDEX, span)], span)
-    stride = ir.MakeTuple([ir.ConstInt(1, DataType.INDEX, span)], span)
+    shape = ir.MakeTuple([ir.ConstInt(64, DataType.INT64, span)], span)
+    stride = ir.MakeTuple([ir.ConstInt(1, DataType.INT64, span)], span)
     call = ir.create_op_call(
         "ptr.make_tensor",
         [src, shape, stride],
@@ -72,7 +72,7 @@ def test_create_op_call_rejects_invalid_kwargs(kwargs):
     dst = _tensor_var("dst")
     src = _tensor_var("src")
     span = ir.Span.unknown()
-    offsets = ir.MakeTuple([ir.ConstInt(0, DataType.INDEX, span)], span)
+    offsets = ir.MakeTuple([ir.ConstInt(0, DataType.INT64, span)], span)
 
     with pytest.raises(Exception):
         ir.create_op_call("block.store", [dst, src, offsets], kwargs, span)

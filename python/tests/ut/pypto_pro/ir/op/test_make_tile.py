@@ -47,14 +47,14 @@ def _span() -> ir.Span:
 def _const_tuple(*dims: int) -> ir.MakeTuple:
     """A shape as the parser hands it to make_mutex_tile_expr: a MakeTuple of ConstInt."""
     span = _span()
-    return ir.MakeTuple([ir.ConstInt(dim, ir.DataType.INDEX, span) for dim in dims], span)
+    return ir.MakeTuple([ir.ConstInt(dim, ir.DataType.INT64, span) for dim in dims], span)
 
 
 def _dynamic_tuple() -> ir.MakeTuple:
     """A shape with one runtime dimension, which has no compile-time footprint."""
     span = _span()
     return ir.MakeTuple(
-        [ir.Var("n", ir.ScalarType(ir.DataType.INT64), span), ir.ConstInt(64, ir.DataType.INDEX, span)],
+        [ir.Var("n", ir.ScalarType(ir.DataType.INT64), span), ir.ConstInt(64, ir.DataType.INT64, span)],
         span,
     )
 

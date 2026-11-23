@@ -279,7 +279,6 @@ void BindDType(py::module_& ir)
         .def_readonly_static("FP64", &DataType::FP64, "64-bit floating point (IEEE 754 double precision)")
         .def_readonly_static("HF4", &DataType::HF4, "4-bit Hisilicon float")
         .def_readonly_static("HF8", &DataType::HF8, "8-bit Hisilicon float")
-        .def_readonly_static("INDEX", &DataType::INDEX, "Machine-word sized integer type for index computations")
         .def_readonly_static("DEFAULT_CONST_FLOAT", &DataType::FP32,
                              "Default dtype for bare float constant literals (= FP32)")
         .def("get_bit", &DataType::GetBit, "Get the size in bits of this data type.")

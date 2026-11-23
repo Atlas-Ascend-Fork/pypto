@@ -308,15 +308,6 @@ def test_default_integer_literal_uses_int64_or_uint64(value, dtype, stored):
     assert const.value == stored
 
 
-@pytest.mark.parametrize("value", [INT64_MIN, INT64_MAX])
-def test_explicit_legacy_index_dtype_is_preserved(value):
-    from pypto_pro.language.parser.diagnostics import make_const_int
-
-    const = make_const_int(value, ir.DataType.INDEX, span=ir.Span.unknown())
-
-    assert const.type.dtype == ir.DataType.INDEX
-
-
 def test_named_dtype_is_taken_at_its_word():
     """An explicitly named dtype is not promoted: the value has to fit it."""
     from pypto_pro.language.parser.diagnostics import make_const_int

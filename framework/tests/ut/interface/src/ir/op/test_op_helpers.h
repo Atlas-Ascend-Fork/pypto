@@ -89,7 +89,7 @@ inline ExprPtr MakeTileVarWithMemRef(const std::string& name, std::vector<int64_
     for (auto d : dims) {
         shape.push_back(std::make_shared<ConstInt>(d, DataType::INT64, sp));
     }
-    auto addr_expr = std::make_shared<ConstInt>(addr, DataType::INDEX, sp);
+    auto addr_expr = std::make_shared<ConstInt>(addr, DataType::INT64, sp);
     auto memref = std::make_shared<MemRef>(ms, addr_expr, size);
     return std::make_shared<Var>(name, std::make_shared<TileType>(shape, dt, std::optional<MemRefPtr>(memref)), sp);
 }

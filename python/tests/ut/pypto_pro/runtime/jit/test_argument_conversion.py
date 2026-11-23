@@ -693,7 +693,7 @@ def validate_carrier(launch):
     (DataType.UINT32, getattr(torch, "uint32", None)),
     (DataType.UINT32, torch.int32),
     (DataType.FP64, torch.float64),
-    (DataType.INDEX, torch.int64),
+    (DataType.INT64, torch.int64),
 ])
 def test_tensor_carriers_are_accepted(validate_carrier, stage, dtype, carrier):
     validate_carrier(stage, dtype, carrier)
@@ -717,7 +717,7 @@ def test_tensor_carriers_are_accepted(validate_carrier, stage, dtype, carrier):
     (DataType.UINT32, torch.int16),
     (DataType.UINT32, torch.uint8),
     (DataType.FP64, torch.float32),
-    (DataType.INDEX, torch.int32),
+    (DataType.INT64, torch.int32),
 ])
 def test_wrong_tensor_carriers_raise(validate_carrier, stage, dtype, carrier):
     with pytest.raises(TypeError, match="dtype mismatch"):

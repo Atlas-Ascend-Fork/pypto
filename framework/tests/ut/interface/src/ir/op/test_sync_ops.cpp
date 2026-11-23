@@ -45,8 +45,8 @@ using namespace test_helpers;
 TEST(SyncOpsMutexTest, DynamicMutexRejectsPerTileGroups)
 {
     auto& reg = OpRegistry::GetInstance();
-    auto id0 = MakeScalarVar("id0", DataType::INDEX);
-    auto id1 = MakeScalarVar("id1", DataType::INDEX);
+    auto id0 = MakeScalarVar("id0", DataType::INT64);
+    auto id1 = MakeScalarVar("id1", DataType::INT64);
     auto firstIds = std::make_shared<const MakeTuple>(std::vector<ExprPtr>{id0}, Sp());
     auto secondIds = std::make_shared<const MakeTuple>(std::vector<ExprPtr>{id1}, Sp());
     auto mutexId = std::make_shared<const MakeTuple>(std::vector<ExprPtr>{firstIds, secondIds}, Sp());
@@ -64,7 +64,7 @@ TEST(SyncOpsMutexTest, DynamicMutexRejectsPerTileGroups)
 TEST(SyncOpsMutexTest, DynamicMutexAcceptsManualScalarId)
 {
     auto& reg = OpRegistry::GetInstance();
-    auto id0 = MakeScalarVar("id0", DataType::INDEX);
+    auto id0 = MakeScalarVar("id0", DataType::INT64);
     std::vector<std::pair<std::string, std::any>> kwargs = {{"pipe", 5}};
 
     for (const char* op_name : {"system.mutex_lock_dyn", "system.mutex_unlock_dyn"}) {
@@ -90,7 +90,7 @@ TEST(SyncOpsMutexTest, DynamicMutexRejectsEmptyCandidateGroups)
 TEST(SyncOpsMutexTest, DynamicMutexRejectsInvalidArgumentCounts)
 {
     auto& reg = OpRegistry::GetInstance();
-    auto id = MakeScalarVar("id", DataType::INDEX);
+    auto id = MakeScalarVar("id", DataType::INT64);
     std::vector<std::pair<std::string, std::any>> kwargs = {{"pipe", 5}};
 
     EXPECT_THROW((void)reg.Create("system.mutex_lock_dyn", {}, kwargs, Sp()), npu::tile_fwk::Error);
@@ -181,7 +181,7 @@ TEST_F(SyncOpsDcciTest, Dcci_TileTarget_ScalarOffset_ReturnsUnknown)
 {
     auto& reg = OpRegistry::GetInstance();
     auto tile = MakeTileVar("ub", {16, 32}, DataType::FP16);
-    auto offset = MakeScalarVar("off", DataType::INDEX);
+    auto offset = MakeScalarVar("off", DataType::INT64);
     std::vector<std::pair<std::string, std::any>> kwargs = {
         {"cache_line", static_cast<int>(CacheLine::SINGLE_CACHE_LINE)},
         {"dst", static_cast<int>(DcciDst::CACHELINE_UB)}};

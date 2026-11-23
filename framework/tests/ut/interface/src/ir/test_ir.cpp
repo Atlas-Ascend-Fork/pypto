@@ -223,7 +223,7 @@ TEST_F(IRExprStrTest, TestMakeTupleAndGetItemStr)
     auto mt = std::make_shared<MakeTuple>(std::vector<ExprPtr>{a, b}, sp);
     ASSERT_EQ(PythonPrint(std::static_pointer_cast<const IRNode>(mt)), "[1, 2]");
 
-    auto idx = std::make_shared<ConstInt>(0, DataType::INDEX, sp);
+    auto idx = std::make_shared<ConstInt>(0, DataType::INT64, sp);
     auto tgi = std::make_shared<GetItemExpr>(mt, idx, sp);
     ASSERT_EQ(PythonPrint(std::static_pointer_cast<const IRNode>(tgi)), "[1, 2][0]");
 }

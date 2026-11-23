@@ -91,7 +91,7 @@ TEST_F(IRPrinterTest, TestPrintConstantsAndBasicExprs)
 
     // GetItemExpr
     auto tup = std::make_shared<MakeTuple>(std::vector<ExprPtr>{a}, Sp());
-    auto idx = std::make_shared<ConstInt>(0, DataType::INDEX, Sp());
+    auto idx = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
     EXPECT_EQ(Print(std::make_shared<GetItemExpr>(tup, idx, Sp())), "[1][0]");
 }
 

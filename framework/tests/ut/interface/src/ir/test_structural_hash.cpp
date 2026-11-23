@@ -169,7 +169,7 @@ TEST_F(IRStructHashTest, TestHashGetItemExpr)
     auto a = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
     auto b = std::make_shared<ConstInt>(2, DataType::INT32, Sp());
     auto tup = std::make_shared<MakeTuple>(std::vector<ExprPtr>{a, b}, Sp());
-    auto idx = std::make_shared<ConstInt>(0, DataType::INDEX, Sp());
+    auto idx = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
     auto g1 = std::make_shared<GetItemExpr>(tup, idx, Sp());
     auto g2 = std::make_shared<GetItemExpr>(tup, idx, Sp());
     EXPECT_EQ(structural_hash(Node(g1)), structural_hash(Node(g2)));
@@ -468,26 +468,6 @@ TEST_F(IRStructHashTest, TestHashMemRefAndUnknownType)
     EXPECT_EQ(structural_hash(memref1), structural_hash(memref2));
     EXPECT_EQ(structural_hash(unknown1), structural_hash(unknown2));
     EXPECT_NE(structural_hash(memref1), structural_hash(unknown1));
-}
-
-// ============================================================================
-// LoopVar INT64/INDEX canonicalization
-// ============================================================================
-
-TEST_F(IRStructHashTest, TestLoopVarInt64IndexDifferentHash)
-{
-    auto i1 = std::make_shared<Var>("i", Scalar(DataType::INT64), Sp());
-    auto i2 = std::make_shared<Var>("i", Scalar(DataType::INDEX), Sp());
-    auto zero = std::make_shared<ConstInt>(0, DataType::INT32, Sp());
-    auto ten = std::make_shared<ConstInt>(10, DataType::INT32, Sp());
-    auto one = std::make_shared<ConstInt>(1, DataType::INT32, Sp());
-    auto yield = std::make_shared<YieldStmt>(std::vector<ExprPtr>{}, Sp());
-
-    auto f1 = std::make_shared<ForStmt>(i1, zero, ten, one, std::vector<IterArgPtr>{}, yield, std::vector<VarPtr>{},
-                                        Sp());
-    auto f2 = std::make_shared<ForStmt>(i2, zero, ten, one, std::vector<IterArgPtr>{}, yield, std::vector<VarPtr>{},
-                                        Sp());
-    EXPECT_NE(structural_hash(Node(f1)), structural_hash(Node(f2)));
 }
 
 // ============================================================================

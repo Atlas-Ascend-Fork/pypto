@@ -44,11 +44,6 @@ namespace ir {
 
 namespace {
 
-bool AreForSyntaxScalarDtypesEquivalent(const DataType& lhs, const DataType& rhs)
-{
-    return (lhs == DataType::INT64 && rhs == DataType::INDEX) || (lhs == DataType::INDEX && rhs == DataType::INT64);
-}
-
 bool AreDoublesEquivalent(double lhs, double rhs) { return std::abs(lhs - rhs) <= 1e-10; }
 
 } // namespace
@@ -409,11 +404,8 @@ public:
     // Transparent containers (Program, SeqStmts) suppress their own field names
     // so that vector/map element accessors ([i] / ['key']) attach directly to the
     // parent field name, producing paths like body[1] instead of body.stmts[1].
-    void PushFieldName(const char* name)
+    void PushFieldName([[maybe_unused]] const char* name)
     {
-        if (transparentDepth_ == 0) {
-            fieldNameStack_.emplace_back(name);
-        }
         if constexpr (AssertMode) {
             if (transparentDepth_ == 0) {
                 path_.emplace_back(name);
@@ -423,9 +415,6 @@ public:
 
     void PopFieldName()
     {
-        if (transparentDepth_ == 0) {
-            fieldNameStack_.pop_back();
-        }
         if constexpr (AssertMode) {
             if (transparentDepth_ == 0) {
                 path_.pop_back();
@@ -445,12 +434,6 @@ private:
     bool EqualVar(const VarPtr& lhs, const VarPtr& rhs);
     bool EqualMemRef(const MemRefPtr& lhs, const MemRefPtr& rhs);
     bool EqualType(const TypePtr& lhs, const TypePtr& rhs);
-    bool IsLoopVarFieldContext() const { return !fieldNameStack_.empty() && fieldNameStack_.back() == "loop_var"; }
-    bool IsConstIntTypeContext() const
-    {
-        return !nodeTypeStack_.empty() && nodeTypeStack_.back() == "ConstInt" && !fieldNameStack_.empty() &&
-               fieldNameStack_.back() == "type";
-    }
 
     /**
      * \brief Generic field-based equality check for IR nodes using FieldIterator
@@ -554,7 +537,6 @@ private:
     std::unordered_map<VarPtr, VarPtr> lhsToRhsVarMap_;
     std::unordered_map<VarPtr, VarPtr> rhsToLhsVarMap_;
     std::vector<std::string> path_; // Only used in assert mode
-    std::vector<std::string> fieldNameStack_;
     std::vector<std::string> nodeTypeStack_;
     int transparentDepth_ = 0;
 };
@@ -662,10 +644,6 @@ bool StructuralEqualImpl<AssertMode>::EqualType(const TypePtr& lhs, const TypePt
         auto rhsScalar = As<ScalarType>(rhs);
         if (!rhsScalar) {
             return IRAssert({}, "Type cast failed for ScalarType");
-        }
-        if ((IsLoopVarFieldContext() || IsConstIntTypeContext()) &&
-            AreForSyntaxScalarDtypesEquivalent(lhsScalar->dtype_, rhsScalar->dtype_)) {
-            return true;
         }
         if (lhsScalar->dtype_ != rhsScalar->dtype_) {
             return IRAssert({}, "ScalarType dtype mismatch (", lhsScalar->dtype_.ToString(),

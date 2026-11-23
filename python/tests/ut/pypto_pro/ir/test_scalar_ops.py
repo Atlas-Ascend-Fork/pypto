@@ -112,7 +112,7 @@ class TestNumericPromotion:
             (ir.max_, ir.Max),
         ],
     )
-    @pytest.mark.parametrize("int_dtype", [DataType.INT32, DataType.INDEX])
+    @pytest.mark.parametrize("int_dtype", [DataType.INT32, DataType.INT64])
     @pytest.mark.parametrize("bool_on_left", [True, False])
     def test_bool_and_int_promote_to_common_dtype(self, make_op, op_type, int_dtype, bool_on_left):
         """A bool first becomes INT64, then same-width promotion keeps the left dtype."""
@@ -121,12 +121,12 @@ class TestNumericPromotion:
         result = make_op(bool_operand, int_operand) if bool_on_left else make_op(int_operand, bool_operand)
 
         assert isinstance(result, op_type)
-        expected_dtype = DataType.INDEX if int_dtype == DataType.INDEX and not bool_on_left else DataType.INT64
+        expected_dtype = DataType.INT64
         _assert_dtype(result, expected_dtype)
         promoted_bool = result.left if bool_on_left else result.right
         promoted_int = result.right if bool_on_left else result.left
         _assert_cast_dtype(promoted_bool, expected_dtype)
-        if int_dtype == DataType.INDEX:
+        if int_dtype == DataType.INT64:
             assert promoted_int is int_operand
         else:
             _assert_cast_dtype(promoted_int, expected_dtype)
@@ -195,18 +195,18 @@ class TestNumericPromotion:
         assert result.right is right
 
     @pytest.mark.parametrize("constant_on_left", [True, False])
-    def test_equal_width_index_int64_keeps_left_dtype(self, constant_on_left):
-        """Equal-width INDEX/INT64 promotion returns the left dtype without a redundant Cast."""
+    def test_equal_width_int64_keeps_left_dtype(self, constant_on_left):
+        """Equal-width INT64 promotion returns the left dtype without a redundant Cast."""
         span = ir.Span.unknown()
-        constant = ir.ConstInt(2, DataType.INDEX, span)
+        constant = ir.ConstInt(2, DataType.INT64, span)
         variable = _var("x", DataType.INT64)
         result = ir.add(constant, variable) if constant_on_left else ir.add(variable, constant)
 
         promoted_constant = result.left if constant_on_left else result.right
-        expected_dtype = DataType.INDEX if constant_on_left else DataType.INT64
+        expected_dtype = DataType.INT64
         _assert_dtype(result, expected_dtype)
         assert promoted_constant is constant
-        _assert_dtype(promoted_constant, DataType.INDEX)
+        _assert_dtype(promoted_constant, DataType.INT64)
 
     @pytest.mark.parametrize("make_compare", [ir.eq, ir.ne, ir.lt, ir.le, ir.gt, ir.ge])
     def test_comparison_accepts_bool_as_numeric(self, make_compare):

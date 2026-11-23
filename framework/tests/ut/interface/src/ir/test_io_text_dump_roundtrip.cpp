@@ -225,7 +225,7 @@ TEST_F(IoTextDumpRoundTripTest, TestExprRoundTrip)
     EXPECT_TRUE(error.empty());
 
     // GetItemExpr: getitem(tuple(1, 2), 0)
-    auto idx = std::make_shared<ConstInt>(0, DataType::INDEX, Sp());
+    auto idx = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
     auto gi = std::make_shared<GetItemExpr>(tup, idx, Sp());
     EXPECT_EQ(TextDump(gi), "getitem(tuple(1, 2), 0)");
 }

@@ -370,7 +370,7 @@ class _GemmCall:
             if known is None:
                 scalar_type = getattr(self.value(node), "type", None)
                 if not isinstance(scalar_type, ir.ScalarType) or not (
-                    scalar_type.dtype.is_int() or scalar_type.dtype == ir.DataType.INDEX
+                    scalar_type.dtype.is_int()
                 ):
                     raise InvalidType(f"{self.api} '{axis}' must be an integer scalar")
             if known is not None and not 0 < known <= size:

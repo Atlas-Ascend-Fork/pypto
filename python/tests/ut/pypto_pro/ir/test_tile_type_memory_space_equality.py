@@ -16,8 +16,8 @@ import pytest
 
 def _tile(space=None, address=0, dtype=DataType.INT64):
     span = ir.Span.unknown()
-    dims = [ir.ConstInt(d, DataType.INDEX, span) for d in (1, 64)]
-    memref = ir.MemRef(space, ir.ConstInt(address, DataType.INDEX, span), 512, span) if space else None
+    dims = [ir.ConstInt(d, DataType.INT64, span) for d in (1, 64)]
+    memref = ir.MemRef(space, ir.ConstInt(address, DataType.INT64, span), 512, span) if space else None
     return ir.TileType(dims, dtype, memref) if memref is not None else ir.TileType(dims, dtype)
 
 

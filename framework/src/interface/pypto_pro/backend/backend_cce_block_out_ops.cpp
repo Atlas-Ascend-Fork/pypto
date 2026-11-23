@@ -894,11 +894,10 @@ static std::string MakeBlockOutInitOutputCodegenCCE(const ir::CallPtr& op, codeg
     std::string size = cce::GetOperandAsCode(codegen, op->args_[2]);
     std::string value = cce::GetOperandAsCode(codegen, op->args_[3]);
 
-    // aicore does not allow implicit conversion from integer (incl. INDEX) scalars to
+    // aicore does not allow implicit conversion from integer scalars to
     // float element types; cast the scalar directly to the tensor's element type.
     auto scalarType = ir::As<ir::ScalarType>(op->args_[3]->GetType());
-    if (scalarType && (scalarType->dtype_ == DataType::INDEX || scalarType->dtype_.IsInt()) &&
-        tensorType->dtype_.IsFloat()) {
+    if (scalarType && scalarType->dtype_.IsInt() && tensorType->dtype_.IsFloat()) {
         value = "(" + ctype + ")(" + value + ")";
     }
     // Float constant on an integer tensor: emit a truncated integer literal, matching the
@@ -1335,16 +1334,15 @@ static std::string MakeBlockOutExpandsCodegenCCE(const ir::CallPtr& op, codegen:
     std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
     std::string scalar = cce::GetOperandAsCode(codegen, op->args_[1]);
 
-    // aicore does not allow implicit cast from integer (including index) to float.
-    // Insert explicit (float) cast when scalar is integer/index and dst element type is float.
+    // aicore does not allow implicit cast from integer to float.
+    // Insert explicit (float) cast when scalar is integer and dst element type is float.
     auto scalarType = ir::As<ir::ScalarType>(op->args_[1]->GetType());
     auto tileType = ir::As<ir::TileType>(op->args_[0]->GetType());
     if (scalarType && tileType) {
-        bool srcIsInt = (scalarType->dtype_ == DataType::INDEX || scalarType->dtype_ == DataType::INT8 ||
-                         scalarType->dtype_ == DataType::INT16 || scalarType->dtype_ == DataType::INT32 ||
-                         scalarType->dtype_ == DataType::INT64 || scalarType->dtype_ == DataType::UINT8 ||
-                         scalarType->dtype_ == DataType::UINT16 || scalarType->dtype_ == DataType::UINT32 ||
-                         scalarType->dtype_ == DataType::UINT64);
+        bool srcIsInt = (scalarType->dtype_ == DataType::INT8 || scalarType->dtype_ == DataType::INT16 ||
+                         scalarType->dtype_ == DataType::INT32 || scalarType->dtype_ == DataType::INT64 ||
+                         scalarType->dtype_ == DataType::UINT8 || scalarType->dtype_ == DataType::UINT16 ||
+                         scalarType->dtype_ == DataType::UINT32 || scalarType->dtype_ == DataType::UINT64);
         bool dstIsFloat = (tileType->dtype_ == DataType::FP16 || tileType->dtype_ == DataType::FP32 ||
                            tileType->dtype_ == DataType::BF16);
         if (srcIsInt && dstIsFloat) {

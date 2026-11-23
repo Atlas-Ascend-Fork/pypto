@@ -38,7 +38,7 @@ _LAYOUT_HARDWARE = {
 
 def _tile(name, shape, dtype, memory_space, addr=0, *, layout=None, fractal=None):
     span = ir.Span.unknown()
-    dims = [ir.ConstInt(dim, DataType.INDEX, span) for dim in shape]
+    dims = [ir.ConstInt(dim, DataType.INT64, span) for dim in shape]
     memref = ir.MemRef(
         memory_space,
         ir.ConstInt(addr, DataType.INT64, span),
@@ -58,7 +58,7 @@ def _tile(name, shape, dtype, memory_space, addr=0, *, layout=None, fractal=None
 
 def _tensor(name, shape, dtype):
     span = ir.Span.unknown()
-    dims = [ir.ConstInt(dim, DataType.INDEX, span) for dim in shape]
+    dims = [ir.ConstInt(dim, DataType.INT64, span) for dim in shape]
     return ir.Var(name, ir.TensorType(dims, dtype), span)
 
 
@@ -417,8 +417,8 @@ def test_matmul_mx_rejects_unpaired_scale_address(
 def test_matmul_mx_skips_address_check_without_explicit_memref():
     t = _mx_tiles()
     span = ir.Span.unknown()
-    shape = [ir.ConstInt(dim, DataType.INDEX, span) for dim in [64, 64]]
-    scale_shape = [ir.ConstInt(dim, DataType.INDEX, span) for dim in [64, 2]]
+    shape = [ir.ConstInt(dim, DataType.INT64, span) for dim in [64, 64]]
+    scale_shape = [ir.ConstInt(dim, DataType.INT64, span) for dim in [64, 2]]
     t["lhs"] = ir.Var("lhs", ir.TileType(shape, DataType.FP8E4M3FN), span)
     scale_hw = ir.HardwareInfo(ir.TileLayout.row_major, ir.TileLayout.row_major, 32)
     t["scale_a"] = ir.Var(

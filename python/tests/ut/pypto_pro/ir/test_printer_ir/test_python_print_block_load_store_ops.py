@@ -20,11 +20,11 @@ from pypto_pro import DataType, ir
 
 def test_python_print_block_load_store_ops():
     span = ir.Span.unknown()
-    dim = ir.ConstInt(64, DataType.INDEX, span)
+    dim = ir.ConstInt(64, DataType.INT64, span)
     tensor = ir.Var("x", ir.TensorType([dim], DataType.FP16), span)
-    memref = ir.MemRef(ir.MemorySpace.Vec, ir.ConstInt(0, DataType.INDEX, span), 128, 0)
+    memref = ir.MemRef(ir.MemorySpace.Vec, ir.ConstInt(0, DataType.INT64, span), 128, 0)
     tile = ir.Var("tile", ir.TileType([dim], DataType.FP16, memref), span)
-    zero = ir.ConstInt(0, DataType.INDEX, span)
+    zero = ir.ConstInt(0, DataType.INT64, span)
 
     load = ir.Call(ir.Op("block.load"), [tile, tensor, ir.MakeTuple([zero], span)], span)
     store = ir.Call(ir.Op("block.store"), [tensor, tile, ir.MakeTuple([zero], span)], span)

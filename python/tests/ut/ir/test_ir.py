@@ -62,7 +62,6 @@ def test_dtypes():
         (ir.INT16, 16, True, False, False, "int16", "int16_t"),
         (ir.INT32, 32, True, False, False, "int32", "int32_t"),
         (ir.INT64, 64, True, False, False, "int64", "int64_t"),
-        (ir.INDEX, 64, True, False, False, "index", "int64_t"),
         (ir.UINT4, 4, False, True, False, "uint4", "unknown"),
         (ir.UINT8, 8, False, True, False, "uint8", "uint8_t"),
         (ir.UINT16, 16, False, True, False, "uint16", "uint16_t"),
@@ -297,7 +296,7 @@ def test_basic_expr():
     assert str(mt) == "tuple(1, 2)"
     tgi = ir.TupleGetItem(mt, 0, span)
     assert str(tgi) == "getitem(tuple(1, 2), 0)"
-    get_item = ir.GetItemExpr(mt, ir.ConstInt(1, ir.INDEX, span), span)
+    get_item = ir.GetItemExpr(mt, ir.ConstInt(1, ir.INT64, span), span)
     assert str(get_item) == "getitem(tuple(1, 2), 1)"
 
     # Call with Op

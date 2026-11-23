@@ -19,7 +19,7 @@ from pypto_pro import DataType, ir
 
 
 def _idx(value: int):
-    return ir.ConstInt(value, DataType.INDEX, ir.Span.unknown())
+    return ir.ConstInt(value, DataType.INT64, ir.Span.unknown())
 
 
 def test_tuple_get_item_preserves_block_return_types():
@@ -50,7 +50,7 @@ def test_tuple_get_item_preserves_block_tile_type():
 
 def test_make_tuple_supports_block_parser_roundtrip_shape():
     span = ir.Span.unknown()
-    lhs = ir.MakeTuple([ir.ConstInt(1, DataType.INDEX, span), ir.ConstInt(2, DataType.INDEX, span)], span)
-    rhs = ir.MakeTuple([ir.ConstInt(1, DataType.INDEX, span), ir.ConstInt(2, DataType.INDEX, span)], span)
+    lhs = ir.MakeTuple([ir.ConstInt(1, DataType.INT64, span), ir.ConstInt(2, DataType.INT64, span)], span)
+    rhs = ir.MakeTuple([ir.ConstInt(1, DataType.INT64, span), ir.ConstInt(2, DataType.INT64, span)], span)
 
     ir.assert_structural_equal(lhs, rhs)

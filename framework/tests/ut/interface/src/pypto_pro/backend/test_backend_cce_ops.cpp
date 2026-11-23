@@ -1060,7 +1060,7 @@ TEST(BackendCceOpsTest, BlockSubviewUsesDynamicTileGroupAddressAndGeneratedName)
 
 TEST(BackendCceOpsTest, BlockSubviewUsesRuntimeAddressWithStaticMemRef)
 {
-    auto addr = MakeConstInt(0x180, ir::DataType::INDEX);
+    auto addr = MakeConstInt(0x180, ir::DataType::INT64);
     auto memref = std::make_shared<const ir::MemRef>(ir::MemorySpace::Vec, addr, 1024, 0, ir::Span::Unknown());
     auto tile_type = std::make_shared<const ir::MutexTileType>(
         ir::TileType(std::vector<int64_t>{8, 16}, ir::DataType::FP32, std::optional<ir::MemRefPtr>(memref),
@@ -1328,7 +1328,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorEncodedFp4UsesLogicalOffsetMetadata)
 
 TEST(BackendCceOpsTest, DebugDumpTensorDynamicFullWindowUsesDeclaredShapeAndStride)
 {
-    auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INDEX);
+    auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
     auto rows = MakeVar("rows", index_type);
     auto cols = MakeVar("cols", index_type);
     auto tensor = MakeDynamicTensorVar("data", std::vector<ir::ExprPtr>{rows, cols}, ir::DataType::FP16,
@@ -1364,7 +1364,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorFullUsesUnifiedDumpPrinter)
 
 TEST(BackendCceOpsTest, DebugDumpTensorUsesExplicitDynamicStride)
 {
-    auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INDEX);
+    auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
     auto row_stride = MakeVar("row_stride", index_type);
     auto tensor = MakeTensorVar("strided", {8, 16}, ir::DataType::FP16, ir::Layout::ND, {row_stride, MakeConstInt(1)});
     auto call = std::make_shared<const ir::Call>(
@@ -1460,7 +1460,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorNzAllowsArbitraryWindowShapeAndRejectsMis
 
 TEST(BackendCceOpsTest, DebugDumpTensorNzDynamicShapeUsesCommonView)
 {
-    auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INDEX);
+    auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
     auto rows = MakeVar("rows", index_type);
     auto cols = MakeVar("cols", index_type);
     auto tensor = MakeDynamicTensorVar("nz_data", std::vector<ir::ExprPtr>{rows, cols}, ir::DataType::FP16,
@@ -1496,7 +1496,7 @@ TEST(BackendCceOpsTest, DebugDumpTensorHighDimensionalNzUsesUnifiedWindowMetadat
 
 TEST(BackendCceOpsTest, DebugDumpTensorHighDimensionalDynamicNzUsesUnifiedWindowMetadata)
 {
-    auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INDEX);
+    auto index_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
     auto batch = MakeVar("batch", index_type);
     auto heads = MakeVar("heads", index_type);
     auto rows = MakeVar("rows", index_type);

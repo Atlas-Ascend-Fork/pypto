@@ -82,12 +82,12 @@ static void EmitDebugLocationHeaderCCE(codegen::CCECodegen& codegen, const ir::S
 
 static bool NeedsPtoPrintfSignedLongLong(const DataType& dtype, char conversion)
 {
-    return (conversion == 'd' || conversion == 'i') && (dtype == DataType::INT64 || dtype == DataType::INDEX);
+    return (conversion == 'd' || conversion == 'i') && dtype == DataType::INT64;
 }
 
 static bool NeedsPtoPrintfUnsignedLongLong(const DataType& dtype, char conversion)
 {
-    return (conversion == 'u' || conversion == 'x') && (dtype == DataType::UINT64 || dtype == DataType::INDEX);
+    return (conversion == 'u' || conversion == 'x') && dtype == DataType::UINT64;
 }
 
 static std::string RewritePtoPrintfFormatForScalarType(const std::string& formatSegment, char conversion,
