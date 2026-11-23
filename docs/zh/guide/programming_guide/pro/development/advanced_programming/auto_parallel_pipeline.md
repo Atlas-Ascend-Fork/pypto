@@ -128,6 +128,7 @@ for kj in pl.range(0, M_ITER):        # 第二条流水
 > - 流水循环体内不能直接获取或操作跨核Buffer，以及与跨核Buffer复用地址的核内Buffer，应把这些操作放进stage函数。同一个stage函数在一条流水中只能调用一次，不同stage函数不能重名。
 > - 可以用if语句控制stage是否执行，但条件必须是编译期常量。在流水循环外调用`group.next()`取Tile时，需要使用单独的赋值语句，不能嵌入其他表达式；同一个变量只能取一次Tile，需要多个Tile时应使用多个变量。
 > - 一个kernel可以包含多个独立的流水循环，但这些循环不能嵌在同一个外层循环中，循环之间的全核同步由框架自动插入。kernel内不要使用以`_pl_`开头的框架保留变量名。
+> - kernel内不支持SIMT：该kernel不能是@pypto_pro.language.jit(mode="simt")定义的SIMT kernel，也不能调用@pypto_pro.language.vector_function(mode="simt", max_threads=N)声明的SIMT函数。
 
 ### 开启流水变换
 

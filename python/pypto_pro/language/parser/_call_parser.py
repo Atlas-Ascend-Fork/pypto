@@ -692,6 +692,12 @@ class CallParserMixin:
             local_name = indexed.value.id
             callee_template = self.expr_evaluator.closure_vars.get(local_name)
             if is_simt_function(callee_template):
+                if self.auto_pipeline_enabled:
+                    raise NotSupported(
+                        f"pipeline: `{local_name}[...]()` launches a SIMT vector function. "
+                        f"The automatic pipeline does not support SIMT.",
+                        span=self.span_tracker.get_span(call),
+                    )
                 self._validate_op_scope("simt.launch")
                 return _parse_simt_launch(self, call, local_name, callee_template)
 
