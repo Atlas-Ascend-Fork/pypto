@@ -20,6 +20,7 @@
 
 #include "interface/operation/attribute.h"
 #include "interface/utils/common.h"
+#include "passes/tile_graph_pass/data_path/convert_op_inserter.h"
 #include "tilefwk/platform.h"
 
 namespace npu::tile_fwk {
@@ -77,6 +78,21 @@ bool MemoryPathUtils::ShouldUseDdrForSpecialPath(bool hasParallelDifferentRequir
     return hasParallelDifferentRequirement && IsSpecialDirectMemoryPath(from, to);
 }
 
+// 只有可直连且仍有下游消费者的拼接输出才贡献目标存储类型。
+static bool HasDirectAssembleOutputRequirement(const Operation& consumerOp, MemoryType targetType)
+{
+    auto assembleOpAttribute = std::dynamic_pointer_cast<AssembleOpAttribute>(consumerOp.GetOpAttribute());
+    if (assembleOpAttribute != nullptr) {
+        MemoryType fromType = assembleOpAttribute->GetFrom();
+        if (MemoryPathUtils::IsSpecialDirectMemoryPath(fromType, targetType) && !consumerOp.oOperand.empty() &&
+            consumerOp.oOperand.front() != nullptr && !consumerOp.oOperand.front()->GetConsumers().empty()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// 综合搬运属性、输出驻留类型和下游需求，优先保留目标类型，其次采用唯一已知类型。
 MemoryType MemoryPathUtils::ResolveEffectiveConsumerRequirement(
     Operation* consumerOp, MemoryType directRequirement, MemoryType targetType,
     const OutputRequirementResolver& resolveOutputRequirement)
@@ -101,15 +117,9 @@ MemoryType MemoryPathUtils::ResolveEffectiveConsumerRequirement(
             addRequirement(viewOpAttribute->GetTo());
         }
     }
-    if (opcode == Opcode::OP_ASSEMBLE || opcode == Opcode::OP_CONTRACT) {
-        auto assembleOpAttribute = std::dynamic_pointer_cast<AssembleOpAttribute>(consumerOp->GetOpAttribute());
-        if (assembleOpAttribute != nullptr) {
-            MemoryType fromType = assembleOpAttribute->GetFrom();
-            if (IsSpecialDirectMemoryPath(fromType, targetType) && !consumerOp->oOperand.empty() &&
-                consumerOp->oOperand.front() != nullptr && !consumerOp->oOperand.front()->GetConsumers().empty()) {
-                addRequirement(targetType);
-            }
-        }
+    if ((opcode == Opcode::OP_ASSEMBLE || opcode == Opcode::OP_CONTRACT) &&
+        HasDirectAssembleOutputRequirement(*consumerOp, targetType)) {
+        addRequirement(targetType);
     }
     if (!consumerOp->oOperand.empty() && consumerOp->oOperand.front() != nullptr) {
         auto output = consumerOp->oOperand.front();
@@ -419,6 +429,7 @@ bool MemoryPathUtils::CheckInnerAxisC0Size(const LogicalTensorPtr& input, const 
     return true;
 }
 
+// 将各张量的 MemoryTypeToBe 同步为已确定的 MemoryTypeOriginal（实际驻留类型），覆盖算子引用张量与图边界张量。
 Status MemoryPathUtils::SyncTensorToBe(Function& function)
 {
     size_t syncCount = 0;
@@ -433,7 +444,7 @@ Status MemoryPathUtils::SyncTensorToBe(Function& function)
         tensor->SetMemoryTypeToBe(tensor->GetMemoryTypeOriginal());
         ++syncCount;
     };
-    // Function boundary tensors can remain after all of their operand references are removed.
+    // 图边界的张量在失去所有算子引用后仍可能存在。
     for (const auto& tensor : function.inCasts_) {
         syncTensor(tensor);
     }
@@ -513,6 +524,521 @@ Status MemoryPathUtils::AssignInOutCastMemoryTypes(Function& function)
         RETURN_IF_NOT_SUCCESS(SetOriginalChecked(outcast, MemoryType::MEM_DEVICE_DDR, "AssignOutcastMemoryType", true));
     }
     return SUCCESS;
+}
+
+// 校验单个消费者的存储需求，检测冲突并按允许的覆盖策略更新。
+Status MemoryPathUtils::SetRequirementChecked(ConvertInserter& inserter, const LogicalTensorPtr& tensor,
+                                              Operation& operation, MemoryType memoryType, const std::string& reason,
+                                              bool allowOverride)
+{
+    std::string context = reason.empty() ? "unknown" : reason;
+    if (tensor == nullptr) {
+        APASS_LOG_ERROR_F(Elements::Tensor,
+                          "SetRequirementChecked failed because tensor is null for operation %s[%d], reason: %s.",
+                          operation.GetOpcodeStr().c_str(), operation.GetOpMagic(), context.c_str());
+        return FAILED;
+    }
+    if (!tensor->HasConsumer(operation)) {
+        APASS_LOG_ERROR_F(Elements::Tensor, "Operation %s[%d] is not a consumer of tensor %d, reason: %s.",
+                          operation.GetOpcodeStr().c_str(), operation.GetOpMagic(), tensor->GetMagic(),
+                          context.c_str());
+        return FAILED;
+    }
+    bool hasRequirement = inserter.HasRequirement(tensor, operation);
+    MemoryType currentType = inserter.GetRequirementOrUnknown(tensor, operation);
+    if (hasRequirement && currentType != MemoryType::MEM_UNKNOWN && memoryType == MemoryType::MEM_UNKNOWN) {
+        return SUCCESS;
+    }
+    if (currentType != MemoryType::MEM_UNKNOWN && memoryType != MemoryType::MEM_UNKNOWN && currentType != memoryType &&
+        !allowOverride) {
+        APASS_LOG_WARN_F(
+            Elements::Tensor,
+            "Skip tensor %d requirement update for operation %s[%d] because current %s conflicts with new %s, "
+            "reason: %s.",
+            tensor->GetMagic(), operation.GetOpcodeStr().c_str(), operation.GetOpMagic(),
+            BriefMemoryTypeToString(currentType).c_str(), BriefMemoryTypeToString(memoryType).c_str(), context.c_str());
+        return SUCCESS;
+    }
+    inserter.UpdateTensorTobeMap(tensor, operation, memoryType, context.c_str());
+    return SUCCESS;
+}
+
+void MemoryPathUtils::ForceSetRequirement(ConvertInserter& inserter, const LogicalTensorPtr& tensor,
+                                          Operation& operation, MemoryType memoryType, const std::string& reason)
+{
+    if (tensor != nullptr && memoryType != MemoryType::MEM_UNKNOWN) {
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Force tensor[%d] requirement for %s[%d] as %s, reason %s.",
+                          tensor->GetMagic(), operation.GetOpcodeStr().c_str(), operation.GetOpMagic(),
+                          BriefMemoryTypeToString(memoryType).c_str(), reason.c_str());
+    }
+    SetRequirementChecked(inserter, tensor, operation, memoryType, reason, true);
+}
+
+void MemoryPathUtils::FillUnknownRequirementsWith(ConvertInserter& inserter, const LogicalTensorPtr& tensor,
+                                                  MemoryType memoryType, const char* reason)
+{
+    if (tensor == nullptr || memoryType == MemoryType::MEM_UNKNOWN) {
+        return;
+    }
+    auto requirements = inserter.GetConsumerRequirements(tensor);
+    for (const auto& item : requirements) {
+        if (item.second == MemoryType::MEM_UNKNOWN) {
+            inserter.UpdateTensorTobeMap(tensor, *item.first, memoryType, reason);
+        }
+    }
+}
+
+Status MemoryPathUtils::EnsureAllConsumerRequirementsExist(ConvertInserter& inserter, Function& function)
+{
+    std::unordered_set<LogicalTensorPtr> visited;
+    auto ensureTensor = [&inserter, &visited](const LogicalTensorPtr& tensor) -> Status {
+        if (tensor == nullptr || !visited.insert(tensor).second)
+            return SUCCESS;
+        for (const auto& consumerOp : tensor->GetConsumers()) {
+            if (inserter.HasRequirement(tensor, *consumerOp))
+                continue;
+            RETURN_IF_NOT_SUCCESS(SetRequirementChecked(inserter, tensor, *consumerOp, MemoryType::MEM_UNKNOWN,
+                                                        "EnsureAllConsumerRequirementsExist"));
+        }
+        return SUCCESS;
+    };
+    for (auto& op : function.Operations()) {
+        for (auto& input : op.iOperand) {
+            RETURN_IF_NOT_SUCCESS(ensureTensor(input));
+        }
+        for (auto& output : op.oOperand) {
+            RETURN_IF_NOT_SUCCESS(ensureTensor(output));
+        }
+    }
+    return SUCCESS;
+}
+
+Status MemoryPathUtils::HandleNopMemoryType(ConvertInserter& inserter, Operation& operation)
+{
+    LogicalTensorPtr input;
+    LogicalTensorPtr output;
+    bool shouldHandle = false;
+    RETURN_IF_NOT_SUCCESS(GetFirstInputOutputIfOpcode(operation, Opcode::OP_NOP, "Handle OP_NOP memory type", input,
+                                                      output, shouldHandle));
+    if (!shouldHandle) {
+        return SUCCESS;
+    }
+    MemoryType inputRequirement = inserter.GetRequirementOrUnknown(input, operation);
+    MemoryType outputOriginal = output->GetMemoryTypeOriginal();
+    if (inputRequirement == MemoryType::MEM_UNKNOWN || outputOriginal == MemoryType::MEM_UNKNOWN) {
+        return SUCCESS;
+    }
+    if (inputRequirement != outputOriginal) {
+        ForceSetRequirement(inserter, input, operation, MemoryType::MEM_DEVICE_DDR, "HandleNopMismatchFallbackDdr");
+        ForceSetOriginal(output, MemoryType::MEM_DEVICE_DDR, "HandleNopMismatchFallbackDdr");
+        return SUCCESS;
+    }
+    return SUCCESS;
+}
+
+// 识别由入参直接切片且所有消费者都显式声明未知需求的情况，原地覆盖时保留在 DDR。
+static bool IsScatterSliceFromIncast(const ConvertInserter& inserter, const Function& function,
+                                     const LogicalTensorPtr& self)
+{
+    if (self->GetConsumers().empty()) {
+        return false;
+    }
+    for (auto* consumer : self->GetConsumers()) {
+        if (consumer == nullptr || inserter.GetRequirementOrUnknown(self, *consumer) != MemoryType::MEM_UNKNOWN) {
+            return false;
+        }
+        auto it = std::find(consumer->iOperand.begin(), consumer->iOperand.end(), self);
+        if (it == consumer->iOperand.end()) {
+            return false;
+        }
+        size_t inputIndex = static_cast<size_t>(std::distance(consumer->iOperand.begin(), it));
+        const auto& definedTypes = OpcodeManager::Inst().GetInputsMemType(consumer->GetOpcode());
+        if (inputIndex >= definedTypes.size() || definedTypes[inputIndex] != MemoryType::MEM_UNKNOWN) {
+            return false;
+        }
+    }
+    Operation* slice = nullptr;
+    for (auto* producer : self->GetProducers()) {
+        if (producer == nullptr || producer->GetOpcode() != Opcode::OP_SLICE || producer->oOperand.empty() ||
+            producer->oOperand.front() != self || producer->iOperand.empty() || producer->iOperand.front() == nullptr ||
+            slice != nullptr) {
+            return false;
+        }
+        slice = producer;
+    }
+    return slice != nullptr &&
+           std::find(function.inCasts_.begin(), function.inCasts_.end(), slice->iOperand.front()) !=
+               function.inCasts_.end() &&
+           std::dynamic_pointer_cast<ViewOpAttribute>(slice->GetOpAttribute()) != nullptr;
+}
+
+// 沿 VIEW、ASSEMBLE 和 RESHAPE 向上追溯，仅在候选驻留类型唯一时采用该类型。
+static MemoryType InferScatterInputMemoryType(const LogicalTensorPtr& tensor,
+                                              std::unordered_set<const LogicalTensor*>& visited)
+{
+    if (tensor == nullptr || !visited.insert(tensor.get()).second) {
+        return MemoryType::MEM_UNKNOWN;
+    }
+    std::set<MemoryType> candidates;
+    if (tensor->GetMemoryTypeOriginal() != MemoryType::MEM_UNKNOWN) {
+        candidates.insert(tensor->GetMemoryTypeOriginal());
+    }
+    for (auto* producer : tensor->GetProducers()) {
+        if (producer == nullptr ||
+            (producer->GetOpcode() != Opcode::OP_VIEW && producer->GetOpcode() != Opcode::OP_ASSEMBLE &&
+             producer->GetOpcode() != Opcode::OP_RESHAPE)) {
+            continue;
+        }
+        for (const auto& input : producer->iOperand) {
+            auto candidate = InferScatterInputMemoryType(input, visited);
+            if (candidate != MemoryType::MEM_UNKNOWN) {
+                candidates.insert(candidate);
+            }
+        }
+    }
+    return candidates.size() == 1 ? *candidates.begin() : MemoryType::MEM_UNKNOWN;
+}
+
+// 沿布局算子向下收集消费者需求，递归时复用已访问集合避免重复访问。
+static MemoryType InferScatterOutputMemoryType(const ConvertInserter& inserter, const LogicalTensorPtr& tensor,
+                                               std::unordered_set<const LogicalTensor*>& visited)
+{
+    if (tensor == nullptr || !visited.insert(tensor.get()).second) {
+        return MemoryType::MEM_UNKNOWN;
+    }
+    std::set<MemoryType> candidates;
+    for (const auto& [consumer, requirement] : inserter.GetConsumerRequirements(tensor)) {
+        if (requirement != MemoryType::MEM_UNKNOWN) {
+            candidates.insert(requirement);
+        } else if (consumer != nullptr &&
+                   (consumer->GetOpcode() == Opcode::OP_VIEW || consumer->GetOpcode() == Opcode::OP_ASSEMBLE ||
+                    consumer->GetOpcode() == Opcode::OP_RESHAPE)) {
+            for (const auto& next : consumer->oOperand) {
+                auto candidate = InferScatterOutputMemoryType(inserter, next, visited);
+                if (candidate != MemoryType::MEM_UNKNOWN) {
+                    candidates.insert(candidate);
+                }
+            }
+        }
+    }
+    return candidates.size() == 1 ? *candidates.begin() : MemoryType::MEM_UNKNOWN;
+}
+
+// 为原地 Scatter 统一输入需求与输出驻留类型，UB 场景改用普通 Scatter。
+Status MemoryPathUtils::HandleScatterInplaceMemoryType(ConvertInserter& inserter, Function& function,
+                                                       Operation& operation)
+{
+    if (operation.GetOpcode() != Opcode::OP_SCATTER_INPLACE &&
+        operation.GetOpcode() != Opcode::OP_SCATTER_ELEMENT_INPLACE) {
+        return SUCCESS;
+    }
+    if (!operation.HasAttr(OP_ATTR_PREFIX + "scatter_mode") ||
+        operation.GetIntAttribute(OP_ATTR_PREFIX + "scatter_mode") != 0) {
+        APASS_LOG_ERROR_F(Elements::Operation, "In-place Scatter only supports overwrite.");
+        return FAILED;
+    }
+    if (operation.iOperand.empty() || operation.oOperand.empty() || operation.iOperand[0] == nullptr ||
+        operation.oOperand[0] == nullptr) {
+        APASS_LOG_ERROR_F(Elements::Operation, "Handle SCATTER_INPLACE memory type failed because operand is invalid.");
+        return FAILED;
+    }
+
+    auto self = operation.iOperand[0];
+    auto output = operation.oOperand[0];
+    MemoryType memoryType = self->GetMemoryTypeOriginal();
+    if (inserter.GetMode() == AssignMemoryTypeMode::SLICE_CONTRACT) {
+        if (IsScatterSliceFromIncast(inserter, function, self)) {
+            memoryType = MemoryType::MEM_DEVICE_DDR;
+            ForceSetOriginal(self, memoryType, "ScatterInplaceSliceFromIncast");
+        } else if (memoryType == MemoryType::MEM_UNKNOWN) {
+            std::unordered_set<const LogicalTensor*> visited;
+            memoryType = InferScatterInputMemoryType(self, visited);
+        }
+        if (memoryType == MemoryType::MEM_UNKNOWN) {
+            std::unordered_set<const LogicalTensor*> visited;
+            memoryType = InferScatterOutputMemoryType(inserter, output, visited);
+        }
+    } else if (memoryType == MemoryType::MEM_UNKNOWN) {
+        memoryType = output->GetMemoryTypeOriginal();
+    }
+    if (memoryType == MemoryType::MEM_UNKNOWN) {
+        memoryType = MemoryType::MEM_UB;
+    }
+    ForceSetRequirement(inserter, self, operation, memoryType, "ScatterInplaceSameMemory");
+    ForceSetOriginal(output, memoryType, "ScatterInplaceSameMemory");
+    if (memoryType == MemoryType::MEM_UB) {
+        operation.SetOpCode(operation.GetOpcode() == Opcode::OP_SCATTER_INPLACE ? Opcode::OP_SCATTER :
+                                                                                  Opcode::OP_SCATTER_ELEMENT);
+    }
+    return SUCCESS;
+}
+
+Status MemoryPathUtils::ApplyOtherSpecialOpcodeRules(ConvertInserter& inserter, Function& function)
+{
+    for (auto& op : function.Operations()) {
+        RETURN_IF_NOT_SUCCESS(HandleScatterInplaceMemoryType(inserter, function, op));
+        RETURN_IF_NOT_SUCCESS(HandleNopMemoryType(inserter, op));
+    }
+    return SUCCESS;
+}
+
+Status MemoryPathUtils::AssignReduceAccInputRequirements(ConvertInserter& inserter, Operation& operation)
+{
+    for (auto& tensor : operation.iOperand) {
+        RETURN_IF_NOT_SUCCESS(SetRequirementChecked(inserter, tensor, operation, MemoryType::MEM_DEVICE_DDR,
+                                                    "AssignReduceAccInputRequirements"));
+    }
+    return SUCCESS;
+}
+
+Status MemoryPathUtils::AssignOpcodeDefinedMemoryTypes(ConvertInserter& inserter, Operation& operation)
+{
+    auto opcode = operation.GetOpcode();
+    bool hasSpecialInputRule = opcode == Opcode::OP_REDUCE_ACC ||
+                               OpChecker::check(operation, OpChecker::CalcTypeChecker(OpCalcType::MATMUL));
+    const auto& inputsMemType = OpcodeManager::Inst().GetInputsMemType(opcode);
+    if (!hasSpecialInputRule) {
+        for (size_t i = 0; i < operation.iOperand.size(); ++i) {
+            MemoryType inputMemType = (i < inputsMemType.size()) ? inputsMemType[i] : MemoryType::MEM_UNKNOWN;
+            RETURN_IF_NOT_SUCCESS(SetRequirementChecked(inserter, operation.iOperand[i], operation, inputMemType,
+                                                        "AssignOpcodeDefinedInput"));
+        }
+    }
+    const auto& outputsMemType = OpcodeManager::Inst().GetOutputsMemType(opcode);
+    for (size_t i = 0; i < operation.oOperand.size(); ++i) {
+        if (i >= outputsMemType.size())
+            continue;
+        RETURN_IF_NOT_SUCCESS(
+            SetOriginalChecked(operation.oOperand[i], outputsMemType[i], "AssignOpcodeDefinedOutput"));
+    }
+    return SUCCESS;
+}
+
+MemoryType MemoryPathUtils::GetAssembleInputType(const ConvertInserter& inserter, Operation& operation)
+{
+    if (operation.iOperand.empty() || operation.iOperand.front() == nullptr)
+        return MemoryType::MEM_UNKNOWN;
+    auto input = operation.iOperand.front();
+    MemoryType fromType = inserter.GetRequirementOrUnknown(input, operation);
+    return fromType != MemoryType::MEM_UNKNOWN ? fromType : input->GetMemoryTypeOriginal();
+}
+
+MemoryType MemoryPathUtils::GetReshapeInputRequirement(ConvertInserter& inserter, Operation& operation,
+                                                       const LogicalTensorPtr& input, MemoryType inputOriginal)
+{
+    MemoryType inputRequirement = inserter.GetRequirementOrUnknown(input, operation);
+    if (inputRequirement != MemoryType::MEM_UNKNOWN || inputOriginal == MemoryType::MEM_UNKNOWN) {
+        return inputRequirement;
+    }
+    ForceSetRequirement(inserter, input, operation, inputOriginal, "InferReshapeInputOriginal");
+    return inputOriginal;
+}
+
+// 经 VIEW 推断 reshape 的输出驻留，需求不唯一时优先保留可达的 UB 需求。
+Status MemoryPathUtils::InferReshapeOutputFromRequirement(ConvertInserter& inserter, const LogicalTensorPtr& output,
+                                                          MemoryType& outputOriginal)
+{
+    if (outputOriginal != MemoryType::MEM_UNKNOWN) {
+        return SUCCESS;
+    }
+    MemoryType outputRequirement = InferUniqueRequirementThroughViewConsumers(inserter, output);
+    if (outputRequirement == MemoryType::MEM_UNKNOWN) {
+        std::unordered_set<const LogicalTensor*> visitedTensors;
+        if (HasRequirementThroughViewConsumers(inserter, output, MemoryType::MEM_UB, visitedTensors)) {
+            outputRequirement = MemoryType::MEM_UB;
+        }
+    }
+    if (outputRequirement == MemoryType::MEM_UNKNOWN) {
+        return SUCCESS;
+    }
+    RETURN_IF_NOT_SUCCESS(SetOriginalChecked(output, outputRequirement, "InferReshapeOutputRequirement"));
+    outputOriginal = output->GetMemoryTypeOriginal();
+    return SUCCESS;
+}
+
+MemoryType MemoryPathUtils::InferUniqueRequirementThroughViewConsumers(const ConvertInserter& inserter,
+                                                                       const LogicalTensorPtr& tensor)
+{
+    std::unordered_set<const LogicalTensor*> visitedTensors;
+    return InferUniqueRequirementThroughViewConsumers(inserter, tensor, visitedTensors);
+}
+
+MemoryType MemoryPathUtils::InferUniqueRequirementThroughViewConsumers(
+    const ConvertInserter& inserter, const LogicalTensorPtr& tensor,
+    std::unordered_set<const LogicalTensor*>& visitedTensors)
+{
+    if (tensor == nullptr || !visitedTensors.insert(tensor.get()).second) {
+        return MemoryType::MEM_UNKNOWN;
+    }
+    std::set<MemoryType> candidates;
+    auto addCandidate = [&candidates](MemoryType candidate) {
+        if (candidate != MemoryType::MEM_UNKNOWN) {
+            candidates.insert(candidate);
+        }
+    };
+    auto consumerRequirements = inserter.GetConsumerRequirements(tensor);
+    for (const auto& item : consumerRequirements) {
+        Operation* consumerOp = item.first;
+        addCandidate(item.second);
+        if (consumerOp == nullptr || consumerOp->GetOpcode() != Opcode::OP_VIEW) {
+            continue;
+        }
+        auto viewOpAttribute = std::dynamic_pointer_cast<ViewOpAttribute>(consumerOp->GetOpAttribute());
+        if (viewOpAttribute != nullptr) {
+            addCandidate(viewOpAttribute->GetTo());
+        }
+        if (consumerOp->oOperand.empty() || consumerOp->oOperand.front() == nullptr) {
+            continue;
+        }
+        auto viewOutput = consumerOp->oOperand.front();
+        addCandidate(viewOutput->GetMemoryTypeOriginal());
+        addCandidate(InferUniqueRequirementThroughViewConsumers(inserter, viewOutput, visitedTensors));
+    }
+    if (candidates.size() == 1) {
+        return *candidates.begin();
+    }
+    return MemoryType::MEM_UNKNOWN;
+}
+
+bool MemoryPathUtils::HasRequirementThroughViewConsumers(const ConvertInserter& inserter,
+                                                         const LogicalTensorPtr& tensor, MemoryType targetRequirement,
+                                                         std::unordered_set<const LogicalTensor*>& visitedTensors)
+{
+    if (tensor == nullptr || targetRequirement == MemoryType::MEM_UNKNOWN ||
+        !visitedTensors.insert(tensor.get()).second) {
+        return false;
+    }
+    auto consumerRequirements = inserter.GetConsumerRequirements(tensor);
+    for (const auto& item : consumerRequirements) {
+        Operation* consumerOp = item.first;
+        if (item.second == targetRequirement) {
+            return true;
+        }
+        if (consumerOp == nullptr || consumerOp->GetOpcode() != Opcode::OP_VIEW) {
+            continue;
+        }
+        auto viewOpAttribute = std::dynamic_pointer_cast<ViewOpAttribute>(consumerOp->GetOpAttribute());
+        if (viewOpAttribute != nullptr && viewOpAttribute->GetTo() == targetRequirement) {
+            return true;
+        }
+        if (consumerOp->oOperand.empty() || consumerOp->oOperand.front() == nullptr) {
+            continue;
+        }
+        auto viewOutput = consumerOp->oOperand.front();
+        if (viewOutput->GetMemoryTypeOriginal() == targetRequirement ||
+            HasRequirementThroughViewConsumers(inserter, viewOutput, targetRequirement, visitedTensors)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+Status MemoryPathUtils::ApplyReshapeMemoryType(ConvertInserter& inserter, Operation& operation,
+                                               const LogicalTensorPtr& input, const LogicalTensorPtr& output,
+                                               bool isDynamic, bool canUseUb)
+{
+    if (canUseUb) {
+        const char* reason = isDynamic ? "InferDynamicReshapeUb" : "InferStaticReshapeUb";
+        ForceSetRequirement(inserter, input, operation, MemoryType::MEM_UB, reason);
+        ForceSetOriginal(output, MemoryType::MEM_UB, reason);
+        return SUCCESS;
+    }
+    APASS_LOG_DEBUG_F(Elements::Operation,
+                      "Reshape[%d] falls back to DDR: dynamic=%d, input tensor[%d] original=%s, "
+                      "requirement=%s, output tensor[%d] original=%s.",
+                      operation.GetOpMagic(), isDynamic, input->GetMagic(),
+                      BriefMemoryTypeToString(input->GetMemoryTypeOriginal()).c_str(),
+                      BriefMemoryTypeToString(inserter.GetRequirementOrUnknown(input, operation)).c_str(),
+                      output->GetMagic(), BriefMemoryTypeToString(output->GetMemoryTypeOriginal()).c_str());
+    const char* reason = isDynamic ? "InferDynamicReshapeFallbackDdr" : "InferStaticReshapeFallbackDdr";
+    ForceSetRequirement(inserter, input, operation, MemoryType::MEM_DEVICE_DDR, reason);
+    ForceSetOriginal(output, MemoryType::MEM_DEVICE_DDR, reason);
+    return SUCCESS;
+}
+
+Status MemoryPathUtils::InferViewTypeInput(ConvertInserter& inserter, Operation& operation,
+                                           const LogicalTensorPtr& input, const LogicalTensorPtr& output,
+                                           MemoryType targetType)
+{
+    MemoryType inputOriginal = input->GetMemoryTypeOriginal();
+    if (targetType != MemoryType::MEM_UNKNOWN && inputOriginal == targetType) {
+        ForceSetRequirement(inserter, input, operation, targetType, "InferViewTypeSameMemory");
+        ForceSetOriginal(output, targetType, "InferViewTypeSameMemory");
+        return SUCCESS;
+    }
+    ForceSetRequirement(inserter, input, operation, MemoryType::MEM_DEVICE_DDR, "InferViewTypeFallbackDdr");
+    ForceSetOriginal(output, MemoryType::MEM_DEVICE_DDR, "InferViewTypeFallbackDdr");
+    return SUCCESS;
+}
+
+MemoryType MemoryPathUtils::InferTargetTypeThroughForwardViews(const ConvertInserter& inserter,
+                                                               const LogicalTensorPtr& tensor)
+{
+    std::unordered_set<LogicalTensorPtr> visitedTensors;
+    return InferTargetTypeThroughForwardViews(inserter, tensor, visitedTensors);
+}
+
+MemoryType MemoryPathUtils::InferTargetTypeThroughForwardViews(const ConvertInserter& inserter,
+                                                               const LogicalTensorPtr& tensor,
+                                                               std::unordered_set<LogicalTensorPtr>& visitedTensors)
+{
+    if (tensor == nullptr || !visitedTensors.insert(tensor).second) {
+        return MemoryType::MEM_UNKNOWN;
+    }
+    // 仅当唯一 consumer 为 OP_VIEW 时沿视图链前向推导，规避多分支分歧
+    const auto& consumers = tensor->GetConsumers();
+    if (consumers.size() != 1) {
+        return MemoryType::MEM_UNKNOWN;
+    }
+    auto consumerOp = *consumers.begin();
+    if (consumerOp == nullptr || consumerOp->GetOpcode() != Opcode::OP_VIEW) {
+        return MemoryType::MEM_UNKNOWN;
+    }
+    if (consumerOp->oOperand.empty() || consumerOp->oOperand.front() == nullptr) {
+        return MemoryType::MEM_UNKNOWN;
+    }
+    auto viewOutput = consumerOp->oOperand.front();
+    if (viewOutput->GetMemoryTypeOriginal() != MemoryType::MEM_UNKNOWN) {
+        return viewOutput->GetMemoryTypeOriginal();
+    }
+    MemoryType viewOutputRequirement = inserter.TryGetUniqueKnownRequiredType(viewOutput);
+    if (viewOutputRequirement != MemoryType::MEM_UNKNOWN) {
+        return viewOutputRequirement;
+    }
+    return InferTargetTypeThroughForwardViews(inserter, viewOutput, visitedTensors);
+}
+
+Status MemoryPathUtils::ResolveTensorMemoryUnknowns(ConvertInserter& inserter, const LogicalTensorPtr& tensor)
+{
+    if (tensor == nullptr) {
+        APASS_LOG_ERROR_F(Elements::Tensor, "Resolve tensor memory unknown failed because tensor is null.");
+        return FAILED;
+    }
+    MemoryType original = tensor->GetMemoryTypeOriginal();
+    if (original == MemoryType::MEM_UNKNOWN) {
+        MemoryType inferredOriginal = InferOriginalFromRequirements(inserter, tensor);
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Resolve unknown tensor[%d] original as %s from consumer requirements.",
+                          tensor->GetMagic(), BriefMemoryTypeToString(inferredOriginal).c_str());
+        RETURN_IF_NOT_SUCCESS(SetOriginalChecked(tensor, inferredOriginal, "ResolveMemoryUnknowns"));
+        original = tensor->GetMemoryTypeOriginal();
+    }
+    FillUnknownRequirementsWith(inserter, tensor, original, "ResolveMemoryUnknowns");
+    return SUCCESS;
+}
+
+MemoryType MemoryPathUtils::InferOriginalFromRequirements(const ConvertInserter& inserter,
+                                                          const LogicalTensorPtr& tensor)
+{
+    if (tensor == nullptr) {
+        return MemoryType::MEM_DEVICE_DDR;
+    }
+    auto knownRequirements = inserter.GetKnownRequiredTypes(tensor);
+    if (knownRequirements.size() == 1) {
+        return *knownRequirements.begin();
+    }
+    APASS_LOG_DEBUG_F(Elements::Tensor, "Default tensor[%d] to DDR: %zu distinct known consumer requirements.",
+                      tensor->GetMagic(), knownRequirements.size());
+    return MemoryType::MEM_DEVICE_DDR;
 }
 
 } // namespace npu::tile_fwk

@@ -186,6 +186,8 @@ public:
                               MemoryType requiredMemoryType, std::vector<MemoryType>& paths);
 
 private:
+    void SetUbToL1ConvertPath(const LogicalTensorPtr& oOperand, MemoryType currTensorMemOri,
+                              MemoryType requiredMemoryType, std::vector<MemoryType>& paths);
     AssignMemoryTypeMode mode_;
 };
 static constexpr int MATMUL_DIM_NUM = 2;

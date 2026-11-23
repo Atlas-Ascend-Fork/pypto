@@ -75,6 +75,8 @@ private:
     bool CanUseDirectViewPath(Operation& operation, MemoryType from, MemoryType to);
 
     bool TryHandleSpecialDirectMemoryPath(Operation& operation, MemoryType from, MemoryType to, bool& directPath);
+    void SetA5UbToL1DirectPath(Operation& operation, const LogicalTensorPtr& input, MemoryType from, MemoryType to,
+                               bool& directPath);
 
     bool HasParallelDifferentConsumerRequirement(const LogicalTensorPtr& tensor, MemoryType targetType) const;
 
@@ -90,8 +92,14 @@ private:
                                                 std::unordered_set<LogicalTensorPtr>& inferredAssembleOutputs);
 
     Status ResolveInconsistentRawTensorMemoryTypes(Function& function);
+    void ResolveRawTensorSiblingMemoryTypes(int64_t rawMagic);
 
     Status ResolveWritableReshapeMemoryTypes(Function& function);
+    Status InferWritableReshapeStorageType(const TensorSet& tensors, const TensorSet& interfaceTensors,
+                                           MemoryType& storageType);
+    void ApplyWritableReshapeStorageType(
+        const TensorSet& tensors, MemoryType storageType, const std::vector<Operation*>& reshapes,
+        const std::unordered_map<int, std::vector<size_t>>& reshapeIndicesByInputMagic);
 
     Status InferAssembleMemoryType(Operation& operation);
 
@@ -103,12 +111,17 @@ private:
     bool CanUseDirectAssemblePath(Operation& operation, MemoryType from, MemoryType to);
 
     Status IsAssembleToOffsetAligned(Operation& operation, const LogicalTensorPtr& output, bool& aligned);
+    Status IsPaddedAssembleOffsetAligned(const Shape& rawShape, const Offset& toOffset, int64_t tensorBytes,
+                                         int64_t alignmentBytes, size_t padIdx, bool& padAligned);
 
     Status InferReshapeMemoryType(Operation& operation);
 
     Status InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op);
+    bool TryUpgradeCubeToVecReshape(Operation& op, const LogicalTensorPtr& input, const LogicalTensorPtr& output);
 
     MemoryType InferCubeToVecSourceType(Operation& op);
+    bool CheckCubeReshapeProducers(const std::set<Operation*, LogicalTensor::CompareOp>& producers,
+                                   bool& allMacroInstrCube) const;
 
     void ApplyReshapeCubeToVecUpgrade(Operation& op, const LogicalTensorPtr& output,
                                       const std::set<Operation*, LogicalTensor::CompareOp>& producers,
@@ -117,6 +130,7 @@ private:
 
     void ApplyReshapeVecToCubeUpgrade(Operation& op, const std::set<Operation*, LogicalTensor::CompareOp>& producers,
                                       const std::set<Operation*, LogicalTensor::CompareOp>& consumers);
+    void SetVecToCubeReshapeConsumersToL1(const std::set<Operation*, LogicalTensor::CompareOp>& consumers);
 
     bool IsReshapeVecToCubeUB2L1Pattern(Operation& op);
 
@@ -143,6 +157,10 @@ private:
 
     Status ShouldSkipDirectPathUpgradeForBothSideOffsets(Operation& op, MemoryType sourceType, MemoryType targetType,
                                                          const std::string& reason, bool& skip);
+    Status ShouldSkipSliceUpgradeForOffsets(Operation& op, MemoryType sourceType, MemoryType targetType,
+                                            const std::string& reason, bool& skip);
+    Status ShouldSkipContractUpgradeForOffsets(Operation& op, MemoryType sourceType, MemoryType targetType,
+                                               const std::string& reason, bool& skip);
 
     Status HasDirectAssembleConsumerDownstream(const LogicalTensorPtr& tensor, bool& hasDirect);
 
@@ -150,12 +168,16 @@ private:
 
     Status KeepSplitReshapeUb(Operation& operation, const LogicalTensorPtr& input, const LogicalTensorPtr& output,
                               bool& kept);
+    Status InferParallelSplitReshapeSlices(Operation& operation, const LogicalTensorPtr& input, bool& compatible);
+    Status TrySetSplitReshapeUb(Operation& operation, const LogicalTensorPtr& input, const LogicalTensorPtr& output,
+                                bool allProducersContract, bool allConsumersSlice, bool& kept);
 
     Status ApplyOversizedLocalBufferFallback(Function& function);
 
     Status ApplyOversizedLocalBufferFallback(Operation& operation);
 
     Status ApplyOversizedLocalBufferFallbackStandard(Operation& operation);
+    Status ApplyOversizedContractInputFallback(Operation& operation, const LogicalTensorPtr& input);
 
     Status ApplyOversizedLocalBufferFallbackLegacy(Operation& operation);
 
@@ -193,11 +215,39 @@ private:
     Status ProcessUB2L1SmallToLarge(Function& function);
     Status ProcessUB2L1LargeToSmall(Function& function);
     Status ProcessL1DdrL1(Function& function);
+    bool AreAllContractInputsFromL1(const LogicalTensorPtr& middle) const;
     Status ProcessDdrMultiReshape(Function& function);
+    struct DdrReshapeBranches {
+        std::vector<Operation*> branchViews;
+        std::vector<Operation*> branchReshapes;
+        std::vector<Operation*> branchSlices;
+        std::vector<Operation*> directSlices;
+    };
+    bool CollectDdrReshapeViewBranch(Operation& branch, const LogicalTensorPtr& input,
+                                     DdrReshapeBranches& branches) const;
+    bool CollectDdrReshapeBranches(const LogicalTensorPtr& input, DdrReshapeBranches& branches) const;
+    Status ApplyDdrMultiReshapeUpgrade(Operation& contract, Operation& firstReshape,
+                                       const DdrReshapeBranches& branches);
     bool ShouldSkipUB2L1SmallToLarge(const LogicalTensorPtr& iOperand, const LogicalTensorPtr& oOperand) const;
     Status TryUpgradeSliceContractPath(Operation& sliceOp, MemoryType sourceType, MemoryType targetType,
                                        const std::string& reason, bool requireMatrixShape, bool checkUbTileShape,
                                        bool checkUb2L1Constraints);
+    struct SliceContractPath {
+        Operation& sliceOp;
+        const LogicalTensorPtr& middle;
+        const LogicalTensorPtr& target;
+        MemoryType sourceType;
+        MemoryType targetType;
+        const std::string& reason;
+        bool requireMatrixShape;
+        bool checkUbTileShape;
+        bool checkUb2L1Constraints;
+    };
+    bool CheckSliceContractMiddle(const SliceContractPath& path);
+    bool CheckSliceContractProducer(const SliceContractPath& path, Operation& producer, const LogicalTensorPtr& input,
+                                    bool isLiteNpu);
+    bool CheckSliceContractConsumers(const SliceContractPath& path);
+    bool CheckSliceContractInputCompatibility(const SliceContractPath& path, const LogicalTensorPtr& input);
     Status TryUpgradeSingleContractSlicePath(Operation& contractOp, MemoryType sourceType, MemoryType targetType,
                                              const std::string& reason, bool requireMatrixShape, bool checkUbTileShape,
                                              bool checkUb2L1Constraints);

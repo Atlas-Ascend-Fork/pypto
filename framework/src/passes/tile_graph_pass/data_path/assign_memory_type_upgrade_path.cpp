@@ -111,6 +111,405 @@ std::pair<size_t, size_t> GetNzOuterInnerAxes(const Shape& shape, bool isConv)
 }
 } // namespace
 
+// 识别来自 Cube 的搬出分支，并区分全部来自矩阵宏指令的情况。
+bool AssignMemoryType::CheckCubeReshapeProducers(const std::set<Operation*, LogicalTensor::CompareOp>& producers,
+                                                 bool& allMacroInstrCube) const
+{
+    for (auto& producer : producers) {
+        if (!IsModeMoveOut(mode_, producer->GetOpcode())) {
+            return false;
+        }
+        bool hasCubeProducer = false;
+        for (auto& producerIOperand : producer->iOperand) {
+            for (auto& producerProducer : producerIOperand->GetProducers()) {
+                hasCubeProducer = true;
+                if (producerProducer->GetCoreType() != CoreType::AIC) {
+                    return false;
+                }
+                if (!IsMatmulMacroInstrOpcode(producerProducer->GetOpcode())) {
+                    allMacroInstrCube = false;
+                }
+            }
+        }
+        if (!hasCubeProducer) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// 要求每条搬运分支都有下游消费者，且均运行在向量核上。
+static bool HasOnlyVectorReshapeConsumers(AssignMemoryTypeMode mode,
+                                          const std::set<Operation*, LogicalTensor::CompareOp>& consumers)
+{
+    for (auto& consumer : consumers) {
+        if (!IsModeMoveOp(mode, consumer->GetOpcode())) {
+            return false;
+        }
+        bool hasVectorConsumer = false;
+        for (auto& consumerOOperand : consumer->oOperand) {
+            for (auto& consumerConsumer : consumerOOperand->GetConsumers()) {
+                hasVectorConsumer = true;
+                if (consumerConsumer->GetCoreType() != CoreType::AIV) {
+                    return false;
+                }
+            }
+        }
+        if (!hasVectorConsumer) {
+            return false;
+        }
+    }
+
+    return true;
+}
+
+// 判定 Cube 到 Vec 的 reshape 源驻留类型，每一跳可有多个并行节点，空集不匹配。
+// 路径为 Cube（AIC）→ CONTRACT 搬出 → reshape → SLICE 或 CONTRACT 搬运 → Vec（AIV）。
+// Kirin9050 矩阵宏指令的输出驻留 L1，普通 Cube 输出驻留 L0C，匹配失败返回 UNKNOWN。
+MemoryType AssignMemoryType::InferCubeToVecSourceType(Operation& op)
+{
+    if (op.GetOpcode() != npu::tile_fwk::Opcode::OP_RESHAPE) {
+        return MemoryType::MEM_UNKNOWN;
+    }
+
+    auto& input = op.iOperand.front();
+    auto& output = op.oOperand.front();
+    auto& producers = input->GetProducers();
+    auto& consumers = output->GetConsumers();
+
+    if (producers.empty() || consumers.empty()) {
+        return MemoryType::MEM_UNKNOWN;
+    }
+
+    bool allMacroInstrCube = true;
+    if (!CheckCubeReshapeProducers(producers, allMacroInstrCube) || !HasOnlyVectorReshapeConsumers(mode_, consumers)) {
+        return MemoryType::MEM_UNKNOWN;
+    }
+    return allMacroInstrCube ? MemoryType::MEM_L1 : MemoryType::MEM_L0C;
+}
+
+// ub2l1 pattern（(s)=单跳 1..N 兄弟节点）：
+// producer: vector -> slice(s)/contract(s) [-> slice(s)/contract(s)] -> reshape   (1~2 跳 move)
+// consumer: reshape -> slice(s)[from L1] [-> slice(s)[from L0A]] -> cube(AIC)     (宏指令无 L0A，仅 1 跳)
+bool AssignMemoryType::IsReshapeVecToCubeUB2L1Pattern(Operation& op)
+{
+    if (op.GetOpcode() != npu::tile_fwk::Opcode::OP_RESHAPE) {
+        return false;
+    }
+
+    auto& input = op.iOperand.front();
+    auto& output = op.oOperand.front();
+    if ((input == nullptr) || (output == nullptr)) {
+        return false;
+    }
+
+    auto& producers = input->GetProducers();
+    auto& consumers = output->GetConsumers();
+    if (producers.empty() || consumers.empty()) {
+        return false;
+    }
+
+    if (!IsReshapeVecToCubeUB2L1ProducerPattern(producers)) {
+        return false;
+    }
+
+    if (!IsReshapeVecToCubeUB2L1ConsumerPattern(consumers) && !IsReshapeVecToCubeUB2L1MacroConsumerPattern(consumers)) {
+        return false;
+    }
+
+    return true;
+}
+
+// ub2l1 producer 侧（reshape 上游，1~2 跳 move）：vector -> slice(s)/contract(s) [-> slice(s)/contract(s)] -> reshape
+// 检查 reshape 上游是否由向量算子经一层或两层搬运供数。
+bool AssignMemoryType::IsReshapeVecToCubeUB2L1ProducerPattern(
+    const std::set<Operation*, LogicalTensor::CompareOp>& producers)
+{
+    for (auto& producer : producers) {
+        bool isProducerDepth1MoveOp = IsModeMoveOp(mode_, producer->GetOpcode());
+        bool isProducerDepth2AllVector = false;
+        bool isProducerDepth2AllMoveOp = false;
+        bool isProducerDepth3AllVector = false;
+
+        std::vector<bool> isProducerDepth2Vector;
+        std::vector<bool> isProducerDepth2MoveOp;
+        std::vector<bool> isProducerDepth3Vector;
+        for (auto& producerIOperand : producer->iOperand) {
+            for (auto& producerProducer : producerIOperand->GetProducers()) {
+                isProducerDepth2Vector.push_back(producerProducer->GetCoreType() == CoreType::AIV);
+                isProducerDepth2MoveOp.push_back(IsModeMoveOp(mode_, producerProducer->GetOpcode()));
+                MemoryPathUtils::CollectProducerAIVFlags(producerProducer, isProducerDepth3Vector);
+            }
+        }
+        isProducerDepth2AllVector = !isProducerDepth2Vector.empty() &&
+                                    std::all_of(isProducerDepth2Vector.begin(), isProducerDepth2Vector.end(),
+                                                [](bool val) { return val; });
+        isProducerDepth2AllMoveOp = !isProducerDepth2MoveOp.empty() &&
+                                    std::all_of(isProducerDepth2MoveOp.begin(), isProducerDepth2MoveOp.end(),
+                                                [](bool val) { return val; });
+        isProducerDepth3AllVector = !isProducerDepth3Vector.empty() &&
+                                    std::all_of(isProducerDepth3Vector.begin(), isProducerDepth3Vector.end(),
+                                                [](bool val) { return val; });
+        // 仅支持向量算子经一层或两层 SLICE、CONTRACT 搬运后接入 reshape。
+        if (!((isProducerDepth1MoveOp && isProducerDepth2AllMoveOp && isProducerDepth3AllVector) ||
+              (isProducerDepth1MoveOp && isProducerDepth2AllVector))) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ub2l1 consumer 侧（reshape 下游，含 L0A 中转）：reshape -> slice(s)[from L1] -> slice(s)[from L0A] -> cube(AIC)
+bool AssignMemoryType::IsReshapeVecToCubeUB2L1ConsumerPattern(
+    const std::set<Operation*, LogicalTensor::CompareOp>& consumers)
+{
+    for (auto& consumer : consumers) {
+        bool isConsumerDepth1MoveIn = IsModeMoveIn(mode_, consumer->GetOpcode());
+        bool isConsumerDepth2AllMoveIn = false;
+        bool isConsumerDepth3AllCube = false;
+
+        std::vector<bool> isConsumerDepth2MoveIn;
+        std::vector<bool> isConsumerDepth3Cube;
+        for (auto& consumerOOperand : consumer->oOperand) {
+            for (auto& consumerConsumer : consumerOOperand->GetConsumers()) {
+                isConsumerDepth2MoveIn.push_back(IsModeMoveIn(mode_, consumerConsumer->GetOpcode()));
+                MemoryPathUtils::CollectConsumerAICFlags(consumerConsumer, isConsumerDepth3Cube);
+            }
+        }
+        isConsumerDepth2AllMoveIn = !isConsumerDepth2MoveIn.empty() &&
+                                    std::all_of(isConsumerDepth2MoveIn.begin(), isConsumerDepth2MoveIn.end(),
+                                                [](bool val) { return val; });
+        isConsumerDepth3AllCube = !isConsumerDepth3Cube.empty() &&
+                                  std::all_of(isConsumerDepth3Cube.begin(), isConsumerDepth3Cube.end(),
+                                              [](bool val) { return val; });
+        if (!isConsumerDepth1MoveIn || !isConsumerDepth2AllMoveIn || !isConsumerDepth3AllCube) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// ub2l1 宏指令 consumer 侧（无 L0A 中转）：reshape -> slice(s)[from L1] -> cube(AIC macro)
+bool AssignMemoryType::IsReshapeVecToCubeUB2L1MacroConsumerPattern(
+    const std::set<Operation*, LogicalTensor::CompareOp>& consumers)
+{
+    for (auto& consumer : consumers) {
+        bool isConsumerDepth1MoveIn = IsModeMoveIn(mode_, consumer->GetOpcode());
+        bool isConsumerDepth2AllMacroCube = false;
+
+        std::vector<bool> isConsumerDepth2MacroCube;
+        for (auto& consumerOOperand : consumer->oOperand) {
+            for (auto& consumerConsumer : consumerOOperand->GetConsumers()) {
+                isConsumerDepth2MacroCube.push_back(consumerConsumer->GetCoreType() == CoreType::AIC &&
+                                                    IsMatmulMacroInstrOpcode(consumerConsumer->GetOpcode()));
+            }
+        }
+        isConsumerDepth2AllMacroCube = !isConsumerDepth2MacroCube.empty() &&
+                                       std::all_of(isConsumerDepth2MacroCube.begin(), isConsumerDepth2MacroCube.end(),
+                                                   [](bool val) { return val; });
+        if (!isConsumerDepth1MoveIn || !isConsumerDepth2AllMacroCube) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// 直连搬运 (L0C2UB/L12UB 的 contract，UB2L1 的 slice) 要求源与目的 tensor shape 完全一致，
+// reshape 仅改变 view 语义，实际搬运两端 shape 不一致会导致精度异常，必须回退 DDR。
+bool AssignMemoryType::AreAllMoveOpsInputOutputShapeIdentical(
+    const std::set<Operation*, LogicalTensor::CompareOp>& moveOps)
+{
+    for (auto& moveOp : moveOps) {
+        if (moveOp == nullptr || moveOp->iOperand.empty() || moveOp->oOperand.empty() ||
+            moveOp->iOperand.front() == nullptr || moveOp->oOperand.front() == nullptr) {
+            return false;
+        }
+        if (moveOp->iOperand.front()->GetShape() != moveOp->oOperand.front()->GetShape()) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// 将 Cube 的输出直接搬入 UB，并同步 reshape 与下游向量分支的需求。
+void AssignMemoryType::ApplyReshapeCubeToVecUpgrade(Operation& op, const LogicalTensorPtr& output,
+                                                    const std::set<Operation*, LogicalTensor::CompareOp>& producers,
+                                                    const std::set<Operation*, LogicalTensor::CompareOp>& consumers,
+                                                    MemoryType cubeOutputType)
+{
+    for (auto& producer : producers) {
+        auto& producerInput = producer->iOperand.front();
+        auto& producerOutput = producer->oOperand.front();
+
+        // 将生产者的 CONTRACT 输入设为 Cube 输出类型（L0C 或 L1）。
+        if (producerInput->GetMemoryTypeOriginal() != cubeOutputType) {
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "AssignMemoryType::ApplyReshapeCubeToVecUpgrade: tensor[%d] original %s -> %s.",
+                producerInput->GetMagic(), BriefMemoryTypeToString(producerInput->GetMemoryTypeOriginal()).c_str(),
+                BriefMemoryTypeToString(cubeOutputType).c_str());
+        }
+        producerInput->SetMemoryTypeOriginal(cubeOutputType, true);
+        inserter.UpdateTensorTobeMap(producerInput, *producer, cubeOutputType);
+
+        // 将生产者输出驻留在 UB。
+        if (producerOutput->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "AssignMemoryType::ApplyReshapeCubeToVecUpgrade: tensor[%d] original %s -> %s.",
+                producerOutput->GetMagic(), BriefMemoryTypeToString(producerOutput->GetMemoryTypeOriginal()).c_str(),
+                BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
+        }
+        producerOutput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
+        inserter.UpdateTensorTobeMap(producerOutput, op, MemoryType::MEM_UB);
+    }
+    // 将 reshape 输出驻留在 UB。
+    if (output->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
+        APASS_LOG_DEBUG_F(Elements::Tensor,
+                          "AssignMemoryType::ApplyReshapeCubeToVecUpgrade: tensor[%d] original %s -> %s.",
+                          output->GetMagic(), BriefMemoryTypeToString(output->GetMemoryTypeOriginal()).c_str(),
+                          BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
+    }
+    output->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
+
+    // 将下游 SLICE、CONTRACT 的输入需求均设为 UB。
+    for (auto& consumer : consumers) {
+        inserter.UpdateTensorTobeMap(output, *consumer, MemoryType::MEM_UB);
+    }
+}
+
+// 将 reshape 下游搬运留在 UB 到 L1 路径，并同步后继消费者需求。
+void AssignMemoryType::SetVecToCubeReshapeConsumersToL1(const std::set<Operation*, LogicalTensor::CompareOp>& consumers)
+{
+    for (auto& consumer : consumers) {
+        auto& consumerInput = consumer->iOperand.front();
+        auto& consumerOutput = consumer->oOperand.front();
+
+        // 将 reshape 输出驻留在 UB，并将消费需求设为 L1。
+        if (consumerInput->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: tensor[%d] original %s -> %s.",
+                consumerInput->GetMagic(), BriefMemoryTypeToString(consumerInput->GetMemoryTypeOriginal()).c_str(),
+                BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
+        }
+        consumerInput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
+        inserter.UpdateTensorTobeMap(consumerInput, *consumer, MemoryType::MEM_L1);
+
+        // 将消费侧切片的输出驻留在 L1。
+        if (consumerOutput->GetMemoryTypeOriginal() != MemoryType::MEM_L1) {
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: tensor[%d] original %s -> %s.",
+                consumerOutput->GetMagic(), BriefMemoryTypeToString(consumerOutput->GetMemoryTypeOriginal()).c_str(),
+                BriefMemoryTypeToString(MemoryType::MEM_L1).c_str());
+        }
+        consumerOutput->SetMemoryTypeOriginal(MemoryType::MEM_L1, true);
+        for (auto& consumerConsumer : consumerOutput->GetConsumers()) {
+            inserter.UpdateTensorTobeMap(consumerOutput, *consumerConsumer, MemoryType::MEM_L1);
+        }
+    }
+}
+
+// 将 Vec 到 Cube 的 reshape 输入留在 UB，并设置下游搬运到 L1。
+void AssignMemoryType::ApplyReshapeVecToCubeUpgrade(Operation& op,
+                                                    const std::set<Operation*, LogicalTensor::CompareOp>& producers,
+                                                    const std::set<Operation*, LogicalTensor::CompareOp>& consumers)
+{
+    for (auto& producer : producers) {
+        auto& producerInput = producer->iOperand.front();
+        auto& producerOutput = producer->oOperand.front();
+
+        // 将生产侧 SLICE、CONTRACT 的输入设为 UB。
+        if (producerInput->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: tensor[%d] original %s -> %s.",
+                producerInput->GetMagic(), BriefMemoryTypeToString(producerInput->GetMemoryTypeOriginal()).c_str(),
+                BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
+        }
+        producerInput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
+        inserter.UpdateTensorTobeMap(producerInput, *producer, MemoryType::MEM_UB);
+
+        // 将 reshape 的输入设为 UB。
+        if (producerOutput->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
+            APASS_LOG_DEBUG_F(
+                Elements::Tensor, "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: tensor[%d] original %s -> %s.",
+                producerOutput->GetMagic(), BriefMemoryTypeToString(producerOutput->GetMemoryTypeOriginal()).c_str(),
+                BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
+        }
+        producerOutput->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
+        inserter.UpdateTensorTobeMap(producerOutput, op, MemoryType::MEM_UB);
+    }
+
+    SetVecToCubeReshapeConsumersToL1(consumers);
+}
+
+// 仅在 UB 容量、搬运形状和数据类型满足约束时升级 Cube 到 Vec 的 reshape。
+bool AssignMemoryType::TryUpgradeCubeToVecReshape(Operation& op, const LogicalTensorPtr& input,
+                                                  const LogicalTensorPtr& output)
+{
+    auto& producers = input->GetProducers();
+    auto& consumers = output->GetConsumers();
+    // l0c2ub / l12ub pattern (batchmatmul case)，结构见 InferCubeToVecSourceType 注释。
+    // 仅按 cube 输出驻留类型区分：宏指令 (kirin9050, 无 L0C) 为 L1 (l12ub)，
+    // 普通 lite NPU 为 L0C (l0c2ub)，producer contract 输入随之设为 L1/L0C。
+    const MemoryType cubeOutputType = InferCubeToVecSourceType(op);
+    if (cubeOutputType != MemoryType::MEM_UNKNOWN && MemoryPathUtils::FitsTensorInUb(input) &&
+        AreAllMoveOpsInputOutputShapeIdentical(producers) &&
+        (cubeOutputType == MemoryType::MEM_L1 ? inserter.IsL12UbLiteNPUSupportedDtype(input) :
+                                                inserter.IsL0C2UbLiteNPUSupportedDtype(input))) {
+        ApplyReshapeCubeToVecUpgrade(op, output, producers, consumers, cubeOutputType);
+        return true;
+    }
+
+    if (cubeOutputType != MemoryType::MEM_UNKNOWN) {
+        APASS_LOG_DEBUG_F(
+            Elements::Operation,
+            "Reject cube-to-vector reshape[%d] upgrade: UB capacity, transfer shape or dtype constraints; "
+            "input tensor[%d] shape=%s, dtype=%s.",
+            op.GetOpMagic(), input->GetMagic(), IntVecToStr(input->GetShape()).c_str(),
+            DataType2String(input->Datatype()));
+    }
+
+    return false;
+}
+
+// 在 LiteNPU 上优先匹配 Cube 到 Vec，未升级时再匹配 Vec 到 Cube 的直连路径。
+Status AssignMemoryType::InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op)
+{
+    if (!IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
+        return SUCCESS;
+    }
+
+    auto& input = op.iOperand.front();
+    auto& output = op.oOperand.front();
+    auto& producers = input->GetProducers();
+    auto& consumers = output->GetConsumers();
+
+    auto hasOutcastOperand = [this](const Operation* move) {
+        return move != nullptr && ((!move->iOperand.empty() && IsOutCastTensor(move->iOperand.front())) ||
+                                   (!move->oOperand.empty() && IsOutCastTensor(move->oOperand.front())));
+    };
+    if (IsSliceMode() && (IsOutCastTensor(input) || IsOutCastTensor(output) ||
+                          std::any_of(producers.begin(), producers.end(), hasOutcastOperand))) {
+        return SUCCESS;
+    }
+
+    if (TryUpgradeCubeToVecReshape(op, input, output)) {
+        return SUCCESS;
+    }
+
+    // ub2l1 pattern，结构见 IsReshapeVecToCubeUB2L1Pattern 注释。
+    // MXMatmul 场景 K 轴非 64 对齐不支持 UB2L1 直连（MX 补齐仅由 DDR 路径支持），回退 DDR。
+    if (IsReshapeVecToCubeUB2L1Pattern(op) && MemoryPathUtils::FitsTensorInUb(output) &&
+        AreAllMoveOpsInputOutputShapeIdentical(consumers) && inserter.IsUb2L1LiteNPUSupportedDtype(output) &&
+        !MemoryPathUtils::HasMxPaddingModeConsumer(output) &&
+        (!IsSliceMode() || std::none_of(consumers.begin(), consumers.end(), hasOutcastOperand))) {
+        ApplyReshapeVecToCubeUpgrade(op, producers, consumers);
+        return SUCCESS;
+    }
+
+    return SUCCESS;
+}
+
+// 按平台能力及固定顺序尝试路径升级，前序规则写入的类型供后续规则使用。
 Status AssignMemoryType::ApplyPlatformPathUpgradeRules(Function& function)
 {
     RETURN_IF_NOT_SUCCESS(ProcessDdrMultiReshape(function));
@@ -132,10 +531,116 @@ Status AssignMemoryType::ApplyPlatformPathUpgradeRules(Function& function)
     return SUCCESS;
 }
 
-Status AssignMemoryType::ProcessDdrMultiReshape(Function& function)
+static bool IsDdrReshapeUbSlice(const Operation& slice, const LogicalTensorPtr& input)
+{
+    return slice.GetOpcode() == Opcode::OP_SLICE && slice.iOperand.size() == 1 && slice.oOperand.size() == 1 &&
+           slice.iOperand.front() == input && slice.oOperand.front()->GetMemoryTypeOriginal() == MemoryType::MEM_UB &&
+           std::dynamic_pointer_cast<ViewOpAttribute>(slice.GetOpAttribute()) != nullptr;
+}
+
+// 所有分支匹配后，依次更新主链、VIEW、分支 reshape 和切片的存储类型。
+Status AssignMemoryType::ApplyDdrMultiReshapeUpgrade(Operation& contract, Operation& firstReshape,
+                                                     const DdrReshapeBranches& branches)
 {
     constexpr MemoryType kUbMemoryType = MemoryType::MEM_UB;
     constexpr const char* kReason = "ProcessDdrMultiReshape";
+    const auto contractInput = contract.iOperand.front();
+    const auto contractOutput = contract.oOperand.front();
+    const auto firstReshapeOutput = firstReshape.oOperand.front();
+    auto contractAttr = std::dynamic_pointer_cast<AssembleOpAttribute>(contract.GetOpAttribute());
+    if (contractAttr == nullptr) {
+        APASS_LOG_ERROR_F(Elements::Operation, "ProcessDdrMultiReshape failed because contract attr is null.");
+        return FAILED;
+    }
+    MemoryPathUtils::ForceSetRequirement(inserter, contractInput, contract, kUbMemoryType, kReason);
+    contractAttr->SetFromType(kUbMemoryType);
+    MemoryPathUtils::ForceSetOriginal(contractOutput, kUbMemoryType, kReason);
+    MemoryPathUtils::ForceSetRequirement(inserter, contractOutput, firstReshape, kUbMemoryType, kReason);
+    MemoryPathUtils::ForceSetOriginal(firstReshapeOutput, kUbMemoryType, kReason);
+
+    for (auto* view : branches.branchViews) {
+        auto viewOutput = view->oOperand.front();
+        MemoryPathUtils::ForceSetRequirement(inserter, firstReshapeOutput, *view, kUbMemoryType, kReason);
+        MemoryPathUtils::ForceSetOriginal(viewOutput, kUbMemoryType, kReason);
+        std::dynamic_pointer_cast<ViewOpAttribute>(view->GetOpAttribute())->SetToType(kUbMemoryType);
+    }
+    for (auto* reshape : branches.branchReshapes) {
+        auto reshapeInput = reshape->iOperand.front();
+        MemoryPathUtils::ForceSetRequirement(inserter, reshapeInput, *reshape, kUbMemoryType, kReason);
+        MemoryPathUtils::ForceSetOriginal(reshape->oOperand.front(), kUbMemoryType, kReason);
+    }
+    for (auto* slice : branches.branchSlices) {
+        auto sliceInput = slice->iOperand.front();
+        MemoryPathUtils::ForceSetRequirement(inserter, sliceInput, *slice, kUbMemoryType, kReason);
+        MemoryPathUtils::ForceSetOriginal(slice->oOperand.front(), kUbMemoryType, kReason);
+        std::dynamic_pointer_cast<ViewOpAttribute>(slice->GetOpAttribute())->SetToType(kUbMemoryType);
+    }
+    for (auto* slice : branches.directSlices) {
+        MemoryPathUtils::ForceSetRequirement(inserter, firstReshapeOutput, *slice, kUbMemoryType, kReason);
+        MemoryPathUtils::ForceSetOriginal(slice->oOperand.front(), kUbMemoryType, kReason);
+        std::dynamic_pointer_cast<ViewOpAttribute>(slice->GetOpAttribute())->SetToType(kUbMemoryType);
+    }
+    APASS_LOG_DEBUG_F(Elements::Operation, "Upgrade contract[%d] reshape branches from DDR to UB for UB slice outputs.",
+                      contract.GetOpMagic());
+    return SUCCESS;
+}
+
+// 匹配 VIEW → reshape → SLICE 分支，要求每条末端切片写入 UB。
+bool AssignMemoryType::CollectDdrReshapeViewBranch(Operation& branch, const LogicalTensorPtr& input,
+                                                   DdrReshapeBranches& branches) const
+{
+    if (branch.GetOpcode() != Opcode::OP_VIEW || branch.iOperand.size() != 1 || branch.oOperand.size() != 1 ||
+        branch.iOperand.front() != input ||
+        std::dynamic_pointer_cast<ViewOpAttribute>(branch.GetOpAttribute()) == nullptr) {
+        return false;
+    }
+    auto viewOutput = branch.oOperand.front();
+    if (viewOutput->GetConsumers().empty() || IsOutCastTensor(viewOutput)) {
+        return false;
+    }
+    branches.branchViews.push_back(&branch);
+    for (auto* reshape : viewOutput->GetConsumers()) {
+        if (reshape->GetOpcode() != Opcode::OP_RESHAPE || reshape->iOperand.size() != 1 ||
+            reshape->oOperand.size() != 1 || reshape->iOperand.front() != viewOutput) {
+            return false;
+        }
+        auto reshapeOutput = reshape->oOperand.front();
+        if (reshapeOutput->GetConsumers().empty() || IsOutCastTensor(reshapeOutput)) {
+            return false;
+        }
+        branches.branchReshapes.push_back(reshape);
+        for (auto* slice : reshapeOutput->GetConsumers()) {
+            if (!IsDdrReshapeUbSlice(*slice, reshapeOutput)) {
+                return false;
+            }
+            branches.branchSlices.push_back(slice);
+        }
+    }
+    return true;
+}
+
+// 同时匹配直接切片和视图分支，至少有一条分支包含额外的 reshape 才参与升级。
+bool AssignMemoryType::CollectDdrReshapeBranches(const LogicalTensorPtr& input, DdrReshapeBranches& branches) const
+{
+    for (auto* branch : input->GetConsumers()) {
+        if (branch->GetOpcode() == Opcode::OP_SLICE) {
+            if (!IsDdrReshapeUbSlice(*branch, input)) {
+                return false;
+            }
+            branches.directSlices.push_back(branch);
+            continue;
+        }
+        if (!CollectDdrReshapeViewBranch(*branch, input, branches)) {
+            return false;
+        }
+    }
+    return !branches.branchReshapes.empty();
+}
+
+// 对齐的 CONTRACT 后若所有 reshape 分支均落到 UB，将中间 DDR 驻留升级到 UB。
+Status AssignMemoryType::ProcessDdrMultiReshape(Function& function)
+{
+    constexpr MemoryType kUbMemoryType = MemoryType::MEM_UB;
     for (auto& contract : function.Operations()) {
         if (contract.GetOpcode() != Opcode::OP_CONTRACT) {
             continue;
@@ -161,111 +666,33 @@ Status AssignMemoryType::ProcessDdrMultiReshape(Function& function)
             continue;
         }
 
-        std::vector<Operation*> branchViews;
-        std::vector<Operation*> branchReshapes;
-        std::vector<Operation*> branchSlices;
-        std::vector<Operation*> directSlices;
-        bool matches = true;
-        for (auto* branch : firstReshapeOutput->GetConsumers()) {
-            if (branch->GetOpcode() == Opcode::OP_SLICE) {
-                if (branch->iOperand.size() != 1 || branch->oOperand.size() != 1 ||
-                    branch->iOperand.front() != firstReshapeOutput ||
-                    branch->oOperand.front()->GetMemoryTypeOriginal() != kUbMemoryType ||
-                    std::dynamic_pointer_cast<ViewOpAttribute>(branch->GetOpAttribute()) == nullptr) {
-                    matches = false;
-                    break;
-                }
-                directSlices.push_back(branch);
-                continue;
-            }
-            if (branch->GetOpcode() != Opcode::OP_VIEW || branch->iOperand.size() != 1 ||
-                branch->oOperand.size() != 1 || branch->iOperand.front() != firstReshapeOutput ||
-                std::dynamic_pointer_cast<ViewOpAttribute>(branch->GetOpAttribute()) == nullptr) {
-                matches = false;
-                break;
-            }
-            auto viewOutput = branch->oOperand.front();
-            if (viewOutput->GetConsumers().empty() || IsOutCastTensor(viewOutput)) {
-                matches = false;
-                break;
-            }
-            branchViews.push_back(branch);
-            for (auto* reshape : viewOutput->GetConsumers()) {
-                if (reshape->GetOpcode() != Opcode::OP_RESHAPE || reshape->iOperand.size() != 1 ||
-                    reshape->oOperand.size() != 1 || reshape->iOperand.front() != viewOutput) {
-                    matches = false;
-                    break;
-                }
-                auto reshapeOutput = reshape->oOperand.front();
-                if (reshapeOutput->GetConsumers().empty() || IsOutCastTensor(reshapeOutput)) {
-                    matches = false;
-                    break;
-                }
-                branchReshapes.push_back(reshape);
-                for (auto* slice : reshapeOutput->GetConsumers()) {
-                    if (slice->GetOpcode() != Opcode::OP_SLICE || slice->iOperand.size() != 1 ||
-                        slice->oOperand.size() != 1 || slice->iOperand.front() != reshapeOutput ||
-                        slice->oOperand.front()->GetMemoryTypeOriginal() != kUbMemoryType ||
-                        std::dynamic_pointer_cast<ViewOpAttribute>(slice->GetOpAttribute()) == nullptr) {
-                        matches = false;
-                        break;
-                    }
-                    branchSlices.push_back(slice);
-                }
-                if (!matches) {
-                    break;
-                }
-            }
-            if (!matches) {
-                break;
-            }
-        }
-        // A single reshape followed only by slices keeps the boundary selected by
-        // normal inference. This upgrade is for paths with another reshape branch.
-        if (!matches || branchReshapes.empty()) {
+        DdrReshapeBranches branches;
+        if (!CollectDdrReshapeBranches(firstReshapeOutput, branches)) {
             continue;
         }
-
-        auto contractAttr = std::dynamic_pointer_cast<AssembleOpAttribute>(contract.GetOpAttribute());
-        if (contractAttr == nullptr) {
-            APASS_LOG_ERROR_F(Elements::Operation, "ProcessDdrMultiReshape failed because contract attr is null.");
-            return FAILED;
-        }
-        MemoryPathUtils::ForceSetRequirement(inserter, contractInput, contract, kUbMemoryType, kReason);
-        contractAttr->SetFromType(kUbMemoryType);
-        MemoryPathUtils::ForceSetOriginal(contractOutput, kUbMemoryType, kReason);
-        MemoryPathUtils::ForceSetRequirement(inserter, contractOutput, *firstReshape, kUbMemoryType, kReason);
-        MemoryPathUtils::ForceSetOriginal(firstReshapeOutput, kUbMemoryType, kReason);
-
-        for (auto* view : branchViews) {
-            auto viewOutput = view->oOperand.front();
-            MemoryPathUtils::ForceSetRequirement(inserter, firstReshapeOutput, *view, kUbMemoryType, kReason);
-            MemoryPathUtils::ForceSetOriginal(viewOutput, kUbMemoryType, kReason);
-            std::dynamic_pointer_cast<ViewOpAttribute>(view->GetOpAttribute())->SetToType(kUbMemoryType);
-        }
-        for (auto* reshape : branchReshapes) {
-            auto reshapeInput = reshape->iOperand.front();
-            MemoryPathUtils::ForceSetRequirement(inserter, reshapeInput, *reshape, kUbMemoryType, kReason);
-            MemoryPathUtils::ForceSetOriginal(reshape->oOperand.front(), kUbMemoryType, kReason);
-        }
-        for (auto* slice : branchSlices) {
-            auto sliceInput = slice->iOperand.front();
-            MemoryPathUtils::ForceSetRequirement(inserter, sliceInput, *slice, kUbMemoryType, kReason);
-            MemoryPathUtils::ForceSetOriginal(slice->oOperand.front(), kUbMemoryType, kReason);
-            std::dynamic_pointer_cast<ViewOpAttribute>(slice->GetOpAttribute())->SetToType(kUbMemoryType);
-        }
-        for (auto* slice : directSlices) {
-            MemoryPathUtils::ForceSetRequirement(inserter, firstReshapeOutput, *slice, kUbMemoryType, kReason);
-            MemoryPathUtils::ForceSetOriginal(slice->oOperand.front(), kUbMemoryType, kReason);
-            std::dynamic_pointer_cast<ViewOpAttribute>(slice->GetOpAttribute())->SetToType(kUbMemoryType);
-        }
-        APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Upgrade contract[%d] reshape branches from DDR to UB for UB slice outputs.",
-                          contract.GetOpMagic());
+        RETURN_IF_NOT_SUCCESS(ApplyDdrMultiReshapeUpgrade(contract, *firstReshape, branches));
     }
     return SUCCESS;
 }
 
+// 优先检查 CONTRACT 的输入需求，未知时才依据输入驻留类型判定是否来自 L1。
+bool AssignMemoryType::AreAllContractInputsFromL1(const LogicalTensorPtr& middle) const
+{
+    for (auto* producer : middle->GetProducers()) {
+        auto input = producer->iOperand.front();
+        if (input == nullptr) {
+            return false;
+        }
+        MemoryType requirement = inserter.GetRequirementOrUnknown(input, *producer);
+        if (requirement != MemoryType::MEM_L1 &&
+            (requirement != MemoryType::MEM_UNKNOWN || input->GetMemoryTypeOriginal() != MemoryType::MEM_L1)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// 当 CONTRACT 与 SLICE 两侧均可留在 L1 时，消除中间 DDR 驻留。
 Status AssignMemoryType::ProcessL1DdrL1(Function& function)
 {
     std::unordered_set<LogicalTensorPtr> visitedOutputs;
@@ -282,21 +709,7 @@ Status AssignMemoryType::ProcessL1DdrL1(Function& function)
             continue;
         }
 
-        bool allContractInputsFromL1 = true;
-        for (auto* producer : middle->GetProducers()) {
-            auto input = producer->iOperand.front();
-            if (input == nullptr) {
-                allContractInputsFromL1 = false;
-                break;
-            }
-            MemoryType requirement = inserter.GetRequirementOrUnknown(input, *producer);
-            if (requirement != MemoryType::MEM_L1 &&
-                (requirement != MemoryType::MEM_UNKNOWN || input->GetMemoryTypeOriginal() != MemoryType::MEM_L1)) {
-                allContractInputsFromL1 = false;
-                break;
-            }
-        }
-        if (!allContractInputsFromL1) {
+        if (!AreAllContractInputsFromL1(middle)) {
             continue;
         }
 
@@ -373,7 +786,7 @@ Status AssignMemoryType::ProcessL0C2L1LargeToSmall(Function& function)
         if (op.GetOpcode() != Opcode::OP_CONTRACT || op.oOperand.empty() || op.oOperand.front() == nullptr) {
             continue;
         }
-        // Single-contract restriction is enforced inside TryUpgradeSingleContractSlicePath.
+        // 由 TryUpgradeSingleContractSlicePath 检查单 CONTRACT 约束。
         RETURN_IF_NOT_SUCCESS(TryUpgradeSingleContractSlicePath(op, MemoryType::MEM_L0C, MemoryType::MEM_L1,
                                                                 "ProcessL0C2L1LargeToSmall", false, false, false));
     }
@@ -387,7 +800,7 @@ bool AssignMemoryType::CheckConsumerMoveInShapeMultiple(const LogicalTensorPtr& 
             continue;
         }
         if (!IsSliceMode()) {
-            // VIEW is defined as a single-input/single-output operation.
+            // VIEW 是单输入、单输出算子。
             ASSERT(consumerOp->GetOOperands().size() == 1) << "VIEW should have 1 output";
         }
         if (!MemoryPathUtils::IsDimMultiple(consumerOp->GetOOperands().front()->GetShape(), input->GetShape())) {
@@ -521,96 +934,111 @@ Status AssignMemoryType::HasNonZeroViewFromOffsetUpstream(const LogicalTensorPtr
 //     (不看 toOffset 值——fold 的失败条件只看 copy 的 fromOffset 是否非立即零, assemble
 //     的 toOffset 为零不影响其 abort, 故 from≠0 + 直连 assemble(to=0) 同样必须拦截;
 //     copy 输出直接喂 vec 计算时 fold 前置条件不成立, 不受此条约束)。
+// SLICE 的上游搬出若同时携带源和目的偏移，则保留原路径。
+Status AssignMemoryType::ShouldSkipSliceUpgradeForOffsets(Operation& op, MemoryType sourceType, MemoryType targetType,
+                                                          const std::string& reason, bool& skip)
+{
+    if (op.iOperand.empty() || op.iOperand.front() == nullptr) {
+        return SUCCESS;
+    }
+    auto middle = op.iOperand.front();
+    bool toNonZero = false;
+    for (auto* producer : middle->GetProducers()) {
+        if (producer == nullptr) {
+            continue;
+        }
+        auto assembleAttr = std::dynamic_pointer_cast<AssembleOpAttribute>(producer->GetOpAttribute());
+        if (assembleAttr != nullptr &&
+            (HasNonZeroOffsetElement(assembleAttr->GetToOffset()) || !assembleAttr->GetToDynOffset().empty())) {
+            toNonZero = true;
+            break;
+        }
+    }
+    if (!toNonZero) {
+        return SUCCESS;
+    }
+    bool fromNonZero = false;
+    for (auto* producer : middle->GetProducers()) {
+        if (producer == nullptr || producer->GetIOperands().empty()) {
+            continue;
+        }
+        bool producerFromNonZero = false;
+        RETURN_IF_NOT_SUCCESS(HasNonZeroViewFromOffsetUpstream(producer->GetIOperands().front(), producerFromNonZero));
+        if (producerFromNonZero) {
+            fromNonZero = true;
+            break;
+        }
+    }
+    if (fromNonZero) {
+        APASS_LOG_DEBUG_F(Elements::Tensor,
+                          "Skip %s upgrade for tensor[%d]: %s->%s direct path carries both from and to offsets.",
+                          reason.c_str(), middle->GetMagic(), BriefMemoryTypeToString(sourceType).c_str(),
+                          BriefMemoryTypeToString(targetType).c_str());
+        skip = true;
+    }
+    return SUCCESS;
+}
+
+// 若 CONTRACT 的下游切片带源偏移且仍有直接拼接消费者，则保留原路径。
+Status AssignMemoryType::ShouldSkipContractUpgradeForOffsets(Operation& op, MemoryType sourceType,
+                                                             MemoryType targetType, const std::string& reason,
+                                                             bool& skip)
+{
+    if (op.oOperand.empty() || op.oOperand.front() == nullptr) {
+        return SUCCESS;
+    }
+    auto middle = op.oOperand.front();
+    bool fromNonZero = false;
+    for (auto* sliceConsumer : middle->GetConsumers()) {
+        if (sliceConsumer == nullptr || sliceConsumer->GetOpcode() != Opcode::OP_SLICE) {
+            continue;
+        }
+        auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(sliceConsumer->GetOpAttribute());
+        if (viewAttr != nullptr &&
+            (HasNonZeroOffsetElement(viewAttr->GetFromOffset()) || !viewAttr->GetFromDynOffset().empty())) {
+            fromNonZero = true;
+            break;
+        }
+    }
+    if (!fromNonZero) {
+        return SUCCESS;
+    }
+    bool dstPresent = false;
+    for (auto* sliceConsumer : middle->GetConsumers()) {
+        if (sliceConsumer == nullptr || sliceConsumer->GetOpcode() != Opcode::OP_SLICE ||
+            sliceConsumer->GetOOperands().empty()) {
+            continue;
+        }
+        bool sliceDstPresent = false;
+        RETURN_IF_NOT_SUCCESS(
+            HasDirectAssembleConsumerDownstream(sliceConsumer->GetOOperands().front(), sliceDstPresent));
+        if (sliceDstPresent) {
+            dstPresent = true;
+            break;
+        }
+    }
+    if (dstPresent) {
+        APASS_LOG_DEBUG_F(Elements::Tensor,
+                          "Skip %s upgrade for tensor[%d]: %s->%s direct path carries non-zero from offset "
+                          "with direct assemble consumer.",
+                          reason.c_str(), middle->GetMagic(), BriefMemoryTypeToString(sourceType).c_str(),
+                          BriefMemoryTypeToString(targetType).c_str());
+        skip = true;
+    }
+    return SUCCESS;
+}
+
+// 分别检查 SLICE 与 CONTRACT 两侧的偏移和下游写入，保留无法安全直连的搬运边界。
 Status AssignMemoryType::ShouldSkipDirectPathUpgradeForBothSideOffsets(Operation& op, MemoryType sourceType,
                                                                        MemoryType targetType, const std::string& reason,
                                                                        bool& skip)
 {
     skip = false;
     if (op.GetOpcode() == Opcode::OP_SLICE) {
-        if (op.iOperand.empty() || op.iOperand.front() == nullptr) {
-            return SUCCESS;
-        }
-        auto middle = op.iOperand.front();
-        bool toNonZero = false;
-        for (auto* producer : middle->GetProducers()) {
-            if (producer == nullptr) {
-                continue;
-            }
-            auto assembleAttr = std::dynamic_pointer_cast<AssembleOpAttribute>(producer->GetOpAttribute());
-            if (assembleAttr != nullptr &&
-                (HasNonZeroOffsetElement(assembleAttr->GetToOffset()) || !assembleAttr->GetToDynOffset().empty())) {
-                toNonZero = true;
-                break;
-            }
-        }
-        if (!toNonZero) {
-            return SUCCESS;
-        }
-        bool fromNonZero = false;
-        for (auto* producer : middle->GetProducers()) {
-            if (producer == nullptr || producer->GetIOperands().empty()) {
-                continue;
-            }
-            bool producerFromNonZero = false;
-            RETURN_IF_NOT_SUCCESS(
-                HasNonZeroViewFromOffsetUpstream(producer->GetIOperands().front(), producerFromNonZero));
-            if (producerFromNonZero) {
-                fromNonZero = true;
-                break;
-            }
-        }
-        if (fromNonZero) {
-            APASS_LOG_DEBUG_F(Elements::Tensor,
-                              "Skip %s upgrade for tensor[%d]: %s->%s direct path carries both from and to offsets.",
-                              reason.c_str(), middle->GetMagic(), BriefMemoryTypeToString(sourceType).c_str(),
-                              BriefMemoryTypeToString(targetType).c_str());
-            skip = true;
-        }
-        return SUCCESS;
+        return ShouldSkipSliceUpgradeForOffsets(op, sourceType, targetType, reason, skip);
     }
     if (op.GetOpcode() == Opcode::OP_CONTRACT) {
-        if (op.oOperand.empty() || op.oOperand.front() == nullptr) {
-            return SUCCESS;
-        }
-        auto middle = op.oOperand.front();
-        bool fromNonZero = false;
-        for (auto* sliceConsumer : middle->GetConsumers()) {
-            if (sliceConsumer == nullptr || sliceConsumer->GetOpcode() != Opcode::OP_SLICE) {
-                continue;
-            }
-            auto viewAttr = std::dynamic_pointer_cast<ViewOpAttribute>(sliceConsumer->GetOpAttribute());
-            if (viewAttr != nullptr &&
-                (HasNonZeroOffsetElement(viewAttr->GetFromOffset()) || !viewAttr->GetFromDynOffset().empty())) {
-                fromNonZero = true;
-                break;
-            }
-        }
-        if (!fromNonZero) {
-            return SUCCESS;
-        }
-        bool dstPresent = false;
-        for (auto* sliceConsumer : middle->GetConsumers()) {
-            if (sliceConsumer == nullptr || sliceConsumer->GetOpcode() != Opcode::OP_SLICE ||
-                sliceConsumer->GetOOperands().empty()) {
-                continue;
-            }
-            bool sliceDstPresent = false;
-            RETURN_IF_NOT_SUCCESS(
-                HasDirectAssembleConsumerDownstream(sliceConsumer->GetOOperands().front(), sliceDstPresent));
-            if (sliceDstPresent) {
-                dstPresent = true;
-                break;
-            }
-        }
-        if (dstPresent) {
-            APASS_LOG_DEBUG_F(Elements::Tensor,
-                              "Skip %s upgrade for tensor[%d]: %s->%s direct path carries non-zero from offset "
-                              "with direct assemble consumer.",
-                              reason.c_str(), middle->GetMagic(), BriefMemoryTypeToString(sourceType).c_str(),
-                              BriefMemoryTypeToString(targetType).c_str());
-            skip = true;
-        }
-        return SUCCESS;
+        return ShouldSkipContractUpgradeForOffsets(op, sourceType, targetType, reason, skip);
     }
     return SUCCESS;
 }
@@ -900,11 +1328,139 @@ bool AssignMemoryType::CanUseL0C2L1UpgradePath(Operation& operation)
     return inserter.FitL0C2L1(operation);
 }
 
+// 检查中间张量和切片输出的目标类型、形状与容量，动态中间张量保留原路径。
+bool AssignMemoryType::CheckSliceContractMiddle(const SliceContractPath& path)
+{
+    constexpr size_t kMatrixShapeDimCount = 2;
+    const auto& middle = path.middle;
+    const auto& target = path.target;
+    const auto& sliceOp = path.sliceOp;
+    const auto sourceType = path.sourceType;
+    const auto targetType = path.targetType;
+    const auto& reason = path.reason;
+    // 与 TryUpgradeSingleContractSlicePath 一致：middle 的 shape 存在 -1（动态维度）时不参与升级，
+    // 动态 shape 的 tensor 无法作为本地 scratch 静态分配。
+    const auto& middleShape = middle->GetShape();
+    if (std::any_of(middleShape.begin(), middleShape.end(), [](int64_t dim) { return dim < 0; })) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "Skip %s: op[%d] middle tensor[%d], dynamic middle shape.",
+                          reason.c_str(), sliceOp.GetOpMagic(), middle->GetMagic());
+        return false;
+    }
+    for (auto* consumer : middle->GetConsumers()) {
+        if (consumer != nullptr && !IsSliceOutputTarget(*consumer, targetType)) {
+            return false;
+        }
+    }
+    if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_L1 &&
+        !AreAllSliceConsumerShapesPreserved(middle)) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Skip %s: op[%d] middle tensor[%d], slice changes shape on L0C-to-L1 path.", reason.c_str(),
+                          sliceOp.GetOpMagic(), middle->GetMagic());
+        return false;
+    }
+    if (path.requireMatrixShape &&
+        (middle->GetShape().size() != kMatrixShapeDimCount || target->GetShape().size() != kMatrixShapeDimCount)) {
+        return false;
+    }
+    if (path.checkUbTileShape && !MemoryPathUtils::FitsAssembleOutputMemoryLimit(middle, targetType)) {
+        APASS_LOG_DEBUG_F(
+            Elements::Operation, "Skip %s: op[%d] middle tensor[%d], %zu bytes exceeds %s limit %zu bytes.",
+            reason.c_str(), sliceOp.GetOpMagic(), middle->GetMagic(), static_cast<size_t>(middle->GetDataSize()),
+            BriefMemoryTypeToString(targetType).c_str(),
+            static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(targetType) *
+                                (targetType == MemoryType::MEM_UB ? UB_THRESHOLD_ASSEMBLE : L1_THRESHOLD)));
+        return false;
+    }
+    return true;
+}
+
+// 检查单个 CONTRACT 输入的驻留类型、数据类型及直连形状约束。
+bool AssignMemoryType::CheckSliceContractProducer(const SliceContractPath& path, Operation& producer,
+                                                  const LogicalTensorPtr& input, bool isLiteNpu)
+{
+    constexpr size_t kMatrixShapeDimCount = 2;
+    const auto sourceType = path.sourceType;
+    const auto targetType = path.targetType;
+    if (input == nullptr || input->GetMemoryTypeOriginal() != sourceType) {
+        return false;
+    }
+    if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_UB &&
+        !(MemoryPathUtils::IsL0C2UbSupportedShape(input) ||
+          (isLiteNpu && MemoryPathUtils::AllBatchAxesAreOne(input->GetShape())))) {
+        return false;
+    }
+    if (!IsContractSliceSourceDtypeSupported(input, sourceType, targetType, isLiteNpu)) {
+        return false;
+    }
+    if (path.requireMatrixShape && input->GetShape().size() != kMatrixShapeDimCount) {
+        return false;
+    }
+    if (path.checkUbTileShape && !CheckUBTileShapeByRank(input)) {
+        return false;
+    }
+    if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_L1 && !CanUseL0C2L1UpgradePath(producer)) {
+        return false;
+    }
+    return true;
+}
+
+// 检查 L0C 到 L1 的切片约束，以及 UB 输出上会阻止升级的并行消费需求。
+bool AssignMemoryType::CheckSliceContractConsumers(const SliceContractPath& path)
+{
+    const auto& middle = path.middle;
+    const auto targetType = path.targetType;
+    const auto sourceType = path.sourceType;
+    const auto& reason = path.reason;
+    const auto& sliceOp = path.sliceOp;
+    for (auto* consumer : middle->GetConsumers()) {
+        if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_L1 &&
+            !CanUseL0C2L1UpgradePath(*consumer)) {
+            return false;
+        }
+        if (targetType != MemoryType::MEM_UB) {
+            continue;
+        }
+        auto output = consumer->oOperand.front();
+        if (HasDifferentConsumerRequirement(output, targetType)) {
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Skip %s: op[%d] middle tensor[%d], parallel output requirement conflict.",
+                              reason.c_str(), sliceOp.GetOpMagic(), middle->GetMagic());
+            return false;
+        }
+    }
+    return true;
+}
+
+// 检查输入的并行需求及各级分块的倍数关系，必要时追加 UB 到 L1 的限制。
+bool AssignMemoryType::CheckSliceContractInputCompatibility(const SliceContractPath& path,
+                                                            const LogicalTensorPtr& input)
+{
+    const auto& middle = path.middle;
+    const auto& target = path.target;
+    const auto targetType = path.targetType;
+    const auto& reason = path.reason;
+    const auto& sliceOp = path.sliceOp;
+    if (HasParallelDifferentConsumerRequirement(input, targetType) ||
+        !MemoryPathUtils::IsDimMultiple(middle->GetShape(), input->GetShape()) ||
+        !CheckConsumerMoveInShapeMultiple(middle, input) ||
+        !MemoryPathUtils::IsDimMultiple(target->GetShape(), input->GetShape())) {
+        APASS_LOG_DEBUG_F(
+            Elements::Operation,
+            "Skip %s: op[%d] middle tensor[%d], parallel input requirement conflict or incompatible tile shapes.",
+            reason.c_str(), sliceOp.GetOpMagic(), middle->GetMagic());
+        return false;
+    }
+    if (path.checkUb2L1Constraints && ShouldSkipUB2L1SmallToLarge(input, middle)) {
+        return false;
+    }
+    return true;
+}
+
+// 按原图顺序校验中间张量及其生产、消费分支，全部满足时才将路径升级为直连。
 Status AssignMemoryType::TryUpgradeSliceContractPath(Operation& sliceOp, MemoryType sourceType, MemoryType targetType,
                                                      const std::string& reason, bool requireMatrixShape,
                                                      bool checkUbTileShape, bool checkUb2L1Constraints)
 {
-    constexpr size_t kMatrixShapeDimCount = 2;
     if (sliceOp.GetOpcode() != Opcode::OP_SLICE || sliceOp.iOperand.empty() || sliceOp.oOperand.empty()) {
         return SUCCESS;
     }
@@ -915,102 +1471,30 @@ Status AssignMemoryType::TryUpgradeSliceContractPath(Operation& sliceOp, MemoryT
         !IsSliceOutputTarget(sliceOp, targetType)) {
         return SUCCESS;
     }
-    // 与 TryUpgradeSingleContractSlicePath 一致：middle 的 shape 存在 -1（动态维度）时不参与升级，
-    // 动态 shape 的 tensor 无法作为本地 scratch 静态分配。
-    const auto& middleShape = middle->GetShape();
-    if (std::any_of(middleShape.begin(), middleShape.end(), [](int64_t dim) { return dim < 0; })) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "Skip %s: op[%d] middle tensor[%d], dynamic middle shape.",
-                          reason.c_str(), sliceOp.GetOpMagic(), middle->GetMagic());
-        return SUCCESS;
-    }
-    for (auto* consumer : middle->GetConsumers()) {
-        if (consumer != nullptr && !IsSliceOutputTarget(*consumer, targetType)) {
-            return SUCCESS;
-        }
-    }
-    if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_L1 &&
-        !AreAllSliceConsumerShapesPreserved(middle)) {
-        APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Skip %s: op[%d] middle tensor[%d], slice changes shape on L0C-to-L1 path.", reason.c_str(),
-                          sliceOp.GetOpMagic(), middle->GetMagic());
-        return SUCCESS;
-    }
-    if (requireMatrixShape &&
-        (middle->GetShape().size() != kMatrixShapeDimCount || target->GetShape().size() != kMatrixShapeDimCount)) {
-        return SUCCESS;
-    }
-    if (checkUbTileShape && !MemoryPathUtils::FitsAssembleOutputMemoryLimit(middle, targetType)) {
-        APASS_LOG_DEBUG_F(
-            Elements::Operation, "Skip %s: op[%d] middle tensor[%d], %zu bytes exceeds %s limit %zu bytes.",
-            reason.c_str(), sliceOp.GetOpMagic(), middle->GetMagic(), static_cast<size_t>(middle->GetDataSize()),
-            BriefMemoryTypeToString(targetType).c_str(),
-            static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(targetType) *
-                                (targetType == MemoryType::MEM_UB ? UB_THRESHOLD_ASSEMBLE : L1_THRESHOLD)));
+    const SliceContractPath path{sliceOp,
+                                 middle,
+                                 target,
+                                 sourceType,
+                                 targetType,
+                                 reason,
+                                 requireMatrixShape,
+                                 checkUbTileShape,
+                                 checkUb2L1Constraints};
+    if (!CheckSliceContractMiddle(path)) {
         return SUCCESS;
     }
     const bool isLiteNpu = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
     for (auto* producer : middle->GetProducers()) {
         auto input = producer->iOperand.front();
-        if (input == nullptr || input->GetMemoryTypeOriginal() != sourceType) {
-            return SUCCESS;
-        }
-        if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_UB &&
-            (!(MemoryPathUtils::IsL0C2UbSupportedShape(input) ||
-               (isLiteNpu && MemoryPathUtils::AllBatchAxesAreOne(input->GetShape()))) ||
-             !(isLiteNpu ? inserter.IsL0C2UbLiteNPUSupportedDtype(input) : inserter.IsL0C2UbSupportedDtype(input)))) {
-            return SUCCESS;
-        }
-        if (isLiteNpu && sourceType == MemoryType::MEM_L1 && targetType == MemoryType::MEM_UB &&
-            !inserter.IsL12UbLiteNPUSupportedDtype(input)) {
-            return SUCCESS;
-        }
-        if (sourceType == MemoryType::MEM_UB && targetType == MemoryType::MEM_L1 &&
-            !(isLiteNpu ? inserter.IsUb2L1LiteNPUSupportedDtype(input) : inserter.IsUb2L1SupportedDtype(input))) {
-            return SUCCESS;
-        }
-        if (requireMatrixShape && input->GetShape().size() != kMatrixShapeDimCount) {
-            return SUCCESS;
-        }
-        if (checkUbTileShape && !CheckUBTileShapeByRank(input)) {
-            return SUCCESS;
-        }
-        if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_L1 &&
-            !CanUseL0C2L1UpgradePath(*producer)) {
-            return SUCCESS;
-        }
-        for (auto* consumer : middle->GetConsumers()) {
-            if (sourceType == MemoryType::MEM_L0C && targetType == MemoryType::MEM_L1 &&
-                !CanUseL0C2L1UpgradePath(*consumer)) {
-                return SUCCESS;
-            }
-            if (targetType != MemoryType::MEM_UB) {
-                continue;
-            }
-            auto output = consumer->oOperand.front();
-            if (HasDifferentConsumerRequirement(output, targetType)) {
-                APASS_LOG_DEBUG_F(Elements::Operation,
-                                  "Skip %s: op[%d] middle tensor[%d], parallel output requirement conflict.",
-                                  reason.c_str(), sliceOp.GetOpMagic(), middle->GetMagic());
-                return SUCCESS;
-            }
-        }
-        if (HasParallelDifferentConsumerRequirement(input, targetType) ||
-            !MemoryPathUtils::IsDimMultiple(middle->GetShape(), input->GetShape()) ||
-            !CheckConsumerMoveInShapeMultiple(middle, input) ||
-            !MemoryPathUtils::IsDimMultiple(target->GetShape(), input->GetShape())) {
-            APASS_LOG_DEBUG_F(
-                Elements::Operation,
-                "Skip %s: op[%d] middle tensor[%d], parallel input requirement conflict or incompatible tile shapes.",
-                reason.c_str(), sliceOp.GetOpMagic(), middle->GetMagic());
-            return SUCCESS;
-        }
-        if (checkUb2L1Constraints && ShouldSkipUB2L1SmallToLarge(input, middle)) {
+        if (!CheckSliceContractProducer(path, *producer, input, isLiteNpu) || !CheckSliceContractConsumers(path) ||
+            !CheckSliceContractInputCompatibility(path, input)) {
             return SUCCESS;
         }
     }
     return ApplySliceContractUpgrade(sliceOp, sourceType, targetType, reason);
 }
 
+// 匹配单 CONTRACT 到 SLICE 的直连路径，按兼容切片范围执行完整或部分升级。
 Status AssignMemoryType::TryUpgradeSingleContractSlicePath(Operation& contractOp, MemoryType sourceType,
                                                            MemoryType targetType, const std::string& reason,
                                                            bool requireMatrixShape, bool checkUbTileShape,
