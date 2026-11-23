@@ -375,11 +375,16 @@ def set_pass_options(
         future release.
 
     experimental : Dict[str, int]
-        Experimental pass options. Currently supports 'sg_set_atomic_scope':
+        Experimental pass options. 'sg_set_atomic_scope':
         set indivisible atomic scope for subsequent operations, affecting VF
         fusion, OoO scheduling, on-chip buffer reuse, sync insertion, mix
         subgraph split, and loop grouping. This is an experimental feature
         that may change or be removed in future releases.
+        'gm_ordered_reuse_min_parallelism': minimum root CALL poset width after
+        inserting memory reuse tokens. -1 disables (default), 0 means 1.
+        Positive values preserve at least that many pairwise independent CALLs.
+        If initial width is at or below the floor, skip active memory reuse.
+        Graph width does not guarantee device performance; None preserves the value.
 
     Raises
     ------
@@ -419,9 +424,13 @@ def set_pass_options(
         for key, val in experimental.items():
             if key == 'sg_set_atomic_scope':
                 pass_options['sg_set_atomic_scope'] = _validate_and_encode_scope_id(val, 'sg_set_atomic_scope')
+            elif key == 'gm_ordered_reuse_min_parallelism':
+                if val is not None:
+                    pass_options[key] = val
             else:
                 raise ValueError(
-                    f"Invalid experimental key: '{key}'. Supported keys: 'sg_set_atomic_scope'."
+                    f"Invalid experimental key: '{key}'. Supported keys: "
+                    "'sg_set_atomic_scope', 'gm_ordered_reuse_min_parallelism'."
                 )
     if ooo_sched_mode is not None:
         if ooo_sched_mode not in ("", "GAPMIN", "HLF"):
@@ -474,7 +483,10 @@ def get_pass_options() -> Dict[str, Union[str, int, bool, List[int], Dict[int, i
     # sg_set_ooo_scope is stored as the sg_set_atomic_scope config key (converted at set time).
     scope_val = _decode_scope_id(rst.get('sg_set_atomic_scope', [0]))
     result['sg_set_ooo_scope'] = scope_val
-    result['experimental'] = {'sg_set_atomic_scope': scope_val}
+    result['experimental'] = {
+        'sg_set_atomic_scope': scope_val,
+        'gm_ordered_reuse_min_parallelism': rst.get('gm_ordered_reuse_min_parallelism', -1),
+    }
     result['ooo_sched_mode'] = rst.get('ooo_sched_mode', '')
     result['sg_set_tunevf_mode'] = rst.get('sg_set_tunevf_mode', 0)
     result['enable_slice'] = rst.get('enable_slice', False)

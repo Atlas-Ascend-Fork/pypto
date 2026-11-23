@@ -9,6 +9,7 @@
         "auto_mix_partition": 1,
         "sg_set_tunevf_mode": 0,
         "enable_slice": true,
+        "gm_ordered_reuse_min_parallelism": -1,
         "sg_set_scope": [-1, 0, 0],
         "sg_set_ooo_scope": [-1],
         "sg_set_atomic_scope": [-1],

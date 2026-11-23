@@ -18,7 +18,9 @@
 #include <limits>
 #include <numeric>
 #include <utility>
+#include "ordered_memory_reuse.h"
 #include "tilefwk/tilefwk.h"
+#include "interface/configs/config_manager_ng.h"
 #include "interface/inner/tilefwk.h"
 #include "interface/program/program.h"
 #include "interface/function/function.h"
@@ -612,6 +614,10 @@ TensorBucket& Allocator::GetBestFitBucket(const TensorsDesc& tensorsDesc)
         return HandleNewBuckets(tensorsDesc, rawDataSize, first->magic);
     }
 
+    if (orderedReuse_.active != nullptr) {
+        return orderedReuse_.active->GetBestFitBucket(*this, tensorsDesc, rawDataSizeKey);
+    }
+
     std::deque<LogicalTensorPtr> predecessorTensors(tensorsDesc.tensors.begin(), tensorsDesc.tensors.end());
     std::unordered_set<int> visitedTensor;
     std::unordered_set<int> visitedBucket;
@@ -645,6 +651,9 @@ TensorBucket& Allocator::GetBestFitBucket(const TensorsDesc& tensorsDesc)
         }
     }
 
+    if (orderedReuse_.minimumParallelism >= 0) {
+        return OrderedMemoryReuse::GetBestFitNaturalBucket(*this, tensorsDesc, rawDataSizeKey, visitedBucket);
+    }
     return HandleNewBuckets(tensorsDesc, rawDataSize, first->magic);
 }
 
@@ -891,6 +900,9 @@ void Allocator::HandleNewTensor(Operation& callOp, size_t outputIdx, LogicalTens
         // 将新张量添加到现有存储组
         const size_t storageIndex = storageRecord->second;
         TensorsDesc& tensorsDesc = storageNeedToAllocate_.at(storageIndex);
+        if (orderedReuse_.minimumParallelism >= 0) {
+            tensorsDesc.orderedReuse.supportsOrderedReuse = false;
+        }
         tensorsDesc.tensors.emplace(outputTensor);
         storageMap_.emplace(outputTensor->GetRawMagic(), storageIndex);
 
@@ -981,6 +993,7 @@ void Allocator::InitializeRootCasts()
 
 void Allocator::Init()
 {
+    orderedReuse_.minimumParallelism = config::GetPassOption<int64_t>(GM_ORDERED_REUSE_MIN_PARALLELISM);
     connectionMatrix_.Generate(function_);
     storageMap_.clear();
     InitializeRootCasts();
@@ -993,10 +1006,7 @@ void Allocator::CollectComsuerOpDesc(TensorsDesc& tensorsDesc)
 {
     for (const LogicalTensorPtr& tensor : tensorsDesc.tensors) {
         for (Operation* consumer : tensor->GetConsumers()) {
-            if (consumer->GetOpcode() != Opcode::OP_CALL) {
-                continue;
-            }
-            uint64_t consumerIndex = connectionMatrix_.GetIndex(*consumer);
+            uint64_t consumerIndex = OrderedMemoryReuse::CollectLifetime(*this, tensorsDesc, *consumer, false);
             if (consumerIndex == connectionMatrix_.INVALID_INDEX) {
                 continue;
             }
@@ -1032,17 +1042,14 @@ void Allocator::CollectConnectionOps(TensorsDesc& tensorsDesc)
     tensorsDesc.connectionOpsBitmap.SetValues(0xFFFFFFFFFFFFFFFF); // And 操作前，需要将connectionOpsBitmap初始化为全1
     for (const LogicalTensorPtr& tensor : tensorsDesc.tensors) {
         for (Operation* producer : tensor->GetProducers()) {
-            if (producer->GetOpcode() != Opcode::OP_CALL) {
+            const uint64_t producerIndex = OrderedMemoryReuse::CollectLifetime(*this, tensorsDesc, *producer, true);
+            if (producerIndex == connectionMatrix_.INVALID_INDEX) {
                 continue;
             }
             // And 操作保证了 clear 的 producer 自身不会再被其他 BitMap 覆写为 1
             tensorsDesc.connectionOpsBitmap.And(connectionMatrix_.GetBitMap(*producer));
 
             // 由于customerOp和producerOp相同时，不能进行内存复用，所以这里需要将bitmap中的指向本操作的位清零
-            uint64_t producerIndex = connectionMatrix_.GetIndex(*producer);
-            if (producerIndex == connectionMatrix_.INVALID_INDEX) {
-                continue;
-            }
             tensorsDesc.connectionOpsBitmap.ClearBit(static_cast<size_t>(producerIndex));
         }
     }
@@ -1130,27 +1137,39 @@ Status Allocator::UpdateIncastOutCast()
 
 Status Allocator::Allocate()
 {
-    APASS_LOG_INFO_F(Elements::Tensor, "Starting memory allocation with %zu storage entries.",
-                     storageNeedToAllocate_.size());
-    for (auto& tensorsDesc : storageNeedToAllocate_) {
-        auto& tensor = *(tensorsDesc.tensors.begin());
-        if (tensor->storage_ == nullptr) {
-            APASS_LOG_ERROR_F(Elements::Tensor, "Tensor rawMagic:%d, storage is nullptr.", tensor->GetRawMagic());
+    for (const auto& tensorsDesc : storageNeedToAllocate_) {
+        if (tensorsDesc.tensors.empty()) {
+            APASS_LOG_ERROR_F(Elements::Tensor, "Memory allocation aborted: storage group has no tensors.");
             return FAILED;
         }
-        if (tensor->storage_->length_ > static_cast<uint64_t>(INT64_MAX)) {
+        const auto& tensor = *tensorsDesc.tensors.begin();
+        if (tensor == nullptr || tensor->storage_ == nullptr) {
+            APASS_LOG_ERROR_F(Elements::Tensor,
+                              "Memory allocation aborted: storage group has a null tensor or missing storage.");
+            return FAILED;
+        }
+        if (tensor->storage_->length_ > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
             APASS_LOG_ERROR_F(Elements::Tensor, "GM storage size %lu exceeds INT64_MAX for rawmagic %d.",
                               tensor->storage_->length_, tensor->GetRawMagic());
             return FAILED;
         }
-        TensorBucket& bucket = GetBestFitBucket(tensorsDesc);
-        if (!bucket.AddTensorGroup(tensorsDesc)) {
-            APASS_LOG_ERROR_F(Elements::Tensor,
-                              "TensorsDesc.tensors is empty, Cannot add empty tensor group to bucket.");
-            return FAILED;
+    }
+    if (orderedReuse_.minimumParallelism >= 0) {
+        OrderedMemoryReuse policy(orderedReuse_.minimumParallelism);
+        const Status status = policy.Build(*this);
+        if (status != SUCCESS) {
+            return status;
         }
-        APASS_LOG_DEBUG_F(Elements::Tensor, "Allocating storage for tensor: rawmagic=%d size=%lu.",
-                          tensor->GetRawMagic(), static_cast<unsigned long>(tensor->storage_->length_));
+    } else {
+        APASS_LOG_INFO_F(Elements::Tensor, "Starting memory allocation with %zu storage entries.",
+                         storageNeedToAllocate_.size());
+        for (auto& tensorsDesc : storageNeedToAllocate_) {
+            auto& tensor = *(tensorsDesc.tensors.begin());
+            TensorBucket& bucket = GetBestFitBucket(tensorsDesc);
+            bucket.AddTensorGroup(tensorsDesc);
+            APASS_LOG_DEBUG_F(Elements::Tensor, "Allocating storage for tensor: rawmagic=%d size=%lu.",
+                              tensor->GetRawMagic(), static_cast<unsigned long>(tensor->storage_->length_));
+        }
     }
     for (auto& bucket : buckets_) {
         bucket.UpdateOffset(size_);

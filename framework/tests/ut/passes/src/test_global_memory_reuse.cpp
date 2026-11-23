@@ -73,19 +73,23 @@ public:
 
 TEST_F(TestGlobalMemoryReuse, RejectDynamicAxisWhenAllocatingInternalStorage)
 {
-    ComputationalGraphBuilder G;
-    G.AddTensor(DataType::DT_FP32, {16, 64}, "input");
-    G.AddTensor(DataType::DT_FP32, {16, 64}, "internal");
-    G.AddOp(Opcode::OP_VIEW, {"input"}, {"internal"}, "view");
-    G.SetInCast({"input"});
+    for (int64_t minimum : {-1, 1}) {
+        SCOPED_TRACE(minimum);
+        config::SetPassOption<int64_t>(GM_ORDERED_REUSE_MIN_PARALLELISM, minimum);
+        ComputationalGraphBuilder G;
+        ASSERT_TRUE(G.AddTensor(DataType::DT_FP32, {16, 64}, "input"));
+        ASSERT_TRUE(G.AddTensor(DataType::DT_FP32, {16, 64}, "internal"));
+        ASSERT_TRUE(G.AddOp(Opcode::OP_VIEW, {"input"}, {"internal"}, "view"));
+        ASSERT_TRUE(G.SetInCast({"input"}));
 
-    Function* function = G.GetFunction();
-    ASSERT_NE(function, nullptr);
-    function->rootFunc_ = function;
-    G.GetTensor("internal")->tensor->rawshape = {-1, 64};
+        Function* function = G.GetFunction();
+        ASSERT_NE(function, nullptr);
+        function->rootFunc_ = function;
+        G.GetTensor("internal")->tensor->rawshape = {-1, 64};
 
-    GlobalMemoryReuse pass;
-    EXPECT_EQ(pass.RunOnFunction(*function), FAILED);
+        GlobalMemoryReuse pass;
+        EXPECT_EQ(pass.RunOnFunction(*function), FAILED);
+    }
 }
 
 /*

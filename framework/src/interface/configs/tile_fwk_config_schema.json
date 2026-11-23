@@ -197,6 +197,16 @@
                         "en": "Whether to enable slice-related processing. Defaults to false."
                     }
                 },
+                "gm_ordered_reuse_min_parallelism": {
+                    "type": "integer",
+                    "default": -1,
+                    "minimum": -1,
+                    "maximum": 9223372036854775807,
+                    "label": {
+                        "zh": "实验参数：插入内存复用 token 后 root CALL 偏序宽度的下限。-1 关闭；0 等价于 1；原图宽度不大于下限时跳过主动复用。图宽度不保证设备性能。",
+                        "en": "Experimental root CALL poset width floor after memory reuse tokens. -1 disables; 0 means 1. Skip active reuse when initial width is at or below the floor. Graph width does not guarantee device performance."
+                    }
+                },
                 "sg_set_scope": {
                     "type": "array",
                     "items": {

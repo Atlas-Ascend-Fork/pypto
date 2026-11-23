@@ -51,6 +51,7 @@ constexpr const char* COPYOUT_RESOLVE_COALESCING = "copyout_resolve_coalescing";
 constexpr const char* AUTO_MIX_PARTITION = "auto_mix_partition";
 constexpr const char* SG_SET_TUNEVF_MODE = "sg_set_tunevf_mode";
 constexpr const char* ENABLE_SLICE = "enable_slice";
+constexpr const char* GM_ORDERED_REUSE_MIN_PARALLELISM = "gm_ordered_reuse_min_parallelism";
 
 // runtime
 constexpr const char* DEVICE_SCHED_MODE = "device_sched_mode";

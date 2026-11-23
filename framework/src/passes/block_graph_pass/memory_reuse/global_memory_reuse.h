@@ -19,6 +19,7 @@
 #include "interface/tensor/logical_tensor.h"
 #include "passes/pass_interface/pass.h"
 #include "connection_matrix.h"
+#include "ordered_memory_reuse.h"
 
 namespace npu::tile_fwk {
 
@@ -39,11 +40,14 @@ struct TensorsDesc {
     LargeBitmap connectionOpsBitmap; // 作为新tensor，判断是否可以复用bucket时使用的连接bitmap
     std::set<LogicalTensorPtr> tensors;
     std::unordered_set<uint64_t> consumerOpIdxs; // 放入bucket后，作为内存桶是否可以再次复用，需要判断的consumerOp集合
+    OrderedReuseLifetime orderedReuse;
     TensorsDesc() : connectionOpsBitmap(0) {}
     TensorsDesc(Function* func) : connectionOpsBitmap(func->Operations(false).size()) {}
 };
 
 class TensorBucket {
+    friend class OrderedMemoryReuse;
+
 public:
     uint64_t GetSize() const { return size_; }
 
@@ -60,9 +64,12 @@ private:
     uint64_t size_{0};
     std::vector<std::set<LogicalTensorPtr>> tensorGroups_; // 所有rawTensor相同的tensor构成了一个tensorGroup
     std::unordered_set<uint64_t> consumerOpIdxs_; // 新tensor能否复用本bucket，需要判断的consumerOp集合
+    OrderedReuseBucket orderedReuse_;
 };
 
 class Allocator {
+    friend class OrderedMemoryReuse;
+
 public:
     explicit Allocator(Function* function) : connectionMatrix_(function), function_(function) {}
     Status Allocate();
@@ -150,6 +157,7 @@ private:
 
     // true：跳过内存复用判断，即不复用内存; false：正常进行内存复用判断
     bool skipReuseJudgment_{false};
+    OrderedReuseAllocatorState orderedReuse_;
 };
 
 class GlobalMemoryReuse : public Pass {
