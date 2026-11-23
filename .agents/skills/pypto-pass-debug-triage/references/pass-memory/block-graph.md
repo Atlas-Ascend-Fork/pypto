@@ -489,7 +489,7 @@ buffer 过大也可能来自上游 tile shape；先区分“分配条目错误�
 | 字段 | 内容 |
 |------|------|
 | Pass 名称 | InsertSync |
-| 主要源文件 | `framework/src/passes/block_graph_pass/insert_sync.{h,cpp}` |
+| 主要源文件 | `framework/src/passes/block_graph_pass/insert_sync/` |
 | Pipeline 阶段 | block_graph；`CopyOutResolve` 之后、`TuneSyncForVF` 之前 |
 | 前置依赖 Pass | 硬依赖 `OoOSchedule`、`CopyOutResolve` |
 | 后置消费 Pass | `TuneSyncForVF` |

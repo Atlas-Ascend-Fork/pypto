@@ -18,6 +18,7 @@
 
 #include <queue>
 #include <optional>
+#include <atomic>
 #include "interface/utils/common.h"
 #include "interface/function/function.h"
 #include "interface/operation/operation.h"
@@ -27,7 +28,9 @@
 #include "interface/inner/tilefwk.h"
 #include "interface/program/program.h"
 #include "interface/operation/opcode.h"
-#include "passes/block_graph_pass/insert_sync_types.h"
+#include "passes/block_graph_pass/insert_sync/sync_types.h"
+#include "passes/block_graph_pass/insert_sync/event_instance_tracker.h"
+#include "passes/block_graph_pass/insert_sync/data_dependency.h"
 #include "passes/pass_interface/pass.h"
 
 namespace npu {
@@ -43,58 +46,6 @@ constexpr uint64_t RECLAIM_PREFIX_OFFSET = 768;
 constexpr uint64_t FORCE_SYNC_OP_NUM = 15;
 constexpr uint64_t NUM15 = 15;
 constexpr uint64_t NUM31 = 31;
-struct Interval {
-    int start;
-    int end;
-    int idx;
-    Interval(int s, int e, int id) : start(s), end(e), idx(id) {}
-};
-
-struct IntervalTreeNode {
-    Interval interval;
-    int max;
-    IntervalTreeNode* left;
-    IntervalTreeNode* right;
-    explicit IntervalTreeNode(Interval i) : interval(i), max(i.end), left(nullptr), right(nullptr) {}
-};
-
-class RangeSearchTree {
-public:
-    ~RangeSearchTree() { FreeTree(); }
-    void Insert(int left, int right, int idx);
-    std::set<int> GetCovered(int left, int right);
-
-private:
-    void FreeTree();
-    Status ProcessTreeNode(const Interval& interval, IntervalTreeNode* currPtr,
-                           std::vector<IntervalTreeNode*>& intervalStack);
-    Status InsertInterval(const Interval& interval);
-    void OverlapSearch(const Interval& interval, std::set<int>& result);
-    IntervalTreeNode* treeRoot = nullptr;
-};
-
-class DataDependencySearcher {
-public:
-    std::set<int> Find(Operation* opWait);
-    void Insert(const Operation* opSet, int idx);
-    std::unordered_map<int, TileRange> ubTensorRangeMap;
-
-private:
-    void CheckRAWSearchTree(Operation* opWait, std::set<int>& res);
-    void CheckWAWSearchTree(Operation* opWait, std::set<int>& res);
-    void CheckWARSearchTree(Operation* opWait, std::set<int>& res);
-    void InsertWAWSearchTree(const Operation* opSet, int idx);
-    void InsertRAWSearchTree(const Operation* opSet, int idx);
-    void InsertWARSearchTree(const Operation* opSet, int idx);
-
-    std::unordered_map<MemoryType, RangeSearchTree> wawSearchTree_;
-    std::unordered_map<MemoryType, RangeSearchTree> warSearchTree_;
-    std::unordered_map<MemoryType, RangeSearchTree> rawSearchTree_;
-    std::unordered_map<int, std::set<int>> readDdrMemMap;
-    std::unordered_map<int, std::set<int>> writeDdrMemMap;
-    std::unordered_map<const Operation*, int> opIndices_;
-};
-
 enum class PipeSeq {
     AIC_MTE2 = 0,
     AIC_MTE1,
@@ -154,7 +105,6 @@ private:
     using ConsumedInstances = PipeSyncTypes::ConsumedInstances;
     using InstanceState = PipeSyncTypes::InstanceState;
     using EventInstance = PipeSyncTypes::EventInstance;
-    using EventInstanceTracker = PipeSyncTypes::EventInstanceTracker;
 
     struct ReclaimBarrier {
         std::vector<Operation*> ops;
@@ -207,6 +157,14 @@ private:
     Status ValidateEventGraphAcyclic(const EventDependencyGraph& graph) const;
     Status ValidateEventReuseOrder(const EventDependencyGraph& graph) const;
     Status ValidateEventReuse(const std::vector<Operation*>& opList) const;
+    struct ReplayGraph {
+        std::vector<size_t> firstEdge;
+        std::vector<std::pair<size_t, size_t>> edges;
+        std::vector<size_t> remaining;
+        explicit ReplayGraph(size_t size) : firstEdge(size, SIZE_MAX), remaining(size, 0) { edges.reserve(size); }
+        void AddEdge(size_t from, size_t to);
+        bool Sort(std::vector<size_t>& order);
+    };
     bool BuildReplayIssueOrder(const std::vector<DepOp>& plan, std::vector<size_t>& order,
                                std::optional<std::pair<size_t, size_t>> extraDependency = std::nullopt) const;
     void CacheReplayOrder(const std::vector<size_t>& order);
@@ -239,7 +197,6 @@ private:
     void RemoveOpDep(DepOp& setOp, DepOp& waitOp) const;
     void AddPhaseOp1(Function& function, const std::vector<Operation*>& srcLog, std::vector<Operation*>& dstLog,
                      size_t& i, size_t& prerun);
-    void AddPhaseOp2(Function& function, std::vector<Operation*>& dstLog, size_t& prerun);
     struct MatchingWait {
         size_t idx;
         bool blocksInsertion;
@@ -260,12 +217,19 @@ private:
                       std::vector<IndexOp>& syncedOpLog);
     Status IssueOpPipeSeq(Function& function, const std::vector<Operation*>& opLogPtr,
                           std::vector<IndexOp>& syncedOpLog, bool& eventIdDeadlock, size_t& issued);
+    struct ReplayContext {
+        std::vector<DepOp> plan;
+        std::vector<IssueQueue> queues;
+        std::vector<IndexOp> log;
+        std::unordered_set<Operation*> originalOps;
+    };
     Status IssueSyncOp(Function& function, const std::vector<Operation*>& opLogPtr, std::vector<IndexOp>& syncedOpLog,
                        size_t& totalIssued, size_t& allIssued);
     Status IssueOp(Function& function, const std::vector<Operation*>& opLogPtr, std::vector<IndexOp>& syncedOpLog);
     Status ProcessDeadLock(uint64_t& eventIdDeadlockEnterTimes, bool& eventIdDeadlock,
                            std::vector<IndexOp>& syncedOpLog, bool* mergeSearchExhausted = nullptr);
     Status MergePendingDependencies(int set1, int wait1, int set2, int wait2, int eventId1, int eventId2);
+    void DiscardMergedSet(std::vector<IndexOp>& syncedOpLog, size_t syncOpIdx1);
     Status SynDependency(int maxOverlapDepIdx, const DataDepInfo& depInfo, const PipePairEx& pipePairEx,
                          std::vector<IndexOp>& syncedOpLog);
     Status GetDepInfo(std::vector<IndexOp>& syncedOpLog, const PipePairEx& pipePairEx, DataDepInfo& depInfo);
@@ -275,7 +239,6 @@ private:
     bool GenSyncOp(PipeCoreRealEx set, PipeCoreRealEx wait, int eventId, bool isSet, Operation& op);
     Status GetEventId(const PipePairEx& pp, int& eventId, size_t setIdx, size_t waitIdx,
                       std::vector<IndexOp>& syncedOpLog, Function& function);
-    bool HasFreeEventId(const PipePairEx& pp);
     bool BufOverlap(const TileRange& range1, const TileRange& range2) const;
     bool CheckWawDependency(const Operation& opSet, const Operation& opWait);
     bool CheckRawDependency(const Operation& opSet, const Operation& opWait);
@@ -337,6 +300,48 @@ private:
     // 对非 PIPE_V 的 AIV 流水归一化为 AIC，使其与 AIC 共用同一套 eventid，避免 AIC/AIV 各自独立分配 1~7 造成冲突。
     PipeCoreRealEx NormalizeToAICCoreForCVMixSync(PipeCoreRealEx p) const;
 
+    Status CollectCrossCoreDemand(size_t idx, std::array<size_t, NUM2>& demand) const;
+    Status ApplyCrossCoreBarrierPlan(Function& function, size_t idx, const std::array<size_t, NUM2>& demand,
+                                     const CrossCoreBarrierPlan& plan, std::vector<IndexOp>& syncedOpLog);
+    Status CommitIntraCoreReclaim(Function& function, size_t boundary, const PipePairEx& pp, uint64_t insertIdx,
+                                  EventInstanceTracker& stagedState, const std::vector<size_t>& covered,
+                                  std::vector<IndexOp>& syncedOpLog);
+    std::vector<size_t> CollectReturningConsumers(const IntraEventCapacityFailure& failure) const;
+    Status ValidatePendingMerge(int maxOverlapDepIdx, const DataDepInfo& depInfo, const PipePairEx& pipePairEx,
+                                const std::vector<IndexOp>& syncedOpLog, const EventInstance* first,
+                                const EventInstance* second);
+    Status ValidateWaitGroup(size_t idx) const;
+    Status CollectEventSyncInstances(std::unordered_map<Operation*, std::pair<size_t, bool>>& syncInstances) const;
+    Status AddMatchedEventEdges(EventDependencyGraph& graph) const;
+    Status AddReclaimRegionEdges(const ReclaimBarrier& barrier, const std::vector<Operation*>& opList,
+                                 const std::unordered_map<Operation*, size_t>& listPosition, size_t realNodeCount,
+                                 EventDependencyGraph& graph) const;
+    void AddReplayDependencies(const std::vector<DepOp>& plan, std::optional<std::pair<size_t, size_t>> extraDependency,
+                               ReplayGraph& graph, std::vector<bool>& crossCoreBoundary) const;
+    void AddReplayBoundaries(const std::vector<bool>& crossCoreBoundary, ReplayGraph& graph) const;
+    std::vector<std::pair<size_t, size_t>> CollectReplayDependencies(const std::vector<DepOp>& plan,
+                                                                     const PipePairEx& pipes) const;
+    void ResetLeafForReplay(Function& function, ReplayContext& replay, std::vector<IndexOp>& syncedOpLog,
+                            const std::vector<size_t>& replayOrder);
+    bool RecoverIssueStall(Function& function, ReplayContext& replay, std::vector<IndexOp>& syncedOpLog,
+                           size_t& totalIssued);
+    void NormalizeMergePipePairs(std::vector<PipePairEx>& dataDepPairEx) const;
+    std::vector<PipePairEx> BuildMergePipePairs() const;
+    void BuildNextInPipe(std::vector<size_t>& nextInPipe) const;
+    std::vector<bool> ReachRetainedDependencies(size_t sourceIdx, const std::vector<size_t>& nextInPipe) const;
+    bool CanRetargetPendingWait(const EventInstance& instance, size_t blocked, const std::vector<DepOp>& plan) const;
+    void RefillCrossCorePool(size_t pool, int handshakeId, CoreType finalReceiver);
+    void AddReclaimEndpoints(size_t count, EventDependencyGraph& graph, std::vector<size_t>& entries,
+                             std::vector<size_t>& exits) const;
+    void CommitPendingWaitMove(size_t set, size_t wait, Operation* syncSet, size_t blocked, std::vector<DepOp>& plan,
+                               std::vector<DepOp>& candidate);
+    bool HasScalarCrossCoreWaits(size_t idx, size_t pool) const;
+    std::unordered_map<size_t, DepOp> SnapshotYieldDependencies(const DepOp& op, const IssueQueue& issueQ) const;
+    void CountIssuedEvents(const DepOp& op, IssueNum& issuenum) const;
+    Status RecoverCrossCoreEventQueue(const PipePairEx& pp, int& eventId, size_t setIdx,
+                                      std::vector<IndexOp>& syncedOpLog, Function& function);
+    Status AllocateCrossCoreEvent(const PipePairEx& pp, int& eventId, size_t setIdx, std::vector<IndexOp>& syncedOpLog,
+                                  Function& function);
     std::vector<DepOp> depOps_;
     // A nonempty rank certifies that the current dependencies admit this order.
     std::vector<size_t> replayRank_;
@@ -423,6 +428,10 @@ private:
                                             const std::unordered_set<Operation*>& forceSyncOps);
     void ReorderOpListForClusters(std::vector<Operation*>& opList, const std::map<int, ClusterInfo>& clusters);
 
+    void RunSubPrograms(const std::vector<std::pair<uint64_t, Function*>>& subPrograms, std::atomic<size_t>& nextIdx,
+                        std::atomic<bool>& status);
+    Status CollectClusterSync(Operation* op, int scopeId, ClusterInfo& ci);
+    Status ValidateClusterContinuity(const std::vector<Operation*>& opList, size_t i, int scopeId, ClusterInfo& ci);
     bool enableDebug_{false};
     bool cvHardSync_{false};
     IRBuilder irBuilder_;

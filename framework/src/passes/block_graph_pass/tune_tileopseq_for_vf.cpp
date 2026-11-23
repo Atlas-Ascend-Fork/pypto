@@ -14,7 +14,7 @@
  */
 
 #include "passes/block_graph_pass/tune_tileopseq_for_vf.h"
-#include "passes/block_graph_pass/insert_sync.h"
+#include "passes/block_graph_pass/insert_sync/insert_sync.h"
 #include "passes/pass_log/pass_log.h"
 #include "interface/configs/config_manager_ng.h"
 

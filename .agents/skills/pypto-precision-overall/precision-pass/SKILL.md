@@ -233,7 +233,7 @@ pipeline 同步不及时导致的数据竞争或 VF 融合问题会导致精度�
 
 **快速验证**：
 
-1. 修改 `framework/src/passes/block_graph_pass/insert_sync.h`，将 `bool enableDebug_{false}` 改为 `bool enableDebug_{true}`
+1. 修改 `framework/src/passes/block_graph_pass/insert_sync/insert_sync.h`，将 `bool enableDebug_{false}` 改为 `bool enableDebug_{true}`
 2. 重新编译安装 pypto：`python3 -m pip install . --verbose`
 3. 重新执行算子。若精度通过 → 说明是同步/VF 融合问题，恢复 `bool enableDebug_{false}` 参数，结束定位流程，反馈结果
 4. 检查是否为 VF 融合问题（仅针对 A5 时执行，否则跳过，默认为同步问题）：

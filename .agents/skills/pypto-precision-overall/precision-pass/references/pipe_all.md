@@ -198,6 +198,6 @@ python3 scripts/locate_source_line.py \
 
 | 文档                                                         | 内容                |
 | ------------------------------------------------------------ | ------------------- |
-| [insert_sync.cpp](../../../../../framework/src/passes/block_graph_pass/insert_sync.cpp) | enableDebug 实现    |
+| [insert_sync/insert_sync.cpp](../../../../../framework/src/passes/block_graph_pass/insert_sync/insert_sync.cpp) | enableDebug 实现    |
 | [tile_fwk_config.json](../../../../../framework/src/interface/configs/tile_fwk_config.json) | 编译配置            |
 | [precision-pass/SKILL.md](../SKILL.md)                       | Pass 精度校验主流程 |

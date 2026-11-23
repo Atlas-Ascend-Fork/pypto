@@ -20,7 +20,7 @@
 #include "interface/program/program.h"
 #include "interface/function/function.h"
 #include "passes/pass_utils/pass_utils.h"
-#include "passes/block_graph_pass/insert_sync.h"
+#include "passes/block_graph_pass/insert_sync/insert_sync.h"
 
 namespace npu::tile_fwk {
 class TuneTileOpSeqForVF : public Pass {

@@ -9,7 +9,7 @@
  */
 
 /*!
- * \file insert_sync_types.h
+ * \file sync_types.h
  * \brief Internal scheduling and event tracking types for InsertSync.
  */
 
@@ -190,7 +190,11 @@ struct PipeSyncTypes {
         std::string DumpPipeDepInfo();
     };
 
+    struct EventInstance;
     struct DataDepInfo {
+        void Reset(const PipePairEx& pipes);
+        void CollectPending(const std::vector<IndexOp>& log,
+                            const std::unordered_map<Operation*, const EventInstance*>& pending);
         PipeType setp;
         CoreType setc;
         PipeType waitp;
@@ -339,50 +343,6 @@ struct PipeSyncTypes {
         InstanceState state{InstanceState::Allocated};
         bool intraCore;
         ConsumptionProof Proof() const { return {slot, id.generation}; }
-    };
-
-    // Owns all event-instance transitions; the scheduler only reads instances.
-    class EventInstanceTracker {
-    public:
-        const std::vector<EventInstance>& Instances() const { return eventInstances_; }
-        const EventInstance* Find(size_t setIdx, size_t waitIdx) const;
-        const EventInstance* FindActive(const EventResource& resource) const;
-        ConsumedInstances Known(const PipeCoreRealEx& pipe) const;
-        const ConsumedInstances& KnownForAllocationCheck(const PipeCoreRealEx& pipe) const;
-        void MergeConsumed(ConsumedInstances& destination, const ConsumedInstances& snapshot) const;
-        bool HasActive(const EventResource& resource) const { return FindActive(resource) != nullptr; }
-        const EventResource& ProofResource(ConsumptionProof proof) const { return slots_[proof.slot].resource; }
-        bool CanAllocate(const EventResource& resource, const ConsumedInstances& consumed,
-                         bool requireActive = false) const;
-        Status Allocate(const EventResource& resource, const PipePairEx& pipes, size_t setIdx, size_t waitIdx);
-        Status Allocate(const EventResource& resource, const PipePairEx& pipes, size_t setIdx, size_t waitIdx,
-                        ConsumedInstances consumed);
-        Status RecordSet(const EventResource& resource, const PipePairEx& pipes, size_t setIdx, size_t waitIdx,
-                         Operation& syncOp, bool intraCore);
-        Status Consume(size_t setIdx, size_t waitIdx, Operation& syncOp);
-        Status CancelPending(size_t setIdx, size_t waitIdx);
-        Status MergePending(size_t set1, size_t wait1, size_t set2, size_t wait2);
-        bool RetargetPendingWait(size_t setIdx, size_t waitIdx, size_t earlierWaitIdx);
-        Status RetireConsumed(size_t setIdx, size_t waitIdx);
-        void ForgetProofs();
-
-    private:
-        struct EventSlot {
-            EventResource resource;
-            uint64_t generation{0};
-            std::optional<size_t> active;
-        };
-        std::optional<size_t> FindSlot(const EventResource& resource) const;
-        size_t GetOrCreateSlot(const EventResource& resource);
-        const EventInstance* FindActive(const EventSlot& slot) const;
-        bool CanAllocate(const EventSlot* slot, const ConsumedInstances& consumed, bool requireActive) const;
-
-        std::vector<EventInstance> eventInstances_;
-        // Indices remain valid when the tracker is copied for a staged drain.
-        std::vector<EventSlot> slots_;
-        std::unordered_map<EventResource, size_t, EventResourceHash> slotByResource_;
-        std::unordered_map<PipeCoreRealEx, ConsumedInstances, PipeCoreRealExHash> knownConsumed_;
-        std::unordered_map<std::pair<size_t, size_t>, size_t, IndexVecHash> eventInstanceByDep_;
     };
 };
 } // namespace tile_fwk

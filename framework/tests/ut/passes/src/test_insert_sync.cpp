@@ -22,7 +22,7 @@
 #include "interface/operation/attribute.h"
 #include "interface/tensor/irbuilder.h"
 #define private public
-#include "passes/block_graph_pass/insert_sync.h"
+#include "passes/block_graph_pass/insert_sync/insert_sync.h"
 #include "passes/block_graph_pass/tune_sync_for_vf.h"
 #include "passes/pass_utils/pass_common_defs.h"
 #include "ut_json/ut_json_tool.h"

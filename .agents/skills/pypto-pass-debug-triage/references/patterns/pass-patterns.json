@@ -759,7 +759,7 @@
         "OoOScheduler"
       ],
       "files": [
-        "framework/src/passes/block_graph_pass/insert_sync.cpp"
+        "framework/src/passes/block_graph_pass/insert_sync/sync_scheduler.cpp"
       ],
       "phenomenon_keywords": [
         "InsertSync",

@@ -41,7 +41,7 @@ description: 偶现精度问题排查技能。当精度问题无法稳定复现�
 
 ### 开关 1：开启同步调试
 
-**修改文件**：`framework/src/passes/block_graph_pass/insert_sync.h`
+**修改文件**：`framework/src/passes/block_graph_pass/insert_sync/insert_sync.h`
 
 **修改内容**：将 `bool enableDebug_{false}` 改为 `bool enableDebug_{true}`
 
