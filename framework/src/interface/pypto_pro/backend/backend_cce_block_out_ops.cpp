@@ -1853,7 +1853,7 @@ static std::string MakeBlockOutGatherMaskCodegenCCE(const ir::CallPtr& op, codeg
     int patternMode = 0;
     for (const auto& [key, val] : op->kwargs_) {
         if (key == "pattern_mode") {
-            patternMode = std::any_cast<int>(val);
+            patternMode = AnyCastFromIR<int>(val, key);
         }
     }
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, patternMode >= 1 && patternMode <= 7)

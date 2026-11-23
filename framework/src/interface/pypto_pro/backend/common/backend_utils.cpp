@@ -54,9 +54,9 @@ CompareAttrs GetCompareAttrs(const ir::CallPtr& op)
     for (const auto& [key, val] : op->kwargs_) {
         if (key == "cmp_mode") {
             attrs.hasCmpMode = true;
-            attrs.cmpMode = std::any_cast<int>(val);
+            attrs.cmpMode = AnyCastFromIR<int>(val, key);
         } else if (key == "offset") {
-            attrs.offset = std::any_cast<int>(val);
+            attrs.offset = AnyCastFromIR<int>(val, key);
         }
     }
     return attrs;

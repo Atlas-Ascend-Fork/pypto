@@ -69,9 +69,9 @@ TypePtr DeduceBarrierType(const std::vector<ExprPtr>& args, const std::vector<st
     int timeoutCycles = 0;
     for (const auto& [name, value] : kwargs) {
         if (name == "timeout_cycles") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << "dist.barrier 'timeout_cycles' must be a compile-time constant integer";
-            timeoutCycles = std::any_cast<int>(value);
+            timeoutCycles = AnyCastFromIR<int>(value, name);
             continue;
         }
         if (name == "sync_local" || name == "flush_store") {
@@ -166,9 +166,9 @@ TypePtr DeduceDistChannelType(const std::vector<ExprPtr>& args,
     int ubAddr = 0;
     for (const auto& [name, value] : kwargs) {
         if (name == "ub_addr") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << "dist.channel 'ub_addr' must be a compile-time constant integer";
-            ubAddr = std::any_cast<int>(value);
+            ubAddr = AnyCastFromIR<int>(value, name);
             hasUbAddr = true;
             continue;
         }
@@ -207,13 +207,13 @@ ChannelWriteKwargs ParseChannelWriteKwargs(const std::vector<std::pair<std::stri
             parsed.submit = std::any_cast<bool>(value);
             hasSubmit = true;
         } else if (name == "timeout_cycles") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << opName << " 'timeout_cycles' must be a compile-time constant integer";
-            parsed.timeoutCycles = std::any_cast<int>(value);
+            parsed.timeoutCycles = AnyCastFromIR<int>(value, name);
         } else if (name == "option") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << opName << " 'option' must be a compile-time constant integer";
-            parsed.option = std::any_cast<int>(value);
+            parsed.option = AnyCastFromIR<int>(value, name);
         } else {
             PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, false)
                 << opName << " does not accept keyword argument '" << name << "'";
@@ -400,9 +400,9 @@ int ParseAppendOption(const std::vector<std::pair<std::string, std::any>>& kwarg
     int option = kDefaultAppendOption;
     for (const auto& [name, value] : kwargs) {
         if (name == "option") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << opName << " 'option' must be a compile-time constant integer";
-            option = std::any_cast<int>(value);
+            option = AnyCastFromIR<int>(value, name);
             continue;
         }
         // Ops with extra compile-time keywords validate those first and list them here.
@@ -459,9 +459,9 @@ TypePtr DeduceDistBufferChannelWriteReduceType(const std::vector<ExprPtr>& args,
     int reduceOp = 0;
     for (const auto& [name, value] : kwargs) {
         if (name == "reduce_op") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << "buffer_channel.write_reduce 'reduce_op' must be a compile-time ReduceOp";
-            reduceOp = std::any_cast<int>(value);
+            reduceOp = AnyCastFromIR<int>(value, name);
             hasReduceOp = true;
             continue;
         }
@@ -568,9 +568,9 @@ TypePtr DeduceDistChannelDrainType(const std::vector<ExprPtr>& args,
     int timeoutCycles = 0;
     for (const auto& [name, value] : kwargs) {
         if (name == "timeout_cycles") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << "channel.drain 'timeout_cycles' must be a compile-time constant integer";
-            timeoutCycles = std::any_cast<int>(value);
+            timeoutCycles = AnyCastFromIR<int>(value, name);
             continue;
         }
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, false)
@@ -593,16 +593,16 @@ TypePtr DeduceDistBufferChannelType(const std::vector<ExprPtr>& args,
     int64_t bufBytes = 0;
     for (const auto& [name, value] : kwargs) {
         if (name == "buf_addr") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << "dist.buffer_channel 'buf_addr' must be a compile-time constant integer";
-            bufAddr = std::any_cast<int>(value);
+            bufAddr = AnyCastFromIR<int>(value, name);
             hasAddr = true;
             continue;
         }
         if (name == "buf_bytes") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << "dist.buffer_channel 'buf_bytes' must be a compile-time constant integer";
-            bufBytes = std::any_cast<int>(value);
+            bufBytes = AnyCastFromIR<int>(value, name);
             hasBytes = true;
             continue;
         }
@@ -664,9 +664,9 @@ TypePtr DeduceDistBufferChannelSubmitType(const std::vector<ExprPtr>& args,
     int timeoutCycles = 0;
     for (const auto& [name, value] : kwargs) {
         if (name == "timeout_cycles") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << "buffer_channel.submit 'timeout_cycles' must be a compile-time constant integer";
-            timeoutCycles = std::any_cast<int>(value);
+            timeoutCycles = AnyCastFromIR<int>(value, name);
             continue;
         }
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, false)
@@ -1029,20 +1029,20 @@ TypePtr DeduceDistChannelWriteReduceType(const std::vector<ExprPtr>& args,
     int option = 0x2D;
     for (const auto& [name, value] : kwargs) {
         if (name == "reduce_op") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << "channel.write_reduce 'reduce_op' must be a compile-time ReduceOp";
-            reduceOp = std::any_cast<int>(value);
+            reduceOp = AnyCastFromIR<int>(value, name);
             hasReduceOp = true;
         } else if (name == "submit") {
             PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(bool))
                 << "channel.write_reduce 'submit' must be a compile-time bool";
         } else if (name == "timeout_cycles") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << "channel.write_reduce 'timeout_cycles' must be a compile-time constant integer";
         } else if (name == "option") {
-            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int))
+            PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, value.type() == typeid(int64_t))
                 << "channel.write_reduce 'option' must be a compile-time constant integer";
-            option = std::any_cast<int>(value);
+            option = AnyCastFromIR<int>(value, name);
             hasOption = true;
         } else {
             PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, false)

@@ -77,7 +77,7 @@ TypePtr DeduceVFAddrRegType([[maybe_unused]] const std::vector<ExprPtr>& args,
 {
     for (const auto& [key, value] : kwargs) {
         if (key == "dtype") {
-            return std::make_shared<RegType>(RegKind::AddrReg, AnyCast<DataType>(value, "kwarg: dtype"));
+            return std::make_shared<RegType>(RegKind::AddrReg, AnyCastFromIR<DataType>(value, "kwarg: dtype"));
         }
     }
     return std::make_shared<RegType>(RegKind::AddrReg, DataType::UINT32);
@@ -122,7 +122,7 @@ TypePtr DeduceVFTypeChangingRegType([[maybe_unused]] const std::vector<ExprPtr>&
 {
     for (const auto& [key, value] : kwargs) {
         if (key == "dtype") {
-            return std::make_shared<RegType>(RegKind::VecReg, AnyCast<DataType>(value, "kwarg: dtype"));
+            return std::make_shared<RegType>(RegKind::VecReg, AnyCastFromIR<DataType>(value, "kwarg: dtype"));
         }
     }
     throw TypeError("vf type-changing op requires an explicit dtype kwarg because the dst type "
@@ -136,7 +136,7 @@ TypePtr DeduceVFTypeChangingLikeType(const std::vector<ExprPtr>& args,
 {
     for (const auto& [key, value] : kwargs) {
         if (key == "dtype") {
-            auto dt = AnyCast<DataType>(value, "kwarg: dtype");
+            auto dt = AnyCastFromIR<DataType>(value, "kwarg: dtype");
             if (!args.empty() && IsMaskReg(args[0]->GetType())) {
                 return std::make_shared<RegType>(RegKind::PredReg, dt);
             }
@@ -160,7 +160,7 @@ TypePtr DeduceVFArangeType([[maybe_unused]] const std::vector<ExprPtr>& args,
 {
     for (const auto& [key, value] : kwargs) {
         if (key == "dtype") {
-            return std::make_shared<RegType>(RegKind::VecReg, AnyCast<DataType>(value, "kwarg: dtype"));
+            return std::make_shared<RegType>(RegKind::VecReg, AnyCastFromIR<DataType>(value, "kwarg: dtype"));
         }
     }
     throw TypeError("vf.arange requires an explicit dtype kwarg because the destination element type "
@@ -181,7 +181,7 @@ static DataType VfDeduceDataDtype(const std::vector<ExprPtr>& args,
 {
     for (const auto& [key, value] : kwargs) {
         if (key == "dtype") {
-            return AnyCast<DataType>(value, "kwarg: dtype");
+            return AnyCastFromIR<DataType>(value, "kwarg: dtype");
         }
     }
     for (const auto& arg : args) {
@@ -225,7 +225,7 @@ TypePtr DeduceVFLoadAlignType(const std::vector<ExprPtr>& args,
     }
     for (const auto& [key, value] : kwargs) {
         if (key == "dist") {
-            auto dist = static_cast<LoadDist>(AnyCast<int>(value, "kwarg: dist"));
+            auto dist = static_cast<LoadDist>(AnyCastFromIR<int>(value, "kwarg: dist"));
             switch (dist) {
                 case LoadDist::DINTLV_B8:
                 case LoadDist::DINTLV_B16:

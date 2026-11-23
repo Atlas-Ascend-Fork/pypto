@@ -31,6 +31,39 @@ namespace pypto {
 namespace ir {
 using npu::tile_fwk::ExternalError;
 
+namespace {
+
+std::any NormalizeKwargValue(const std::any& value)
+{
+    if (value.type() == typeid(DataType)) {
+        return std::any(AnyCast<DataType>(value, "kwarg").ToCTypeString());
+    }
+    if (value.type() == typeid(MemorySpace)) {
+        return std::any(MemorySpaceToString(AnyCast<MemorySpace>(value, "kwarg")));
+    }
+    if (value.type() == typeid(int)) {
+        return std::any(static_cast<int64_t>(AnyCast<int>(value, "kwarg")));
+    }
+    if (value.type() == typeid(std::vector<int>)) {
+        const auto& numbers = AnyCast<std::vector<int>>(value, "kwarg");
+        return std::any(std::vector<int64_t>(numbers.begin(), numbers.end()));
+    }
+    return value;
+}
+
+std::vector<std::pair<std::string, std::any>> NormalizeKwargs(
+    const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    std::vector<std::pair<std::string, std::any>> normalized;
+    normalized.reserve(kwargs.size());
+    for (const auto& [key, value] : kwargs) {
+        normalized.emplace_back(key, NormalizeKwargValue(value));
+    }
+    return normalized;
+}
+
+} // namespace
+
 void ValidateKwargs(const std::vector<std::pair<std::string, std::any>>& kwargs,
                     const std::unordered_map<std::string, std::type_index>& allowedKwargs, const std::string& opName)
 {
@@ -41,30 +74,24 @@ void ValidateKwargs(const std::vector<std::pair<std::string, std::any>>& kwargs,
                 << "Unknown kwarg '" << key << "' for operator '" << opName << "'";
         }
 
-        // For DataType, accept both DataType and int (since Python may pass as int for backward compatibility)
         if (it->second == std::type_index(typeid(DataType))) {
-            std::type_index valueType(value.type());
             PRO_IR_CHECK(ExternalError::INVALID_TYPE,
-                         valueType == std::type_index(typeid(DataType)) || valueType == std::type_index(typeid(int)))
+                         std::type_index(value.type()) == std::type_index(typeid(std::string)))
                 << "Kwarg '" << key << "' for operator '" << opName
-                << "' expects DataType or int, but got incompatible type";
+                << "' expects a dtype string, but got incompatible type";
         } else if (it->second == std::type_index(typeid(int))) {
-            std::type_index valueType(value.type());
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, valueType == std::type_index(typeid(int)) ||
-                                                          valueType == std::type_index(typeid(int64_t)) ||
-                                                          valueType == std::type_index(typeid(TilePad)))
-                << "Kwarg '" << key << "' for operator '" << opName
-                << "' expects int/int64/TilePad, but got incompatible type";
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, std::type_index(value.type()) == std::type_index(typeid(int64_t)))
+                << "Kwarg '" << key << "' for operator '" << opName << "' expects int64, but got incompatible type";
         } else if (it->second == std::type_index(typeid(MemorySpace))) {
             PRO_IR_CHECK(ExternalError::INVALID_VAL,
-                         std::type_index(value.type()) == std::type_index(typeid(MemorySpace)))
+                         std::type_index(value.type()) == std::type_index(typeid(std::string)))
                 << "Kwarg '" << key << "' for operator '" << opName
-                << "' expects MemorySpace, but got incompatible type" << value.type().name();
+                << "' expects a memory-space string, but got incompatible type";
         } else if (it->second == std::type_index(typeid(std::vector<int>))) {
             PRO_IR_CHECK(ExternalError::INVALID_TYPE,
-                         std::type_index(value.type()) == std::type_index(typeid(std::vector<int>)))
+                         std::type_index(value.type()) == std::type_index(typeid(std::vector<int64_t>)))
                 << "Kwarg '" << key << "' for operator '" << opName
-                << "' expects std::vector<int>, but got incompatible type";
+                << "' expects std::vector<int64_t>, but got incompatible type";
         } else if (it->second == std::type_index(typeid(std::vector<std::string>))) {
             PRO_IR_CHECK(ExternalError::INVALID_TYPE,
                          std::type_index(value.type()) == std::type_index(typeid(std::vector<std::string>)))
@@ -122,25 +149,26 @@ CallPtr OpRegistry::Create(const std::string& opName, const std::vector<ExprPtr>
     PRO_IR_CHECK(ExternalError::KEY_ERROR, it != registry_.end()) << "Operator '" + opName + "' not found in registry";
 
     const auto& entry = it->second;
+    const auto normalized = NormalizeKwargs(kwargs);
 
     // Validate kwargs against allowed attributes (stored in Op)
-    if (!kwargs.empty()) {
+    if (!normalized.empty()) {
         OpPtr op = entry.GetOp();
         const auto& allowedKwargs = op->GetAttrs();
         if (!allowedKwargs.empty()) {
-            ValidateKwargs(kwargs, allowedKwargs, opName);
+            ValidateKwargs(normalized, allowedKwargs, opName);
         }
     }
 
     const auto& deduceTypeFn = entry.GetDeduceType();
 
     // Deduce result type (pass args and kwargs separately)
-    TypePtr resultType = deduceTypeFn(args, kwargs);
+    TypePtr resultType = deduceTypeFn(args, normalized);
     PRO_IR_INTERNAL_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, resultType)
         << "Type deduction failed for '" + opName + "'";
 
     // Create Call with deduced type
-    return std::make_shared<Call>(opName, args, kwargs, resultType, std::move(span));
+    return std::make_shared<Call>(opName, args, normalized, resultType, std::move(span));
 }
 
 const OpRegistryEntry& OpRegistry::GetEntry(const std::string& opName) const

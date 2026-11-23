@@ -22,6 +22,8 @@
 #include <cxxabi.h>
 
 #include <any>
+#include <type_traits>
+#include <vector>
 #include <string>
 #include <typeinfo>
 

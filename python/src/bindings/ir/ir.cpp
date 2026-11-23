@@ -154,23 +154,23 @@ std::vector<std::pair<std::string, std::any>> ConvertKwargsDict(const py::dict& 
         // Try to cast to common types.
         // NOTE: Check enum-like values BEFORE plain int, and bool BEFORE int.
         if (py::isinstance<DataType>(item.second)) {
-            kwargs.emplace_back(key, py::cast<DataType>(item.second));
+            kwargs.emplace_back(key, py::cast<DataType>(item.second).ToCTypeString());
         } else if (py::isinstance<MemorySpace>(item.second)) {
-            kwargs.emplace_back(key, py::cast<MemorySpace>(item.second));
+            kwargs.emplace_back(key, MemorySpaceToString(py::cast<MemorySpace>(item.second)));
         } else if (py::hasattr(item.second, "value")) {
             // Generic pybind11 enum: extract underlying int value
-            kwargs.emplace_back(key, py::cast<int>(item.second.attr("value")));
+            kwargs.emplace_back(key, py::cast<int64_t>(item.second.attr("value")));
         } else if (py::isinstance<py::bool_>(item.second)) {
             kwargs.emplace_back(key, py::cast<bool>(item.second));
         } else if (py::isinstance<py::int_>(item.second)) {
-            kwargs.emplace_back(key, py::cast<int>(item.second));
+            kwargs.emplace_back(key, py::cast<int64_t>(item.second));
         } else if (py::isinstance<py::tuple>(item.second) || py::isinstance<py::list>(item.second)) {
             // Dispatch on element type: list[str] -> vector<string>, list[int] -> vector<int>.
             auto seq = py::cast<py::sequence>(item.second);
             if (py::len(seq) > 0 && py::isinstance<py::str>(seq[0])) {
                 kwargs.emplace_back(key, ConvertSequenceToVector<std::string>(seq));
             } else {
-                kwargs.emplace_back(key, ConvertSequenceToVector<int>(seq));
+                kwargs.emplace_back(key, ConvertSequenceToVector<int64_t>(seq));
             }
         } else if (py::isinstance<py::str>(item.second)) {
             kwargs.emplace_back(key, py::cast<std::string>(item.second));
@@ -1205,6 +1205,8 @@ void BindExpr(py::module_& ir)
                     result[key.c_str()] = AnyCast<DataType>(value, "converting to Python: " + key);
                 } else if (value.type() == typeid(TilePad)) {
                     result[key.c_str()] = AnyCast<TilePad>(value, "converting to Python: " + key);
+                } else if (value.type() == typeid(std::vector<int64_t>)) {
+                    result[key.c_str()] = AnyCast<std::vector<int64_t>>(value, "converting to Python: " + key);
                 }
             }
             return result;

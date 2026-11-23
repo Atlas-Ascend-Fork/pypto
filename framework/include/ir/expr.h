@@ -23,6 +23,7 @@
 #include <vector>
 
 #include "core/any_cast.h"
+#include "ir/memory_space.h"
 #include "core/dtype.h"
 #include "core/error.h"
 #include "core/logging.h"
@@ -242,6 +243,55 @@ inline ExprPtr NoneValue()
 
 // MemRefPtr is already declared in memref.h, just reuse it here
 
+template <typename T>
+T AnyCastFromIR(const std::any& value, const std::string& context = "")
+{
+    return AnyCast<T>(value, context);
+}
+
+template <>
+inline int AnyCastFromIR<int>(const std::any& value, const std::string& context)
+{
+    if (value.type() == typeid(int64_t)) {
+        return static_cast<int>(std::any_cast<int64_t>(value));
+    }
+    return AnyCast<int>(value, context);
+}
+
+template <>
+inline std::vector<int> AnyCastFromIR<std::vector<int>>(const std::any& value, const std::string& context)
+{
+    if (value.type() == typeid(std::vector<int64_t>)) {
+        const auto& numbers = std::any_cast<const std::vector<int64_t>&>(value);
+        std::vector<int> result;
+        result.reserve(numbers.size());
+        for (auto number : numbers) {
+            result.push_back(static_cast<int>(number));
+        }
+        return result;
+    }
+    return AnyCast<std::vector<int>>(value, context);
+}
+
+template <>
+inline ir::DataType AnyCastFromIR<ir::DataType>(const std::any& value, const std::string& context)
+{
+    if (value.type() == typeid(std::string)) {
+        const auto& text = std::any_cast<const std::string&>(value);
+        return ir::DataType(ir::DataType::GetDataTypeCTypeStringDict().Find(text, static_cast<uint8_t>(0)));
+    }
+    return AnyCast<ir::DataType>(value, context);
+}
+
+template <>
+inline ir::MemorySpace AnyCastFromIR<ir::MemorySpace>(const std::any& value, const std::string& context)
+{
+    if (value.type() == typeid(std::string)) {
+        return ir::StringToMemorySpace(std::any_cast<const std::string&>(value));
+    }
+    return AnyCast<ir::MemorySpace>(value, context);
+}
+
 /**
  * \brief Function call expression
  *
@@ -303,7 +353,7 @@ public:
     {
         for (const auto& [k, v] : kwargs_) {
             if (k == key) {
-                return AnyCast<T>(v, "kwarg key: " + key);
+                return AnyCastFromIR<T>(v, "kwarg key: " + key);
             }
         }
         return defaultValue;
@@ -418,4 +468,7 @@ public:
 using GetItemExprPtr = std::shared_ptr<const GetItemExpr>;
 
 } // namespace ir
+
+using ir::AnyCastFromIR;
+
 } // namespace pypto

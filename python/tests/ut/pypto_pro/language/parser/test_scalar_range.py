@@ -559,7 +559,7 @@ def test_op_without_a_runtime_operand_accepts_a_value_that_fits():
     program, _ = _parse_with_body(pl.DT_FP16, _full_body(pl.DT_FP16, 65504.0))
 
     call = _assert_scalar_operand(program, "vf.full", 65504.0, index=0)
-    assert call.kwargs["dtype"] == ir.DataType.FP16
+    assert call.kwargs["dtype"] == "half"
 
 
 # ---------------------------------------------------------------------------

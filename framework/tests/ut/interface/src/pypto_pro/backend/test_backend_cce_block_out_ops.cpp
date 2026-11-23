@@ -1253,7 +1253,7 @@ TEST(BackendCCEBlockOutOps, MergedLoadsSeparateAxesAndReuseAliases)
     std::vector<ir::StmtPtr> stmts = {
         MakeTileAssign(out), MakeTileAssign(transposed),
         std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{alias}, tensor, ir::Span::Unknown())};
-    auto add_load = [&](const ir::VarPtr& dst, std::vector<int> axes, int inner, bool is_transpose = false) {
+    auto add_load = [&](const ir::VarPtr& dst, std::vector<int64_t> axes, int64_t inner, bool is_transpose = false) {
         std::vector<std::pair<std::string, std::any>> kwargs = {{"tile_dims", axes}, {"is_transpose", is_transpose}};
         if (inner != 0) {
             kwargs.emplace_back("nd_inner", inner);

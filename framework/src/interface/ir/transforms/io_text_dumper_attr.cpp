@@ -202,9 +202,9 @@ void IRTextDumper::PrintAttrValue(const std::string& key, const std::any& value)
     } else if (value.type() == typeid(std::string)) {
         stream_ << EncodeString(AnyCast<std::string>(value));
     } else if (value.type() == typeid(DataType)) {
-        stream_ << (AnyCast<DataType>(value, key).ToCTypeString());
+        stream_ << (AnyCastFromIR<DataType>(value, key).ToCTypeString());
     } else if (value.type() == typeid(MemorySpace)) {
-        stream_ << MemorySpaceToString(AnyCast<MemorySpace>(value, key));
+        stream_ << MemorySpaceToString(AnyCastFromIR<MemorySpace>(value, key));
     } else if (value.type() == typeid(std::vector<int>)) {
         const auto& vals = AnyCast<std::vector<int>>(value, key);
         PrintDataArray(std::vector<int64_t>(vals.begin(), vals.end()));

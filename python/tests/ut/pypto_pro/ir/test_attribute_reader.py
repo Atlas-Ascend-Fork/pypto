@@ -18,12 +18,12 @@ import pypto
 
 def test_call_snapshot_retains_lists_and_is_read_only():
     node = ir.Call("attribute_probe", [], {"ids": [2, 5], "fields": ["cursor", "tiles"],
-                                         "space": ir.MemorySpace.Vec, "enabled": True, "scale": 1.25},
+                                         "space": "Vec", "enabled": True, "scale": 1.25},
                    ir.Span.unknown())
     attrs = ir.get_attributes(node)
     assert ir.attributes_api_version == 1
     assert attrs == {"ids": [2, 5], "fields": ["cursor", "tiles"],
-                     "space": ir.MemorySpace.Vec, "enabled": True, "scale": 1.25}
+                     "space": "Vec", "enabled": True, "scale": 1.25}
     attrs["ids"].append(9)
     assert ir.get_attributes(node)["ids"] == [2, 5]
 

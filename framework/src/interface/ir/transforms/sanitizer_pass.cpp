@@ -65,7 +65,8 @@ constexpr char kTileAddrOp[] = "block.tile_addr";
 // Runtime-evaluated GetValidRow()/GetValidCol() of the tile.
 ExprPtr TileDim(const ExprPtr& tile, int axis)
 {
-    return OpRegistry::GetInstance().Create("block.tile_valid_shape", {tile}, {{"axis", axis}}, tile->span_);
+    return OpRegistry::GetInstance().Create("block.tile_valid_shape", {tile}, {{"axis", static_cast<int64_t>(axis)}},
+                                            tile->span_);
 }
 
 ExprPtr Int64Const(int64_t v) { return std::make_shared<ConstInt>(v, DataType::INT64, Span::Unknown()); }

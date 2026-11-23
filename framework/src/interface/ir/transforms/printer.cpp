@@ -288,9 +288,9 @@ static void PrintKwargValue(std::ostream& stream, const std::string& prefix, con
     } else if (value.type() == typeid(std::string)) {
         stream << std::quoted(AnyCast<std::string>(value, key));
     } else if (value.type() == typeid(DataType)) {
-        stream << prefix << "." << DTypeToString(AnyCast<DataType>(value, key));
+        stream << prefix << "." << DTypeToString(AnyCastFromIR<DataType>(value, key));
     } else if (value.type() == typeid(MemorySpace)) {
-        stream << prefix << ".MemorySpace." << MemorySpaceToString(AnyCast<MemorySpace>(value, key));
+        stream << prefix << ".MemorySpace." << MemorySpaceToString(AnyCastFromIR<MemorySpace>(value, key));
     } else if (value.type() == typeid(SymbolicScalar)) {
         stream << (AnyCast<SymbolicScalar>(value, key).Dump());
     } else if (value.type() == typeid(std::vector<int>)) {

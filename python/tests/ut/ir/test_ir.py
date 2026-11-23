@@ -443,8 +443,7 @@ def test_basic_stmt():
 def test_call_kwargs_conversion():
     """
     Test ConvertKwargsDict via ir.Call kwargs parameter.
-    Covers: DataType, bool, int, string, float, error case.
-    Note: MemorySpace/PipeType/CoreType/list types are converted but not readable via kwargs getter.
+    Covers: DataType (canonical string), bool, int, string, float, error case.
     """
     span = ir.Span("test", 1, 1)
     a = ir.ConstInt(1, ir.INT32, span)
@@ -458,7 +457,7 @@ def test_call_kwargs_conversion():
         "scale": 0.5,  # float
     }
     call = ir.Call("test_op", [a], kwargs, span)
-    assert call.kwargs["dtype"] == ir.FP16
+    assert call.kwargs["dtype"] == "half"
     assert call.kwargs["flag"] is True
     assert call.kwargs["axis"] == 0
     assert call.kwargs["mode"] == "fast"

@@ -378,7 +378,7 @@ private:
                 for (bool lock : {true, false}) {
                     auto call = OpRegistry::GetInstance().Create(
                         lock ? "system.mutex_lock_dyn" : "system.mutex_unlock_dyn", {id},
-                        {{"pipe", static_cast<int>(pipe)}}, span);
+                        {{"pipe", static_cast<int64_t>(pipe)}}, span);
                     StmtPtr sync = std::make_shared<AssignStmt>(std::vector<VarPtr>{}, call, span);
                     if (guard) {
                         auto body = std::make_shared<SeqStmts>(

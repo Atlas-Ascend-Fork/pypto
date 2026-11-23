@@ -168,7 +168,7 @@ T GetOpKwarg(const std::vector<std::pair<std::string, std::any>>& kwargs, const 
 {
     for (const auto& kwarg : kwargs) {
         if (kwarg.first == key) {
-            return AnyCast<T>(kwarg.second, "kwarg key: " + key);
+            return AnyCastFromIR<T>(kwarg.second, "kwarg key: " + key);
         }
     }
     if (defaultValue) {
