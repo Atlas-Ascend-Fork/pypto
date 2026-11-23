@@ -24,6 +24,7 @@ endif()
 target_include_directories(pypto_pass_pgo_vf PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}
     ${PTO_FWK_SRC_ROOT}/framework/include
+    ${PTO_FWK_SRC_ROOT}/framework/include/pypto_pro
     ${PTO_FWK_SRC_ROOT}/framework/src
     ${PTO_FWK_SRC_ROOT}/framework/src/interface
     ${PTO_FWK_SRC_ROOT}/framework/src/interface/machine/device)

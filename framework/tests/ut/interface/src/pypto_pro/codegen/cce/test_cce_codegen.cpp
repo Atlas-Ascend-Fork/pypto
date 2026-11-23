@@ -47,6 +47,24 @@ ir::VarPtr MakeVar(const std::string& name, const ir::TypePtr& type)
     return std::make_shared<const ir::Var>(name, type, ir::Span::Unknown());
 }
 
+ir::TileTypePtr MakeTileTypePtr(const std::vector<int64_t>& shape, ir::DataType dtype,
+                                const std::vector<int64_t>& validShape)
+{
+    auto memref = std::make_shared<const ir::MemRef>(ir::MemorySpace::Vec, MakeConstInt(0), 1024, 0);
+    std::vector<ir::ExprPtr> valid;
+    valid.reserve(validShape.size());
+    for (int64_t dim : validShape) {
+        valid.push_back(MakeConstInt(dim));
+    }
+    return std::make_shared<const ir::TileType>(shape, dtype, std::optional<ir::MemRefPtr>(memref), ir::TileView(valid),
+                                                ir::HardwareInfo(ir::TileLayout::row_major));
+}
+
+ir::StmtPtr MakeEmptyBody()
+{
+    return std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{}, ir::Span::Unknown());
+}
+
 ir::VarPtr MakeTensorVar(const std::string& name, const std::vector<int64_t>& shape, ir::DataType dtype)
 {
     auto ptr = MakeVar(name + "_base", std::make_shared<const ir::PtrType>(dtype));
@@ -1482,6 +1500,243 @@ TEST(CCECodegenTest, GlobalSynchronizationPreservesCoreScope)
             }
         }
     }
+}
+
+TEST(CCECodegenTest, GeneratesStandaloneSimdVfFunctionWithRequestedQualifier)
+{
+    // PGO profiling emits one standalone SIMD function per candidate and picks the
+    // qualifier from the requested emit type, without mutating the IR function.
+    auto scalar_type = std::make_shared<const ir::ScalarType>(ir::DataType::FP32);
+    auto value = MakeVar("value", scalar_type);
+    auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{}, ir::Span::Unknown());
+    auto function = std::make_shared<const ir::Function>("vf_only", std::vector<ir::VarPtr>{value},
+                                                         std::vector<ir::TypePtr>{}, body, ir::Span::Unknown(),
+                                                         ir::FunctionType::SIMD_VF, false);
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    const std::string calleeCode = codegen.GenerateSimdVFFunction(function, npu::tile_fwk::NPUArch::DAV_3510,
+                                                                  ir::FunctionType::SIMD_CALLEE);
+    EXPECT_NE(calleeCode.find("__simd_callee__ inline void vf_only(float value)"), std::string::npos);
+    EXPECT_NE(calleeCode.find("#include <pypto_vf_support.h>"), std::string::npos);
+
+    const std::string vfCode = codegen.GenerateSimdVFFunction(function, npu::tile_fwk::NPUArch::DAV_3510,
+                                                              ir::FunctionType::SIMD_VF);
+    EXPECT_NE(vfCode.find("__simd_vf__ inline void vf_only(float value)"), std::string::npos);
+}
+
+TEST(CCECodegenTest, GeneratesSimdVfFunctionForTileEmitTypes)
+{
+    auto tile_type = MakeTileTypePtr({16, 16}, ir::DataType::FP32, {16, 16});
+    auto tile = MakeVar("tile", tile_type);
+    auto scalar = MakeVar("value", std::make_shared<const ir::ScalarType>(ir::DataType::FP32));
+    auto function = std::make_shared<const ir::Function>("tile_vf", std::vector<ir::VarPtr>{tile, scalar},
+                                                         std::vector<ir::TypePtr>{}, MakeEmptyBody(),
+                                                         ir::Span::Unknown(), ir::FunctionType::SIMD_TILE_VF, false);
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    for (auto emit_type : {ir::FunctionType::SIMD_TILE_VF, ir::FunctionType::SIMD_TILE_CALLEE}) {
+        SCOPED_TRACE(static_cast<int>(emit_type));
+        const std::string generated = codegen.GenerateSimdVFFunction(function, npu::tile_fwk::NPUArch::DAV_3510,
+                                                                     emit_type);
+        EXPECT_NE(generated.find("__aicore__ inline void tile_vf(__ubuf__ float* tile, float value)"),
+                  std::string::npos);
+        EXPECT_NE(generated.find("#include <pypto_vf_support.h>"), std::string::npos);
+    }
+}
+
+TEST(CCECodegenTest, GeneratesSimdVfFunctionWithEveryParameterKind)
+{
+    auto scalar = MakeVar("flag", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
+    auto ptr = MakeVar("addr", std::make_shared<const ir::PtrType>(ir::DataType::FP32));
+    auto tile = MakeVar("tile", MakeTileTypePtr({8, 8}, ir::DataType::FP32, {-1, -1}));
+    auto reg = MakeVar("reg", std::make_shared<const ir::RegType>(ir::RegKind::VecReg, ir::DataType::FP32));
+    auto function = std::make_shared<const ir::Function>("vf_params", std::vector<ir::VarPtr>{scalar, ptr, tile, reg},
+                                                         std::vector<ir::TypePtr>{}, MakeEmptyBody(),
+                                                         ir::Span::Unknown(), ir::FunctionType::SIMD_VF, false);
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    const std::string generated = codegen.GenerateSimdVFFunction(function, npu::tile_fwk::NPUArch::DAV_3510,
+                                                                 ir::FunctionType::SIMD_VF);
+    EXPECT_NE(generated.find("__simd_vf__ inline void vf_params(int32_t flag, __gm__ float* addr, "
+                             "__ubuf__ float* tile, uint32_t tile__valid_row, uint32_t tile__valid_col, "
+                             "RtWrap<float>& reg)"),
+              std::string::npos);
+
+    // TensorType parameters are only accepted in the SIMT kernel path; a standalone SIMD VF rejects them.
+    auto tensor = MakeTensorVar("input", {8, 8}, ir::DataType::FP16);
+    auto tensor_function = std::make_shared<const ir::Function>("vf_tensor", std::vector<ir::VarPtr>{tensor},
+                                                                std::vector<ir::TypePtr>{}, MakeEmptyBody(),
+                                                                ir::Span::Unknown(), ir::FunctionType::SIMD_VF, false);
+    EXPECT_THROW((void)codegen.GenerateSimdVFFunction(tensor_function, npu::tile_fwk::NPUArch::DAV_3510,
+                                                      ir::FunctionType::SIMD_VF),
+                 npu::tile_fwk::Error);
+}
+
+TEST(CCECodegenTest, RejectsInvalidInputsForSimdVfFunction)
+{
+    auto scalar_type = std::make_shared<const ir::ScalarType>(ir::DataType::FP32);
+    auto scalar = MakeVar("value", scalar_type);
+    auto function = std::make_shared<const ir::Function>("vf_invalid", std::vector<ir::VarPtr>{scalar},
+                                                         std::vector<ir::TypePtr>{}, MakeEmptyBody(),
+                                                         ir::Span::Unknown(), ir::FunctionType::SIMD_VF, false);
+    CCECodegen codegen(ir::SectionKind::Vector);
+    EXPECT_THROW(
+        (void)codegen.GenerateSimdVFFunction(nullptr, npu::tile_fwk::NPUArch::DAV_3510, ir::FunctionType::SIMD_VF),
+        npu::tile_fwk::Error);
+    EXPECT_THROW(
+        (void)codegen.GenerateSimdVFFunction(function, npu::tile_fwk::NPUArch::DAV_3510, ir::FunctionType::OPAQUE),
+        npu::tile_fwk::Error);
+    for (auto arch : {npu::tile_fwk::NPUArch::DAV_UNKNOWN, npu::tile_fwk::NPUArch::DAV_2201}) {
+        SCOPED_TRACE(static_cast<int>(arch));
+        EXPECT_THROW((void)codegen.GenerateSimdVFFunction(function, arch, ir::FunctionType::SIMD_VF),
+                     npu::tile_fwk::Error);
+    }
+
+    auto tuple_type = std::make_shared<const ir::TupleType>(std::vector<ir::TypePtr>{scalar_type});
+    auto tuple_param = MakeVar("tuple", tuple_type);
+    auto tuple_function = std::make_shared<const ir::Function>("vf_tuple", std::vector<ir::VarPtr>{tuple_param},
+                                                               std::vector<ir::TypePtr>{}, MakeEmptyBody(),
+                                                               ir::Span::Unknown(), ir::FunctionType::SIMD_VF, false);
+    EXPECT_THROW((void)codegen.GenerateSimdVFFunction(tuple_function, npu::tile_fwk::NPUArch::DAV_3510,
+                                                      ir::FunctionType::SIMD_VF),
+                 npu::tile_fwk::Error);
+}
+
+TEST(CCECodegenTest, EmitsTargetGuardForStandaloneSimdVfFunction)
+{
+    auto scalar = MakeVar("value", std::make_shared<const ir::ScalarType>(ir::DataType::FP32));
+    auto function = std::make_shared<const ir::Function>("vf_guard", std::vector<ir::VarPtr>{scalar},
+                                                         std::vector<ir::TypePtr>{}, MakeEmptyBody(),
+                                                         ir::Span::Unknown(), ir::FunctionType::SIMD_VF, false);
+    CCECodegen cube_codegen(ir::SectionKind::Cube);
+    EXPECT_NE(cube_codegen.GenerateSimdVFFunction(function, npu::tile_fwk::NPUArch::DAV_3510, ir::FunctionType::SIMD_VF)
+                  .find("#if defined(__DAV_CUBE__)"),
+              std::string::npos);
+    CCECodegen vector_codegen(ir::SectionKind::Vector);
+    EXPECT_NE(
+        vector_codegen.GenerateSimdVFFunction(function, npu::tile_fwk::NPUArch::DAV_3510, ir::FunctionType::SIMD_VF)
+            .find("#if defined(__DAV_VEC__)"),
+        std::string::npos);
+}
+
+TEST(CCECodegenTest, GeneratesSimdTileFunctionForPlainTiles)
+{
+    auto static_tile = MakeVar("st", MakeTileTypePtr({16, 16}, ir::DataType::FP32, {16, 16}));
+    auto dynamic_tile = MakeVar("dt", MakeTileTypePtr({16, 16}, ir::DataType::FP32, {-1, -1}));
+    auto function = std::make_shared<const ir::Function>("tile_fn", std::vector<ir::VarPtr>{static_tile, dynamic_tile},
+                                                         std::vector<ir::TypePtr>{}, MakeEmptyBody(),
+                                                         ir::Span::Unknown(), ir::FunctionType::SIMD_TILE_VF, false);
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    const std::string generated = codegen.GenerateSimdTileFunction(function, npu::tile_fwk::NPUArch::DAV_3510);
+    EXPECT_NE(generated.find("__aicore__ inline void tile_fn(__ubuf__ float* st_ptr, __ubuf__ float* dt_ptr, "
+                             "uint32_t dt__valid_row, uint32_t dt__valid_col)"),
+              std::string::npos);
+    EXPECT_NE(generated.find("using st_Type = Tile<TileType::Vec, float"), std::string::npos);
+    EXPECT_NE(generated.find("st_Type st;"), std::string::npos);
+    EXPECT_NE(generated.find("TASSIGN(st, (uint64_t)st_ptr);"), std::string::npos);
+    EXPECT_NE(generated.find("dt_Type dt(16, 16);"), std::string::npos);
+    EXPECT_NE(generated.find("dt.SetValidShape(dt__valid_row, dt__valid_col);"), std::string::npos);
+}
+
+TEST(CCECodegenTest, GeneratesSimdTileFunctionForMutexTiles)
+{
+    auto base_type = MakeTileTypePtr({8, 8}, ir::DataType::FP32, {-1, -1});
+    auto mutex_type = std::make_shared<const ir::MutexTileType>(*base_type, 0);
+    auto dst = MakeVar("dst", mutex_type);
+    auto lhs = MakeVar("a", mutex_type);
+    auto rhs = MakeVar("b", mutex_type);
+    auto add = std::make_shared<const ir::Call>("block.add", std::vector<ir::ExprPtr>{dst, lhs, rhs}, ir::GetNoneType(),
+                                                ir::Span::Unknown());
+    auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{std::make_shared<const ir::AssignStmt>(
+                                                         std::vector<ir::VarPtr>{}, add, ir::Span::Unknown())},
+                                                     ir::Span::Unknown());
+    auto function = std::make_shared<const ir::Function>("mutex_fn", std::vector<ir::VarPtr>{dst, lhs, rhs},
+                                                         std::vector<ir::TypePtr>{}, body, ir::Span::Unknown(),
+                                                         ir::FunctionType::SIMD_TILE_VF, false);
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    const std::string generated = codegen.GenerateSimdTileFunction(function, npu::tile_fwk::NPUArch::DAV_3510);
+    EXPECT_NE(generated.find("using a_Type = SyncedTile<"), std::string::npos);
+    EXPECT_NE(generated.find("a_Type a{a_Type::PtoTile(8, 8), {}};"), std::string::npos);
+    EXPECT_NE(generated.find("TASSIGN(a.tile, (uint64_t)a_ptr);"), std::string::npos);
+    EXPECT_NE(generated.find("a.tile.SetValidShape(a__valid_row, a__valid_col);"), std::string::npos);
+    EXPECT_NE(generated.find("TADD(dst.tile, a.tile, b.tile);"), std::string::npos);
+}
+
+TEST(CCECodegenTest, GeneratesSimdTileFunctionWithScalarAndPtrParameters)
+{
+    auto tile = MakeVar("tile", MakeTileTypePtr({4, 4}, ir::DataType::FP32, {4, 4}));
+    auto scalar = MakeVar("value", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
+    auto ptr = MakeVar("addr", std::make_shared<const ir::PtrType>(ir::DataType::FP32));
+    auto function = std::make_shared<const ir::Function>("mixed_fn", std::vector<ir::VarPtr>{tile, scalar, ptr},
+                                                         std::vector<ir::TypePtr>{}, MakeEmptyBody(),
+                                                         ir::Span::Unknown(), ir::FunctionType::SIMD_TILE_VF, false);
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    const std::string generated = codegen.GenerateSimdTileFunction(function, npu::tile_fwk::NPUArch::DAV_3510);
+    EXPECT_NE(generated.find("__aicore__ inline void mixed_fn(__ubuf__ float* tile_ptr, int32_t value, "
+                             "__gm__ float* addr)"),
+              std::string::npos);
+}
+
+TEST(CCECodegenTest, RejectsInvalidInputsForSimdTileFunction)
+{
+    auto tile = MakeVar("tile", MakeTileTypePtr({8, 8}, ir::DataType::FP32, {8, 8}));
+    auto function = std::make_shared<const ir::Function>("tile_invalid", std::vector<ir::VarPtr>{tile},
+                                                         std::vector<ir::TypePtr>{}, MakeEmptyBody(),
+                                                         ir::Span::Unknown(), ir::FunctionType::SIMD_TILE_VF, false);
+    CCECodegen codegen(ir::SectionKind::Vector);
+    EXPECT_THROW((void)codegen.GenerateSimdTileFunction(nullptr, npu::tile_fwk::NPUArch::DAV_3510),
+                 npu::tile_fwk::Error);
+    for (auto arch : {npu::tile_fwk::NPUArch::DAV_UNKNOWN, npu::tile_fwk::NPUArch::DAV_2201}) {
+        SCOPED_TRACE(static_cast<int>(arch));
+        EXPECT_THROW((void)codegen.GenerateSimdTileFunction(function, arch), npu::tile_fwk::Error);
+    }
+
+    auto rank1_tile = MakeVar("rank1", MakeTileTypePtr({16}, ir::DataType::FP32, {16}));
+    auto rank1_function = std::make_shared<const ir::Function>(
+        "tile_rank1", std::vector<ir::VarPtr>{rank1_tile}, std::vector<ir::TypePtr>{}, MakeEmptyBody(),
+        ir::Span::Unknown(), ir::FunctionType::SIMD_TILE_VF, false);
+    EXPECT_THROW((void)codegen.GenerateSimdTileFunction(rank1_function, npu::tile_fwk::NPUArch::DAV_3510),
+                 npu::tile_fwk::Error);
+
+    auto dynamic_dim = MakeVar("dim", std::make_shared<const ir::ScalarType>(ir::DataType::INT64));
+    auto memref = std::make_shared<const ir::MemRef>(ir::MemorySpace::Vec, MakeConstInt(0), 1024, 0);
+    auto dynamic_shape_type = std::make_shared<const ir::TileType>(
+        std::vector<ir::ExprPtr>{dynamic_dim, MakeConstInt(16)}, ir::DataType::FP32,
+        std::optional<ir::MemRefPtr>(memref),
+        std::optional<ir::TileView>(ir::TileView({MakeConstInt(-1), MakeConstInt(-1)})),
+        std::optional<ir::HardwareInfo>(ir::HardwareInfo(ir::TileLayout::row_major)));
+    auto dynamic_shape_function = std::make_shared<const ir::Function>(
+        "tile_dynamic", std::vector<ir::VarPtr>{MakeVar("dyn", dynamic_shape_type)}, std::vector<ir::TypePtr>{},
+        MakeEmptyBody(), ir::Span::Unknown(), ir::FunctionType::SIMD_TILE_VF, false);
+    EXPECT_THROW((void)codegen.GenerateSimdTileFunction(dynamic_shape_function, npu::tile_fwk::NPUArch::DAV_3510),
+                 npu::tile_fwk::Error);
+
+    auto tuple_type = std::make_shared<const ir::TupleType>(
+        std::vector<ir::TypePtr>{std::make_shared<const ir::ScalarType>(ir::DataType::FP32)});
+    auto tuple_function = std::make_shared<const ir::Function>(
+        "tile_tuple", std::vector<ir::VarPtr>{MakeVar("tuple", tuple_type)}, std::vector<ir::TypePtr>{},
+        MakeEmptyBody(), ir::Span::Unknown(), ir::FunctionType::SIMD_TILE_VF, false);
+    EXPECT_THROW((void)codegen.GenerateSimdTileFunction(tuple_function, npu::tile_fwk::NPUArch::DAV_3510),
+                 npu::tile_fwk::Error);
+}
+
+TEST(CCECodegenTest, EmitsTargetGuardForStandaloneSimdTileFunction)
+{
+    auto tile = MakeVar("tile", MakeTileTypePtr({4, 4}, ir::DataType::FP32, {4, 4}));
+    auto function = std::make_shared<const ir::Function>("tile_guard", std::vector<ir::VarPtr>{tile},
+                                                         std::vector<ir::TypePtr>{}, MakeEmptyBody(),
+                                                         ir::Span::Unknown(), ir::FunctionType::SIMD_TILE_VF, false);
+    CCECodegen cube_codegen(ir::SectionKind::Cube);
+    EXPECT_NE(cube_codegen.GenerateSimdTileFunction(function, npu::tile_fwk::NPUArch::DAV_3510)
+                  .find("#if defined(__DAV_CUBE__)"),
+              std::string::npos);
+    CCECodegen vector_codegen(ir::SectionKind::Vector);
+    EXPECT_NE(vector_codegen.GenerateSimdTileFunction(function, npu::tile_fwk::NPUArch::DAV_3510)
+                  .find("#if defined(__DAV_VEC__)"),
+              std::string::npos);
 }
 
 } // namespace codegen

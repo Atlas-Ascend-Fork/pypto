@@ -504,6 +504,9 @@ std::string CCECodegen::BuildVfFunctionSignature(const ir::FunctionPtr& func)
         }
     } else if (func->funcType_ == ir::FunctionType::SIMD_VF) {
         sig << "__simd_vf__ inline void ";
+    } else if (func->funcType_ == ir::FunctionType::SIMD_TILE_VF ||
+               func->funcType_ == ir::FunctionType::SIMD_TILE_CALLEE) {
+        sig << "__aicore__ inline void ";
     } else {
         sig << "__simd_callee__ inline void ";
     }
@@ -864,6 +867,214 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
     emitter_.EmitRaw(functionCode);
     emitter_.EmitLine("#endif");
 
+    return emitter_.GetCode();
+}
+
+std::string CCECodegen::GenerateSimdTileFunction(const ir::FunctionPtr& func, npu::tile_fwk::NPUArch arch)
+{
+    PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, func != nullptr)
+        << "Cannot generate code for a null function";
+    arch_ = arch;
+    PRO_CODEGEN_CHECK(npu::tile_fwk::ExternalError::INVALID_VAL, arch_ != npu::tile_fwk::NPUArch::DAV_UNKNOWN)
+        << "unknown arch '" << npu::tile_fwk::NPUArchToString(arch_) << "'";
+    PRO_CODEGEN_CHECK(npu::tile_fwk::ExternalError::NOT_IMPLEMENTED_ERROR, IsRegisterBasedArch())
+        << "PyPTO Pro only supports arch '3510' or '9201', got '" << npu::tile_fwk::NPUArchToString(arch_) << "'";
+
+    ResetFunctionGenerationState();
+    needsSimtAtomicHeader_ = false;
+    needsScalarHelpers_ = false;
+    currentKernelType_ = func->funcType_;
+    currentFunctionType_ = func->funcType_;
+    simtCallees_.clear();
+    simdCallees_.clear();
+    emitter_.Clear();
+    tilingHeaders_.clear();
+    structDefinitions_.clear();
+
+    std::ostringstream signature;
+    signature << "__aicore__ inline void " << func->name_ << "(";
+    bool first = true;
+    for (const auto& param : func->params_) {
+        const auto& type = param->GetType();
+        const std::string name = context_.SanitizeName(param);
+        if (auto tile = ir::As<ir::TileType>(type)) {
+            if (!first) {
+                signature << ", ";
+            }
+            first = false;
+            signature << "__ubuf__ " << tile->dtype_.ToCTypeString() << "* " << name << "_ptr";
+            for (int axis = 0; axis < 2; ++axis) {
+                if (!GetStaticTileValidDim(tile, axis)) {
+                    signature << ", uint32_t " << name << (axis == 0 ? "__valid_row" : "__valid_col");
+                }
+            }
+            context_.RegisterVar(param, name);
+        } else if (auto scalar = ir::As<ir::ScalarType>(type)) {
+            if (!first) {
+                signature << ", ";
+            }
+            first = false;
+            signature << scalar->dtype_.ToCTypeString() << " " << name;
+            context_.RegisterVar(param, name);
+        } else if (auto ptr = ir::As<ir::PtrType>(type)) {
+            if (!first) {
+                signature << ", ";
+            }
+            first = false;
+            signature << "__gm__ " << ptr->dtype_.ToCTypeString() << "* " << name;
+            context_.RegisterVar(param, name);
+        } else {
+            PRO_CODEGEN_CHECK(npu::tile_fwk::ExternalError::NOT_IMPLEMENTED_ERROR, false)
+                << "GenerateSimdTileFunction supports only TileType/ScalarType/PtrType parameters";
+        }
+    }
+    signature << ")";
+    emitter_.EmitLine(signature.str());
+    emitter_.EmitLine("{");
+    emitter_.IncreaseIndent();
+
+    for (const auto& param : func->params_) {
+        auto tile = ir::As<ir::TileType>(param->GetType());
+        if (tile == nullptr) {
+            continue;
+        }
+        PRO_CODEGEN_CHECK(npu::tile_fwk::ExternalError::INVALID_SHAPE, tile->shape_.size() >= 2)
+            << "GenerateSimdTileFunction expects rank-2 tile parameters";
+        const auto rows = ir::As<ir::ConstInt>(tile->shape_[0]);
+        const auto cols = ir::As<ir::ConstInt>(tile->shape_[1]);
+        PRO_CODEGEN_CHECK(npu::tile_fwk::ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED,
+                          rows != nullptr && cols != nullptr)
+            << "GenerateSimdTileFunction expects static tile rows/cols";
+        const std::string name = context_.SanitizeName(param);
+        const int64_t rowValue = rows->value_;
+        const int64_t colValue = cols->value_;
+        const std::string ptoType = typeConverter_.ConvertPtoTileType(tile, rowValue, colValue);
+        const auto staticValidRow = GetStaticTileValidDim(tile, 0);
+        const auto staticValidCol = GetStaticTileValidDim(tile, 1);
+        std::string ctorArgs;
+        auto appendCtorArg = [&ctorArgs](const std::string& value) {
+            if (!ctorArgs.empty()) {
+                ctorArgs += ", ";
+            }
+            ctorArgs += value;
+        };
+        if (!staticValidRow) {
+            appendCtorArg(std::to_string(rowValue));
+        }
+        if (!staticValidCol) {
+            appendCtorArg(std::to_string(colValue));
+        }
+        const std::string validRow = staticValidRow ? std::to_string(*staticValidRow) : (name + "__valid_row");
+        const std::string validCol = staticValidCol ? std::to_string(*staticValidCol) : (name + "__valid_col");
+        if (auto mutex = ir::As<ir::MutexTileType>(param->GetType())) {
+            const std::string alias = typeConverter_.ConvertTileType(mutex, rowValue, colValue);
+            emitter_.EmitLine("using " + name + "_Type = " + alias + ";");
+            emitter_.EmitLine(name + "_Type " + name + "{" + name + "_Type::PtoTile(" + ctorArgs + "), {}};");
+            emitter_.EmitLine("TASSIGN(" + name + ".tile, (uint64_t)" + name + "_ptr);");
+            if (!staticValidRow || !staticValidCol) {
+                emitter_.EmitLine(name + ".tile.SetValidShape(" + validRow + ", " + validCol + ");");
+            }
+        } else {
+            emitter_.EmitLine("using " + name + "_Type = " + ptoType + ";");
+            if (ctorArgs.empty()) {
+                emitter_.EmitLine(name + "_Type " + name + ";");
+            } else {
+                emitter_.EmitLine(name + "_Type " + name + "(" + ctorArgs + ");");
+            }
+            emitter_.EmitLine("TASSIGN(" + name + ", (uint64_t)" + name + "_ptr);");
+            if (!staticValidRow || !staticValidCol) {
+                emitter_.EmitLine(name + ".SetValidShape(" + validRow + ", " + validCol + ");");
+            }
+        }
+    }
+
+    GenerateBody(func);
+
+    std::string functionCode = emitter_.GetCode();
+    emitter_.Clear();
+
+    emitter_.EmitLine(target_ == ir::SectionKind::Cube ? "#if defined(__DAV_CUBE__)" : "#if defined(__DAV_VEC__)");
+    emitter_.EmitLine("#ifndef PYPTO_SYNCED_TILE_DEFINED");
+    emitter_.EmitLine("#define PYPTO_SYNCED_TILE_DEFINED");
+    emitter_.EmitLine("#include <stdint.h>");
+    emitter_.EmitLine("template<class Tile, uint32_t N> struct SyncedTile {");
+    emitter_.EmitLine("    using PtoTile = Tile;");
+    emitter_.EmitLine("    PtoTile tile;");
+    emitter_.EmitLine("    int64_t mutex_ids[N];");
+    emitter_.EmitLine("};");
+    emitter_.EmitLine("#endif");
+    EmitStructTypes();
+    emitter_.EmitLine("#include <pypto_dump.h>");
+    if (needsScalarHelpers_) {
+        emitter_.EmitLine("#include <pypto_scalar.h>");
+    }
+    if (target_ == ir::SectionKind::Vector) {
+        emitter_.EmitLine("#include <pypto_vf_support.h>");
+    }
+    emitter_.EmitRaw(functionCode);
+    emitter_.EmitLine("#endif");
+    return emitter_.GetCode();
+}
+
+std::string CCECodegen::GenerateSimdVFFunction(const ir::FunctionPtr& func, npu::tile_fwk::NPUArch arch,
+                                               ir::FunctionType emitType)
+{
+    PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, func != nullptr)
+        << "Cannot generate code for a null function";
+    PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR,
+                      emitType == ir::FunctionType::SIMD_VF || emitType == ir::FunctionType::SIMD_CALLEE ||
+                          emitType == ir::FunctionType::SIMD_TILE_VF || emitType == ir::FunctionType::SIMD_TILE_CALLEE)
+        << "GenerateSimdVFFunction expects a SIMD_VF/SIMD_CALLEE/SIMD_TILE_VF/SIMD_TILE_CALLEE emit type";
+    ir::FunctionPtr emitFunc = func;
+    if (func->funcType_ != emitType) {
+        emitFunc = std::make_shared<ir::Function>(func->name_, func->params_, func->returnTypes_, func->body_,
+                                                  func->span_, emitType, func->entry_, func->attrs_);
+    }
+    arch_ = arch;
+    PRO_CODEGEN_CHECK(npu::tile_fwk::ExternalError::INVALID_VAL, arch_ != npu::tile_fwk::NPUArch::DAV_UNKNOWN)
+        << "unknown arch '" << npu::tile_fwk::NPUArchToString(arch_) << "'";
+    PRO_CODEGEN_CHECK(npu::tile_fwk::ExternalError::NOT_IMPLEMENTED_ERROR, IsRegisterBasedArch())
+        << "PyPTO Pro only supports arch '3510' or '9201', got '" << npu::tile_fwk::NPUArchToString(arch_) << "'";
+
+    needsSimtAtomicHeader_ = false;
+    needsScalarHelpers_ = false;
+    currentKernelType_ = emitFunc->funcType_;
+    simtCallees_.clear();
+    simdCallees_.clear();
+    emitter_.Clear();
+    tilingHeaders_.clear();
+    structDefinitions_.clear();
+
+    GenerateVfFunction(emitFunc);
+    std::string functionCode = emitter_.GetCode();
+    emitter_.Clear();
+
+    emitter_.EmitLine(target_ == ir::SectionKind::Cube ? "#if defined(__DAV_CUBE__)" : "#if defined(__DAV_VEC__)");
+    if (IsSimtFuncType(emitFunc->funcType_)) {
+        if (needsSimtAtomicHeader_) {
+            emitter_.EmitLine("#include \"__clang_cce_simt_atomic.h\"");
+        }
+    } else {
+        emitter_.EmitLine("#ifndef PYPTO_SYNCED_TILE_DEFINED");
+        emitter_.EmitLine("#define PYPTO_SYNCED_TILE_DEFINED");
+        emitter_.EmitLine("#include <stdint.h>");
+        emitter_.EmitLine("template<class Tile, uint32_t N> struct SyncedTile {");
+        emitter_.EmitLine("    using PtoTile = Tile;");
+        emitter_.EmitLine("    PtoTile tile;");
+        emitter_.EmitLine("    int64_t mutex_ids[N];");
+        emitter_.EmitLine("};");
+        emitter_.EmitLine("#endif");
+        EmitStructTypes();
+        emitter_.EmitLine("#include <pypto_dump.h>");
+        if (needsScalarHelpers_) {
+            emitter_.EmitLine("#include <pypto_scalar.h>");
+        }
+        if (target_ == ir::SectionKind::Vector) {
+            emitter_.EmitLine("#include <pypto_vf_support.h>");
+        }
+    }
+    emitter_.EmitRaw(functionCode);
+    emitter_.EmitLine("#endif");
     return emitter_.GetCode();
 }
 
