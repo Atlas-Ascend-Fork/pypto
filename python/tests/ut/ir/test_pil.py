@@ -1380,6 +1380,62 @@ def test_nested_function_return_in_symbolic_if_is_rejected():
         pil.compile(kernel, x, out, create_new_logical_tensor=True)
 
 
+def test_symbolic_if_without_else_rejects_undefined_tensor_use():
+    def kernel(a, b, out):
+        pypto.set_vec_tile_shapes(16, 16)
+        for i in pypto.loop(0, 2, 1):
+            va = pypto.view(a, [16, 16], [i * 16, 0])
+            vb = pypto.view(b, [16, 16], [i * 16, 0])
+            if pypto.SymbolicScalar("cond") > 0:
+                pypto.set_pass_options(vec_nbuffer_setting={-1: 2})
+                v = va + vb
+            pypto.assemble(v * vb, [i * 16, 0], out)
+
+    tensors = [pypto.Tensor(shape=(32, 16), dtype=pypto.DT_FP32, name=n) for n in ("a", "b", "out")]
+    with pytest.raises(Exception, match="Variable 'v' may be undefined"):
+        pil.compile(kernel, *tensors)
+
+
+def test_symbolic_if_without_else_allows_unused_branch_value():
+    def kernel(a, b, out):
+        pypto.set_vec_tile_shapes(16, 16)
+        for i in pypto.loop(0, 2, 1):
+            va = pypto.view(a, [16, 16], [i * 16, 0])
+            vb = pypto.view(b, [16, 16], [i * 16, 0])
+            if pypto.SymbolicScalar("cond") > 0:
+                _v = va + vb
+            pypto.assemble(va + vb, [i * 16, 0], out)
+
+    tensors = [pypto.Tensor(shape=(32, 16), dtype=pypto.DT_FP32, name=n) for n in ("a", "b", "out")]
+    pil.compile(kernel, *tensors)
+
+
+def test_symbolic_if_undefined_value_survives_nested_branch():
+    def kernel(a):
+        if pypto.SymbolicScalar("first") > 0:
+            if pypto.SymbolicScalar("second") > 0:
+                v = a + 1
+        if pypto.SymbolicScalar("third") > 0:
+            a = a + 1
+        a[:] = v + a
+
+    a = pypto.Tensor(shape=(16, 16), dtype=pypto.DT_FP32)
+    with pytest.raises(Exception, match="Variable 'v' may be undefined"):
+        pil.compile(kernel, a)
+
+
+def test_symbolic_if_undefined_value_survives_loop():
+    def kernel(a):
+        for _ in pypto.loop(2):
+            if pypto.SymbolicScalar("cond") > 0:
+                v = a + 1
+        a[:] = v + a
+
+    a = pypto.Tensor(shape=(16, 16), dtype=pypto.DT_FP32)
+    with pytest.raises(Exception, match="Variable 'v' may be undefined"):
+        pil.compile(kernel, a)
+
+
 def test_symbolic_composite_condition_is_supported():
     def kernel(x, out):
         pypto.set_vec_tile_shapes(16, 16)

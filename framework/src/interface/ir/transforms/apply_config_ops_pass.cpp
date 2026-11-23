@@ -12,6 +12,7 @@
 #include <array>
 #include "ir/transforms/base/mutator.h"
 #include "interface/configs/config_manager_ng.h"
+#include "interface/function/function.h"
 #include "interface/operation/operation.h"
 #include "interface/tensor/ir_tensor_op_rebuild.h"
 
@@ -148,7 +149,8 @@ Pass ApplyConfigOps()
 {
     return CreateFunctionPass(
         [](const FunctionPtr& func) -> FunctionPtr {
-            if (func->GetAttr<bool>("_config_applied", false)) {
+            if (std::dynamic_pointer_cast<const npu::tile_fwk::Function>(func) ||
+                func->GetAttr<bool>("_config_applied", false)) {
                 return func;
             }
             auto entry = func->GetAttr<ConfigScopePtr>("_config_scope");

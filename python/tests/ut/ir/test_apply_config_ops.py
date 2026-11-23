@@ -63,6 +63,11 @@ def test_config_replay():
     assert tiles["MUL"] == [16, 16]
     assert hidden[0].parse_attrs()["config"]["pass.cube_nbuffer_setting"] == {-1: 4}
     assert all(s.opcode != "OP_CONFIG" for s in hidden[0].body.stmts)
+    replayed = ir.Pass.apply_config_ops()(rooted)
+    hidden_after = [func for name, func in replayed.functions.items() if "_hiddenfunc" in name]
+    assert len(hidden_after) == 1
+    assert hidden_after[0].parse_attrs()["config"] == hidden[0].parse_attrs()["config"]
+    assert hidden_after[0].same_as(hidden[0])
 
 
 def test_branch_config():

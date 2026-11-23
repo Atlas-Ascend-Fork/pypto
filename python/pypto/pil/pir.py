@@ -232,16 +232,17 @@ class _Poison:
     time.
     """
 
-    __slots__ = ("_name", "_span")
+    __slots__ = ("_name", "_span", "_message")
 
-    def __init__(self, name, span):
+    def __init__(self, name, span, message=None):
         self._name = name
         self._span = span
+        self._message = message
 
     def _conflict(self, *args, **kwargs):
-        raise RuntimeError(
-            f"Conflicted var {self._name}: {self._span.filename}:{self._span.begin_line}"
-        )
+        if self._message:
+            raise RuntimeError(self._message)
+        raise RuntimeError(f"Conflicted var {self._name}: {self._span.filename}:{self._span.begin_line}")
 
     __getattr__ = _conflict
     __add__ = __radd__ = __sub__ = __rsub__ = __mul__ = __rmul__ = _conflict
@@ -292,6 +293,9 @@ class BuildContext(ir.IRBuilder):
         # raises "Conflicted var <name>", so a deferred type conflict is reported
         # at the point of use rather than at if-construction time.
         return ir.Var(name, ir.UnknownType.get(), span)
+
+    def undefined(self, name: str, span: ir.Span):
+        return _Poison(name, span, f"Variable '{name}' may be undefined after symbolic if")
 
     def unwrap(self, val: Any) -> ir.Expr:
         if val is None:

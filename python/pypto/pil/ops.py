@@ -28,6 +28,7 @@ from .pir import (
     Jump,
     LoopRange,
     Scope,
+    _Poison,
     slot_read,
     slot_write,
     slot_write_inplace,
@@ -83,7 +84,9 @@ def has_scalar(values: list) -> bool:
 # leave them in scope (the body's own stores keep them current) and skip
 # them from the IR loop-carried / branch-carried yield state
 def is_opaque_value(val) -> bool:
-    return not (val is None or isinstance(val, (bool, int, float, pypto.SymbolicScalar, pypto.Tensor, list, tuple)))
+    return not (
+        val is None or isinstance(val, (bool, int, float, pypto.SymbolicScalar, pypto.Tensor, list, tuple, _Poison))
+    )
 
 
 def carriable_names(scope: Scope, names) -> list:
@@ -458,9 +461,10 @@ def _loop_unroll(body: Block, loop: LoopRange, factor, nstart, nstop, ctx: Build
 
     return_vars = []
     for name in return_var_names:
-        var = ctx.create_var_like(name, ctx.unwrap(scope.resolve_local(name)))
+        val = scope.resolve_local(name)
+        var = ctx.create_var_like(name, ctx.unwrap(val))
         return_vars.append(var)
-        scope.store(name, ctx.wrap(var))
+        scope.store(name, val if isinstance(val, _Poison) else ctx.wrap(var))
 
     loop_attrs = {
         "parallel": loop.parallel,
@@ -549,6 +553,7 @@ def _if_else_stmt(cond, then_block: Block, else_block: Block, ctx: BuildContext)
     # surface in branch.store_names during dispatch. Collect them as they are
     # discovered so they are branch-carried like plain names.
     discovered: list[str] = []
+    undefined_names: set[str] = set()
 
     is_expr = (
         then_block.jump is Jump.END_BRANCH
@@ -577,6 +582,9 @@ def _if_else_stmt(cond, then_block: Block, else_block: Block, ctx: BuildContext)
                         continue
                     discovered.append(name)
                 branch_names = yield_var_names + discovered
+                undefined_names.update(
+                    name for name in branch_names if isinstance(scope.resolve_local(name), _Poison)
+                )
                 branch_operands = []
                 if is_expr:
                     branch_operands.append(as_expr(scope.resolve(branch.result)))
@@ -624,9 +632,15 @@ def _if_else_stmt(cond, then_block: Block, else_block: Block, ctx: BuildContext)
         yield_vars.append(value_var)
     for i, name in enumerate(all_names):
         idx = i + value_slots
-        var = merge_var(name, then_yield_vars[idx], else_yield_vars[idx])
+        then_expr, else_expr = then_yield_vars[idx], else_yield_vars[idx]
+        var = merge_var(name, then_expr, else_expr)
         yield_vars.append(var)
-        scope.store(name, ctx.wrap(var))
+        if name in undefined_names or (
+            isinstance(then_expr.type, ir.NoneType) != isinstance(else_expr.type, ir.NoneType)
+        ):
+            scope.store(name, ctx.undefined(name, then_block.span))
+        else:
+            scope.store(name, ctx.wrap(var))
 
     if_stmt = ctx.create_if_stmt(ctx.unwrap(cond), then_body, else_body, yield_vars, ctx.span)
     ctx.emit(if_stmt)
