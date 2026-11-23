@@ -257,7 +257,7 @@ LogicalTensorPtr TensorFillPadOperation(Function& function, const Tensor& self, 
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, mode == "constant") << "FillPad: only 'constant' mode is supported.";
     auto operand = self.GetStorage();
     std::vector<int64_t> outputShape = operand->shape;
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, outputShape.size() == NUM_VALUE_1 || outputShape.size() == NUM_VALUE_2)
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, outputShape.size() == 1 || outputShape.size() == NUM_VALUE_2)
         << "FillPad: only 1D or 2D input is supported.";
     auto result = std::make_shared<LogicalTensor>(function, operand->Datatype(), outputShape,
                                                   SymbolicScalar::FromConcrete(outputShape));

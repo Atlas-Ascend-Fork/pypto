@@ -365,8 +365,8 @@ LogicalTensorPtr IntegerPow(const Tensor& self, int32_t intExponent)
     auto result = GenAllOneTensor(self.GetShape(), self.GetStorage()->GetDynValidShape(), self.GetDataType());
     auto current = CALL(BinaryOperation<BinaryOpType::MUL>, *Program::GetInstance().GetCurrentFunction(), self, result);
 
-    while (intExponent != NUM_VALUE_0) {
-        if (intExponent % NUM_VALUE_2 != NUM_VALUE_0) {
+    while (intExponent != 0) {
+        if (intExponent % NUM_VALUE_2 != 0) {
             result = CALL(BinaryOperation<BinaryOpType::MUL>, *Program::GetInstance().GetCurrentFunction(), result,
                           current);
         }
@@ -380,7 +380,7 @@ LogicalTensorPtr IntegerPow(const Tensor& self, int32_t intExponent)
 LogicalTensorPtr GeneralPow(const Tensor& self, double exponent)
 {
     // 如果指数小于0，先计算a^(-b)，最后再取倒数
-    bool expLessThanZero = exponent < NUM_VALUE_0;
+    bool expLessThanZero = exponent < 0;
     exponent = std::abs(exponent);
 
     LogicalTensorPtr result;

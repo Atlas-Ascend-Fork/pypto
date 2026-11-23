@@ -1085,6 +1085,14 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
     buffer_facts = facts.buffer_facts
     unbound_decls = facts.unbound_decls
     same_name_decls = facts.same_name_decls
+
+    def _record_type(value):
+        var_type = getattr(value, "type", None)
+        if var_type is None:
+            return None
+        dtype = var_type.dtype if isinstance(var_type, ir.ScalarType) else None
+        return (type(var_type).__name__, dtype)
+
     for target in (ir.SectionKind.Cube, ir.SectionKind.Vector):
         # The probe discards parsed IR, so AUTO placeholders do not need resolution.
         parser = ASTParser(
@@ -1112,34 +1120,29 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
         # {id(declaration handle IR): the first kernel-body variable bound to that buffer}
         decl_names: dict = {}
 
-        def _record_type(value):
-            var_type = getattr(value, "type", None)
-            if var_type is None:
-                return None
-            dtype = var_type.dtype if isinstance(var_type, ir.ScalarType) else None
-            return (type(var_type).__name__, dtype)
-
-        def _define(name, value, allow_redef=False, span=None, _orig=original_define):
+        def _define(
+            name, value, allow_redef=False, span=None, _orig=original_define, _parser=parser, _decl_names=decl_names
+        ):
             recorded = _record_type(value)
             if recorded is not None:
                 var_types.setdefault(name, recorded)
-            origins = parser.buffers_of(value)
+            origins = _parser.buffers_of(value)
             # Whether the value IS a buffer rather than a slot taken from one.
-            holds_buffer = not parser.inline_call_stack and bool(origins) and parser.is_tile_group(value)
+            holds_buffer = not _parser.inline_call_stack and bool(origins) and _parser.is_tile_group(value)
             # A kernel-body variable names a buffer when it holds exactly that one buffer: a
             # tile group handle. A tile taken from it, or a tuple of several buffers, names none.
             if holds_buffer and len(origins) == 1:
-                decl_names.setdefault(id(origins[0]), name)
+                _decl_names.setdefault(id(origins[0]), name)
             return _orig(name, value, allow_redef=allow_redef, span=span)
 
         scope.define_var = _define
 
-        def _struct_fields(expr):
+        def _struct_fields(expr, _parser=parser):
             """{field name: IR type} when ``expr`` is a struct, None when it is not one."""
             var_type = getattr(expr, "type", None)
             if not isinstance(var_type, ir.TupleType):
                 return None
-            info = parser.debug_info.get_tuple_type_info(var_type)
+            info = _parser.debug_info.get_tuple_type_info(var_type)
             if info is None or info.kind != ir.TupleTypeKind.STRUCT:
                 return None
             return dict(zip(info.fields, var_type.types))
@@ -1150,9 +1153,9 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
         # repeat a kernel position.
         original_bind = parser._bind_inline_arguments
 
-        def _bind(func_name, func_def, call, _orig=original_bind):
+        def _bind(func_name, func_def, call, _orig=original_bind, _parser=parser, _fields=_struct_fields):
             bound = _orig(func_name, func_def, call)
-            if parser.inline_call_stack:
+            if _parser.inline_call_stack:
                 return bound
             written = {id(arg) for arg in call.args}
             for _param, (expr, arg_node) in bound.items():
@@ -1164,7 +1167,7 @@ def probe_kernel_facts(kernel_def, bound_signature=None) -> KernelFacts:
                 kind, dtype = recorded
                 arg_types.setdefault(
                     (arg_node.lineno, arg_node.col_offset),
-                    ArgTypeFacts(kind, dtype, _struct_fields(expr)),
+                    ArgTypeFacts(kind, dtype, _fields(expr)),
                 )
             return bound
 

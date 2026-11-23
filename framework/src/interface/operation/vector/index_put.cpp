@@ -139,7 +139,7 @@ static void CheckIndexPutParamsInvalid(const Tensor& self, const std::vector<Ten
                 << "Tensors in indices should have the same shape";
         }
     }
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, indices.size() >= NUM_VALUE_1 && indices.size() <= NUM_VALUE_4)
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, indices.size() >= 1 && indices.size() <= NUM_VALUE_4)
         << "indicesSize is out of range [1, 4]";
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "INDEXPUT");
     CheckTensorDimRange(values.GetStorage(), 1, NUM_VALUE_4, "INDEXPUT");

@@ -525,7 +525,7 @@ void TiledQuantMXOperation(Function& function, const TileShape& tileShape, size_
 void QuantMXTileFunc(Function& function, const TileShape& tileShape, const std::vector<LogicalTensorPtr>& iOperand,
                      const std::vector<LogicalTensorPtr>& oOperand, [[maybe_unused]] const Operation& op)
 {
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, iOperand.size() == NUM_VALUE_1) << "QuantMX expects 1 input tensor.";
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, iOperand.size() == 1) << "QuantMX expects 1 input tensor.";
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, oOperand.size() == NUM_VALUE_4) << "QuantMX expects 4 output tensors.";
 
     const auto& src = iOperand[0];

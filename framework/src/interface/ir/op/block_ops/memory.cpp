@@ -25,6 +25,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/common.h"
 #include "core/dtype.h"
 #include "core/error.h"
 #include "core/logging.h"
@@ -70,7 +71,7 @@ TypePtr DeduceBlockCreateMutexTileType([[maybe_unused]] const std::vector<ExprPt
                                        [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs,
                                        const std::string& opName)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_3)
         << "The operator " << opName << " requires shape, valid_shape and mutex_ids";
     auto mutexIds = As<MakeTuple>(args[2]);
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, mutexIds != nullptr)
@@ -249,7 +250,7 @@ REGISTER_OP("block.sanitizer_log_region")
 TypePtr DeduceSanitizerLogType(const std::vector<ExprPtr>& args,
                                [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() >= 4)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() >= NUM_VALUE_4)
         << "block.sanitizer_log requires (record_head, fields..., log_ptr, capacity, line)";
     auto head = As<ConstInt>(args[0]);
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT,
@@ -322,7 +323,7 @@ REGISTER_OP("get_subblock_num")
 // PtrType; build a typed view with pl.make_tensor(ptr, shape, stride, dtype=...).
 TypePtr DeduceBlockDynamicInputPtrType(const std::vector<ExprPtr>& args, const std::string& opName)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_2)
         << "The operator " << opName << " requires 2 arguments (x, i), but got " << args.size();
     // Whether i is an integer index is settled by the frontend; reading x's dtype only
     // needs it to be a pointer.
@@ -347,7 +348,7 @@ REGISTER_OP("dynamic_input_ptr")
 // (dim != 0 form). Returns an INT64 scalar (the length of that axis).
 TypePtr DeduceBlockDynamicInputDimType(const std::vector<ExprPtr>& args, const std::string& opName)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_3)
         << "The operator " << opName << " requires 3 arguments (x, i, axis), but got " << args.size();
     return std::make_shared<ScalarType>(DataType::INT64);
 }

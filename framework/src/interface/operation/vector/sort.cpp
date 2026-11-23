@@ -369,8 +369,7 @@ std::tuple<Tensor, Tensor> sort(const Tensor& self, int axis = -1, bool descendi
     CheckTensorDataType(self.GetStorage(), supportedTypes, "SORT");
     CheckTensorDimRange(self.GetStorage(), 1, NUM_VALUE_4, "SORT");
     auto len = static_cast<int>(self.GetShape().size());
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, len >= NUM_VALUE_1 && len <= NUM_VALUE_4)
-        << "Only 1D to 4D input is supported.\n";
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, len >= 1 && len <= NUM_VALUE_4) << "Only 1D to 4D input is supported.\n";
 
     axis = axis >= 0 ? axis : axis + len;
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, axis >= 0 && axis < len)

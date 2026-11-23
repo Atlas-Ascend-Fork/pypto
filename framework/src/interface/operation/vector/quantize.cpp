@@ -306,7 +306,7 @@ Tensor Quantize(const Tensor& input, const Tensor& scale, DataType dtype, int ax
 
     int ndim = static_cast<int>(processedInput.GetShape().size());
     int normalizedAxis = axis >= 0 ? axis - ndim : axis;
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, normalizedAxis == -NUM_VALUE_1 || normalizedAxis == -NUM_VALUE_2)
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, normalizedAxis == -1 || normalizedAxis == -NUM_VALUE_2)
         << "Only axis=-1 (per-row) and axis=-2 (per-column) are supported";
 
     Tensor result = normalizedAxis == -NUM_VALUE_2 ?

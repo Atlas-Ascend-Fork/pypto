@@ -91,7 +91,6 @@ TypePtr DeduceVFUnalignRegType([[maybe_unused]] const std::vector<ExprPtr>& args
 
 // ============================================================================
 // Type deduction for value-form calls (the single deduce entry point)
-//
 // A value-form Call carries only its source args; f_deduce_type computes the
 // destination register type(s) — RegTensor / MaskReg / a TupleType of them for
 // dual-dst ops — from the args and kwargs alone (arg-complete, like block

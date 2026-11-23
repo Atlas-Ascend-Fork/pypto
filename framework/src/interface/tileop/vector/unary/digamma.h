@@ -132,9 +132,9 @@ template <typename TileType>
 TILEOP void DigammaSet(TileType outHi, TileType outLo, const float* value)
 {
     // Load a two-float constant.
-    pto::TEXPANDS(outHi, value[TileOp::NUM_VALUE_0]);
+    pto::TEXPANDS(outHi, value[0]);
     SyncV();
-    pto::TEXPANDS(outLo, value[TileOp::NUM_VALUE_1]);
+    pto::TEXPANDS(outLo, value[1]);
     SyncV();
 }
 
@@ -196,7 +196,7 @@ TILEOP void DigammaAdd(TileType outHi, TileType outLo, TileType lhsHi, TileType 
                        TileType tmp1, TileType tmp2, TileType tmp3, TileType tmp6, TileType tmp7)
 {
     // Add a two-float constant.
-    pto::TADDS(tmp0, lhsHi, rhs[TileOp::NUM_VALUE_0]);
+    pto::TADDS(tmp0, lhsHi, rhs[0]);
     SyncV();
     pto::TSUB(tmp1, tmp0, lhsHi);
     SyncV();
@@ -204,7 +204,7 @@ TILEOP void DigammaAdd(TileType outHi, TileType outLo, TileType lhsHi, TileType 
     SyncV();
     pto::TSUB(tmp2, lhsHi, tmp2);
     SyncV();
-    pto::TEXPANDS(tmp3, rhs[TileOp::NUM_VALUE_0]);
+    pto::TEXPANDS(tmp3, rhs[0]);
     SyncV();
     pto::TSUB(tmp1, tmp3, tmp1);
     SyncV();
@@ -212,7 +212,7 @@ TILEOP void DigammaAdd(TileType outHi, TileType outLo, TileType lhsHi, TileType 
     SyncV();
     pto::TADD(tmp2, tmp2, lhsLo);
     SyncV();
-    pto::TADDS(tmp2, tmp2, rhs[TileOp::NUM_VALUE_1]);
+    pto::TADDS(tmp2, tmp2, rhs[1]);
     SyncV();
     DigammaNormalize(outHi, outLo, tmp0, tmp2, tmp6, tmp7);
 }
@@ -275,7 +275,7 @@ TILEOP void DigammaMul(TileType outHi, TileType outLo, TileType lhsHi, TileType 
                        TileType tmp1, TileType tmp2, TileType tmp5, TileType tmp6, TileType tmp7)
 {
     // Multiply by a two-float constant.
-    pto::TMULS(tmp0, lhsHi, rhs[TileOp::NUM_VALUE_0]);
+    pto::TMULS(tmp0, lhsHi, rhs[0]);
     SyncV();
     DigammaSplit(tmp1, tmp2, lhsHi, tmp6, tmp7);
     pto::TMULS(tmp5, tmp1, rhs[TileOp::NUM_VALUE_2]);
@@ -294,11 +294,11 @@ TILEOP void DigammaMul(TileType outHi, TileType outLo, TileType lhsHi, TileType 
     SyncV();
     pto::TADD(tmp5, tmp5, tmp6);
     SyncV();
-    pto::TMULS(tmp6, lhsHi, rhs[TileOp::NUM_VALUE_1]);
+    pto::TMULS(tmp6, lhsHi, rhs[1]);
     SyncV();
     pto::TADD(tmp5, tmp5, tmp6);
     SyncV();
-    pto::TMULS(tmp6, lhsLo, rhs[TileOp::NUM_VALUE_0]);
+    pto::TMULS(tmp6, lhsLo, rhs[0]);
     SyncV();
     pto::TADD(tmp5, tmp5, tmp6);
     SyncV();
@@ -378,10 +378,10 @@ TILEOP void DigammaLookup(TileType outHi, TileType outLo, TileType src, const fl
     for (int i = 1; i < TileOp::NUM_VALUE_16; ++i) {
         pto::TCMPS(mask, src, DIGAMMA_LOOKUP_BOUNDARIES[i], pto::CmpMode::GE);
         SyncV();
-        pto::TEXPANDS(tmp0, table[i][TileOp::NUM_VALUE_0]);
+        pto::TEXPANDS(tmp0, table[i][0]);
         SyncV();
         DigammaSelect(outHi, tmp0, outHi, tmp7, tmp10, mask);
-        pto::TEXPANDS(tmp0, table[i][TileOp::NUM_VALUE_1]);
+        pto::TEXPANDS(tmp0, table[i][1]);
         SyncV();
         DigammaSelect(outLo, tmp0, outLo, tmp7, tmp10, mask);
     }
@@ -418,7 +418,7 @@ TILEOP void DigammaReflection(TileType cot, SrcTile src, TileType tmp0, TileType
     SyncV();
 
     // t = pi*r, square = t*t.
-    DigammaMul(tmp11, tmp12, tmp11, tmp12, DIGAMMA_CONSTANTS[TileOp::NUM_VALUE_0], tmp0, tmp1, tmp2, tmp5, tmp6, tmp7);
+    DigammaMul(tmp11, tmp12, tmp11, tmp12, DIGAMMA_CONSTANTS[0], tmp0, tmp1, tmp2, tmp5, tmp6, tmp7);
     DigammaMul(tmp13, tmp14, tmp11, tmp12, tmp11, tmp12, tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7);
 
     // Horner evaluation: sin(t) ~= t * P(t^2).
@@ -453,7 +453,7 @@ TILEOP void DigammaReflection(TileType cot, SrcTile src, TileType tmp0, TileType
     SyncV();
     DigammaDiv(tmp15, tmp16, tmp13, tmp14, tmp11, tmp12, tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7, tmp8, tmp9,
                tmp10);
-    DigammaMul(tmp15, tmp16, tmp15, tmp16, DIGAMMA_CONSTANTS[TileOp::NUM_VALUE_0], tmp0, tmp1, tmp2, tmp5, tmp6, tmp7);
+    DigammaMul(tmp15, tmp16, tmp15, tmp16, DIGAMMA_CONSTANTS[0], tmp0, tmp1, tmp2, tmp5, tmp6, tmp7);
     pto::TADD(cot, tmp15, tmp16);
     SyncV();
 }
@@ -476,7 +476,7 @@ TILEOP void DigammaPositive(TileType out, TileType tmp0, TileType tmp1, TileType
         pto::TEXPANDS(tmp2, ONE);
         SyncV();
         DigammaSelect(tmp2, tmp17, tmp2, tmp7, tmp10, tmp21);
-        DigammaSet(tmp11, tmp12, DIGAMMA_CONSTANTS[TileOp::NUM_VALUE_1]);
+        DigammaSet(tmp11, tmp12, DIGAMMA_CONSTANTS[1]);
         DigammaLift(tmp13, tmp14, tmp2);
         DigammaDiv(tmp11, tmp12, tmp11, tmp12, tmp13, tmp14, tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7, tmp8, tmp9,
                    tmp10);
@@ -551,7 +551,7 @@ TILEOP void DigammaPositive(TileType out, TileType tmp0, TileType tmp1, TileType
     pto::TMUL(tmp0, tmp17, tmp17);
     SyncV();
     DigammaLift(tmp13, tmp14, tmp0);
-    DigammaSet(tmp11, tmp12, DIGAMMA_CONSTANTS[TileOp::NUM_VALUE_1]);
+    DigammaSet(tmp11, tmp12, DIGAMMA_CONSTANTS[1]);
     DigammaDiv(tmp11, tmp12, tmp11, tmp12, tmp13, tmp14, tmp0, tmp1, tmp2, tmp3, tmp4, tmp5, tmp6, tmp7, tmp8, tmp9,
                tmp10);
     pto::TADD(tmp11, tmp11, tmp12);
@@ -715,7 +715,7 @@ TILEOP void TDigamma(T0 dst, T1 tmp, T2 src)
                 AssignElementwiseOperandExecTile(srcTile, src, tileOffsets);
 
                 pto::TASSIGN(tmp0Tile, (uint64_t)(tmp.GetAddr()));
-                pto::TASSIGN(tmp1Tile, (uint64_t)(tmp.GetAddr() + TileOp::NUM_VALUE_1 * tileSize));
+                pto::TASSIGN(tmp1Tile, (uint64_t)(tmp.GetAddr() + 1 * tileSize));
                 pto::TASSIGN(tmp2Tile, (uint64_t)(tmp.GetAddr() + TileOp::NUM_VALUE_2 * tileSize));
                 pto::TASSIGN(tmp3Tile, (uint64_t)(tmp.GetAddr() + TileOp::NUM_VALUE_3 * tileSize));
                 pto::TASSIGN(tmp4Tile, (uint64_t)(tmp.GetAddr() + TileOp::NUM_VALUE_4 * tileSize));

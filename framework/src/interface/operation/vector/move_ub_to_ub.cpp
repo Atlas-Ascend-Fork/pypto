@@ -106,8 +106,8 @@ void TiledMoveUbToUbOperation(Function& function, const TileShape& tileShape, si
 void MoveUbToUbTileFunc(Function& function, const TileShape& tileShape, const std::vector<LogicalTensorPtr>& iOperand,
                         const std::vector<LogicalTensorPtr>& oOperand, [[maybe_unused]] const Operation& op)
 {
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, iOperand.size() == NUM_VALUE_1) << "MoveUbToUb expects 1 input tensor.";
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, oOperand.size() == NUM_VALUE_1) << "MoveUbToUb expects 1 output tensor.";
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, iOperand.size() == 1) << "MoveUbToUb expects 1 input tensor.";
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, oOperand.size() == 1) << "MoveUbToUb expects 1 output tensor.";
 
     const auto& src = iOperand[0];
     const auto& dst = oOperand[0];

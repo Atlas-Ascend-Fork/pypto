@@ -23,7 +23,57 @@
 #pragma once
 #include <cstdint>
 
+namespace npu::tile_fwk {
+
+constexpr int32_t NUM_VALUE_2 = 2;
+constexpr int32_t NUM_VALUE_3 = 3;
+constexpr int32_t NUM_VALUE_4 = 4;
+constexpr int32_t NUM_VALUE_5 = 5;
+constexpr int32_t NUM_VALUE_6 = 6;
+constexpr int32_t NUM_VALUE_7 = 7;
+constexpr int32_t NUM_VALUE_8 = 8;
+constexpr int32_t NUM_VALUE_9 = 9;
+constexpr int32_t NUM_VALUE_10 = 10;
+constexpr int32_t NUM_VALUE_12 = 12;
+constexpr int32_t NUM_VALUE_16 = 16;
+constexpr int32_t NUM_VALUE_21 = 21;
+constexpr int32_t NUM_VALUE_22 = 22;
+constexpr int32_t NUM_VALUE_26 = 26;
+constexpr int32_t NUM_VALUE_31 = 31;
+constexpr int32_t NUM_VALUE_32 = 32;
+constexpr int32_t NUM_VALUE_34 = 34;
+constexpr int32_t NUM_VALUE_64 = 64;
+constexpr int32_t NUM_VALUE_128 = 128;
+constexpr int32_t NUM_VALUE_256 = 256;
+constexpr double NUM_VALUE_0_5 = 0.5;
+constexpr double NUM_VALUE_EPS = 1e-9;
+
+} // namespace npu::tile_fwk
+
 namespace pypto {
+
+using npu::tile_fwk::NUM_VALUE_0_5;
+using npu::tile_fwk::NUM_VALUE_10;
+using npu::tile_fwk::NUM_VALUE_12;
+using npu::tile_fwk::NUM_VALUE_128;
+using npu::tile_fwk::NUM_VALUE_16;
+using npu::tile_fwk::NUM_VALUE_2;
+using npu::tile_fwk::NUM_VALUE_21;
+using npu::tile_fwk::NUM_VALUE_22;
+using npu::tile_fwk::NUM_VALUE_256;
+using npu::tile_fwk::NUM_VALUE_26;
+using npu::tile_fwk::NUM_VALUE_3;
+using npu::tile_fwk::NUM_VALUE_31;
+using npu::tile_fwk::NUM_VALUE_32;
+using npu::tile_fwk::NUM_VALUE_34;
+using npu::tile_fwk::NUM_VALUE_4;
+using npu::tile_fwk::NUM_VALUE_5;
+using npu::tile_fwk::NUM_VALUE_6;
+using npu::tile_fwk::NUM_VALUE_64;
+using npu::tile_fwk::NUM_VALUE_7;
+using npu::tile_fwk::NUM_VALUE_8;
+using npu::tile_fwk::NUM_VALUE_9;
+using npu::tile_fwk::NUM_VALUE_EPS;
 
 // ============================================================================
 // IR Constants

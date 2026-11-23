@@ -12,13 +12,13 @@
 #define PYPTO_DUMP_H
 
 #if defined(__ENABLE_PTO_PRINTF__)
-#ifndef __PTO_INCLUDE_INTERNAL_HEADERS__
-#define __PTO_INCLUDE_INTERNAL_HEADERS__
-#define __PYPTO_DUMP_DEFINED_INTERNAL_HEADERS__
+#ifndef PYPTO_DEBUG_INCLUDE_INTERNAL_HEADERS
+#define PYPTO_DEBUG_INCLUDE_INTERNAL_HEADERS
+#define PYPTO_DUMP_DEFINED_INTERNAL_HEADERS
 #endif
 #ifndef PYPTO_PTO_DEBUG
 #define PYPTO_PTO_DEBUG 1
-#define __PYPTO_DUMP_DEFINED_PTO_DEBUG__
+#define PYPTO_DUMP_DEFINED_PTO_DEBUG
 #endif
 #include <type_traits>
 #include <utility>
@@ -185,13 +185,13 @@ __aicore__ inline void PyptoDumpTileWindow(T& src, uint32_t desc, int rowOffset,
 #define PYPTO_DUMP_TENSOR(layout, rank, ...) PyptoDumpTensor<layout, rank>(__VA_ARGS__)
 #define PYPTO_DUMP_TILE_WINDOW(layout, ...) PyptoDumpTileWindow<layout>(__VA_ARGS__)
 
-#ifdef __PYPTO_DUMP_DEFINED_PTO_DEBUG__
+#ifdef PYPTO_DUMP_DEFINED_PTO_DEBUG
 #undef PYPTO_PTO_DEBUG
-#undef __PYPTO_DUMP_DEFINED_PTO_DEBUG__
+#undef PYPTO_DUMP_DEFINED_PTO_DEBUG
 #endif
-#ifdef __PYPTO_DUMP_DEFINED_INTERNAL_HEADERS__
-#undef __PTO_INCLUDE_INTERNAL_HEADERS__
-#undef __PYPTO_DUMP_DEFINED_INTERNAL_HEADERS__
+#ifdef PYPTO_DUMP_DEFINED_INTERNAL_HEADERS
+#undef PYPTO_DEBUG_INCLUDE_INTERNAL_HEADERS
+#undef PYPTO_DUMP_DEFINED_INTERNAL_HEADERS
 #endif
 #else
 #define PYPTO_DUMP_TENSOR(...) ((void)0)

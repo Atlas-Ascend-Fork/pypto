@@ -9,6 +9,7 @@
  */
 #include "ir/transforms/litenpu_dynamic_to_static_pass.h"
 
+#include "core/common.h"
 #include "ir/transforms/base/mutator.h"
 #include "ir/transforms/base/visitor.h"
 #include "ir/transforms/passes.h"
@@ -217,7 +218,7 @@ private:
             return std::nullopt;
         }
         const auto& ops = expr->GetExpressionOperandList();
-        if (ops.size() < 3 || !ops[1]->IsSymbol() || !ops[2]->IsImmediate()) {
+        if (ops.size() < NUM_VALUE_3 || !ops[1]->IsSymbol() || !ops[2]->IsImmediate()) {
             return std::nullopt;
         }
         std::string name = ops[1]->GetSymbolName();

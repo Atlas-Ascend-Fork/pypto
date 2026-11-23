@@ -657,7 +657,7 @@ TileShape TileShapeResolver::GetOutputTileShape(const Operation& op, int index) 
             // other axes min(outShape, vecTile). (TiledGatherMaskBuildIn.)
             uint8_t patternMode = static_cast<uint8_t>(op.GetIntAttribute(OP_ATTR_PREFIX + "patternMode"));
             const auto pattern = static_cast<GatherMaskPattern>(patternMode);
-            int64_t divisor = NUM_VALUE_1;
+            int64_t divisor = 1;
             if (IsHalfGatherMaskPattern(pattern)) {
                 divisor = NUM_VALUE_2;
             } else if (IsQuarterGatherMaskPattern(pattern)) {

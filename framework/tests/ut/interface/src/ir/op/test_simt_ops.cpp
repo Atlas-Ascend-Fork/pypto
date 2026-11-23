@@ -223,6 +223,24 @@ TEST(SimtOpsTest, GridGroupQueriesAndReceiverContracts)
     EXPECT_THROW((void)registry.Create("simt.grid_group.group_dim", {grid}, {{"axis", 3}}, Sp()), npu::tile_fwk::Error);
 }
 
+TEST(SimtOpsTest, ThreadBlockCoordinateAxes)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto block = registry.Create("simt.group.this_thread_block", {}, Sp());
+    for (const auto& name : {"simt.thread_block.group_index", "simt.thread_block.thread_index"}) {
+        SCOPED_TRACE(name);
+        for (int axis : {0, 1, 2}) {
+            auto query = registry.Create(name, {block}, {{"axis", axis}}, Sp());
+            auto type = As<ScalarType>(query->GetType());
+            ASSERT_NE(type, nullptr);
+            EXPECT_EQ(type->dtype_, DataType::UINT32);
+        }
+        for (int axis : {-1, 3}) {
+            EXPECT_THROW((void)registry.Create(name, {block}, {{"axis", axis}}, Sp()), npu::tile_fwk::Error);
+        }
+    }
+}
+
 TEST(SimtOpsTest, SemanticGroupDtypeAndShapeContracts)
 {
     auto& registry = OpRegistry::GetInstance();

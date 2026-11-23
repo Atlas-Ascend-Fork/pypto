@@ -466,7 +466,7 @@ void TiledTopK(Function& function, const TileShape& tileShape, size_t cur, Input
 int64_t RadixSelectGetSortTempBlockCount(int64_t bytesOfInput)
 {
     switch (bytesOfInput) {
-        case NUM_VALUE_1:
+        case 1:
         case NUM_VALUE_2:
             return NUM_VALUE_22;
         case NUM_VALUE_4:
@@ -481,7 +481,7 @@ int64_t RadixSelectGetSortTempBlockCount(int64_t bytesOfInput)
 int64_t RadixSelectGetCalcTopKTempBlockCount(int64_t bytesOfInput)
 {
     switch (bytesOfInput) {
-        case NUM_VALUE_1:
+        case 1:
         case NUM_VALUE_2:
             return NUM_VALUE_6;
         case NUM_VALUE_4:

@@ -22,11 +22,10 @@
 // codegen fails to compile inside a __simd_vf__ body. The union below carries a
 // RegTensor member whose construction is skipped by the empty __simd_callee__
 // union constructor (C++ leaves the non-trivial variant member unconstructed),
-// and the two conversion operators recover both uses codegen generates:
-//   - operator RegType&()  : passes the underlying register to vbr/vlds/vmax
-//                            builtins (single user-defined conversion);
-//   - operator RegTensor<T>&() : serves the (RegTensor<T>&)x casts emitted by
-//                            the B64 interleave/deinterleave helpers.
+// and the two conversion operators recover both uses codegen generates. The
+// RegType reference conversion passes the underlying register to vbr/vlds/vmax
+// builtins with one user-defined conversion. The RegTensor reference conversion
+// serves the casts emitted by the B64 interleave/deinterleave helpers.
 // The wrapper sits in the global namespace next to `pto` (the generated file
 // does `using namespace pto;`, so RegTensor resolves correctly).
 template <typename T>

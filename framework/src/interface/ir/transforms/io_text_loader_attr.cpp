@@ -26,6 +26,7 @@
 #include <vector>
 
 #include "core/any_cast.h"
+#include "core/common.h"
 #include "tilefwk/element.h"
 #include "interface/configs/config_manager_ng.h"
 #include "interface/operation/attribute.h"
@@ -278,7 +279,7 @@ bool AsKeyMap(const std::vector<std::any>& values, std::map<Key, int64_t>& out)
     std::map<Key, int64_t> mapped;
     for (const auto& value : values) {
         const auto* pair = std::any_cast<std::vector<std::any>>(&value);
-        if (pair == nullptr || pair->size() != 2) {
+        if (pair == nullptr || pair->size() != NUM_VALUE_2) {
             return false;
         }
         const auto* key = std::any_cast<Key>(&(*pair)[0]);
@@ -547,7 +548,7 @@ void IRTextParser::SetOpTileShape(npu::tile_fwk::Operation& op, const std::strin
     } else if (key == "cube_tile") {
         std::vector<int64_t> cube;
         SetValue(cube, value);
-        if (cube.size() == 8) {
+        if (cube.size() == kCubeTileVectorSize) {
             auto& cubeTile = tileShape.GetCubeTile();
             cubeTile.m = {cube[0], cube[1]};
             cubeTile.k = {cube[2], cube[3], cube[4]};
@@ -557,9 +558,9 @@ void IRTextParser::SetOpTileShape(npu::tile_fwk::Operation& op, const std::strin
     } else if (key == "dist_tile") {
         std::vector<int64_t> dist;
         SetValue(dist, value);
-        if (dist.size() == 10) {
+        if (dist.size() == kDistTileVectorSize) {
             auto& distTile = tileShape.GetDistTile();
-            for (int i = 0; i < 3; i++) {
+            for (size_t i = 0; i < distTile.row.size(); i++) {
                 distTile.row[i] = static_cast<int>(dist[i]);
                 distTile.col[i] = static_cast<int>(dist[3 + i]);
                 distTile.rank[i] = static_cast<int>(dist[6 + i]);

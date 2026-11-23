@@ -94,8 +94,6 @@ enum class BroadcastOperand : int64_t {
     RIGHT_OPERAND = 2,
 };
 
-constexpr int32_t NUM_VALUE_0 = 0;
-constexpr int32_t NUM_VALUE_1 = 1;
 constexpr int32_t NUM_VALUE_2 = 2;
 constexpr int32_t NUM_VALUE_3 = 3;
 constexpr int32_t NUM_VALUE_4 = 4;

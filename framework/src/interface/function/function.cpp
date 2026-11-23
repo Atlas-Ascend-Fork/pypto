@@ -14,6 +14,7 @@
  */
 
 #include "interface/function/function.h"
+#include "core/common.h"
 #include <queue>
 #include <algorithm>
 #include <unordered_map>
@@ -2209,7 +2210,7 @@ Operation& Function::AddRawOperation(const Opcode opCode, const LogicalTensors& 
     auto& op = operations_.emplace_back(std::make_shared<Operation>(*this, opCode, iOperands, oOperands));
     opPosition_.emplace(op.get(), operations_.size() - 1);
     auto scopeConfig = config::GetPassOption<std::vector<int64_t>>(SG_SET_SCOPE);
-    if (scopeConfig.size() == 0x3) {
+    if (scopeConfig.size() == NUM_VALUE_3) {
         operations_.back()->SetScopeInfo(Operation::ScopeInfo::FromConfig(scopeConfig));
     } else if (scopeConfig.size() == 1) {
         operations_.back()->SetScopeId(static_cast<int>(scopeConfig[0]));

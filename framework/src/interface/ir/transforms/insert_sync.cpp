@@ -8,6 +8,7 @@
 #include <unordered_set>
 
 #include "backend/backend_cce.h"
+#include "core/common.h"
 #include "ir/kind_traits.h"
 #include "ir/op_attr_types.h"
 #include "ir/op_registry.h"
@@ -109,7 +110,7 @@ public:
             auto& slots = candidates_[parameter];
             slots.resize(MutexSlots(parameter->GetType()));
             for (auto& slot : slots)
-                for (int64_t id = 0; id < 32; ++id)
+                for (int64_t id = 0; id < NUM_VALUE_32; ++id)
                     slot.insert(id);
         }
         do {

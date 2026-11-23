@@ -140,8 +140,8 @@ void TiledScatterUpdateFor2Dims(Function& function, const TileShape& tileShape, 
                                 int axis, std::string cacheMode, int blockSize)
 {
     auto& vecTile = tileShape.GetVecTile();
-    int64_t tileBS = vecTile[NUM_VALUE_0];
-    int64_t tileD = vecTile[NUM_VALUE_1];
+    int64_t tileBS = vecTile[0];
+    int64_t tileD = vecTile[1];
     int64_t s = index->shape[1];
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, s != 0) << "1 dim of index is zero.";
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, tileBS != 0) << "0 dim of tileshape is zero.";
@@ -176,8 +176,8 @@ void TiledScatterUpdateFor4Dims(Function& function, const TileShape& tileShape, 
                                 int axis, std::string cacheMode, int blockSize)
 {
     auto& vecTile = tileShape.GetVecTile();
-    int64_t tileB = vecTile[NUM_VALUE_0];
-    int64_t tileS = vecTile[NUM_VALUE_1];
+    int64_t tileB = vecTile[0];
+    int64_t tileS = vecTile[1];
     int64_t tileN = vecTile[NUM_VALUE_2];
     int64_t tileD = vecTile[NUM_VALUE_3];
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, tileB != 0) << "0 dim of tileshape is zero.";
@@ -266,11 +266,10 @@ void TensorScatterUpdate(Function& function, const LogicalTensorPtr& result, con
 static void CheckScatterUpdateInput(const Tensor& input)
 {
     CHECK(VectorErrorCode::ERR_PARAM_INVALID,
-          (input.GetShape().size() == NUM_VALUE_2 &&
-           (input.GetShape(NUM_VALUE_0) != NUM_VALUE_0 && input.GetShape(NUM_VALUE_1) != NUM_VALUE_0)) ||
+          (input.GetShape().size() == NUM_VALUE_2 && (input.GetShape(0) != 0 && input.GetShape(1) != 0)) ||
               (input.GetShape().size() == NUM_VALUE_4 &&
-               (input.GetShape(NUM_VALUE_0) != NUM_VALUE_0 && input.GetShape(NUM_VALUE_1) != NUM_VALUE_0 &&
-                input.GetShape(NUM_VALUE_2) != NUM_VALUE_0 && input.GetShape(NUM_VALUE_3) != NUM_VALUE_0)))
+               (input.GetShape(0) != 0 && input.GetShape(1) != 0 && input.GetShape(NUM_VALUE_2) != 0 &&
+                input.GetShape(NUM_VALUE_3) != 0)))
         << "The shape of input is invalid";
     CHECK(VectorErrorCode::ERR_PARAM_INVALID,
           input.GetShape().size() == NUM_VALUE_2 || input.GetShape().size() == NUM_VALUE_4)
@@ -280,9 +279,8 @@ static void CheckScatterUpdateInput(const Tensor& input)
 
 static void CheckScatterUpdateIndex(const Tensor& index)
 {
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, index.GetShape().size() == NUM_VALUE_2 &&
-                                                  index.GetShape(NUM_VALUE_0) != NUM_VALUE_0 &&
-                                                  index.GetShape(NUM_VALUE_1) != NUM_VALUE_0)
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID,
+          index.GetShape().size() == NUM_VALUE_2 && index.GetShape(0) != 0 && index.GetShape(1) != 0)
         << "The shape of index is invalid";
 }
 

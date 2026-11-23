@@ -17,9 +17,9 @@
 
 #include <cstdint>
 
-#if !defined(__PTO_INCLUDE_INTERNAL_HEADERS__)
-#define __PTO_INCLUDE_INTERNAL_HEADERS__
-#define __UNDEF_PTO_INCLUDE_COMPILER_INTERNAL_HEADERS_PTO_DUMP_H__
+#if !defined(PYPTO_DEBUG_INCLUDE_INTERNAL_HEADERS)
+#define PYPTO_DEBUG_INCLUDE_INTERNAL_HEADERS
+#define PYPTO_DEBUG_RESTORE_INTERNAL_HEADERS_PTO_DUMP_H
 #endif
 
 #include "impl/utils/sys_macros_impl.h"
@@ -100,9 +100,9 @@ __aicore__ static __attribute__((noinline)) void pto_dump_window(__fbuf__ T* inp
                                                                  const DumpTensorView& view);
 } // namespace pypto::aicore
 
-#if defined(__UNDEF_PTO_INCLUDE_COMPILER_INTERNAL_HEADERS_PTO_DUMP_H__)
-#undef __PTO_INCLUDE_INTERNAL_HEADERS__
-#undef __UNDEF_PTO_INCLUDE_COMPILER_INTERNAL_HEADERS_PTO_DUMP_H__
+#if defined(PYPTO_DEBUG_RESTORE_INTERNAL_HEADERS_PTO_DUMP_H)
+#undef PYPTO_DEBUG_INCLUDE_INTERNAL_HEADERS
+#undef PYPTO_DEBUG_RESTORE_INTERNAL_HEADERS_PTO_DUMP_H
 #endif
 
 #endif // INCLUDE_UTILS_DEBUG_PTO_DUMP_H

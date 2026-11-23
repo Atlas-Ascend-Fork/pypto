@@ -105,7 +105,7 @@ LogicalTensorPtr PowSCalc(const LogicalTensorPtr& self, const Element& other, Pr
                                                                            ones, mul);
         op->SetAttribute(OpAttributeKey::precisionType, static_cast<int64_t>(PrecisionType::HIGH_PRECISION));
         return result;
-    } else if (std::abs(exponent + NUM_VALUE_1) < NUM_VALUE_EPS) { // 1 / x
+    } else if (std::abs(exponent + 1) < NUM_VALUE_EPS) { // 1 / x
         auto ones = GenAllOneTensor(self->shape, self->GetDynValidShape(), DT_FP32);
         auto [result, op] = TensorBinaryOperationWithOp<BinaryOpType::DIV>(*Program::GetInstance().GetCurrentFunction(),
                                                                            ones, self);

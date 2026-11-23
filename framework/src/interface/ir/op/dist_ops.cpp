@@ -21,6 +21,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/common.h"
 #include "core/dtype.h"
 #include "core/error.h"
 #include "core/logging.h"
@@ -175,7 +176,7 @@ TypePtr DeduceDistChannelType(const std::vector<ExprPtr>& args,
             << "dist.channel does not accept keyword argument '" << name << "'";
     }
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, hasUbAddr) << "dist.channel requires the 'ub_addr' keyword";
-    PRO_IR_CHECK(ExternalError::INVALID_VAL, ubAddr >= 0 && ubAddr % 64 == 0)
+    PRO_IR_CHECK(ExternalError::INVALID_VAL, ubAddr >= 0 && ubAddr % NUM_VALUE_64 == 0)
         << "dist.channel ub_addr must be a non-negative 64-byte aligned address, but got " << ubAddr;
     // Opaque handle: an int64 the frontend guarantees is a channel token.
     return std::make_shared<ScalarType>(DataType::INT64);
@@ -288,8 +289,8 @@ TypePtr DeduceDistChannelWriteIndexedType(const std::vector<ExprPtr>& args,
     bool hasDstIndex = false;
     std::optional<DataType> srcIndexDType;
     std::optional<DataType> dstIndexDType;
-    for (size_t i = 5; i <= 6; ++i) {
-        const char* name = i == 5 ? "src_indices" : "dst_indices";
+    for (size_t i = NUM_VALUE_5; i <= NUM_VALUE_6; ++i) {
+        const char* name = i == NUM_VALUE_5 ? "src_indices" : "dst_indices";
         auto tileType = As<TileType>(args[i]->GetType());
         if (tileType == nullptr) {
             const auto sentinel = As<ConstInt>(args[i]);
@@ -304,7 +305,7 @@ TypePtr DeduceDistChannelWriteIndexedType(const std::vector<ExprPtr>& args,
         // A 1-D logical table is spelled [N] or, because tile allocation only takes
         // rank-2 shapes, [N, 1] / [1, N] with a static unit axis.
         bool isOneDimensional = tileType->shape_.size() == 1;
-        if (tileType->shape_.size() == 2) {
+        if (tileType->shape_.size() == NUM_VALUE_2) {
             const auto first = As<ConstInt>(tileType->shape_[0]);
             const auto second = As<ConstInt>(tileType->shape_[1]);
             isOneDimensional = (first != nullptr && first->value_ == 1) || (second != nullptr && second->value_ == 1);
@@ -316,7 +317,7 @@ TypePtr DeduceDistChannelWriteIndexedType(const std::vector<ExprPtr>& args,
         PRO_IR_CHECK(ExternalError::INVALID_TYPE,
                      tileType->memref_.has_value() && (*tileType->memref_)->memorySpace_ == MemorySpace::Vec)
             << "channel.write_indexed " << name << " must live in UB (MemorySpace::Vec)";
-        if (i == 5) {
+        if (i == NUM_VALUE_5) {
             hasSrcIndex = true;
             srcIndexDType = tileType->dtype_;
         } else {
@@ -335,11 +336,12 @@ TypePtr DeduceDistChannelWriteIndexedType(const std::vector<ExprPtr>& args,
         << (dstIndexDType.has_value() ? dstIndexDType->ToString() : "none");
 
     if (const auto rowBytes = As<ConstInt>(args[4])) {
+        constexpr int64_t kMaxRowBytes = 256 * 1024 * 1024;
         PRO_IR_CHECK(ExternalError::INVALID_VAL, rowBytes->value_ > 0)
             << "channel.write_indexed row_bytes must be positive, but got " << rowBytes->value_;
-        PRO_IR_CHECK(ExternalError::INVALID_VAL, rowBytes->value_ % 32 == 0)
+        PRO_IR_CHECK(ExternalError::INVALID_VAL, rowBytes->value_ % NUM_VALUE_32 == 0)
             << "channel.write_indexed row_bytes must be a multiple of 32 bytes, but got " << rowBytes->value_;
-        PRO_IR_CHECK(ExternalError::INVALID_VAL, rowBytes->value_ <= 256 * 1024 * 1024)
+        PRO_IR_CHECK(ExternalError::INVALID_VAL, rowBytes->value_ <= kMaxRowBytes)
             << "channel.write_indexed row_bytes must be <= 256 MiB, but got " << rowBytes->value_;
     }
 

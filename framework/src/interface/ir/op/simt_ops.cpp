@@ -23,6 +23,7 @@
 #include <utility>
 #include <vector>
 
+#include "core/common.h"
 #include "core/dtype.h"
 #include "core/logging.h"
 #include "ir/expr.h"
@@ -259,7 +260,7 @@ TypePtr DeduceSimtAtomicType(const std::string& opName, size_t operandCount, std
                              const std::vector<std::pair<std::string, std::any>>& kwargs,
                              std::initializer_list<DataType> noResultDtypes = {})
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == operandCount + 2)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == operandCount + NUM_VALUE_2)
         << opName << " requires container, offset, and " << operandCount << " scalar operand(s)";
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << opName << " does not accept keyword arguments";
 
@@ -271,7 +272,7 @@ TypePtr DeduceSimtAtomicType(const std::string& opName, size_t operandCount, std
         << opName << " does not support dtype " << dtype.ToString() << " on " << (tileType ? "UB Tile" : "GM Tensor");
 
     for (size_t i = 0; i < operandCount; ++i) {
-        auto operandType = As<ScalarType>(args[i + 2]->GetType());
+        auto operandType = As<ScalarType>(args[i + NUM_VALUE_2]->GetType());
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, operandType) << opName << " operand " << i << " must be a scalar";
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, operandType->dtype_ == dtype)
             << opName << " operand " << i << " dtype must match target dtype " << dtype.ToString() << ", but got "
@@ -320,7 +321,7 @@ ScalarTypePtr DeduceSimtWarpShuffleCommonType(const std::string& opName, const s
                                               const std::vector<ExprPtr>& args,
                                               const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_3)
         << opName << " requires value, " << controlName << ", and width";
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << opName << " does not accept keyword arguments";
 
@@ -338,7 +339,7 @@ ScalarTypePtr DeduceSimtWarpShuffleCommonType(const std::string& opName, const s
     auto width = As<ConstInt>(args[2]);
     if (width) {
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT,
-                     width->value_ >= 1 && width->value_ <= 32 && (width->value_ & (width->value_ - 1)) == 0)
+                     width->value_ >= 1 && width->value_ <= NUM_VALUE_32 && (width->value_ & (width->value_ - 1)) == 0)
             << opName << " width must be one of 1, 2, 4, 8, 16, or 32";
     }
     return std::make_shared<ScalarType>(valueType->dtype_);
@@ -356,7 +357,7 @@ TypePtr DeduceSimtWarpShflType(const std::string& opName, const std::vector<Expr
 
     auto srcLane = As<ConstInt>(args[1]);
     if (srcLane) {
-        PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, srcLane->value_ >= 0 && srcLane->value_ < 32)
+        PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, srcLane->value_ >= 0 && srcLane->value_ < NUM_VALUE_32)
             << opName << " src_lane must be in [0, 31]";
     }
     return valueType;
@@ -374,7 +375,7 @@ TypePtr DeduceSimtWarpShflUpDownType(const std::string& opName, const std::vecto
 
     auto delta = As<ConstInt>(args[1]);
     if (delta) {
-        PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, delta->value_ >= 0 && delta->value_ < 32)
+        PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, delta->value_ >= 0 && delta->value_ < NUM_VALUE_32)
             << opName << " delta must be in [0, 31]";
     }
     return valueType;
@@ -392,7 +393,7 @@ TypePtr DeduceSimtWarpShflXorType(const std::string& opName, const std::vector<E
 
     auto laneMask = As<ConstInt>(args[1]);
     if (laneMask) {
-        PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, laneMask->value_ >= 0 && laneMask->value_ < 32)
+        PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, laneMask->value_ >= 0 && laneMask->value_ < NUM_VALUE_32)
             << opName << " lane_mask must be in [0, 31]";
         auto width = As<ConstInt>(args[2]);
         PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, !width || laneMask->value_ < width->value_)
@@ -451,6 +452,7 @@ TypePtr DeduceSimtRintRoundType(const std::string& opName, const std::vector<Exp
 TypePtr DeduceSimtLaunchType(const std::vector<ExprPtr>& args,
                              const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
+    constexpr int64_t kMaxSimtThreads = 2048;
     PRO_IR_CHECK(ExternalError::INVALID_SHAPE, args.size() >= 3) << "simt.launch requires three launch dimensions";
     int64_t totalThreads = 1;
     for (std::size_t i = 0; i < 3; ++i) {
@@ -459,22 +461,22 @@ TypePtr DeduceSimtLaunchType(const std::vector<ExprPtr>& args,
                      dimType && dimType->dtype_.IsInt() && dimType->dtype_ != DataType(DataType::BOOL))
             << "simt.launch dimensions must be non-bool integer scalars";
         auto dim = As<ConstInt>(args[i]);
-        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, dim && dim->value_ > 0 && dim->value_ <= 2048)
+        PRO_IR_CHECK(ExternalError::INVALID_SHAPE, dim && dim->value_ > 0 && dim->value_ <= kMaxSimtThreads)
             << "simt.launch dimensions must be compile-time integers in [1, 2048], got dim[" << i
             << "]=" << (dim ? dim->value_ : -1);
         totalThreads *= dim->value_;
     }
-    PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, totalThreads <= 2048)
+    PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, totalThreads <= kMaxSimtThreads)
         << "simt.launch total thread count must not exceed 2048, got total_threads=" << totalThreads;
     int maxThreads = GetOpKwarg<int>(kwargs, "max_threads");
-    PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, maxThreads >= 1 && maxThreads <= 2048)
+    PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, maxThreads >= 1 && maxThreads <= kMaxSimtThreads)
         << "simt.launch max_threads must be in [1, 2048]";
     PRO_IR_CHECK(ExternalError::OUT_OF_RANGE, totalThreads <= maxThreads)
         << "simt.launch threads " << totalThreads << " exceed callee max_threads " << maxThreads;
     for (std::size_t i = 3; i < args.size(); ++i) {
         auto argType = args[i]->GetType();
         if (auto tileType = As<TileType>(argType)) {
-            PRO_IR_CHECK(ExternalError::INVALID_SHAPE, tileType->shape_.size() == 2)
+            PRO_IR_CHECK(ExternalError::INVALID_SHAPE, tileType->shape_.size() == NUM_VALUE_2)
                 << "simt.launch Tile argument must have a two-dimensional shape";
             PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<Var>(args[i]) != nullptr)
                 << "simt.launch Tile argument must be a Var";
@@ -482,7 +484,7 @@ TypePtr DeduceSimtLaunchType(const std::vector<ExprPtr>& args,
                 PRO_IR_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, As<ConstInt>(dim) != nullptr)
                     << "simt.launch Tile argument must have a static shape";
             }
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, tileType->dtype_.GetBit() >= 8)
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, tileType->dtype_.GetBit() >= NUM_VALUE_8)
                 << "simt.launch Tile argument has a sub-byte element dtype";
             PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, tileType->memref_.has_value())
                 << "simt.launch Tile argument has no memory reference";
@@ -499,7 +501,7 @@ TypePtr DeduceSimtLaunchType(const std::vector<ExprPtr>& args,
                 PRO_IR_CHECK(ExternalError::DYNAMIC_SHAPE_COMPUTE_UNSUPPORTED, As<ConstInt>(dim) != nullptr)
                     << "simt.launch Tensor argument must have a static shape";
             }
-            PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensorType->dtype_.GetBit() >= 8)
+            PRO_IR_CHECK(ExternalError::INVALID_TYPE, tensorType->dtype_.GetBit() >= NUM_VALUE_8)
                 << "simt.launch Tensor argument has a sub-byte element dtype";
             PRO_IR_CHECK(ExternalError::INVALID_FORMAT,
                          tensorType->tensor_view_.has_value() && tensorType->tensor_view_->layout == Layout::ND)
@@ -520,7 +522,8 @@ TypePtr DeduceSimtLaunchType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtSadType(const std::vector<ExprPtr>& args,
                           const std::vector<std::pair<std::string, std::any>>& /*kwargs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3) << "simt.sad requires exactly 3 scalar operands";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_3)
+        << "simt.sad requires exactly 3 scalar operands";
     auto lhsType = As<ScalarType>(args[0]->GetType());
     auto rhsType = As<ScalarType>(args[1]->GetType());
     auto addendType = As<ScalarType>(args[2]->GetType());
@@ -558,7 +561,8 @@ TypePtr DeduceSimtMathSignature(const std::string& opName, std::initializer_list
 TypePtr DeduceSimtScalbnType(const std::vector<ExprPtr>& args,
                              const std::vector<std::pair<std::string, std::any>>& /*kwargs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2) << "simt.scalbn requires exactly 2 scalar operands";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_2)
+        << "simt.scalbn requires exactly 2 scalar operands";
     auto valueType = As<ScalarType>(args[0]->GetType());
     auto exponentType = As<ScalarType>(args[1]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, valueType) << "simt.scalbn value must be a scalar";
@@ -574,7 +578,7 @@ TypePtr DeduceSimtScalbnType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtMulI32ToI64Type(const std::vector<ExprPtr>& args,
                                   const std::vector<std::pair<std::string, std::any>>& /*kwargs*/)
 {
-    DeduceSimtMathType("simt.mul_i32_to_i64", 2, {DataType::INT32, DataType::UINT32}, args);
+    DeduceSimtMathType("simt.mul_i32_to_i64", NUM_VALUE_2, {DataType::INT32, DataType::UINT32}, args);
     auto inputType = As<ScalarType>(args[0]->GetType());
     DataType resultDtype = inputType->dtype_ == DataType::INT32 ? DataType::INT64 : DataType::UINT64;
     return std::make_shared<ScalarType>(resultDtype);
@@ -1440,7 +1444,7 @@ TypePtr DeduceSimtThisGridType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtTiledPartitionType(const std::vector<ExprPtr>& args,
                                      const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_2)
         << "tiled_partition requires a parent group and size";
     auto parent = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, parent != nullptr) << "tiled_partition parent must be a SIMT group";
@@ -1450,7 +1454,7 @@ TypePtr DeduceSimtTiledPartitionType(const std::vector<ExprPtr>& args,
     CheckSimtGroupIntegerArg(args[1], "tiled_partition size");
     if (auto size = As<ConstInt>(args[1])) {
         PRO_IR_CHECK(ExternalError::INVALID_VAL,
-                     size->value_ > 0 && size->value_ <= 32 && (size->value_ & (size->value_ - 1)) == 0)
+                     size->value_ > 0 && size->value_ <= NUM_VALUE_32 && (size->value_ & (size->value_ - 1)) == 0)
             << "tiled_partition size must be a power of two in [1, 32]";
     }
     return std::make_shared<SimtGroupType>(SimtGroupKind::ThreadBlockTile);
@@ -1459,7 +1463,7 @@ TypePtr DeduceSimtTiledPartitionType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtBinaryPartitionType(const std::vector<ExprPtr>& args,
                                       const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_2)
         << "binary_partition requires a parent group and predicate";
     auto parent = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, parent != nullptr) << "binary_partition parent must be a SIMT group";
@@ -1512,7 +1516,7 @@ TypePtr DeduceSimtThreadBlockGroupIndexType(const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlock)
         << "simt.thread_block.group_index requires a ThreadBlock receiver";
     const int axis = GetOpKwarg<int>(attrs, "axis");
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < 3) << "Invalid coordinate axis";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < NUM_VALUE_3) << "Invalid coordinate axis";
     return std::make_shared<ScalarType>(DataType::UINT32);
 }
 
@@ -1525,7 +1529,7 @@ TypePtr DeduceSimtThreadBlockThreadIndexType(const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlock)
         << "simt.thread_block.thread_index requires a ThreadBlock receiver";
     const int axis = GetOpKwarg<int>(attrs, "axis");
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < 3) << "Invalid coordinate axis";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < NUM_VALUE_3) << "Invalid coordinate axis";
     return std::make_shared<ScalarType>(DataType::UINT32);
 }
 
@@ -1538,7 +1542,7 @@ TypePtr DeduceSimtThreadBlockGroupDimType(const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlock)
         << "simt.thread_block.group_dim requires a ThreadBlock receiver";
     const int axis = GetOpKwarg<int>(attrs, "axis");
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < 3) << "Invalid coordinate axis";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < NUM_VALUE_3) << "Invalid coordinate axis";
     return std::make_shared<ScalarType>(DataType::UINT32);
 }
 
@@ -1611,7 +1615,7 @@ TypePtr DeduceSimtThreadBlockTileMetaGroupSizeType(const std::vector<ExprPtr>& a
 TypePtr DeduceSimtThreadBlockTileShflType(const std::vector<ExprPtr>& args,
                                           const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_3)
         << "simt.thread_block_tile.shfl received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
@@ -1623,7 +1627,7 @@ TypePtr DeduceSimtThreadBlockTileShflType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtThreadBlockTileShflUpType(const std::vector<ExprPtr>& args,
                                             const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_3)
         << "simt.thread_block_tile.shfl_up received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
@@ -1635,7 +1639,7 @@ TypePtr DeduceSimtThreadBlockTileShflUpType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtThreadBlockTileShflDownType(const std::vector<ExprPtr>& args,
                                               const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_3)
         << "simt.thread_block_tile.shfl_down received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
@@ -1647,7 +1651,7 @@ TypePtr DeduceSimtThreadBlockTileShflDownType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtThreadBlockTileShflXorType(const std::vector<ExprPtr>& args,
                                              const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_3)
         << "simt.thread_block_tile.shfl_xor received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
@@ -1659,7 +1663,7 @@ TypePtr DeduceSimtThreadBlockTileShflXorType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtThreadBlockTileAnyType(const std::vector<ExprPtr>& args,
                                          const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_2)
         << "simt.thread_block_tile.any received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
@@ -1671,7 +1675,7 @@ TypePtr DeduceSimtThreadBlockTileAnyType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtThreadBlockTileAllType(const std::vector<ExprPtr>& args,
                                          const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_2)
         << "simt.thread_block_tile.all received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
@@ -1683,7 +1687,7 @@ TypePtr DeduceSimtThreadBlockTileAllType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtThreadBlockTileBallotType(const std::vector<ExprPtr>& args,
                                             const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_2)
         << "simt.thread_block_tile.ballot received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::ThreadBlockTile)
@@ -1750,7 +1754,7 @@ TypePtr DeduceSimtCoalescedGroupMetaGroupSizeType(const std::vector<ExprPtr>& ar
 TypePtr DeduceSimtCoalescedGroupShflType(const std::vector<ExprPtr>& args,
                                          const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_3)
         << "simt.coalesced_group.shfl received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
@@ -1762,7 +1766,7 @@ TypePtr DeduceSimtCoalescedGroupShflType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtCoalescedGroupShflUpType(const std::vector<ExprPtr>& args,
                                            const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_3)
         << "simt.coalesced_group.shfl_up received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
@@ -1774,7 +1778,7 @@ TypePtr DeduceSimtCoalescedGroupShflUpType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtCoalescedGroupShflDownType(const std::vector<ExprPtr>& args,
                                              const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 3)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_3)
         << "simt.coalesced_group.shfl_down received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
@@ -1786,7 +1790,7 @@ TypePtr DeduceSimtCoalescedGroupShflDownType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtCoalescedGroupAnyType(const std::vector<ExprPtr>& args,
                                         const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_2)
         << "simt.coalesced_group.any received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
@@ -1798,7 +1802,7 @@ TypePtr DeduceSimtCoalescedGroupAnyType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtCoalescedGroupAllType(const std::vector<ExprPtr>& args,
                                         const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_2)
         << "simt.coalesced_group.all received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
@@ -1810,7 +1814,7 @@ TypePtr DeduceSimtCoalescedGroupAllType(const std::vector<ExprPtr>& args,
 TypePtr DeduceSimtCoalescedGroupBallotType(const std::vector<ExprPtr>& args,
                                            const std::vector<std::pair<std::string, std::any>>& /*attrs*/)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_2)
         << "simt.coalesced_group.ballot received an invalid operand count";
     auto group = As<SimtGroupType>(args[0]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::CoalescedGroup)
@@ -1894,7 +1898,7 @@ TypePtr DeduceSimtGridGroupGroupDimType(const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::GridGroup)
         << "simt.grid_group.group_dim requires a GridGroup receiver";
     const int axis = GetOpKwarg<int>(attrs, "axis");
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < 3) << "Invalid coordinate axis";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < NUM_VALUE_3) << "Invalid coordinate axis";
     return std::make_shared<ScalarType>(DataType::UINT32);
 }
 
@@ -1907,7 +1911,7 @@ TypePtr DeduceSimtGridGroupBlockIndexType(const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, group && group->kind_ == SimtGroupKind::GridGroup)
         << "simt.grid_group.block_index requires a GridGroup receiver";
     const int axis = GetOpKwarg<int>(attrs, "axis");
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < 3) << "Invalid coordinate axis";
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, axis >= 0 && axis < NUM_VALUE_3) << "Invalid coordinate axis";
     return std::make_shared<ScalarType>(DataType::UINT32);
 }
 

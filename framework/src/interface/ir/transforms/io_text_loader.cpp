@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "core/any_cast.h"
+#include "core/common.h"
 #include "core/dtype.h"
 #include "core/logging.h"
 #include "ir/core.h"
@@ -560,12 +561,13 @@ TypePtr IRTextParser::ParseTypeReg()
 namespace {
 bool IsDefaultStride(const std::vector<ExprPtr>& stride)
 {
+    constexpr int64_t kDefaultStrideSentinel = -2;
     if (stride.empty()) {
         return false;
     }
     for (const auto& dim : stride) {
         auto constant = As<ConstInt>(dim);
-        if (constant == nullptr || constant->value_ != -2) {
+        if (constant == nullptr || constant->value_ != kDefaultStrideSentinel) {
             return false;
         }
     }
@@ -1312,9 +1314,9 @@ bool IRTextParser::IsPro() const
         if (token.kind == IRTextLexerTokenKind::PunLBrace) {
             break;
         }
-        if (token.kind == IRTextLexerTokenKind::TokAttrName && token.text == IR_KW_TYPE && i + 2 < tokens_.size() &&
-            tokens_[i + 1].kind == IRTextLexerTokenKind::PunLParen) {
-            const std::string& value = tokens_[i + 2].text;
+        if (token.kind == IRTextLexerTokenKind::TokAttrName && token.text == IR_KW_TYPE &&
+            i + NUM_VALUE_2 < tokens_.size() && tokens_[i + 1].kind == IRTextLexerTokenKind::PunLParen) {
+            const std::string& value = tokens_[i + NUM_VALUE_2].text;
             if (value == "pro" || IsProOnlyFunctionTypeName(value)) {
                 return true;
             }

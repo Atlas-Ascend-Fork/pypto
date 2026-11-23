@@ -13,10 +13,14 @@
  */
 
 #include "gtest/gtest.h"
+#include <algorithm>
+#include <memory>
 #include "tilefwk/tilefwk.h"
 #include "interface/inner/tilefwk.h"
 #include "interface/function/function.h"
 #include "interface/operation/operation.h"
+#include "interface/operation/operation_impl.h"
+#include "passes/tensor_graph_pass/expand_function.h"
 #include "interface/program/program.h"
 #include "tilefwk/hif4_scratch.h"
 #include "tilefwk/data_type.h"
@@ -33,6 +37,218 @@ public:
     }
     void TearDown() override {}
 };
+
+class OperationTilingTest : public OperationOpsTest {
+protected:
+    void SetUp() override
+    {
+        OperationOpsTest::SetUp();
+        config::SetHostOption(COMPILE_STAGE, CS_TENSOR_GRAPH);
+    }
+
+    std::shared_ptr<Function> Expand(Operation& root, const TileShape& tileShape)
+    {
+        auto tiled = std::make_shared<Function>(Program::GetInstance(), "TiledOperation", "TiledOperation", nullptr);
+        tiled->paramConfigs_.combineAxis = false;
+        // The temporary graph must not attach operations to the enclosing FUNCTION's tensors.
+        LogicalTensors inputs;
+        for (const auto& input : root.GetIOperands()) {
+            auto clone = std::make_shared<LogicalTensor>(*tiled, input->Datatype(), input->shape,
+                                                         input->GetDynValidShape(), input->Format());
+            inputs.push_back(clone);
+            tiled->AddOriginIncast(clone);
+        }
+        LogicalTensors outputs;
+        for (const auto& output : root.GetOOperands()) {
+            auto clone = std::make_shared<LogicalTensor>(*tiled, output->Datatype(), output->shape,
+                                                         output->GetDynValidShape(), output->Format());
+            outputs.push_back(clone);
+            tiled->AddOriginOutcast(clone);
+        }
+        ExpandFunction::CurrentTileOpGuard guard(root);
+        ExpandOperationInto(*tiled, tileShape, root.GetOpcode(), inputs, outputs, root);
+        for (const auto& input : root.GetIOperands()) {
+            for (const auto* consumer : input->GetConsumers()) {
+                EXPECT_NE(consumer->BelongTo(), tiled.get());
+            }
+        }
+        for (const auto& output : root.GetOOperands()) {
+            for (const auto* producer : output->GetProducers()) {
+                EXPECT_NE(producer->BelongTo(), tiled.get());
+            }
+        }
+        return tiled;
+    }
+
+    // AddOperation moves parent coordinates into View/Assemble attributes and resets the local Tile offset.
+    void ExpectViewOffset(const LogicalTensorPtr& tile, const Offset& expected)
+    {
+        const auto& producers = tile->GetProducers();
+        ASSERT_EQ(producers.size(), 1U);
+        auto attr = std::dynamic_pointer_cast<ViewOpAttribute>((*producers.begin())->GetOpAttribute());
+        ASSERT_NE(attr, nullptr);
+        EXPECT_EQ(attr->GetFromOffset(), expected);
+    }
+
+    void ExpectAssembleOffset(const LogicalTensorPtr& tile, const Offset& expected)
+    {
+        const auto& consumers = tile->GetConsumers();
+        ASSERT_EQ(consumers.size(), 1U);
+        auto attr = std::dynamic_pointer_cast<AssembleOpAttribute>((*consumers.begin())->GetOpAttribute());
+        ASSERT_NE(attr, nullptr);
+        EXPECT_EQ(attr->GetToOffset(), expected);
+    }
+};
+
+TEST_F(OperationTilingTest, MaxpoolPreservesPaddingAndTailTiles)
+{
+    Tensor input(DT_FP16, {1, 1, 5, 7, 16}, "input");
+    FUNCTION("MaxpoolPaddingAndTail", {input})
+    {
+        auto output = Maxpool(input, {2, 2}, {1, 1}, {1, 0, 0, 1});
+        EXPECT_EQ(output.GetShape(), (Shape{1, 1, 5, 7, 16}));
+        EXPECT_EQ(output.GetDataType(), DT_FP16);
+        auto& root = Program::GetInstance().GetCurrentFunction()->Operations(false).back();
+        ASSERT_EQ(root.GetOpcode(), Opcode::OP_MAX_POOL);
+        EXPECT_EQ(root.GetIntAttribute(ConvOpAttributeKey::paddingLeft), 1);
+        EXPECT_EQ(root.GetIntAttribute(ConvOpAttributeKey::paddingTop), 0);
+        EXPECT_EQ(root.GetIntAttribute(ConvOpAttributeKey::paddingRight), 0);
+        EXPECT_EQ(root.GetIntAttribute(ConvOpAttributeKey::paddingBottom), 1);
+        EXPECT_EQ(root.GetIntAttribute(ConvOpAttributeKey::strideh), 1);
+        EXPECT_EQ(root.GetIntAttribute(ConvOpAttributeKey::stridew), 1);
+        EXPECT_EQ(root.GetIntAttribute(PoolOpAttributeKey::poolh), 2);
+        EXPECT_EQ(root.GetIntAttribute(PoolOpAttributeKey::poolw), 2);
+
+        TileShape tile;
+        tile.SetVecTile(3, 4);
+        auto tiled = Expand(root, tile);
+        size_t poolCount = 0;
+        for (const auto& op : tiled->Operations(false)) {
+            if (op.GetOpcode() != Opcode::OP_MAX_POOL) {
+                continue;
+            }
+            const int64_t row = static_cast<int64_t>(poolCount / 2) * 3;
+            const int64_t col = static_cast<int64_t>(poolCount % 2) * 4;
+            ExpectAssembleOffset(op.GetOutputOperand(0), (Offset{0, 0, row, col, 0}));
+            EXPECT_EQ(op.GetOutputOperand(0)->shape,
+                      (Shape{1, 1, std::min<int64_t>(3, 5 - row), std::min<int64_t>(4, 7 - col), 16}));
+            ExpectViewOffset(op.GetInputOperand(0), (Offset{0, 0, row, col == 0 ? 0 : col - 1, 0}));
+            EXPECT_EQ(op.GetInputOperand(0)->shape, (Shape{1, 1, row == 0 ? 4 : 2, 4, 16}));
+            EXPECT_EQ(op.GetIntAttribute(ConvOpAttributeKey::paddingLeft), col == 0 ? 1 : 0);
+            EXPECT_EQ(op.GetIntAttribute(ConvOpAttributeKey::paddingBottom), row == 0 ? 0 : 1);
+            EXPECT_EQ(op.GetIntAttribute(PoolOpAttributeKey::poolh), 2);
+            EXPECT_EQ(op.GetIntAttribute(PoolOpAttributeKey::poolw), 2);
+            ++poolCount;
+        }
+        EXPECT_EQ(poolCount, 4U);
+    }
+}
+
+TEST_F(OperationTilingTest, UnitMaxpoolLowersToCopies)
+{
+    Tensor input(DT_FP16, {1, 1, 3, 5, 16}, "input");
+    FUNCTION("UnitMaxpoolCopies", {input})
+    {
+        auto output = Maxpool(input, {1, 1}, {1, 1}, {0, 0, 0, 0});
+        EXPECT_EQ(output.GetShape(), input.GetShape());
+        auto& root = Program::GetInstance().GetCurrentFunction()->Operations(false).back();
+        TileShape tile;
+        tile.SetVecTile(2, 3);
+        auto tiled = Expand(root, tile);
+        size_t copyCount = 0;
+        for (const auto& op : tiled->Operations(false)) {
+            EXPECT_NE(op.GetOpcode(), Opcode::OP_MAX_POOL);
+            if (op.GetOpcode() == Opcode::OP_COPY_UB_TO_UB) {
+                const int64_t row = static_cast<int64_t>(copyCount / 2) * 2;
+                const int64_t col = static_cast<int64_t>(copyCount % 2) * 3;
+                EXPECT_EQ(op.GetInputOperand(0)->shape, op.GetOutputOperand(0)->shape);
+                ExpectViewOffset(op.GetInputOperand(0), (Offset{0, 0, row, col, 0}));
+                ExpectAssembleOffset(op.GetOutputOperand(0), (Offset{0, 0, row, col, 0}));
+                ++copyCount;
+            }
+        }
+        EXPECT_EQ(copyCount, 4U);
+    }
+}
+
+TEST_F(OperationTilingTest, ScatterUpdatePaBsnd2DTilesRowsAndColumns)
+{
+    Tensor src(DT_FP32, {6, 16}, "src");
+    Tensor index(DT_INT32, {2, 3}, "index");
+    Tensor dst(DT_FP32, {8, 16}, "dst");
+    FUNCTION("ScatterUpdatePaBsnd2D", {src, index, dst})
+    {
+        auto output = ScatterUpdate(dst, index, src, -2, "PA_BSND", 2);
+        EXPECT_EQ(output.GetShape(), (Shape{8, 16}));
+        auto& root = Program::GetInstance().GetCurrentFunction()->Operations(false).back();
+        ASSERT_EQ(root.GetOpcode(), Opcode::OP_INDEX_OUTCAST);
+        TileShape tile;
+        tile.SetVecTile(3, 8);
+        auto tiled = Expand(root, tile);
+        size_t scatterCount = 0;
+        for (const auto& op : tiled->Operations(false)) {
+            if (op.GetOpcode() != Opcode::OP_INDEX_OUTCAST) {
+                continue;
+            }
+            const int64_t batch = static_cast<int64_t>(scatterCount / 2);
+            const int64_t col = static_cast<int64_t>(scatterCount % 2) * 8;
+            EXPECT_EQ(op.GetInputOperand(0)->shape, (Shape{3, 8}));
+            ExpectViewOffset(op.GetInputOperand(0), (Offset{batch * 3, col}));
+            EXPECT_EQ(op.GetInputOperand(1)->shape, (Shape{1, 3}));
+            ExpectViewOffset(op.GetInputOperand(1), (Offset{batch, 0}));
+            EXPECT_EQ(op.GetInputOperand(2)->shape, (Shape{8, 8}));
+            ExpectViewOffset(op.GetInputOperand(2), (Offset{0, col}));
+            EXPECT_EQ(op.GetOutputOperand(0), tiled->GetOriginOutcast().at(0));
+            EXPECT_EQ(op.GetOutputOperand(0)->shape, output.GetShape());
+            EXPECT_EQ(op.GetIntAttribute("axis"), 0);
+            EXPECT_EQ(op.GetStringAttribute(OpAttributeKey::cacheMode), "PA_BSND");
+            EXPECT_EQ(op.GetIntAttribute(OpAttributeKey::panzBlockSize), 2);
+            ++scatterCount;
+        }
+        EXPECT_EQ(scatterCount, 4U);
+    }
+}
+
+TEST_F(OperationTilingTest, ScatterUpdatePaBsnd4DPreservesSequenceTail)
+{
+    Tensor src(DT_FP32, {2, 3, 2, 16}, "src");
+    Tensor index(DT_INT32, {2, 3}, "index");
+    Tensor dst(DT_FP32, {4, 2, 2, 16}, "dst");
+    FUNCTION("ScatterUpdatePaBsnd4D", {src, index, dst})
+    {
+        auto output = ScatterUpdate(dst, index, src, -2, "PA_BSND", 2);
+        EXPECT_EQ(output.GetShape(), (Shape{4, 2, 2, 16}));
+        auto& root = Program::GetInstance().GetCurrentFunction()->Operations(false).back();
+        ASSERT_EQ(root.GetOpcode(), Opcode::OP_INDEX_OUTCAST);
+        TileShape tile;
+        tile.SetVecTile(1, 2, 1, 8);
+        auto tiled = Expand(root, tile);
+        size_t scatterCount = 0;
+        for (const auto& op : tiled->Operations(false)) {
+            if (op.GetOpcode() != Opcode::OP_INDEX_OUTCAST) {
+                continue;
+            }
+            const int64_t batch = static_cast<int64_t>(scatterCount / 8);
+            const int64_t sequence = static_cast<int64_t>(scatterCount / 4 % 2) * 2;
+            const int64_t head = static_cast<int64_t>(scatterCount / 2 % 2);
+            const int64_t col = static_cast<int64_t>(scatterCount % 2) * 8;
+            const int64_t sequenceSize = std::min<int64_t>(2, 3 - sequence);
+            EXPECT_EQ(op.GetInputOperand(0)->shape, (Shape{1, sequenceSize, 1, 8}));
+            ExpectViewOffset(op.GetInputOperand(0), (Offset{batch, sequence, head, col}));
+            EXPECT_EQ(op.GetInputOperand(1)->shape, (Shape{1, sequenceSize}));
+            ExpectViewOffset(op.GetInputOperand(1), (Offset{batch, sequence}));
+            EXPECT_EQ(op.GetInputOperand(2)->shape, (Shape{4, 2, 2, 8}));
+            ExpectViewOffset(op.GetInputOperand(2), (Offset{0, 0, 0, col}));
+            EXPECT_EQ(op.GetOutputOperand(0), tiled->GetOriginOutcast().at(0));
+            EXPECT_EQ(op.GetOutputOperand(0)->shape, output.GetShape());
+            EXPECT_EQ(op.GetIntAttribute("axis"), 2);
+            EXPECT_EQ(op.GetStringAttribute(OpAttributeKey::cacheMode), "PA_BSND");
+            EXPECT_EQ(op.GetIntAttribute(OpAttributeKey::panzBlockSize), 2);
+            ++scatterCount;
+        }
+        EXPECT_EQ(scatterCount, 16U);
+    }
+}
 
 TEST_F(OperationOpsTest, CheckIndexAddParamsInvalid_FP16_Overflow)
 {

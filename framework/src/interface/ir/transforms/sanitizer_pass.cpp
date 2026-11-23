@@ -14,6 +14,7 @@
 #include <utility>
 
 #include "backend/common/backend_utils.h"
+#include "core/common.h"
 #include "ir/kind_traits.h"
 #include "ir/memory_space.h"
 #include "ir/op_registry.h"
@@ -57,6 +58,8 @@ enum class PhaseOpKind : uint32_t {
 
 /// Max logical tensor rank supported by the GM bounds check.
 constexpr uint32_t kSanitizerMaxTensorDims = 5;
+constexpr size_t kTileSliceMetadataFieldCount = 7;   // Layout, inner shape, and address metadata.
+constexpr size_t kTileAddressMetadataFieldCount = 4; // Address, physical shape, and dtype bits.
 constexpr char kTileAddrOp[] = "block.tile_addr";
 
 // Runtime-evaluated GetValidRow()/GetValidCol() of the tile.
@@ -77,6 +80,7 @@ struct TileLayoutDesc {
 // Mirrors the frontend L1 slice contract: NZ (16, 256/bits), ZN (256/bits, 16); fractal 1024 uses (16, 16).
 TileLayoutDesc TileLayoutInfo(const TypePtr& type)
 {
+    constexpr uint64_t kAccFractalBytes = 1024;
     TileLayoutDesc desc;
     auto tileType = As<TileType>(type);
     if (tileType == nullptr || !tileType->hardwareInfo_.has_value()) {
@@ -87,10 +91,10 @@ TileLayoutDesc TileLayoutInfo(const TypePtr& type)
     if (desc.layout != Layout::NZ && desc.layout != Layout::ZN) {
         return desc;
     }
-    desc.innerRows = 16;
-    desc.innerCols = 16;
+    desc.innerRows = NUM_VALUE_16;
+    desc.innerCols = NUM_VALUE_16;
     const int64_t bits = static_cast<int64_t>(tileType->dtype_.GetBit());
-    if (hw.fractal != 1024 && bits > 0) {
+    if (hw.fractal != kAccFractalBytes && bits > 0) {
         const int64_t innerSpan = 256 / bits;
         if (desc.layout == Layout::NZ) {
             desc.innerCols = innerSpan;
@@ -491,7 +495,7 @@ StmtPtr SanitizerInstrumenter::RecordValidShape(const CallPtr& call)
     fields.push_back(Int64Const(0));
     fields.push_back(call->args_[1]);
     fields.push_back(call->args_[2]);
-    fields.insert(fields.end(), 7, Int64Const(-1)); // L1 slice layout and address metadata are not applicable.
+    fields.insert(fields.end(), kTileSliceMetadataFieldCount, Int64Const(-1));
     return MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::TileAccess), std::move(fields), call->span_);
 }
 
@@ -576,9 +580,9 @@ StmtPtr SanitizerInstrumenter::RecordGmAccess(const CallPtr& call)
         // against the GM tensor and keep the phase pair out of that window.
         const auto layout = backend::cce::MXLoadLayoutName(call);
         if (layout.find("MX_A_") != std::string::npos) {
-            accCol = MakeFloorDiv(accCol, Int64Const(2), call->span_);
+            accCol = MakeFloorDiv(accCol, Int64Const(NUM_VALUE_2), call->span_);
         } else if (layout.find("MX_B_") != std::string::npos) {
-            accRow = MakeFloorDiv(accRow, Int64Const(2), call->span_);
+            accRow = MakeFloorDiv(accRow, Int64Const(NUM_VALUE_2), call->span_);
         }
     }
     fields.push_back(std::move(accRow));
@@ -607,7 +611,7 @@ StmtPtr SanitizerInstrumenter::RecordTileAccess(const CallPtr& call, uint32_t ti
     fields.push_back(offCol);
     fields.push_back(winRow);
     fields.push_back(winCol);
-    fields.insert(fields.end(), 7, Int64Const(-1)); // L1 slice layout and address metadata are not applicable.
+    fields.insert(fields.end(), kTileSliceMetadataFieldCount, Int64Const(-1));
     return MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::TileAccess), std::move(fields), call->span_);
 }
 
@@ -641,7 +645,7 @@ StmtPtr SanitizerInstrumenter::RecordSubview(const CallPtr& call)
         fields.push_back(tileType->shape_[1]);
         fields.push_back(Int64Const(tileType->dtype_.GetBit()));
     } else {
-        fields.insert(fields.end(), 4, Int64Const(-1));
+        fields.insert(fields.end(), kTileAddressMetadataFieldCount, Int64Const(-1));
     }
     return MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::TileAccess), std::move(fields), call->span_);
 }
@@ -695,7 +699,7 @@ StmtPtr SanitizerInstrumenter::RecordPhase(const CallPtr& call, PhaseOpKind kind
         << "sanitizer: Acc tile has no resolvable phase address";
     ExprPtr accSrcAddr = Int64Const(-1);
     // Non-accumulating operations have no pair of tile views to compare.
-    std::vector<ExprPtr> accValidShapes(4, Int64Const(-1));
+    std::vector<ExprPtr> accValidShapes(NUM_VALUE_4, Int64Const(-1));
     if (accSrcIdx >= 0) {
         const auto srcIdx = static_cast<uint32_t>(accSrcIdx);
         PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, srcIdx < call->args_.size())

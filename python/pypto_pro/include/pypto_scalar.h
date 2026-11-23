@@ -20,13 +20,17 @@
 
 namespace pypto_scalar {
 
+constexpr int kBFloat16FractionBits = 7;
+constexpr unsigned kUint64HighestBitIndex = 63;
+
 // Round to nearest, ties to even. A NaN must never round into an infinity or zero.
 PYPTO_SCALAR_INLINE uint16_t FloatBitsToBFloat16(uint32_t bits)
 {
+    constexpr unsigned kFp32ToBFloat16Shift = 16;
     if ((bits & 0x7fffffffu) > 0x7f800000u) {
-        return (bits >> 16) | 0x0040u;
+        return (bits >> kFp32ToBFloat16Shift) | 0x0040u;
     }
-    return (bits + 0x7fffu + ((bits >> 16) & 1u)) >> 16;
+    return (bits + 0x7fffu + ((bits >> kFp32ToBFloat16Shift) & 1u)) >> kFp32ToBFloat16Shift;
 }
 
 // Convert integers directly: going through FP32 can round twice near a BF16 midpoint.
@@ -41,19 +45,19 @@ PYPTO_SCALAR_INLINE uint16_t IntegerToBFloat16(T value)
     if (magnitude == 0) {
         return 0;
     }
-    const unsigned exponent = 63u - __builtin_clzll(magnitude);
+    const unsigned exponent = kUint64HighestBitIndex - __builtin_clzll(magnitude);
     uint64_t significand;
-    if (exponent <= 7) {
-        significand = magnitude << (7 - exponent);
+    if (exponent <= kBFloat16FractionBits) {
+        significand = magnitude << (kBFloat16FractionBits - exponent);
     } else {
-        const unsigned shift = exponent - 7;
+        const unsigned shift = exponent - kBFloat16FractionBits;
         significand = magnitude >> shift;
         const uint64_t remainder = magnitude & ((uint64_t(1) << shift) - 1);
         const uint64_t halfway = uint64_t(1) << (shift - 1);
         significand += remainder > halfway || (remainder == halfway && (significand & 1));
     }
     // Addition propagates a rounded significand carry into the exponent.
-    return (negative ? 0x8000u : 0u) | (((exponent + 126u) << 7) + significand);
+    return (negative ? 0x8000u : 0u) | (((exponent + 126u) << kBFloat16FractionBits) + significand);
 }
 
 template <typename T>
@@ -62,14 +66,17 @@ PYPTO_SCALAR_INLINE T BFloat16ToInteger(uint16_t bits)
     if constexpr (std::is_same<T, bool>::value) {
         return (bits & 0x7fffu) != 0;
     } else {
-        const int exponent = int((bits >> 7) & 0xffu) - 127;
+        constexpr int kBFloat16ExponentBias = 127;
+        const int exponent = int((bits >> kBFloat16FractionBits) & 0xffu) - kBFloat16ExponentBias;
         // The caller must supply an in-range finite value. Avoid undefined shifts
         // even for inputs outside that contract.
-        if (exponent < 0 || exponent > 63) {
+        if (exponent < 0 || exponent > static_cast<int>(kUint64HighestBitIndex)) {
             return 0;
         }
         const uint64_t significand = (bits & 0x7fu) | 0x80u;
-        const uint64_t magnitude = exponent >= 7 ? significand << (exponent - 7) : significand >> (7 - exponent);
+        const uint64_t magnitude = exponent >= kBFloat16FractionBits ?
+                                       significand << (exponent - kBFloat16FractionBits) :
+                                       significand >> (kBFloat16FractionBits - exponent);
         return static_cast<T>((bits & 0x8000u) ? uint64_t(0) - magnitude : magnitude);
     }
 }

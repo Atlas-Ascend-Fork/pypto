@@ -10,6 +10,7 @@
 #include "ir/transforms/passes.h"
 #include <algorithm>
 #include <array>
+#include "core/common.h"
 #include "ir/transforms/base/mutator.h"
 #include "interface/configs/config_manager_ng.h"
 #include "interface/function/function.h"
@@ -67,7 +68,7 @@ TensorOpStmtPtr ApplyOpConfig(const TensorOpStmtPtr& stmt, const ConfigScopePtr&
         op->UpdateTileShape(scope->GenerateTileShape());
         if (scope->HasConfig("pass.sg_set_scope")) {
             auto values = scope->GetPassConfig<std::vector<int64_t>>(npu::tile_fwk::SG_SET_SCOPE);
-            if (values.size() == 3) {
+            if (values.size() == NUM_VALUE_3) {
                 op->SetScopeInfo(Operation::ScopeInfo::FromConfig(values));
             } else if (values.size() == 1) {
                 op->SetScopeId(static_cast<int>(values[0]));

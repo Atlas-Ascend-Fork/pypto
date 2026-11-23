@@ -39,9 +39,9 @@ __aicore__ inline float cast_type(const bfloat16_t& bVal)
 
 __aicore__ inline float to_float(const bfloat16_t& bVal) { return cast_type(bVal); }
 } // namespace pypto::aicore
-#if defined(__UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_TYPE_CONVERSION_UTILS__)
-#undef __PTO_INCLUDE_INTERNAL_HEADERS__
-#undef __UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_TYPE_CONVERSION_UTILS__
+#if defined(PYPTO_DEBUG_RESTORE_INTERNAL_HEADERS_PTO_TYPE_CONVERSION_UTILS)
+#undef PYPTO_DEBUG_INCLUDE_INTERNAL_HEADERS
+#undef PYPTO_DEBUG_RESTORE_INTERNAL_HEADERS_PTO_TYPE_CONVERSION_UTILS
 #endif
 
 #endif // IMPL_UTILS_DEBUG_NPU_ARCH_2201_PTO_TYPE_CONVERSION_UTILS_H

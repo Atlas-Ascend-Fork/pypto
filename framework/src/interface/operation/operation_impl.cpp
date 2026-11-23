@@ -346,8 +346,8 @@ static const std::vector<NPUArch> ONLINE_SOFTMAX_SUPPORTED_ARCHITECTURES = {NPUA
 void TiledMaxpool(Function& function, const TileShape& tileShape, const std::shared_ptr<LogicalTensor>& input,
                   const std::shared_ptr<LogicalTensor>& output, const Operation& op)
 {
-    const int dimN = output->shape[NUM_VALUE_0];
-    const int dimC1 = output->shape[NUM_VALUE_1];
+    const int dimN = output->shape[0];
+    const int dimC1 = output->shape[1];
     const int dimOutH = output->shape[NUM_VALUE_2];
     const int dimOutW = output->shape[NUM_VALUE_3];
     const int dimInH = input->shape[NUM_VALUE_2];
@@ -363,8 +363,8 @@ void TiledMaxpool(Function& function, const TileShape& tileShape, const std::sha
     const int poolW = op.GetIntAttribute(PoolOpAttributeKey::poolw);
 
     auto& vecTile = tileShape.GetVecTile();
-    int tileOutH = vecTile[NUM_VALUE_0];
-    int tileOutW = vecTile[NUM_VALUE_1];
+    int tileOutH = vecTile[0];
+    int tileOutW = vecTile[1];
     bool isOnlyNeedCopy = strideH == 1 && strideW == 1 && poolH == 1 && poolW == 1;
 
     for (int n = 0; n < dimN; n++) {
@@ -418,14 +418,14 @@ void TensorMaxpool(Function& function, const std::shared_ptr<LogicalTensor>& ope
                    const std::shared_ptr<LogicalTensor>& result, const std::vector<int>& pools,
                    const std::vector<int>& strides, const std::vector<int>& paddings)
 {
-    const int paddingLeft = paddings[NUM_VALUE_0];
-    const int paddingTop = paddings[NUM_VALUE_1];
+    const int paddingLeft = paddings[0];
+    const int paddingTop = paddings[1];
     const int paddingRight = paddings[NUM_VALUE_2];
     const int paddingBottom = paddings[NUM_VALUE_3];
-    const int strideH = strides[NUM_VALUE_0];
-    const int strideW = strides[NUM_VALUE_1];
-    const int poolH = pools[NUM_VALUE_0];
-    const int poolW = pools[NUM_VALUE_1];
+    const int strideH = strides[0];
+    const int strideW = strides[1];
+    const int poolH = pools[0];
+    const int poolW = pools[1];
 
     auto& maxpoolTensorOp = function.AddOperation(Opcode::OP_MAX_POOL, {operand}, {result});
     maxpoolTensorOp.SetAttribute(ConvOpAttributeKey::paddingLeft, paddingLeft);
@@ -448,18 +448,18 @@ Tensor Maxpool(const Tensor& operand, const std::vector<int>& pools, const std::
 
     const int inDimH = operand.GetShape()[NUM_VALUE_2];
     const int inDimW = operand.GetShape()[NUM_VALUE_3];
-    const int paddingLeft = paddings[NUM_VALUE_0];
-    const int paddingTop = paddings[NUM_VALUE_1];
+    const int paddingLeft = paddings[0];
+    const int paddingTop = paddings[1];
     const int paddingRight = paddings[NUM_VALUE_2];
     const int paddingBottom = paddings[NUM_VALUE_3];
-    const int strideH = strides[NUM_VALUE_0];
-    const int strideW = strides[NUM_VALUE_1];
-    const int kh = pools[NUM_VALUE_0];
-    const int kw = pools[NUM_VALUE_1];
+    const int strideH = strides[0];
+    const int strideW = strides[1];
+    const int kh = pools[0];
+    const int kw = pools[1];
     const int outHeight = CeilDiv(inDimH + paddingTop + paddingBottom - kh + 1, strideH);
     const int outWidth = CeilDiv(inDimW + paddingLeft + paddingRight - kw + 1, strideW);
-    const std::vector<int64_t> outShape = {operand.GetShape()[NUM_VALUE_0], operand.GetShape()[NUM_VALUE_1], outHeight,
-                                           outWidth, operand.GetShape()[NUM_VALUE_4]};
+    const std::vector<int64_t> outShape = {operand.GetShape()[0], operand.GetShape()[1], outHeight, outWidth,
+                                           operand.GetShape()[NUM_VALUE_4]};
     Tensor result(operand.GetStorage()->tensor->datatype, outShape);
     CALL(Maxpool, *Program::GetInstance().GetCurrentFunction(), operand.GetStorage(), result.GetStorage(), pools,
          strides, paddings);

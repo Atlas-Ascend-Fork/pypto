@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "core/any_cast.h"
+#include "core/common.h"
 #include "core/dtype.h"
 #include "core/logging.h"
 #include "ir/expr.h"
@@ -110,7 +111,7 @@ template <typename InputType>
 TypePtr DeduceDebugDumpType(const std::vector<ExprPtr>& args, const std::string& opName,
                             const std::string& inputTypeName)
 {
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1 || args.size() == 3)
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1 || args.size() == NUM_VALUE_3)
         << opName << " requires 1 argument (input) or 3 arguments (input, offsets, shapes), but got " << args.size();
 
     auto inputType = As<InputType>(args[0]->GetType());

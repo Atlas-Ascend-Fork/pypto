@@ -93,8 +93,9 @@ __simt_vf__ __launch_bounds__(kNumMaxRanks) inline void BarrierSignal(__gm__ Win
 
 __aicore__ inline void CpuRelax()
 {
+    constexpr int32_t kRelaxNopCount = 300;
 #pragma unroll 1
-    for (int32_t i = 0; i < 300; ++i) {
+    for (int32_t i = 0; i < kRelaxNopCount; ++i) {
         asm volatile("nop");
     }
 }

@@ -296,9 +296,9 @@ __aicore__ constexpr inline DumpTensorDataType get_dump_datatype()
 
 // PyPTO: PtoVFDebug* helpers omitted (SIMD VF printf/dump not in scope; avoids -Wunused-function).
 
-#if defined(__UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_DEBUG_UTILS__)
-#undef __PTO_INCLUDE_INTERNAL_HEADERS__
-#undef __UNDEF_PTO_INCLUDE_INTERNAL_HEADERS_PTO_DEBUG_UTILS__
+#if defined(PYPTO_DEBUG_RESTORE_INTERNAL_HEADERS_PTO_DEBUG_UTILS)
+#undef PYPTO_DEBUG_INCLUDE_INTERNAL_HEADERS
+#undef PYPTO_DEBUG_RESTORE_INTERNAL_HEADERS_PTO_DEBUG_UTILS
 #endif
 
 #endif // IMPL_UTILS_DEBUG_PTO_DEBUG_UTILS_H

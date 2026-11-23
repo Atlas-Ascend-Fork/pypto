@@ -206,7 +206,7 @@ Tensor Dequantize(const Tensor& input, const Tensor& scale, DataType otype, int 
 
     int ndim = static_cast<int>(processedInput.GetShape().size());
     int normalizedAxis = axis >= 0 ? axis - ndim : axis;
-    CHECK(VectorErrorCode::ERR_PARAM_INVALID, normalizedAxis == -NUM_VALUE_1 || normalizedAxis == -NUM_VALUE_2)
+    CHECK(VectorErrorCode::ERR_PARAM_INVALID, normalizedAxis == -1 || normalizedAxis == -NUM_VALUE_2)
         << "Dequantize axis must be -1 (per-row) or -2 (per-column), but got axis=" << axis
         << " (normalized=" << normalizedAxis << ")";
 

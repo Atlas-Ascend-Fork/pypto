@@ -150,7 +150,7 @@ void ShrinkTensorLastDimension(const LogicalTensorPtr& TensorPtr)
     std::vector<int64_t> inputShape(TensorPtr->shape);
     int lastDim = inputShape.back();
     int bitsNumOfByte = NUM_VALUE_8;
-    int shrinkLastDim = std::max(lastDim / bitsNumOfByte, NUM_VALUE_1);
+    int shrinkLastDim = std::max(lastDim / bitsNumOfByte, 1);
     TensorPtr->shape.back() = shrinkLastDim;
 }
 

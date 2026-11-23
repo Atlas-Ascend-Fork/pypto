@@ -15,6 +15,7 @@
 
 #include "gtest/gtest.h"
 
+#include <any>
 #include <cstdint>
 #include <memory>
 #include <optional>
@@ -25,6 +26,7 @@
 #include "core/error.h"
 #include "ir/expr.h"
 #include "ir/kind_traits.h"
+#include "ir/op_registry.h"
 #include "ir/scalar_expr.h"
 #include "ir/type.h"
 #include "ir/type_inference.h"
@@ -354,6 +356,52 @@ TEST_F(TypeInferenceTest, DeduceBlockOutType_FirstNotTile_Throws)
     auto scalar = MakeScalarVar("s", DataType::FP32);
     std::vector<std::pair<std::string, std::any>> kwargs;
     EXPECT_THROW((void)DeduceBlockOutType({scalar, tile}, kwargs, "test_op", 2), npu::tile_fwk::Error);
+}
+
+TEST(DistOpsTest, ChannelRequiresNonNegativeAlignedUbAddress)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto window = std::make_shared<Var>("window", GetWindowType(), Sp());
+    auto peer = std::make_shared<ConstInt>(-1, DataType::INT32, Sp());
+    for (int address : {0, 64}) {
+        auto channel = registry.Create("dist.channel", {window, peer}, {{"ub_addr", address}}, Sp());
+        auto type = As<ScalarType>(channel->GetType());
+        ASSERT_NE(type, nullptr);
+        EXPECT_EQ(type->dtype_, DataType::INT64);
+    }
+    for (int address : {-64, 32}) {
+        EXPECT_THROW((void)registry.Create("dist.channel", {window, peer}, {{"ub_addr", address}}, Sp()),
+                     npu::tile_fwk::Error);
+    }
+}
+
+TEST(DistOpsTest, IndexedWriteChecksIndexShapeCapacityAndRowAlignment)
+{
+    auto& registry = OpRegistry::GetInstance();
+    auto channel = MakeScalarVar("channel", DataType::INT64);
+    auto dst = MakePtrVar("dst", DataType::FP32);
+    auto src = MakeTensorVar("src", {4, 8}, DataType::FP32);
+    auto count = std::make_shared<ConstInt>(4, DataType::INT32, Sp());
+    auto srcIndices = MakeTileVarWithMemRef("src_indices", {4, 1}, DataType::INT32, MemorySpace::Vec, 0, 16);
+    auto dstIndices = MakeTileVarWithMemRef("dst_indices", {1, 4}, DataType::INT32, MemorySpace::Vec, 64, 16);
+    const std::vector<std::pair<std::string, std::any>> kwargs{{"submit", true}};
+    std::vector<ExprPtr> args{channel,    dst,       src, count, std::make_shared<ConstInt>(32, DataType::INT32, Sp()),
+                              srcIndices, dstIndices};
+    auto call = registry.Create("channel.write_indexed", args, kwargs, Sp());
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
+
+    for (int rowBytes : {0, 31, 256 * 1024 * 1024 + 32}) {
+        auto invalid = args;
+        invalid[4] = std::make_shared<ConstInt>(rowBytes, DataType::INT32, Sp());
+        EXPECT_THROW((void)registry.Create("channel.write_indexed", invalid, kwargs, Sp()), npu::tile_fwk::Error);
+    }
+    for (size_t index : {size_t{5}, size_t{6}}) {
+        auto invalid = args;
+        invalid[index] = MakeTileVarWithMemRef("short_indices", {3, 1}, DataType::INT32, MemorySpace::Vec, 0, 12);
+        EXPECT_THROW((void)registry.Create("channel.write_indexed", invalid, kwargs, Sp()), npu::tile_fwk::Error);
+        invalid[index] = MakeTileVarWithMemRef("matrix_indices", {2, 2}, DataType::INT32, MemorySpace::Vec, 0, 16);
+        EXPECT_THROW((void)registry.Create("channel.write_indexed", invalid, kwargs, Sp()), npu::tile_fwk::Error);
+    }
 }
 
 } // namespace ir
