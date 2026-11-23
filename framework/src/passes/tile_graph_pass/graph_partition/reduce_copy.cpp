@@ -1101,38 +1101,46 @@ bool MixGraphMerger::CheckNoExternalUseOfMergedInnerTensor(const std::vector<int
                 isInvalid = IsInvalidMergedInnerTensor(tensorId, mergedRoots, prodIn, prodOut, consIn, consOut);
             }
             if (isInvalid) {
-                const auto& tinfo = mInput.boundaryTensors[tensorId];
-                if (mWarnedInnerTensorMagics.insert(tinfo.tensorMagic).second) {
-                    bool hasScopelessEndpoint = tinfo.producerSubgraphs.size() != tinfo.producerCvFuseIds.size() ||
-                                                tinfo.consumerSubgraphs.size() != tinfo.consumerCvFuseIds.size();
-                    for (int cvFuseId : tinfo.producerCvFuseIds) {
-                        hasScopelessEndpoint = hasScopelessEndpoint || cvFuseId < 0;
-                    }
-                    for (int cvFuseId : tinfo.consumerCvFuseIds) {
-                        hasScopelessEndpoint = hasScopelessEndpoint || cvFuseId < 0;
-                    }
-                    const char* cause = checkByCvFuseId ? (hasScopelessEndpoint ?
-                                                               "scope information is missing (CvFuseId=-1)" :
-                                                               "producer/consumer carry different scopes (CvFuseId)") :
-                                                          "producer/consumer carry different scopes (CvFuseId)";
-                    APASS_LOG_WARN_F(Elements::Operation,
-                                     "Merge group [%s] not merged: tensor %d producer(ingroup[%s] outgroup[%s]) "
-                                     "consumer(ingroup[%s] outgroup[%s]) has both in-group and out-group endpoints. "
-                                     "Likely cause: %s.",
-                                     IntVecToStr(actualGroup).c_str(), tinfo.tensorMagic, IntVecToStr(prodIn).c_str(),
-                                     IntVecToStr(prodOut).c_str(), IntVecToStr(consIn).c_str(),
-                                     IntVecToStr(consOut).c_str(), cause);
-                } else {
-                    APASS_LOG_DEBUG_F(Elements::Operation,
-                                      "Merge group [%s] not merged: tensor %d blocked by inner-external-use again, "
-                                      "see previous WARN for detail.",
-                                      IntVecToStr(actualGroup).c_str(), tinfo.tensorMagic);
-                }
+                LogMergedInnerTensorRejection(actualGroup, tensorId, prodIn, prodOut, consIn, consOut, checkByCvFuseId);
                 return false;
             }
         }
     }
     return true;
+}
+
+void MixGraphMerger::LogMergedInnerTensorRejection(const std::vector<int>& actualGroup, int tensorId,
+                                                   const std::vector<int>& prodIn, const std::vector<int>& prodOut,
+                                                   const std::vector<int>& consIn, const std::vector<int>& consOut,
+                                                   bool checkByCvFuseId)
+{
+    const auto& tinfo = mInput.boundaryTensors[tensorId];
+    if (!mWarnedInnerTensorMagics.insert(tinfo.tensorMagic).second) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Merge group [%s] not merged: tensor %d blocked by inner-external-use again, "
+                          "see previous WARN for detail.",
+                          IntVecToStr(actualGroup).c_str(), tinfo.tensorMagic);
+        return;
+    }
+    // scope 缺失(端点数不匹配或 CvFuseId=-1)与 scope 不一致两类成因分开提示, 便于定位配置问题
+    bool hasScopelessEndpoint = tinfo.producerSubgraphs.size() != tinfo.producerCvFuseIds.size() ||
+                                tinfo.consumerSubgraphs.size() != tinfo.consumerCvFuseIds.size();
+    for (int cvFuseId : tinfo.producerCvFuseIds) {
+        hasScopelessEndpoint = hasScopelessEndpoint || cvFuseId < 0;
+    }
+    for (int cvFuseId : tinfo.consumerCvFuseIds) {
+        hasScopelessEndpoint = hasScopelessEndpoint || cvFuseId < 0;
+    }
+    const char* cause = checkByCvFuseId ?
+                            (hasScopelessEndpoint ? "scope information is missing (CvFuseId=-1)" :
+                                                    "producer/consumer carry different scopes (CvFuseId)") :
+                            "producer/consumer carry different scopes (CvFuseId)";
+    APASS_LOG_WARN_F(Elements::Operation,
+                     "Merge group [%s] not merged: tensor %d producer(ingroup[%s] outgroup[%s]) "
+                     "consumer(ingroup[%s] outgroup[%s]) has both in-group and out-group endpoints. "
+                     "Likely cause: %s.",
+                     IntVecToStr(actualGroup).c_str(), tinfo.tensorMagic, IntVecToStr(prodIn).c_str(),
+                     IntVecToStr(prodOut).c_str(), IntVecToStr(consIn).c_str(), IntVecToStr(consOut).c_str(), cause);
 }
 
 // 多分支门槛: 2+ 个 root/branch 视为多分支(fan-in/fan-out)。tensor 层 N:M 判定、
@@ -1186,17 +1194,10 @@ static bool IsCrossCoreEndpointPair(EndpointCoreKind prodKind, EndpointCoreKind 
            (prodKind == EndpointCoreKind::AIV && consKind == EndpointCoreKind::AIC);
 }
 
-// 两阶段 N:M 收益评估: 组内须为严格两层完全二部结构(生产/消费侧各>=2 root, 无中间/孤立
-// root, 每个 prod->cons 均有调度依赖且带跨核直连证据 directPathRootPairs), 双侧并行损失
-// sum-max 均不超过 kSerialLossRatio x 对侧 max 时放行。twoStageRoots 输出结构成员全集,
-// 供 hinge 护栏按条目豁免(仅跳过端点与分支全落在结构内的条目)。
-bool MixGraphMerger::CheckTwoStageNmBenefit(const std::vector<int>& actualGroup,
-                                            const std::set<std::pair<int, int>>& directPathRootPairs,
-                                            std::set<int>& twoStageRoots)
+bool MixGraphMerger::ClassifyTwoStageSides(const std::vector<int>& actualGroup, std::set<int>& producers,
+                                           std::set<int>& consumers)
 {
     const std::set<int> group(actualGroup.begin(), actualGroup.end());
-    std::set<int> producers;
-    std::set<int> consumers;
     for (int root : actualGroup) {
         bool hasPred = false;
         bool hasSucc = false;
@@ -1218,6 +1219,12 @@ bool MixGraphMerger::CheckTwoStageNmBenefit(const std::vector<int>& actualGroup,
                           producers.size(), consumers.size());
         return false;
     }
+    return true;
+}
+
+bool MixGraphMerger::VerifyTwoStageDependencies(const std::set<int>& producers, const std::set<int>& consumers,
+                                                const std::set<std::pair<int, int>>& directPathRootPairs)
+{
     for (int prod : producers) {
         for (int cons : consumers) {
             if (mCachedOutGraph[prod].count(cons) == 0) {
@@ -1232,10 +1239,15 @@ bool MixGraphMerger::CheckTwoStageNmBenefit(const std::vector<int>& actualGroup,
             }
         }
     }
+    return true;
+}
+
+bool MixGraphMerger::IsTwoStageLossAcceptable(const std::set<int>& producers, const std::set<int>& consumers)
+{
     std::unordered_map<int, int64_t> latency;
     for (int i = 0; i < mInput.numSubgraph; ++i) {
         const int root = FindParent(i);
-        if (group.count(root) > 0) {
+        if (producers.count(root) > 0 || consumers.count(root) > 0) {
             latency[root] += static_cast<int64_t>(mInput.subgraphAICLatency[i]) + mInput.subgraphAIVLatency[i];
         }
     }
@@ -1262,7 +1274,22 @@ bool MixGraphMerger::CheckTwoStageNmBenefit(const std::vector<int>& actualGroup,
                       "prodBudget=%ld consBudget=%ld decision=%s.",
                       producers.size(), consumers.size(), prodLoss, consLoss, kSerialLossRatio * consMax,
                       kSerialLossRatio * prodMax, allowed ? "allow" : "reject");
-    if (!allowed) {
+    return allowed;
+}
+
+// 两阶段 N:M 收益评估: 组内须为严格两层完全二部结构(生产/消费侧各>=2 root, 无中间/孤立
+// root, 每个 prod->cons 均有调度依赖且带跨核直连证据 directPathRootPairs), 双侧并行损失
+// sum-max 均不超过 kSerialLossRatio x 对侧 max 时放行。twoStageRoots 输出结构成员全集,
+// 供 hinge 护栏按条目豁免(仅跳过端点与分支全落在结构内的条目)。
+bool MixGraphMerger::CheckTwoStageNmBenefit(const std::vector<int>& actualGroup,
+                                            const std::set<std::pair<int, int>>& directPathRootPairs,
+                                            std::set<int>& twoStageRoots)
+{
+    std::set<int> producers;
+    std::set<int> consumers;
+    if (!ClassifyTwoStageSides(actualGroup, producers, consumers) ||
+        !VerifyTwoStageDependencies(producers, consumers, directPathRootPairs) ||
+        !IsTwoStageLossAcceptable(producers, consumers)) {
         return false;
     }
     twoStageRoots.insert(producers.begin(), producers.end());
@@ -1270,38 +1297,80 @@ bool MixGraphMerger::CheckTwoStageNmBenefit(const std::vector<int>& actualGroup,
     return true;
 }
 
-bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>& actualGroup, bool allowSinkMerge)
+void MixGraphMerger::CollectTensorEndpointPairs(int tensorId, const std::unordered_set<int>& mergedRoot,
+                                                StructuralPattern& pattern)
 {
-    // 两层结构 benefit 判定(不依赖 latency):
-    // tensor 层: 分侧统计 prodRoots/consRoots, 仅 prodRoots>1 && consRoots>1 拒绝为 N:M tensor;
-    //            1:1/1:N/N:1 均视为简单 tensor edge, 建 root 级方向边。
-    // root 图层: 用 rootPreds/rootSuccs 识别整体 N:M 并拒绝; 1:1/N:1/1:N 均通过。
-    // 跨核直连门: 只检查纯 C/V root 之间的实际跨核数据边, 组内这些边至少一条具备直连资格。
-    // sink 保护: actualGroup 内不产出 boundary tensor 的 root,
-    //            统计其当前所有 producer root, >1 且串行损失(Σbranch − max)超过
-    //            kSerialLossRatio × 合入root 才拒绝; 其余(损失可被 root 消化/全部归一 root)放行。
-    std::unordered_set<int> mergedRoot(actualGroup.begin(), actualGroup.end());
+    const auto& info = mInput.boundaryTensors[tensorId];
+    // 仅"分属不同候选 root 的真实 op 对"才构成本次新增边界; 同 root 关系已被前序合并
+    // 内部化, 不计本次收益。
+    for (const auto& prod : info.producers) {
+        const int prodRoot = FindParent(prod.subgraphId);
+        for (const auto& cons : info.consumers) {
+            const int consRoot = FindParent(cons.subgraphId);
+            if (prodRoot == consRoot) {
+                continue;
+            }
+            // 仅 AIC↔AIV 端点对参与本收益门; AICPU/UNKNOWN 端点对不计入本次跨核边:
+            // 核型无明确策略, 既不触发直连要求, 其 memtype 通路也不计入直连收益
+            // (AICPU 子图正常已被 MarkNoMergeSubgraph 前置排除, 此处为防御性豁免)。
+            if (!IsCrossCoreEndpointPair(prod.coreKind, cons.coreKind)) {
+                continue;
+            }
+            const bool pairDirectPath = prod.directPath || cons.directPath;
+            if (pairDirectPath) {
+                pattern.directConsumersByRoot[prodRoot].insert(consRoot);
+            }
+            if (mergedRoot.count(prodRoot) == 0 || mergedRoot.count(consRoot) == 0) {
+                continue;
+            }
+            const auto [prodHasAIC, prodHasAIV] = pattern.rootCoreKinds.at(prodRoot);
+            const auto [consHasAIC, consHasAIV] = pattern.rootCoreKinds.at(consRoot);
+            // 仅"一端纯 C、另一端纯 V"的 root 对要求直连资格。
+            if (prodHasAIC == consHasAIV && prodHasAIV == consHasAIC && prodHasAIC != prodHasAIV) {
+                pattern.hasCrossCoreEdge = true;
+                pattern.hasDirectPathEdge = pattern.hasDirectPathEdge || pairDirectPath;
+            }
+            if (pairDirectPath) {
+                pattern.directPathRootPairs.insert({prodRoot, consRoot});
+            }
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Cross-core endpoint pair on boundary tensor %d: prod sg%d -> cons sg%d, "
+                              "direct path %s.",
+                              info.tensorMagic, prod.subgraphId, cons.subgraphId, pairDirectPath ? "hit" : "miss");
+        }
+    }
+}
+
+void MixGraphMerger::BuildRootLevelEdges(const std::set<int>& prodRoots, const std::set<int>& consRoots,
+                                         StructuralPattern& pattern)
+{
+    // 建 root 级方向边 (prodRoot -> consRoot), 跳过 self-loop
+    for (int prodRoot : prodRoots) {
+        for (int consRoot : consRoots) {
+            if (prodRoot == consRoot) {
+                continue;
+            }
+            pattern.hasSimpleTensorEdge = true;
+            pattern.rootPreds[consRoot].insert(prodRoot);
+            pattern.rootSuccs[prodRoot].insert(consRoot);
+        }
+    }
+}
+
+void MixGraphMerger::CollectStructuralPattern(const std::vector<int>& actualGroup,
+                                              const std::unordered_set<int>& mergedRoot, StructuralPattern& pattern)
+{
     // root 级核构成(纯C/纯V/混合): 混合 root 的跨核串行化代价已沉没, 无干净两核并行可牺牲,
     // 涉及混合 root 的边不触发直连门; 纯 C root <-> 纯 V root 的边按候选组汇总直连收益。
-    std::unordered_map<int, std::pair<bool, bool>> rootCoreKinds;
     for (int sg = 0; sg < mInput.numSubgraph; ++sg) {
         const int root = FindParent(sg);
         if (mergedRoot.count(root) > 0) {
-            auto& [hasAIC, hasAIV] = rootCoreKinds[root];
+            auto& [hasAIC, hasAIV] = pattern.rootCoreKinds[root];
             hasAIC = hasAIC || mInput.subgraphAICOpNum[sg] > 0;
             hasAIV = hasAIV || mInput.subgraphAIVOpNum[sg] > 0;
         }
     }
     ++mVisitStamp;
-    std::set<int> allProdRoots;
-    std::unordered_map<int, std::set<int>> rootPreds;
-    std::unordered_map<int, std::set<int>> rootSuccs;
-    bool hasSimpleTensorEdge = false;
-    bool hasDirectPathEdge = false;
-    bool hasCrossCoreEdge = false;
-    // Also collect external hinge endpoints, without changing candidate-local benefit evidence.
-    std::unordered_map<int, std::set<int>> directConsumersByRoot;
-    std::set<std::pair<int, int>> directPathRootPairs; // 跨核直连 root 对: N:M 放行证据须来自结构自身的边
     for (int root : actualGroup) {
         for (int tensorId : mRootToBoundaryTensorIds[root]) {
             if (mTensorVisitStamp[tensorId] == mVisitStamp) {
@@ -1316,7 +1385,7 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                 int parent = FindParent(s);
                 if (mergedRoot.count(parent) > 0) {
                     prodRoots.insert(parent);
-                    allProdRoots.insert(parent);
+                    pattern.allProdRoots.insert(parent);
                 }
             }
             for (int s : info.consumerSubgraphs) {
@@ -1325,45 +1394,7 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                     consRoots.insert(parent);
                 }
             }
-            // 仅"分属不同候选 root 的真实 op 对"才构成本次新增边界; 同 root 关系已被前序合并
-            // 内部化, 不计本次收益。
-            for (const auto& prod : info.producers) {
-                const int prodRoot = FindParent(prod.subgraphId);
-                for (const auto& cons : info.consumers) {
-                    const int consRoot = FindParent(cons.subgraphId);
-                    if (prodRoot == consRoot) {
-                        continue;
-                    }
-                    // 仅 AIC↔AIV 端点对参与本收益门; AICPU/UNKNOWN 端点对不计入本次跨核边:
-                    // 核型无明确策略, 既不触发直连要求, 其 memtype 通路也不计入直连收益
-                    // (AICPU 子图正常已被 MarkNoMergeSubgraph 前置排除, 此处为防御性豁免)。
-                    if (!IsCrossCoreEndpointPair(prod.coreKind, cons.coreKind)) {
-                        continue;
-                    }
-                    const bool pairDirectPath = prod.directPath || cons.directPath;
-                    if (pairDirectPath) {
-                        directConsumersByRoot[prodRoot].insert(consRoot);
-                    }
-                    if (mergedRoot.count(prodRoot) == 0 || mergedRoot.count(consRoot) == 0) {
-                        continue;
-                    }
-                    const auto [prodHasAIC, prodHasAIV] = rootCoreKinds.at(prodRoot);
-                    const auto [consHasAIC, consHasAIV] = rootCoreKinds.at(consRoot);
-                    // 仅"一端纯 C、另一端纯 V"的 root 对要求直连资格。
-                    if (prodHasAIC == consHasAIV && prodHasAIV == consHasAIC && prodHasAIC != prodHasAIV) {
-                        hasCrossCoreEdge = true;
-                        hasDirectPathEdge = hasDirectPathEdge || pairDirectPath;
-                    }
-                    if (pairDirectPath) {
-                        directPathRootPairs.insert({prodRoot, consRoot});
-                    }
-                    APASS_LOG_DEBUG_F(Elements::Operation,
-                                      "Cross-core endpoint pair on boundary tensor %d: prod sg%d -> cons sg%d, "
-                                      "direct path %s.",
-                                      info.tensorMagic, prod.subgraphId, cons.subgraphId,
-                                      pairDirectPath ? "hit" : "miss");
-                }
-            }
+            CollectTensorEndpointPairs(tensorId, mergedRoot, pattern);
             if (prodRoots.empty() || consRoots.empty()) {
                 continue;
             }
@@ -1373,19 +1404,47 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                                   "N:M tensor %d (prod=%zu, cons=%zu): defer to candidate stage evaluation.",
                                   info.tensorMagic, prodRoots.size(), consRoots.size());
             }
-            // 建 root 级方向边 (prodRoot -> consRoot), 跳过 self-loop
-            for (int prodRoot : prodRoots) {
-                for (int consRoot : consRoots) {
-                    if (prodRoot == consRoot) {
-                        continue;
-                    }
-                    hasSimpleTensorEdge = true;
-                    rootPreds[consRoot].insert(prodRoot);
-                    rootSuccs[prodRoot].insert(consRoot);
-                }
+            BuildRootLevelEdges(prodRoots, consRoots, pattern);
+        }
+    }
+}
+
+bool MixGraphMerger::AllOutputSinksInCandidate(const std::unordered_set<int>& mergedRoot)
+{
+    if (mGlobalOutputSinks.size() < kMultiBranchThreshold) {
+        return false;
+    }
+    for (int sinkSg : mGlobalOutputSinks) {
+        if (mergedRoot.count(FindParent(sinkSg)) == 0) {
+            return false;
+        }
+    }
+    APASS_LOG_DEBUG_F(Elements::Operation, "Structural merge allowed: candidate consolidates all %zu output sinks.",
+                      mGlobalOutputSinks.size());
+    return true;
+}
+
+std::set<int> MixGraphMerger::CollectIncomingRoots(int root)
+{
+    std::set<int> incomingRoots;
+    for (int tensorId : mRootToBoundaryTensorIds[root]) {
+        const auto& info = mInput.boundaryTensors[tensorId];
+        for (int s : info.producerSubgraphs) {
+            int predRoot = FindParent(s);
+            if (predRoot != root) {
+                incomingRoots.insert(predRoot);
             }
         }
     }
+    return incomingRoots;
+}
+
+bool MixGraphMerger::CheckStructuralSinkBenefit(const std::vector<int>& actualGroup,
+                                                const std::unordered_set<int>& mergedRoot,
+                                                const std::set<int>& allProdRoots, bool allowSinkMerge)
+{
+    // sink(汇聚点): 候选组内不产出任何 boundary tensor 的 root —— 纯消费输入、无对外输出,
+    // 合并它的收益只有省边界拷贝/调度, 却可能把多个并行 producer 串进单 kernel。
     // sink 保护: 不产出 boundary tensor 的 root, 当前 producer root 数 > 1 才拒绝。
     // 若所有 producer 已经归到同一个 root，合入 sink 不再减少并行分支。
     // 串行损失保护: 分支串行化损失(Σbranch − max)超过 kSerialLossRatio × 合入root 时才拒绝,
@@ -1394,93 +1453,46 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
     // 视为合并并行输出级(下游无并行可损失), 跳过 sink 保护。
     // 推迟门控: 常规合并轮凡涉及 sink 的候选组一律推迟, 防止 sink 提前合入后逐轮吞并大量小子图;
     // 仅常规合并收敛后的 sink 尝试轮(allowSinkMerge=true)才执行上述检查并尝试合并。
-    bool skipSinkProtection = false;
-    if (mGlobalOutputSinks.size() >= kMultiBranchThreshold) {
-        skipSinkProtection = true;
-        for (int sinkSg : mGlobalOutputSinks) {
-            if (mergedRoot.count(FindParent(sinkSg)) == 0) {
-                skipSinkProtection = false;
-                break;
-            }
-        }
-        if (skipSinkProtection) {
-            APASS_LOG_DEBUG_F(Elements::Operation,
-                              "Structural merge allowed: candidate consolidates all %zu output sinks.",
-                              mGlobalOutputSinks.size());
-        }
-    }
-    if (skipSinkProtection) {
+    if (AllOutputSinksInCandidate(mergedRoot)) {
         if (!allowSinkMerge) {
             APASS_LOG_DEBUG_F(Elements::Operation,
                               "Structural merge deferred: candidate consolidates all output sinks, "
                               "wait for sink merge round.");
             return false;
         }
-    } else {
-        for (int root : actualGroup) {
-            if (allProdRoots.count(root) > 0) {
-                continue;
-            }
+        return true;
+    }
+    for (int root : actualGroup) {
+        if (allProdRoots.count(root) > 0) {
+            continue;
+        }
 
-            std::set<int> incomingRoots;
-            for (int tensorId : mRootToBoundaryTensorIds[root]) {
-                const auto& info = mInput.boundaryTensors[tensorId];
-                for (int s : info.producerSubgraphs) {
-                    int predRoot = FindParent(s);
-                    if (predRoot != root) {
-                        incomingRoots.insert(predRoot);
-                    }
-                }
-            }
-
-            if (incomingRoots.size() < kMultiBranchThreshold) {
-                continue;
-            }
-            if (!allowSinkMerge) {
-                APASS_LOG_DEBUG_F(Elements::Operation,
-                                  "Structural merge deferred: convergence sink at root %d (rootInDeg=%zu), "
-                                  "wait for sink merge round.",
-                                  root, incomingRoots.size());
-                return false;
-            }
-            // sink 收益保护(相对 root 标尺): 分支串行化损失(Σ-max)超过 root 总 latency 的
-            // kSerialLossRatio 倍时拒绝。详见 IsSinkMergeUnbeneficial。
-            if (IsSinkMergeUnbeneficial(root, incomingRoots)) {
-                APASS_LOG_DEBUG_F(Elements::Operation,
-                                  "Structural merge skipped: convergence sink at root %d (rootInDeg=%zu).", root,
-                                  incomingRoots.size());
-                return false;
-            }
+        const std::set<int> incomingRoots = CollectIncomingRoots(root);
+        if (incomingRoots.size() < kMultiBranchThreshold) {
+            continue;
         }
-    }
-    // N:M requires a special direct path and bounded loss on both dependency stages.
-    bool hasNto1 = false;
-    bool has1toN = false;
-    for (const auto& pair : rootPreds) {
-        if (pair.second.size() >= kMultiBranchThreshold) {
-            hasNto1 = true;
-            break;
+        if (!allowSinkMerge) {
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Structural merge deferred: convergence sink at root %d (rootInDeg=%zu), "
+                              "wait for sink merge round.",
+                              root, incomingRoots.size());
+            return false;
         }
-    }
-    for (const auto& pair : rootSuccs) {
-        if (pair.second.size() >= kMultiBranchThreshold) {
-            has1toN = true;
-            break;
-        }
-    }
-    std::set<int> twoStageRoots;
-    if (hasNto1 && has1toN) {
-        // 直连证据按 root 对在 CheckTwoStageNmBenefit 内逐边校验(每个 prod->cons 依赖均须
-        // 带直连), 不再用整候选聚合的 hasDirectPathEdge 作为放行依据。
-        if (!CheckTwoStageNmBenefit(actualGroup, directPathRootPairs, twoStageRoots)) {
+        // sink 收益保护(相对 root 标尺): 分支串行化损失(Σ-max)超过 root 总 latency 的
+        // kSerialLossRatio 倍时拒绝。详见 IsSinkMergeUnbeneficial。
+        if (IsSinkMergeUnbeneficial(root, incomingRoots)) {
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Structural merge skipped: convergence sink at root %d (rootInDeg=%zu).", root,
+                              incomingRoots.size());
             return false;
         }
     }
-    // 并行分支串行化防护(实测依据: mla_prolog_quant automix, Unroll 展开后的扇出/扇入组把
-    // 8~16 路可跨核并行的分支串进单 kernel, e2e +6.6%): 同一 hinge 端点(组内或组外的生产者/
-    // 消费者)聚合挂着 >= kHingeBranchThreshold 个组内 root, 且这些 root 在组内 root 图上两两
-    // 互不可达(无依赖路径)、亦非同环耦合时, 判定为并行分支被串行化, 拒绝; 分支间存在组内
-    // 依赖路径的链式合并(可打通 L0C2UB 的 cube+glue 链)与同环多链不受影响。
+    return true;
+}
+
+std::unordered_map<int, std::set<int>> MixGraphMerger::CollectHingeToBranchRoots(
+    const std::vector<int>& actualGroup, const std::unordered_set<int>& mergedRoot)
+{
     ++mVisitStamp;
     std::unordered_map<int, std::set<int>> hingeToBranchRoots;
     for (int root : actualGroup) {
@@ -1507,34 +1519,93 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
             }
         }
     }
+    return hingeToBranchRoots;
+}
+
+bool MixGraphMerger::AreBranchesRingCoupled(const std::set<int>& branches)
+{
+    if (mRootLoopPaths.empty()) {
+        return false;
+    }
+    for (int branch : branches) {
+        for (int other : branches) {
+            if (branch != other && !HasSharedLoopPath(mRootLoopPaths[branch], mRootLoopPaths[other])) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool MixGraphMerger::IsHingeSerialLossAbsorbable(int hingeRoot, const std::set<int>& branches,
+                                                 const StructuralPattern& pattern)
+{
+    // Aggregate latency by current root: a branch may already contain multiple subgraphs.
+    std::unordered_map<int, int64_t> rootLatency;
+    for (int i = 0; i < mInput.numSubgraph; ++i) {
+        const int root = FindParent(i);
+        if (root == hingeRoot || branches.count(root) > 0) {
+            rootLatency[root] += static_cast<int64_t>(mInput.subgraphAICLatency[i]) + mInput.subgraphAIVLatency[i];
+        }
+    }
+    const int64_t hingeLatency = rootLatency[hingeRoot];
+    int64_t sumBranchLatency = 0;
+    int64_t maxBranchLatency = 0;
+    for (int branch : branches) {
+        const int64_t latency = rootLatency[branch];
+        sumBranchLatency += latency;
+        maxBranchLatency = std::max(maxBranchLatency, latency);
+    }
+    // A direct-path 1:N hinge can remove a shared GM round trip for every branch.
+    // Charge the hinge's parallel-loss budget only when its latency is comparable to
+    // the largest branch; otherwise the direct-path benefit cannot amortize serialization.
+    const auto& directConsumersByRoot = pattern.directConsumersByRoot;
+    const auto directIt = directConsumersByRoot.find(hingeRoot);
+    if (hingeLatency <= maxBranchLatency && directIt != directConsumersByRoot.end() &&
+        std::includes(directIt->second.begin(), directIt->second.end(), branches.begin(), branches.end())) {
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Structural merge allowed: direct-path 1:N hinge root %d has %zu branches.", hingeRoot,
+                          branches.size());
+        return true;
+    }
+    // Include the longest parallel branch in the hinge execution baseline.
+    const int64_t baselineLatency = hingeLatency + maxBranchLatency;
+    const int64_t serialLoss = sumBranchLatency - maxBranchLatency;
+    const int64_t budget = kSerialLossRatio * baselineLatency;
+    APASS_LOG_DEBUG_F(Elements::Operation,
+                      "Hinge serial-loss gate: hinge=%d branchSum=%lld branchMax=%lld "
+                      "baseline=%lld serialLoss=%lld budget=%lld decision=%s.",
+                      hingeRoot, static_cast<long long>(sumBranchLatency), static_cast<long long>(maxBranchLatency),
+                      static_cast<long long>(baselineLatency), static_cast<long long>(serialLoss),
+                      static_cast<long long>(budget), serialLoss <= budget ? "allow" : "reject");
+    return serialLoss <= budget;
+}
+
+bool MixGraphMerger::CheckStructuralHingeBenefit(const std::vector<int>& actualGroup,
+                                                 const std::unordered_set<int>& mergedRoot,
+                                                 const StructuralPattern& pattern, const std::set<int>& twoStageRoots)
+{
+    const auto& rootSuccs = pattern.rootSuccs;
+    // hinge(铰链端点): 多个组内 root 共同挂靠的边界 tensor 对端 —— 作生产者时 1:N 扇出供数、
+    // 作消费者时 N:1 扇入汇数, 端点可在组内或组外; 其直连挂靠的组内 root 集合即"分支"。
+    // 并行分支串行化防护(实测依据: mla_prolog_quant automix, Unroll 展开后的扇出/扇入组把
+    // 8~16 路可跨核并行的分支串进单 kernel, e2e +6.6%): 同一 hinge 端点(组内或组外的生产者/
+    // 消费者)聚合挂着 >= kHingeBranchThreshold 个组内 root, 且这些 root 在组内 root 图上两两
+    // 互不可达(无依赖路径)、亦非同环耦合时, 判定为并行分支被串行化, 拒绝; 分支间存在组内
+    // 依赖路径的链式合并(可打通 L0C2UB 的 cube+glue 链)与同环多链不受影响。
+    const auto hingeToBranchRoots = CollectHingeToBranchRoots(actualGroup, mergedRoot);
     for (const auto& kv : hingeToBranchRoots) {
         // 仅当 hinge 端点及其全部分支都属于两阶段结构时, 该条目的双侧损失检查已由
         // CheckTwoStageNmBenefit 覆盖; 组外 hinge 与混入结构外分支的条目仍走原有护栏。
-        if (hasNto1 && has1toN && twoStageRoots.count(kv.first) > 0 &&
+        if (twoStageRoots.count(kv.first) > 0 &&
             std::includes(twoStageRoots.begin(), twoStageRoots.end(), kv.second.begin(), kv.second.end())) {
             continue;
         }
         if (kv.second.size() < kHingeBranchThreshold) {
             continue;
         }
-        // 同环豁免: 分支两两共享 loop-carry 通路(同一 ring 的多链, 如 online softmax
-        // 共享读端的多条写链)时, 执行序已被环迭代约束, 非独立并行分支, 不属本护栏
-        if (!mRootLoopPaths.empty()) {
-            bool ringCoupled = true;
-            for (int branch : kv.second) {
-                for (int other : kv.second) {
-                    if (branch != other && !HasSharedLoopPath(mRootLoopPaths[branch], mRootLoopPaths[other])) {
-                        ringCoupled = false;
-                        break;
-                    }
-                }
-                if (!ringCoupled) {
-                    break;
-                }
-            }
-            if (ringCoupled) {
-                continue;
-            }
+        if (AreBranchesRingCoupled(kv.second)) {
+            continue;
         }
         bool hasDependentPair = false;
         for (int branch : kv.second) {
@@ -1546,63 +1617,54 @@ bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>
                 break;
             }
         }
-        if (!hasDependentPair) {
-            // Aggregate latency by current root: a branch may already contain multiple subgraphs.
-            std::unordered_map<int, int64_t> rootLatency;
-            for (int i = 0; i < mInput.numSubgraph; ++i) {
-                const int root = FindParent(i);
-                if (root == kv.first || kv.second.count(root) > 0) {
-                    rootLatency[root] += static_cast<int64_t>(mInput.subgraphAICLatency[i]) +
-                                         mInput.subgraphAIVLatency[i];
-                }
-            }
-            const int64_t hingeLatency = rootLatency[kv.first];
-            int64_t sumBranchLatency = 0;
-            int64_t maxBranchLatency = 0;
-            for (int branch : kv.second) {
-                const int64_t latency = rootLatency[branch];
-                sumBranchLatency += latency;
-                maxBranchLatency = std::max(maxBranchLatency, latency);
-            }
-            // A direct-path 1:N hinge can remove a shared GM round trip for every branch.
-            // Charge the hinge's parallel-loss budget only when its latency is comparable to
-            // the largest branch; otherwise the direct-path benefit cannot amortize serialization.
-            const auto directIt = directConsumersByRoot.find(kv.first);
-            if (hingeLatency <= maxBranchLatency && directIt != directConsumersByRoot.end() &&
-                std::includes(directIt->second.begin(), directIt->second.end(), kv.second.begin(), kv.second.end())) {
-                APASS_LOG_DEBUG_F(Elements::Operation,
-                                  "Structural merge allowed: direct-path 1:N hinge root %d has %zu branches.", kv.first,
-                                  kv.second.size());
-                continue;
-            }
-            // Include the longest parallel branch in the hinge execution baseline.
-            const int64_t baselineLatency = hingeLatency + maxBranchLatency;
-            const int64_t serialLoss = sumBranchLatency - maxBranchLatency;
-            const int64_t budget = kSerialLossRatio * baselineLatency;
-            APASS_LOG_DEBUG_F(Elements::Operation,
-                              "Hinge serial-loss gate: hinge=%d branchSum=%lld branchMax=%lld "
-                              "baseline=%lld serialLoss=%lld budget=%lld decision=%s.",
-                              kv.first, static_cast<long long>(sumBranchLatency),
-                              static_cast<long long>(maxBranchLatency), static_cast<long long>(baselineLatency),
-                              static_cast<long long>(serialLoss), static_cast<long long>(budget),
-                              serialLoss <= budget ? "allow" : "reject");
-            if (serialLoss <= budget) {
-                continue;
-            }
-            APASS_LOG_DEBUG_F(Elements::Operation,
-                              "Structural merge skipped: hinge root %d fans to %zu independent parallel branches [%s].",
-                              kv.first, kv.second.size(),
-                              IntVecToStr(std::vector<int>(kv.second.begin(), kv.second.end())).c_str());
+        if (hasDependentPair) {
+            continue;
+        }
+        if (IsHingeSerialLossAbsorbable(kv.first, kv.second, pattern)) {
+            continue;
+        }
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Structural merge skipped: hinge root %d fans to %zu independent parallel branches [%s].",
+                          kv.first, kv.second.size(),
+                          IntVecToStr(std::vector<int>(kv.second.begin(), kv.second.end())).c_str());
+        return false;
+    }
+    return true;
+}
+
+bool MixGraphMerger::CheckMergeBenefitByStructuralPattern(const std::vector<int>& actualGroup, bool allowSinkMerge)
+{
+    const std::unordered_set<int> mergedRoot(actualGroup.begin(), actualGroup.end());
+    StructuralPattern pattern;
+    CollectStructuralPattern(actualGroup, mergedRoot, pattern);
+    // sink(汇聚点, 不产出 boundary tensor 的 root)保护与推迟门控, 详见 CheckStructuralSinkBenefit
+    if (!CheckStructuralSinkBenefit(actualGroup, mergedRoot, pattern.allProdRoots, allowSinkMerge)) {
+        return false;
+    }
+    // N:M requires a special direct path and bounded loss on both dependency stages.
+    const auto hasMultipleBranches = [](const auto& entry) { return entry.second.size() >= kMultiBranchThreshold; };
+    const bool hasNto1 = std::any_of(pattern.rootPreds.begin(), pattern.rootPreds.end(), hasMultipleBranches);
+    const bool has1toN = std::any_of(pattern.rootSuccs.begin(), pattern.rootSuccs.end(), hasMultipleBranches);
+    std::set<int> twoStageRoots;
+    if (hasNto1 && has1toN) {
+        // 直连证据按 root 对在 CheckTwoStageNmBenefit 内逐边校验(每个 prod->cons 依赖均须
+        // 带直连), 不再用整候选聚合的 hasDirectPathEdge 作为放行依据。
+        if (!CheckTwoStageNmBenefit(actualGroup, pattern.directPathRootPairs, twoStageRoots)) {
             return false;
         }
     }
+    // hinge(铰链端点, 多个组内 root 共同挂靠的边界 tensor 对端)并行分支串行化防护,
+    // 详见 CheckStructuralHingeBenefit
+    if (!CheckStructuralHingeBenefit(actualGroup, mergedRoot, pattern, twoStageRoots)) {
+        return false;
+    }
     // 通过条件: 至少存在一个简单 tensor edge
-    if (!hasSimpleTensorEdge) {
+    if (!pattern.hasSimpleTensorEdge) {
         APASS_LOG_DEBUG_F(Elements::Operation, "Structural merge skipped: no simple tensor edge benefit.");
         return false;
     }
     // 仅纯 C/V root 之间的跨核边触发直连要求, 这些边中至少一条具备直连资格即可。
-    if (hasCrossCoreEdge && !hasDirectPathEdge) {
+    if (pattern.hasCrossCoreEdge && !pattern.hasDirectPathEdge) {
         APASS_LOG_DEBUG_F(Elements::Operation,
                           "Structural merge skipped: pure C/V roots have no direct-path (L0C2UB/UB2L1) benefit.");
         return false;
@@ -1652,6 +1714,22 @@ bool MixGraphMerger::IsSinkMergeUnbeneficial(int root, const std::set<int>& inco
     return serialLoss > rootLatency * kSerialLossRatio;
 }
 
+bool MixGraphMerger::IsLoopPathMixed(const std::vector<int>& actualGroup)
+{
+    const std::set<int>* ref = nullptr;
+    for (int root : actualGroup) {
+        const auto& paths = mRootLoopPaths[root];
+        if (ref == nullptr) {
+            ref = &paths;
+            continue;
+        }
+        if (*ref != paths) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool MixGraphMerger::CheckLoopPathConsistency(const std::vector<int>& actualGroup)
 {
     // 同通路门控(carry 约束原则的语义化实现):
@@ -1667,20 +1745,7 @@ bool MixGraphMerger::CheckLoopPathConsistency(const std::vector<int>& actualGrou
     if (mRootLoopPaths.empty()) {
         return true;
     }
-    const std::set<int>* ref = nullptr;
-    bool mixed = false;
-    for (int root : actualGroup) {
-        const auto& paths = mRootLoopPaths[root];
-        if (ref == nullptr) {
-            ref = &paths;
-            continue;
-        }
-        if (*ref != paths) {
-            mixed = true;
-            break;
-        }
-    }
-    if (!mixed) {
+    if (!IsLoopPathMixed(actualGroup)) {
         return true;
     }
     for (size_t i = 0; i < actualGroup.size(); ++i) {
@@ -1836,6 +1901,42 @@ static bool ValidateOutput(const MergeOutput& output, int numSubgraph)
     return true;
 }
 
+bool MixGraphMerger::TryMergeGroup(size_t groupIdx, const MergeInput& input, int mergeLoopStep, bool allowSinkMerge)
+{
+    std::vector<int> actualGroup = GetActualGroup(input.mergeGroup[groupIdx]);
+    if (actualGroup.size() <= 1) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "Skip merge group %zu: already merged", groupIdx);
+        return false;
+    }
+    if (input.isEnforceMergeGroup[groupIdx]) {
+        // true: enforce 组改走 CvFuseId 判定, 同 scope 的组外端点豁免(终将并入同一混合子图),
+        // 防止 enforce 组互相等待无法合并; auto-mix 路径保持默认 subgraphId 判定不变
+        if (CanMergeWithoutCycle(actualGroup) && CheckNoExternalUseOfMergedInnerTensor(actualGroup, true)) {
+            // enforce 路径不受 op 数上限拦截, 但超限时打 WARN 提示编译时间风险(观测用, 不改变合并行为)
+            WarnIfEnforceOpNumExceeds(actualGroup);
+            APASS_LOG_DEBUG_F(Elements::Operation, "Merge group %zu succeeded: actualGroup=%s.", groupIdx,
+                              IntVecToStr(actualGroup).c_str());
+            PerformMerge(actualGroup);
+            return true;
+        }
+        APASS_LOG_DEBUG_F(Elements::Operation, "Merge group %zu [%s] skipped due to constraints, see above for reason.",
+                          groupIdx, IntVecToStr(actualGroup).c_str());
+        return false;
+    }
+    if (!input.hasScopedOp && enableAutoMix && mergeLoopStep != 0 && input.isValidMergeGroup[groupIdx] &&
+        CanMergeWithConstraints(actualGroup, allowSinkMerge)) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "Merge group %zu succeeded: actualGroup=%s.", groupIdx,
+                          IntVecToStr(actualGroup).c_str());
+        PerformMerge(actualGroup);
+        return true;
+    }
+    if (mergeLoopStep != 0) {
+        APASS_LOG_DEBUG_F(Elements::Operation, "Merge group %zu [%s] skipped due to constraints.", groupIdx,
+                          IntVecToStr(actualGroup).c_str());
+    }
+    return false;
+}
+
 MergeOutput MixGraphMerger::Merge(const MergeInput& input)
 {
     if (!ValidateInput(input)) {
@@ -1857,36 +1958,8 @@ MergeOutput MixGraphMerger::Merge(const MergeInput& input)
                           allowSinkMerge ? "True" : "False");
         bool hasUpdated = false;
         for (size_t i = 0; i < input.mergeGroup.size(); ++i) {
-            const auto& group = input.mergeGroup[i];
-            std::vector<int> actualGroup = GetActualGroup(group);
-            if (actualGroup.size() <= 1) {
-                APASS_LOG_DEBUG_F(Elements::Operation, "Skip merge group %zu: already merged", i);
-                continue;
-            }
-            if (input.isEnforceMergeGroup[i]) {
-                // true: enforce 组改走 CvFuseId 判定, 同 scope 的组外端点豁免(终将并入同一混合子图),
-                // 防止 enforce 组互相等待无法合并; auto-mix 路径保持默认 subgraphId 判定不变
-                if (CanMergeWithoutCycle(actualGroup) && CheckNoExternalUseOfMergedInnerTensor(actualGroup, true)) {
-                    // enforce 路径不受 op 数上限拦截, 但超限时打 WARN 提示编译时间风险(观测用, 不改变合并行为)
-                    WarnIfEnforceOpNumExceeds(actualGroup);
-                    APASS_LOG_DEBUG_F(Elements::Operation, "Merge group %zu succeeded: actualGroup=%s.", i,
-                                      IntVecToStr(actualGroup).c_str());
-                    PerformMerge(actualGroup);
-                    hasUpdated = true;
-                } else {
-                    APASS_LOG_DEBUG_F(Elements::Operation,
-                                      "Merge group %zu [%s] skipped due to constraints, see above for reason.", i,
-                                      IntVecToStr(actualGroup).c_str());
-                }
-            } else if (!input.hasScopedOp && enableAutoMix && mergeLoopStep != 0 && input.isValidMergeGroup[i] &&
-                       CanMergeWithConstraints(actualGroup, allowSinkMerge)) {
-                APASS_LOG_DEBUG_F(Elements::Operation, "Merge group %zu succeeded: actualGroup=%s.", i,
-                                  IntVecToStr(actualGroup).c_str());
-                PerformMerge(actualGroup);
+            if (TryMergeGroup(i, input, mergeLoopStep, allowSinkMerge)) {
                 hasUpdated = true;
-            } else if (mergeLoopStep != 0) {
-                APASS_LOG_DEBUG_F(Elements::Operation, "Merge group %zu [%s] skipped due to constraints.", i,
-                                  IntVecToStr(actualGroup).c_str());
             }
         }
         if (allowSinkMerge) {

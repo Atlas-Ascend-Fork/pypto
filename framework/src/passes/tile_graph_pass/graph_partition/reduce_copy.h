@@ -113,6 +113,9 @@ private:
     bool CanMergeWithoutCycle(const std::vector<int>& actualGroup);
     void WarnIfEnforceOpNumExceeds(const std::vector<int>& actualGroup);
     bool CanMergeWithConstraints(const std::vector<int>& actualGroup, bool allowSinkMerge);
+    // 单个候选组的合并尝试: enforce 组走 CvFuseId 判定(同 scope 组外端点豁免),
+    // auto-mix 组走约束检查; 返回是否执行了合并(用于轮次收敛判定)
+    bool TryMergeGroup(size_t groupIdx, const MergeInput& input, int mergeLoopStep, bool allowSinkMerge);
     void PerformMerge(const std::vector<int>& actualGroup);
     void UpdateBoundaryTensorIndex(const std::vector<int>& actualGroup);
     void ApplyMergeToGraph(const std::vector<int>& actualGroup);
@@ -120,13 +123,72 @@ private:
     void UpdateOutput();
     bool CheckTwoStageNmBenefit(const std::vector<int>& actualGroup,
                                 const std::set<std::pair<int, int>>& directPathRootPairs, std::set<int>& twoStageRoots);
+    // 双侧分类: 组内每个 root 须只有前驱或只有后继(中间/孤立 root 拒绝),
+    // 且生产/消费两侧各 >= kMultiBranchThreshold 个 root
+    bool ClassifyTwoStageSides(const std::vector<int>& actualGroup, std::set<int>& producers, std::set<int>& consumers);
+    // 完全二部校验: 每个 prod->cons 依赖均须存在且带直连证据(directPathRootPairs)
+    bool VerifyTwoStageDependencies(const std::set<int>& producers, const std::set<int>& consumers,
+                                    const std::set<std::pair<int, int>>& directPathRootPairs);
+    // 双侧并行损失约束: sum-max 均不超过 kSerialLossRatio x 对侧 max 且两侧 max > 0
+    bool IsTwoStageLossAcceptable(const std::set<int>& producers, const std::set<int>& consumers);
     bool CheckLatencyConstraint(const std::vector<int>& actualGroup);
+    // 候选组内 loop-carry 通路集合是否混杂(存在与首个 root 通路集合不同的成员)
+    bool IsLoopPathMixed(const std::vector<int>& actualGroup);
     bool CheckLoopPathConsistency(const std::vector<int>& actualGroup);
+    // Tensor topology and endpoint-level direct-path evidence for one candidate.
+    struct StructuralPattern {
+        // root 级核构成(纯C/纯V/混合): 混合 root 的跨核代价已沉没, 不触发直连门
+        std::unordered_map<int, std::pair<bool, bool>> rootCoreKinds;
+        std::set<int> allProdRoots;
+        std::unordered_map<int, std::set<int>> rootPreds;
+        std::unordered_map<int, std::set<int>> rootSuccs;
+        std::unordered_map<int, std::set<int>> directConsumersByRoot;
+        std::set<std::pair<int, int>> directPathRootPairs;
+        bool hasSimpleTensorEdge{false};
+        bool hasDirectPathEdge{false};
+        bool hasCrossCoreEdge{false};
+    };
+    void CollectStructuralPattern(const std::vector<int>& actualGroup, const std::unordered_set<int>& mergedRoot,
+                                  StructuralPattern& pattern);
+    // 单个 boundary tensor 的 op 级跨核端点对收集: 填充 directConsumersByRoot/directPathRootPairs
+    // 与 hasCrossCoreEdge/hasDirectPathEdge 直连证据(组外端点对只计入 directConsumersByRoot)
+    void CollectTensorEndpointPairs(int tensorId, const std::unordered_set<int>& mergedRoot,
+                                    StructuralPattern& pattern);
+    // 建 root 级方向边 (prodRoot -> consRoot, 跳过 self-loop), 填充 rootPreds/rootSuccs
+    void BuildRootLevelEdges(const std::set<int>& prodRoots, const std::set<int>& consRoots,
+                             StructuralPattern& pattern);
+    // 输出级 consolidate 旁路: 全图 >=2 个出度0 sink 且本候选含其全部时,
+    // 视为合并并行输出级(下游无并行可损失), 跳过 sink 保护
+    bool AllOutputSinksInCandidate(const std::unordered_set<int>& mergedRoot);
+    // 收集 root 的全部 producer root(排除自身), 用于 sink 入边统计
+    std::set<int> CollectIncomingRoots(int root);
+    // sink(汇聚点): 不产出任何 boundary tensor 的 root(纯消费输入、无对外输出);
+    // 本函数做 sink 串行损失保护、输出级 consolidate 旁路与 sink 轮推迟门控
+    bool CheckStructuralSinkBenefit(const std::vector<int>& actualGroup, const std::unordered_set<int>& mergedRoot,
+                                    const std::set<int>& allProdRoots, bool allowSinkMerge);
+    // hinge(铰链端点): 多个组内 root 共同挂靠的边界 tensor 对端(1:N 扇出 / N:1 扇入),
+    // 端点可在组内或组外; 本函数防并行分支被串进单 kernel
+    bool CheckStructuralHingeBenefit(const std::vector<int>& actualGroup, const std::unordered_set<int>& mergedRoot,
+                                     const StructuralPattern& pattern, const std::set<int>& twoStageRoots);
+    // hinge 端点 -> 组内分支集合: 端点(组内或组外)通过 boundary tensor 直连的组内 root 全集
+    std::unordered_map<int, std::set<int>> CollectHingeToBranchRoots(const std::vector<int>& actualGroup,
+                                                                     const std::unordered_set<int>& mergedRoot);
+    // 同环豁免: 分支两两共享 loop-carry 通路(同一 ring 的多链)时非独立并行分支
+    bool AreBranchesRingCoupled(const std::set<int>& branches);
+    // 规模豁免: 独立分支串行化损失(Σ-max)可被 hinge 规模消化, 或直连 1:N hinge 的
+    // 共享 GM 往返收益可摊销串行损失时放行
+    bool IsHingeSerialLossAbsorbable(int hingeRoot, const std::set<int>& branches, const StructuralPattern& pattern);
     bool CheckMergeBenefitByStructuralPattern(const std::vector<int>& actualGroup, bool allowSinkMerge);
     // 判断汇聚 sink 的合并是否无收益需拒绝(串行损失模型): 串行化损失 Σbranch − max(branch)
     // 超过 kSerialLossRatio × 合入root 总 latency 时拒绝; 调用方保证入边数 >= 2
     bool IsSinkMergeUnbeneficial(int root, const std::set<int>& incomingRoots);
     bool CheckNoExternalUseOfMergedInnerTensor(const std::vector<int>& actualGroup, bool checkByCvFuseId = false);
+    // 首次发现的非法 inner tensor 打 WARN(含成因推导), 同一 tensorMagic 重复出现时降级 DEBUG,
+    // 避免同一 tensor 在多个候选组反复告警刷屏
+    void LogMergedInnerTensorRejection(const std::vector<int>& actualGroup, int tensorId,
+                                       const std::vector<int>& prodIn, const std::vector<int>& prodOut,
+                                       const std::vector<int>& consIn, const std::vector<int>& consOut,
+                                       bool checkByCvFuseId);
     bool IsInvalidMergedInnerTensor(int tensorId, const std::unordered_set<int>& mergedRoots, std::vector<int>& prodIn,
                                     std::vector<int>& prodOut, std::vector<int>& consIn, std::vector<int>& consOut);
     bool IsInvalidMergedInnerTensorByCvFuseId(int tensorId, const std::unordered_set<int>& mergedRoots,
