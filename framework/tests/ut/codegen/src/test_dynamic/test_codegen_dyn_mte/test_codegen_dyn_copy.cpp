@@ -25,6 +25,7 @@
 #include "codegen/symbol_mgr/codegen_symbol.h"
 #include "codegen/npu/cloudnpu/codegen_op_cloudnpu.h"
 #include "codegen/npu/cloudnpu/codegen_cloudnpu.h"
+#include "tilefwk/error_manager.h"
 #include "test_codegen_utils.h"
 #include "test_codegen_common.h"
 
@@ -390,6 +391,127 @@ TEST_F(TestCodegenDynCopy, L0CReshapeCopyOut)
         R"!!!(TReshapeStore<TStoreConfig<CopyOutMode::NZ2ND, 0, 0>>(gmTensor_0, l0cTensor_1, l0cTensor_1, Coord2Dim(0, 0), 0, 0, 0, 0, 0);
 )!!!";
     EXPECT_EQ(res, expect);
+}
+
+// reshape copy in/out 的多维（2D/3D/4D）构图：GM 侧 dynValidShape 携带真实 gShape 值，
+// 用于验证 TReshapeLoad/TReshapeStore 的 Coord 维度与 gShape 右对齐补 0（PR#7587）
+// gShape 非空时覆盖 GM 布局 attr（构造 attr 与 tensor 维数不一致的畸形场景）
+std::string TestReshapeCopyMteBody(const std::string& funcName, Opcode opcode, MemoryType inType, MemoryType outType,
+                                   const std::vector<int64_t>& shape, const std::vector<int64_t>& gShape = {})
+{
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    config::SetHostOption(COMPILE_STAGE, CS_CODEGEN_INSTRUCTION);
+
+    auto shapeImme = OpImmediate::Specified(shape);
+    auto function = GenMockFuncDyn(funcName, shape);
+    const std::vector<SymbolicScalar> dynValidShape = SymbolicScalar::FromConcrete(shape);
+    auto localTensor = CreateLogicalTensor({*function, DataType::DT_INT32, inType, shape, dynValidShape});
+    auto localOutTensor = CreateLogicalTensor({*function, DataType::DT_FP16, outType, shape, dynValidShape});
+    std::vector<int64_t> offset(shape.size(), 0);
+    std::vector<SymbolicScalar> dynoffset = SymbolicScalar::FromConcrete(offset);
+    localTensor->UpdateOffset(TensorOffset(offset, dynoffset));
+
+    LogicalTensors inputs = {localTensor};
+    LogicalTensors outputs = {localOutTensor};
+    if (opcode == Opcode::OP_L0C_RESHAPE_COPY_OUT) {
+        inputs.emplace_back(localTensor);
+    }
+
+    auto& op = function->AddOperation(opcode, inputs, outputs);
+    op.SetAttribute(OpAttributeKey::gmTensorParamIdxInCall, 0);
+    if (opcode == Opcode::OP_L0C_RESHAPE_COPY_OUT) {
+        op.SetOpAttribute(
+            std::make_shared<CopyOpAttribute>(MEM_L0C, OpImmediate::Specified(offset), shapeImme, shapeImme));
+    } else {
+        op.SetOpAttribute(
+            std::make_shared<CopyOpAttribute>(MEM_L1, OpImmediate::Specified(offset), shapeImme, shapeImme));
+    }
+
+    auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(op.GetOpAttribute());
+    copyAttr->SetFromOffset(OpImmediate::Specified(offset));
+    copyAttr->SetToOffset(OpImmediate::Specified(offset));
+    // GM 布局 gShape 取真实 shape 值：3D 前导补 0 -> (0, d0, d1, d2)，4D 原样透传
+    const std::vector<int64_t>& gmLayout = gShape.empty() ? shape : gShape;
+    copyAttr->SetFromDynValidShape(OpImmediate::Specified(gmLayout));
+    copyAttr->SetToDynValidShape(OpImmediate::Specified(gmLayout));
+
+    return GenOpCodeFromOp(*function, op);
+}
+
+// 3D reshape 拷入：Coord 为 3 维，gShape 右对齐补 0 -> (0, 2, 64, 64)
+TEST_F(TestCodegenDynCopy, L1ReshapeCopyIn3DTensor)
+{
+    std::string res = TestReshapeCopyMteBody("L1ReshapeCopyIn3DTensor", Opcode::OP_L1_RESHAPE_COPY_IN,
+                                             MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_L1, {2, 64, 64});
+    std::string expect =
+        R"!!!(TReshapeLoad<CopyInMode::ND2NZ, PaddingMode::NORMAL_PADDING_MODE, -1>(l1Tensor_0, gmTensor_1, Coord3Dim(0, 0, 0), 0, 2, 64, 64);
+)!!!";
+    EXPECT_EQ(res, expect);
+}
+
+// 4D reshape 拷入：Coord 为 4 维，gShape 原样透传 -> (2, 3, 64, 64)
+TEST_F(TestCodegenDynCopy, L1ReshapeCopyIn4DTensor)
+{
+    std::string res = TestReshapeCopyMteBody("L1ReshapeCopyIn4DTensor", Opcode::OP_L1_RESHAPE_COPY_IN,
+                                             MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_L1, {2, 3, 64, 64});
+    std::string expect =
+        R"!!!(TReshapeLoad<CopyInMode::ND2NZ, PaddingMode::NORMAL_PADDING_MODE, -1>(l1Tensor_0, gmTensor_1, Coord4Dim(0, 0, 0, 0), 2, 3, 64, 64);
+)!!!";
+    EXPECT_EQ(res, expect);
+}
+
+// 3D reshape 拷出：Coord 为 3 维，gShape 右对齐补 0 -> (0, 2, 64, 64)，尾参为 scaleValue
+TEST_F(TestCodegenDynCopy, L0CReshapeCopyOut3DTensor)
+{
+    std::string res = TestReshapeCopyMteBody("L0CReshapeCopyOut3DTensor", Opcode::OP_L0C_RESHAPE_COPY_OUT,
+                                             MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR, {2, 64, 64});
+    std::string expect =
+        R"!!!(TReshapeStore<TStoreConfig<CopyOutMode::NZ2ND, 0, 0>>(gmTensor_0, l0cTensor_1, l0cTensor_1, Coord3Dim(0, 0, 0), 0, 2, 64, 64, 0);
+)!!!";
+    EXPECT_EQ(res, expect);
+}
+
+// 4D reshape 拷出：Coord 为 4 维，gShape 原样透传 -> (2, 3, 64, 64)
+TEST_F(TestCodegenDynCopy, L0CReshapeCopyOut4DTensor)
+{
+    std::string res = TestReshapeCopyMteBody("L0CReshapeCopyOut4DTensor", Opcode::OP_L0C_RESHAPE_COPY_OUT,
+                                             MemoryType::MEM_L0C, MemoryType::MEM_DEVICE_DDR, {2, 3, 64, 64});
+    std::string expect =
+        R"!!!(TReshapeStore<TStoreConfig<CopyOutMode::NZ2ND, 0, 0>>(gmTensor_0, l0cTensor_1, l0cTensor_1, Coord4Dim(0, 0, 0, 0), 2, 3, 64, 64, 0);
+)!!!";
+    EXPECT_EQ(res, expect);
+}
+
+// 维数越界在 codegen 期即报 TENSOR_DIM_UNSUPPORTED，不再静默补 0（PR#7587）
+// 本用例覆盖下界：1 维 tensor 的 gShape
+TEST_F(TestCodegenDynCopy, L1ReshapeCopyIn1DDimUnsupported)
+{
+    // Error 抛出时会被 ErrorManager 队列首条历史错误覆盖 what()，先清空保证断言消息可校验
+    ErrorManager::Instance().OutputErrorMessage(true);
+    try {
+        auto res = TestReshapeCopyMteBody("L1ReshapeCopyIn1D", Opcode::OP_L1_RESHAPE_COPY_IN,
+                                          MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_L1, {64});
+        FAIL() << "expect TENSOR_DIM_UNSUPPORTED for 1-dim gShape, got: " << res;
+    } catch (const npu::tile_fwk::Error& e) {
+        EXPECT_NE(std::string(e.what()).find("TENSOR_DIM_UNSUPPORTED"), std::string::npos);
+        EXPECT_NE(std::string(e.what()).find("gShape dim should be 2~4"), std::string::npos);
+    }
+}
+
+// 维数越界上界：4 维 tensor 携带 5 维 gShape attr（畸形 attr 场景），
+// 覆盖旧实现 FillVecWithDummyInHead 负数填充的隐患路径
+TEST_F(TestCodegenDynCopy, L1ReshapeCopyIn5DGShapeDimUnsupported)
+{
+    ErrorManager::Instance().OutputErrorMessage(true);
+    try {
+        auto res = TestReshapeCopyMteBody("L1ReshapeCopyIn5DGShape", Opcode::OP_L1_RESHAPE_COPY_IN,
+                                          MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_L1, {2, 3, 64, 64},
+                                          {2, 3, 4, 64, 64});
+        FAIL() << "expect TENSOR_DIM_UNSUPPORTED for 5-dim gShape, got: " << res;
+    } catch (const npu::tile_fwk::Error& e) {
+        EXPECT_NE(std::string(e.what()).find("TENSOR_DIM_UNSUPPORTED"), std::string::npos);
+        EXPECT_NE(std::string(e.what()).find("gShape dim should be 2~4"), std::string::npos);
+    }
 }
 
 TEST_F(TestCodegenDynCopy, L0CCopyUBTensor)

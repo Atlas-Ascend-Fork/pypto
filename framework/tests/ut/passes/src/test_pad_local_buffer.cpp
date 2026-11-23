@@ -22,6 +22,7 @@
 #include "passes/pass_utils/alignment_utils.h"
 #include "passes/tile_graph_pass/graph_constraint/pad_local_buffer.h"
 #include "passes/tile_graph_pass/graph_constraint/axis_combine.h"
+#include "tilefwk/error_manager.h"
 #include "computational_graph_builder.h"
 #include "passes/pass_mgr/pass_manager.h"
 #include "interface/configs/config_manager.h"
@@ -1420,6 +1421,110 @@ TEST_F(TestPadLocalBuffer, GemvMatmulKAlign)
     auto rawShapeL0A = t3a->tensor->GetRawShape();
     EXPECT_EQ(rawShapeL0A[0], 1);
     EXPECT_EQ(rawShapeL0A[1], 256);
+}
+
+// 2 维非 MX matmul 输入不触发 "raw shape size is less than 3" 校验（PR#7576），
+// 且 rawshape 走普通 16 元素对齐，不被 MX scale 逻辑改写
+TEST_F(TestPadLocalBuffer, Matmul2DNonMXInputSkipsScaleSceneCheck)
+{
+    ComputationalGraphBuilder graph;
+    // a: 普通 2 维 matmul A 通路
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP16, {32, 15}, MemoryType::MEM_DEVICE_DDR, "t1a"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP16, {32, 15}, MemoryType::MEM_L1, "t2a"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_COPY_IN, {"t1a"}, {"t2a"}, "COPYA", true), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP16, {32, 15}, MemoryType::MEM_L0A, "t3a"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_L1_TO_L0A, {"t2a"}, {"t3a"}, "L1TOL0A", true), true);
+    // b: 普通 2 维 matmul B 通路
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP16, {15, 16}, MemoryType::MEM_DEVICE_DDR, "t1b"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP16, {15, 16}, MemoryType::MEM_L1, "t2b"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_COPY_IN, {"t1b"}, {"t2b"}, "COPYB", true), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP16, {15, 16}, MemoryType::MEM_L0B, "t3b"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_L1_TO_L0B, {"t2b"}, {"t3b"}, "L1TOL0B", true), true);
+    // amulb
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP16, {32, 16}, MemoryType::MEM_L0C, "out"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_A_MUL_B, {"t3a", "t3b"}, {"out"}, "AMULB", true), true);
+
+    ErrorManager::Instance().OutputErrorMessage(true); // 清空历史错误，保证断言只针对本次构图
+    auto* currFunctionPtr = graph.GetFunction();
+    PadLocalBuffer padLocalBufferTest;
+    EXPECT_EQ(padLocalBufferTest.RunOnFunction(*currFunctionPtr), SUCCESS);
+    // 非 MX scale 场景不应输出任何错误（回退 PR#7576 会误报 "raw shape size is less than 3"）
+    std::string errMsg;
+    EXPECT_FALSE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    // 普通 16 元素对齐而非 MX 的 32 对齐，证明未被 MX 逻辑改写
+    EXPECT_EQ(graph.GetTensor("t2a")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{32, 16}));
+    EXPECT_EQ(graph.GetTensor("t3a")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{32, 16}));
+    EXPECT_EQ(graph.GetTensor("t2b")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{16, 16}));
+    EXPECT_EQ(graph.GetTensor("t3b")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{16, 16}));
+}
+
+// 3 维 L0A scale 场景按倒数第 3 维 pad 到 32（CUBE_PAD_B8_VALUE），其余维保持原值，
+// 分别覆盖 op 自身 opcode 与 producer opcode 命中场景（PR#7576）
+TEST_F(TestPadLocalBuffer, MXSceneL0AScalePadsThirdLastDim)
+{
+    ComputationalGraphBuilder graph;
+    EXPECT_EQ(graph.AddTensor(DataType::DT_INT8, {3, 5, 17}, MemoryType::MEM_DEVICE_DDR, "saGm"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_INT8, {3, 5, 17}, MemoryType::MEM_L1, "saL1"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_COPY_IN, {"saGm"}, {"saL1"}, "COPYA", true), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_INT8, {3, 5, 17}, MemoryType::MEM_L0AMX, "saL0A"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_L1_TO_L0A_SCALE, {"saL1"}, {"saL0A"}, "L1TOL0ASCALE", true), true);
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    auto* currFunctionPtr = graph.GetFunction();
+    PadLocalBuffer padLocalBufferTest;
+    EXPECT_EQ(padLocalBufferTest.RunOnFunction(*currFunctionPtr), SUCCESS);
+    std::string errMsg;
+    EXPECT_FALSE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    // op 自身 opcode 命中场景：L1 scale 的倒数第 3 维 pad 到 32，其余维保持 5/17
+    EXPECT_EQ(graph.GetTensor("saL1")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{32, 5, 17}));
+    // producer opcode 命中场景：L0AMX scale 同样只 pad 倒数第 3 维
+    EXPECT_EQ(graph.GetTensor("saL0A")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{32, 5, 17}));
+}
+
+// 3 维 L0B scale 场景按倒数第 2 维 pad 到 32，其余维保持原值（PR#7576）
+TEST_F(TestPadLocalBuffer, MXSceneL0BScalePadsSecondLastDim)
+{
+    ComputationalGraphBuilder graph;
+    EXPECT_EQ(graph.AddTensor(DataType::DT_INT8, {5, 3, 17}, MemoryType::MEM_DEVICE_DDR, "sbGm"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_INT8, {5, 3, 17}, MemoryType::MEM_L1, "sbL1"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_COPY_IN, {"sbGm"}, {"sbL1"}, "COPYB", true), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_INT8, {5, 3, 17}, MemoryType::MEM_L0BMX, "sbL0B"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_L1_TO_L0B_SCALE, {"sbL1"}, {"sbL0B"}, "L1TOL0BSCALE", true), true);
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    auto* currFunctionPtr = graph.GetFunction();
+    PadLocalBuffer padLocalBufferTest;
+    EXPECT_EQ(padLocalBufferTest.RunOnFunction(*currFunctionPtr), SUCCESS);
+    std::string errMsg;
+    EXPECT_FALSE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    // L0B scale 的 n 恒在倒数第 2 维：pad 3 -> 32，其余维保持 5/17
+    EXPECT_EQ(graph.GetTensor("sbL1")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{5, 32, 17}));
+    EXPECT_EQ(graph.GetTensor("sbL0B")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{5, 32, 17}));
+}
+
+// 2 维 scale 输入维数不足 3：报 "raw shape size is less than 3" 并返回 false，
+// 由普通 matmul pad 兜底（不做 MX 轴 pad，避免尾维定位下溢）（PR#7576）
+TEST_F(TestPadLocalBuffer, MXSceneScaleInputLessThan3DimsErrors)
+{
+    ComputationalGraphBuilder graph;
+    EXPECT_EQ(graph.AddTensor(DataType::DT_INT8, {3, 17}, MemoryType::MEM_DEVICE_DDR, "saGm"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_INT8, {3, 17}, MemoryType::MEM_L1, "saL1"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_COPY_IN, {"saGm"}, {"saL1"}, "COPYA", true), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_INT8, {3, 17}, MemoryType::MEM_L0AMX, "saL0A"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_L1_TO_L0A_SCALE, {"saL1"}, {"saL0A"}, "L1TOL0ASCALE", true), true);
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    auto* currFunctionPtr = graph.GetFunction();
+    PadLocalBuffer padLocalBufferTest;
+    EXPECT_EQ(padLocalBufferTest.RunOnFunction(*currFunctionPtr), SUCCESS);
+    // MX scale 场景命中但维数不足，必须报错并跳过 MX pad
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("raw shape size is less than 3"), std::string::npos);
+    // int8 普通通路按 32 对齐兜底，两轴均被 pad，证明 MX 轴 pad 未生效
+    EXPECT_EQ(graph.GetTensor("saL1")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{32, 32}));
+    EXPECT_EQ(graph.GetTensor("saL0A")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{32, 32}));
+    ErrorManager::Instance().OutputErrorMessage(true); // 清空本次错误，避免影响后续用例
 }
 
 namespace {

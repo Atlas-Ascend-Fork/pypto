@@ -134,13 +134,6 @@ bool ShouldSkipViewAssembleExpand(const Operation& op)
         return true;
     }
 
-    // batchmatmul 的 batch VIEW/ASSEMBLE不参与 tile 展开
-    if (op.HasAttribute(OpAttributeKey::isBatchMatmul)) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "ExpandFunction skips VIEW/ASSEMBLE op=%d opcode=%s rule=batch_matmul.",
-                          op.GetOpMagic(), op.GetOpcodeStr().c_str());
-        return true;
-    }
-
     // VIEW 按输出 shape 切分，ASSEMBLE 按输入 shape 切分；对应 shape 含 -1 则跳过展开。
     if (op.GetOpcode() == Opcode::OP_VIEW) {
         if (OperandShapesHaveDynamicDim(op.GetOOperands())) {

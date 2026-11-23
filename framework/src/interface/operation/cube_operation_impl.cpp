@@ -1626,12 +1626,12 @@ static Tensor GetGmDeterministicAccumulationTensor(std::vector<Tensor> gmPartial
     return gmPartialSums[0];
 }
 
-// batchmatmul 插入的 batch view/assemble、GmAccumulation 插入的 K view 打上 isBatchMatmul标签，
+// batchmatmul 插入的 batch view/assemble、GmAccumulation 插入的 K view 打上 skipSliceContractExpand 标签，
 // ExpandFunction 识别该标签不将其展开为 slice/contract
 void MarkBatchMatmulOp(Operation* op)
 {
     if (op != nullptr) {
-        op->SetAttribute(OpAttributeKey::isBatchMatmul, true);
+        op->SetAttribute(OpAttributeKey::skipSliceContractExpand, true);
     }
 }
 
