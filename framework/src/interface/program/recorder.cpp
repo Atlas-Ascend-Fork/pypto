@@ -191,6 +191,33 @@ void RecordFunc::AbortRecording()
     Program::GetInstance().AbandonIncompleteRecording();
 }
 
+RecordFunc::~RecordFunc()
+{
+    if (isEnd_) {
+        return;
+    }
+    // Program may have been reset/abandoned while this recording was still
+    // alive (pytest teardown or interpreter exit). There is no active function
+    // to end then, and EndFunction would assert on an empty function stack.
+    if (!Program::GetInstance().HasIncompleteRecordingState()) {
+        isEnd_ = true;
+        Program::GetInstance().GetTensorSlotManager()->SetRecording(false);
+        return;
+    }
+    // Destructors must not throw. A genuine EndFunction failure is reported and
+    // the half-recorded graph is dropped so it cannot poison later recording.
+    try {
+        EndFunction();
+    } catch (const std::exception& e) {
+        FE_LOGE(InternalError::FE_INNER_ERROR, "Failed to end function recording during destruction: %s", e.what());
+        try {
+            Program::GetInstance().AbandonIncompleteRecording();
+        } catch (...) {
+            // Cleanup in a destructor must never propagate.
+        }
+    }
+}
+
 RecordFunc::Iterator RecordFunc::begin()
 {
     if (recordLoopFunc_) {

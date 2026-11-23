@@ -272,11 +272,7 @@ public:
     void EndFunction();
     void AbortRecording();
 
-    ~RecordFunc()
-    {
-        if (!isEnd_)
-            EndFunction();
-    }
+    ~RecordFunc();
 
     Iterator begin();
     IteratorEnd end();

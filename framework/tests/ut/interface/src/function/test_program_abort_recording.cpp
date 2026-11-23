@@ -121,6 +121,40 @@ TEST_F(ProgramAbortRecordingTest, RecordLoopFuncDestructorAfterStackCleared)
     EXPECT_TRUE(Program::GetInstance().GetLoopStack().empty());
 }
 
+TEST_F(ProgramAbortRecordingTest, RecordFuncDestructorAfterReset)
+{
+    std::vector<int64_t> shape{kRows, kCols};
+    Tensor a(DT_FP32, shape, "a");
+    Tensor b(DT_FP32, shape, "b");
+    Tensor c(DT_FP32, shape, "c");
+
+    {
+        RecordFunc record("reset_main", {a, b}, {c});
+        EXPECT_TRUE(Program::GetInstance().HasIncompleteRecordingState());
+        Program::GetInstance().Reset();
+    }
+    EXPECT_FALSE(Program::GetInstance().HasIncompleteRecordingState());
+    EXPECT_EQ(Program::GetInstance().FunctionMapSize(), 1U);
+}
+
+TEST_F(ProgramAbortRecordingTest, RecordFuncDestructorDropsHalfRecordingOnEndFailure)
+{
+    std::vector<int64_t> shape{kRows, kCols};
+    Tensor a(DT_FP32, shape, "a");
+    Tensor b(DT_FP32, shape, "b");
+    Tensor c(DT_FP32, shape, "c");
+
+    {
+        RecordFunc record("fail_main", {a, b}, {c});
+        Program::GetInstance().Reset();
+        // Program looks incomplete while no function is active, so the destructor
+        // takes the EndFunction failure path and must clean up without throwing.
+        Program::GetInstance().GetTensorSlotManager()->Checkpoint();
+        EXPECT_TRUE(Program::GetInstance().HasIncompleteRecordingState());
+    }
+    EXPECT_FALSE(Program::GetInstance().HasIncompleteRecordingState());
+}
+
 TEST_F(ProgramAbortRecordingTest, AbortRecordingAfterPartialLoopBody)
 {
     std::vector<int64_t> shape{kRows, kCols};
