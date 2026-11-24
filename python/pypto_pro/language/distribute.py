@@ -115,7 +115,7 @@ class Channel(NamedTuple):
         ``Window.register_memory`` on the URMA plane, or a ``pl.Ptr`` inside such a
         tensor. The channel resolves the matching local buffer and returns the peer
         address of the same byte, typed like the source. Resolve once and reuse the
-        result for :meth:`write` / :meth:`write_indexed`.
+        result for :meth:`write`.
 
         The returned address is a peer VA for jetty WQEs; it is **not** dereferenceable
         by ``pl.load``/``pl.store``. Use ``pld.remote_ptr`` for the UB_MEM plane.
@@ -173,48 +173,6 @@ class Channel(NamedTuple):
         ``submit=False`` stages the WQE for a later :meth:`submit`. ``option``
         controls the WQE control flags; the engine's UDF flag for the reduce fields
         is always set on top of it.
-        """
-
-    @_api_decl
-    def write_indexed(self, dst, src, /, *, src_indices=None, dst_indices=None,
-                      count: int, submit: bool = True, timeout: int | None = None) -> None:
-        """Asynchronously write selected rows to a remote region.
-
-        Copies ``count`` rows from ``src`` to the remote address ``dst`` using optional
-        source and destination row indices. If an index table is omitted,
-        sequential row indices ``[0, count)`` are used.
-
-        Args:
-            dst: Remote destination pointer from :meth:`remote_ptr`.
-            src: Source tensor with the same dtype and row shape as the destination.
-            src_indices: Optional 1-D UB Tile of source row indices.
-            dst_indices: Optional 1-D UB Tile of destination row indices.
-            count: Number of rows to transfer. Zero is a no-op.
-            submit: If True, submit the generated WQEs immediately.
-                Otherwise, queue them for a later ``submit()``.
-            timeout: Optional timeout for queue operations.
-
-        Notes:
-            - At least one index table must be provided.
-            - Indices are row numbers, not byte offsets. They must address rows
-              of the corresponding tensor; an out-of-range index reads or writes
-              outside the region.
-            - Index tables must reside in UB (``pl.MemorySpace.Vec``) and be
-              ready before the call. Load GM index tables into UB first.
-            - Supported index dtypes: int32, int64, uint32, uint64. When both
-              tables are present they must share one dtype.
-            - Both tensors must be row-major and have contiguous rows. The row
-              payload (axes after the row axis) must be a multiple of 32 bytes and
-              at most 256 MiB.
-            - Each row is one single-SGE WQEBB. A SIMT worker encodes the WQEs
-              directly in the channel's GM send queue; only the 5-word SQE
-              header is staged in UB. Rows are published in chunks of at most
-              1024 (the jetty SQ depth must be at least 1024), one CQE per
-              chunk; a chunk may wrap the SQ ring. Intermediate chunks are
-              published when the queue is full even with ``submit=False``.
-            - ``count`` must fit in int32; the device traps above ``INT32_MAX``.
-            - To keep all WQEs queued until an explicit ``submit()``, the channel
-              must have enough free capacity for the whole transfer.
         """
 
     @_api_decl
@@ -494,8 +452,7 @@ def channel(win: Window, buffer: int, /, *, peer: int | None = None) -> Channel:
         win: the owning window.
         buffer: UB scratch address, >= ``pld.CHANNEL_UB_BYTES`` (256) bytes, 64-byte
             aligned, not overlapping any Tile or another channel's scratch. The first
-            128 bytes hold the peer/jetty headers; :meth:`write_indexed` keeps its SQE
-            header above them. Compile-time.
+            128 bytes hold the peer/jetty headers. Compile-time.
         peer: destination rank for the per-peer form (compile-time or in-kernel integer).
             ``peer == win.rank()`` is rejected at runtime. Must be omitted when
             ``win.is_shared()`` is true (per-AIV jetty); passing it there traps.
@@ -520,8 +477,7 @@ def buffer_channel(ch: Channel, buf_addr: int, buf_bytes: int, /) -> BufferChann
     - ``bch.read`` / ``write_reduce`` / ``write_notify`` / the atomics also **stage**
       into the ring (reads and atomics are engine-written and their results are
       readable only after :meth:`drain`; the published final WQEBB's fence retires the
-      batch in order). ``write_indexed`` is not available on a buffer channel — use
-      the base channel for that.
+      batch in order).
     - ``bch.drain()`` traps if WQEBBs were staged and never submitted.
 
     Do not call ``ch`` posting methods while a batch is staged — submit checks the

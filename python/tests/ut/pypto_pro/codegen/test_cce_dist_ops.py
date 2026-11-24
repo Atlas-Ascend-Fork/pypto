@@ -35,7 +35,6 @@ def _dist_pointer_codegen_kernel(
     sig: pl.Tensor[[16], pl.DT_INT64],
     sig32: pl.Tensor[[16], pl.DT_INT32],
     src: pl.Tensor[[8, 16], pl.DT_BF16],
-    idx: pl.Tensor[[1, 8], pl.DT_INT32],
     out: pl.Tensor[[8, 16], pl.DT_BF16],
     out2: pl.Tensor[[1], pl.DT_INT64],
     out2f: pl.Tensor[[1, 8], pl.DT_FP32],
@@ -66,8 +65,6 @@ def _dist_pointer_codegen_kernel(
             if sig32_slot[0] >= 1:
                 break
 
-        it = pl.make_tile(pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec), addr=0x1000)
-        pl.load(it, idx, [0, 0])
         ch = pld.channel(win, 0x2000, peer=peer)
         wptr = ch.remote_ptr(ws)
         sig_rptr = ch.remote_ptr(sig)
@@ -79,7 +76,6 @@ def _dist_pointer_codegen_kernel(
         ch.write(pl.make_ptr(pl.addptr(wptr, 64), pl.DT_INT64), 7)
         ch.write_notify(wptr, src, pl.addptr(sig_rptr, me), me + 1)
         ch.unlock()
-        ch.write_indexed(pl.addptr(wptr, 128), src, src_indices=it, count=8)
         ch.read(out, pl.addptr(wptr, 512))
         ch.write_reduce(pl.make_ptr(pl.addptr(wptr, 768), pl.DT_FP32), out2f, op=pld.ReduceOp.SUM)
         ch.atomic_fetch_add(pl.make_ptr(pl.addptr(wptr, 1024), pl.DT_INT64), out2, 1)

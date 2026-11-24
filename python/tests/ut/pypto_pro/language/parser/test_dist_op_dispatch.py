@@ -555,22 +555,6 @@ def test_channel_option_rejects_unsupported_bits():
     assert "unsupported WQE flag bits" in str(caught.value)
 
 
-def test_write_indexed_rejects_option():
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, src: pl.Tensor[[8, 16], pl.DT_BF16], dst: pl.Tensor[[8, 16], pl.DT_BF16],
-               idx: pl.Tensor[[1, 8], pl.DT_INT32]):
-        with pl.section_vector():
-            it = pl.make_tile(
-                pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec), addr=0x1000)
-            pl.load(it, idx, [0, 0])
-            ch = pld.channel(win, 0x2000, peer=1)
-            ch.write_indexed(ch.remote_ptr(dst), src, src_indices=it, count=8,
-                             option=pld.UrmaOption.CQE)
-
-    with pytest.raises(InvalidArgument) as caught:
-        _parse(kernel)
-    assert "option" in str(caught.value)
-
 def test_channel_remote_ptr_needs_one_operand():
     @pl.jit(arch="3510", auto_mutex=False)
     def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32]):
@@ -708,24 +692,6 @@ def test_dist_buffer_channel_write_notify():
             bch.submit()
             bch.drain()
     _assert_ir(kernel, "test_dist_buffer_channel_write_notify")
-
-
-def test_buffer_channel_rejects_write_indexed():
-    @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32],
-               src: pl.Tensor[[1, 8], pl.DT_INT32], idx: pl.Tensor[[1, 8], pl.DT_INT32]):
-        with pl.section_vector():
-            it = pl.make_tile(
-                pl.TileType(shape=[1, 8], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec), addr=0x1000)
-            pl.load(it, idx, [0, 0])
-            ch = pld.channel(win, 64, peer=1)
-            rptr = ch.remote_ptr(dst)
-            bch = pld.buffer_channel(ch, 512, 256)
-            bch.write_indexed(rptr, src, src_indices=it, count=8)
-
-    with pytest.raises(InvalidOperation) as caught:
-        _parse(kernel)
-    assert "no method 'write_indexed'" in str(caught.value)
 
 
 def test_buffer_channel_rejects_remote_ptr_and_is_shared():

@@ -375,34 +375,5 @@ TEST(DistOpsTest, ChannelRequiresNonNegativeAlignedUbAddress)
     }
 }
 
-TEST(DistOpsTest, IndexedWriteChecksIndexShapeCapacityAndRowAlignment)
-{
-    auto& registry = OpRegistry::GetInstance();
-    auto channel = MakeScalarVar("channel", DataType::INT64);
-    auto dst = MakePtrVar("dst", DataType::FP32);
-    auto src = MakeTensorVar("src", {4, 8}, DataType::FP32);
-    auto count = std::make_shared<ConstInt>(4, DataType::INT32, Sp());
-    auto srcIndices = MakeTileVarWithMemRef("src_indices", {4, 1}, DataType::INT32, MemorySpace::Vec, 0, 16);
-    auto dstIndices = MakeTileVarWithMemRef("dst_indices", {1, 4}, DataType::INT32, MemorySpace::Vec, 64, 16);
-    const std::vector<std::pair<std::string, std::any>> kwargs{{"submit", true}};
-    std::vector<ExprPtr> args{channel,    dst,       src, count, std::make_shared<ConstInt>(32, DataType::INT32, Sp()),
-                              srcIndices, dstIndices};
-    auto call = registry.Create("channel.write_indexed", args, kwargs, Sp());
-    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
-
-    for (int rowBytes : {0, 31, 256 * 1024 * 1024 + 32}) {
-        auto invalid = args;
-        invalid[4] = std::make_shared<ConstInt>(rowBytes, DataType::INT32, Sp());
-        EXPECT_THROW((void)registry.Create("channel.write_indexed", invalid, kwargs, Sp()), npu::tile_fwk::Error);
-    }
-    for (size_t index : {size_t{5}, size_t{6}}) {
-        auto invalid = args;
-        invalid[index] = MakeTileVarWithMemRef("short_indices", {3, 1}, DataType::INT32, MemorySpace::Vec, 0, 12);
-        EXPECT_THROW((void)registry.Create("channel.write_indexed", invalid, kwargs, Sp()), npu::tile_fwk::Error);
-        invalid[index] = MakeTileVarWithMemRef("matrix_indices", {2, 2}, DataType::INT32, MemorySpace::Vec, 0, 16);
-        EXPECT_THROW((void)registry.Create("channel.write_indexed", invalid, kwargs, Sp()), npu::tile_fwk::Error);
-    }
-}
-
 } // namespace ir
 } // namespace pypto

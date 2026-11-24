@@ -185,16 +185,11 @@ constexpr uint32_t kDistWqebbBytes = 64U;
 constexpr uint64_t kDistMaxTransferBytes = 256ULL * 1024ULL * 1024ULL;
 
 // SQE word0 flag byte (bits 16-23), mirroring hcomm's UrmaWqeEntry. The scalar write
-// forms stage the caller's UrmaOption here; write_indexed's batch body uses odr=1 with
-// no fence/completion and its last SQE carries 0x2D (URMA_DEFAULT_CFG), so one AdvanceSq
-// commits the whole batch and accounts for exactly one CQE. RingDoorbell publishes the
-// committed prefix.
+// forms stage the caller's UrmaOption here; the batch publish path marks its last SQE
+// with kDistSqePublishFlags, so one AdvanceSq commits the whole batch and accounts for
+// exactly one CQE. RingDoorbell publishes the committed prefix.
 constexpr uint32_t kDistSqeFlagShift = 16U;
-constexpr uint32_t kDistDefaultSqeOption = 0x2DU; // URMA_DEFAULT_CFG
-constexpr uint64_t kDistSqeBodyFlags = 1ULL << kDistSqeFlagShift;
-constexpr uint64_t kDistSqeFinalFlags = static_cast<uint64_t>(kDistDefaultSqeOption) << kDistSqeFlagShift;
 constexpr uint64_t kDistSqeFixedBits = (1ULL << 28U) | (1ULL << 29U); // tokenEn, rmtJettyType
-constexpr uint64_t kDistSqeBase = kDistSqeBodyFlags | kDistSqeFixedBits;
 // Word-0 fields outside the flag byte; the reduce descriptor lives in word 4.
 constexpr uint32_t kDistSqeOpcodeShift = 40U;
 constexpr uint32_t kDistSqeSgeNumShift = 24U;
@@ -279,14 +274,7 @@ __aicore__ constexpr uint64_t ReduceDescriptorBits()
            (static_cast<uint64_t>(kReduceOp) << kDistWqe4ReduceOpShift);
 }
 
-// write_indexed builds one single-SGE 64B WQEBB per row directly in the jetty SQ
-// in GM. One lane owns one SQE word, so eight lanes cover one WQEBB; each warp
-// therefore writes four contiguous WQEBBs.
-constexpr uint32_t kDistSimtWarps = 8U;
-constexpr uint32_t kDistSimtThreads = 32U * kDistSimtWarps;
 constexpr uint32_t kDistWqebbWords = kDistWqebbBytes / sizeof(uint64_t);
-constexpr uint32_t kDistSimtRowsPerPass = kDistSimtThreads / kDistWqebbWords;
-constexpr uint32_t kDistSimtMaxChunkWqebbs = 1024U;
 constexpr uint32_t kDistNearFullThreshold = 10U;
 
 // Cross-AIV channel lock word values (the vendor ChannelEntity protocol: free = 0,
@@ -386,69 +374,6 @@ __aicore__ inline void FillSqeWords(__ubuf__ uint64_t* w, uint32_t seq, const Pe
     w[5] = reinterpret_cast<uint64_t>(remote);
 }
 
-// Scalar-prepared SQE words 0..4; the worker ORs the per-row owner bit and the
-// final-batch flags into word 0 and fills word 7 (SGE source VA).
-struct Wqebb {
-    uint64_t words[kDistWqebbWords];
-};
-
-struct WriteIndexedParams {
-    uint64_t src_base;
-    uint64_t dst_base;
-    uint64_t row_bytes;
-    uint64_t src_stride;
-    uint64_t dst_stride;
-    uint32_t count;
-    uint32_t sq_depth;
-    uint32_t sq_seq;
-};
-
-static_assert(sizeof(Wqebb) <= kDistWqebbBytes, "SQE header must fit one WQEBB");
-
-template <typename IndexT, bool kHasSrcIndex, bool kHasDstIndex>
-__simt_vf__ __launch_bounds__(kDistSimtThreads) inline void WriteIndexedSimt(__gm__ uint64_t* sq,
-                                                                             __ubuf__ const Wqebb* hdr,
-                                                                             __ubuf__ const IndexT* src_indices,
-                                                                             __ubuf__ const IndexT* dst_indices,
-                                                                             WriteIndexedParams args)
-{
-    uint32_t tid = threadIdx.y * 32U + threadIdx.x;
-    uint32_t lane = tid & (kDistWqebbWords - 1U);
-    uint32_t group = tid / kDistWqebbWords;
-    const uint64_t header = lane < 5U ? hdr->words[lane] : 0ULL;
-
-    for (uint32_t row = group; row < args.count; row += kDistSimtRowsPerPass) {
-        uint32_t seq = args.sq_seq + row;
-        uint32_t phys = seq & (args.sq_depth - 1U);
-        uint64_t word = header;
-
-        if (lane == 0U) {
-            // Header word 0 must have owner and final-only flags cleared.
-            word |= static_cast<uint64_t>((seq + 1U) & kDistSqeSeqMask);
-            word |= (seq & args.sq_depth) == 0U ? (1ULL << kDistSqeOwnerBit) : 0ULL;
-            word |= row + 1U == args.count ? kDistSqeFinalFlags : 0ULL;
-        } else if (lane == 5U) {
-            uint64_t index = static_cast<uint64_t>(row);
-            if constexpr (kHasDstIndex) {
-                index = static_cast<uint64_t>(dst_indices[row]);
-            }
-            word = args.dst_base + index * args.dst_stride;
-        } else if (lane == 6U) {
-            word = args.row_bytes;
-        } else if (lane == 7U) {
-            uint64_t index = static_cast<uint64_t>(row);
-            if constexpr (kHasSrcIndex) {
-                index = static_cast<uint64_t>(src_indices[row]);
-            }
-            word = args.src_base + index * args.src_stride;
-        }
-        __stg<ST_L2CacheType::L2_CACHE_HINT_NORMAL_FV, L1CacheType::NON_CACHEABLE>(
-            sq + static_cast<uint64_t>(phys) * kDistWqebbWords + lane, word);
-    }
-
-    __threadfence();
-}
-
 struct Channel {
     __gm__ Window* win_;
     uint32_t jettyIdx_;
@@ -492,10 +417,9 @@ struct Channel {
 private:
     // SQE words 0..5 into stage_: the opcode, the standalone-final flag byte and the
     // remote address come from the caller; word 0 carries the per-post sequence number
-    // and owner bit (same fields the write_indexed worker ORs per row), word 1 keeps
-    // one SGE. Words 6/7 (SGE length, local VA) and any opcode payload stay the
-    // caller's per-op fill. Declared before its template users: the CCE frontend
-    // binds non-template names in member-template bodies at first parse.
+    // and owner bit, word 1 keeps one SGE. Words 6/7 (SGE length, local VA) and any
+    // opcode payload stay the caller's per-op fill. Declared before its template users:
+    // the CCE frontend binds non-template names in member-template bodies at first parse.
     template <UrmaOpCode kOpCode, uint64_t kFinalFlags>
     __aicore__ inline void FillSqeHeader(GM_ADDR remote)
     {
@@ -669,53 +593,6 @@ public:
             *reinterpret_cast<__ubuf__ uint32_t*>(stage_ + i) = 0U;
         }
         PostSqe<kTimeoutCycles, kSubmit>(2U);
-    }
-
-    template <typename IndexT, bool kHasSrcIndex, bool kHasDstIndex, int64_t kTimeoutCycles, bool kSubmit>
-    __aicore__ inline void WriteIndexed(GM_ADDR dst_base, GM_ADDR src_base, __ubuf__ IndexT* src_indices,
-                                        __ubuf__ IndexT* dst_indices, uint64_t row_bytes, uint64_t src_stride,
-                                        uint64_t dst_stride, uint64_t count)
-    {
-        static_assert(std::is_same_v<IndexT, int32_t> || std::is_same_v<IndexT, int64_t> ||
-                          std::is_same_v<IndexT, uint32_t> || std::is_same_v<IndexT, uint64_t>,
-                      "write_indexed indices must be a 32/64-bit integer type");
-        // count == 0 is a complete no-op: no WQE, no CQE, no doorbell.
-        if (count == 0ULL) {
-            return;
-        }
-        if (count > 0x7FFFFFFFULL) {
-            pypto_panic("dist.channel.write_indexed count %llu exceeds INT32_MAX\n",
-                        static_cast<unsigned long long>(count));
-        }
-        // The SIMT encoder publishes at most kDistSimtMaxChunkWqebbs rows per
-        // AdvanceSq, so the ring must hold one full chunk.
-        if (info_->sqDepth < kDistSimtMaxChunkWqebbs) {
-            pypto_panic("dist.channel.write_indexed requires sqDepth >= %u WQEBBs, got %u\n", kDistSimtMaxChunkWqebbs,
-                        info_->sqDepth);
-        }
-
-        if (row_bytes == 0ULL || (row_bytes % 32ULL) != 0ULL || row_bytes > kDistMaxTransferBytes) {
-            pypto_panic("dist.channel.write_indexed invalid row_bytes %llu (must be a positive multiple of 32 "
-                        "bytes, <= 256 MiB)\n",
-                        static_cast<unsigned long long>(row_bytes));
-        }
-        if (src_stride < row_bytes || dst_stride < row_bytes) {
-            pypto_panic("dist.channel.write_indexed strides (%llu, %llu) must be >= row_bytes %llu\n",
-                        static_cast<unsigned long long>(src_stride), static_cast<unsigned long long>(dst_stride),
-                        static_cast<unsigned long long>(row_bytes));
-        }
-
-        if constexpr (!kHasSrcIndex && !kHasDstIndex) {
-            if (src_stride == row_bytes && dst_stride == row_bytes) {
-                Write<kTimeoutCycles, kSubmit, kDistDefaultSqeOption>(dst_base, src_base,
-                                                                      static_cast<int64_t>(count * row_bytes));
-                return;
-            }
-        }
-
-        PostIndexedChunks<IndexT, kHasSrcIndex, kHasDstIndex, kTimeoutCycles, kSubmit>(
-            src_base, dst_base, src_indices, dst_indices, row_bytes, src_stride, dst_stride,
-            static_cast<uint32_t>(count));
     }
 
     template <int64_t kTimeoutCycles>
@@ -941,68 +818,6 @@ private:
         pypto_panic("dist.channel.remote_ptr: pointer 0x%llx is not in a region registered on this channel\n",
                     static_cast<unsigned long long>(local_ptr));
         return nullptr;
-    }
-
-    // Every index form: the worker writes the WQEs into the GM SQ, the scalar side
-    // only fences and publishes one chunk (one AdvanceSq, one CQE) at a time. Each
-    // row is a single-SGE 64B WQEBB; the worker applies the ring
-    // mask per row, so a chunk may cross the physical wrap (but never exceeds sqDepth,
-    // which would overwrite a slot twice inside one chunk).
-    template <typename IndexT, bool kHasSrcIndex, bool kHasDstIndex, int64_t kTimeoutCycles, bool kSubmit>
-    __aicore__ inline void PostIndexedChunks(GM_ADDR src_base, GM_ADDR dst_base, __ubuf__ IndexT* src_indices,
-                                             __ubuf__ IndexT* dst_indices, uint64_t row_bytes, uint64_t src_stride,
-                                             uint64_t dst_stride, uint32_t count)
-    {
-        auto* hdr = reinterpret_cast<__ubuf__ Wqebb*>(stage_);
-        WriteIndexedParams args{};
-        args.row_bytes = row_bytes;
-        args.src_stride = src_stride;
-        args.dst_stride = dst_stride;
-        args.sq_depth = info_->sqDepth;
-        uint64_t src_base_addr = reinterpret_cast<uint64_t>(src_base);
-        uint64_t dst_base_addr = reinterpret_cast<uint64_t>(dst_base);
-        __gm__ uint64_t* sq_base = reinterpret_cast<__gm__ uint64_t*>(info_->sqBaseAddr);
-
-        if constexpr (kHasSrcIndex || kHasDstIndex) {
-            set_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
-            wait_flag(PIPE_MTE2, PIPE_V, EVENT_ID0);
-        }
-
-        hdr->words[0] = kDistSqeBase | (static_cast<uint64_t>(UrmaOpCode::WRITE) << kDistSqeOpcodeShift);
-        hdr->words[1] = peer_.peerInfo->tpIdNumSgesRemoteTokenId | (1ULL << kDistSqeSgeNumShift);
-        hdr->words[2] = peer_.peerInfo->remoteEid[0];
-        hdr->words[3] = peer_.peerInfo->remoteEid[1];
-        hdr->words[4] = peer_.peerInfo->remoteTokenValueUdf;
-        set_flag(PIPE_S, PIPE_V, EVENT_ID0);
-        wait_flag(PIPE_S, PIPE_V, EVENT_ID0);
-
-        uint32_t done = 0;
-        uint32_t chunk = kDistSimtMaxChunkWqebbs;
-        while (done < count) {
-            if (count - done < chunk) {
-                chunk = count - done;
-            }
-            ReserveOrWait<kTimeoutCycles>(chunk, 1U);
-            args.count = chunk;
-            args.sq_seq = static_cast<uint32_t>(info_->packedHead);
-            args.src_base = src_base_addr + (kHasSrcIndex ? 0ULL : static_cast<uint64_t>(done) * src_stride);
-            args.dst_base = dst_base_addr + (kHasDstIndex ? 0ULL : static_cast<uint64_t>(done) * dst_stride);
-            __ubuf__ IndexT* src_chunk = kHasSrcIndex ? src_indices + done : nullptr;
-            __ubuf__ IndexT* dst_chunk = kHasDstIndex ? dst_indices + done : nullptr;
-
-            cce::async_invoke<pypto::dist::WriteIndexedSimt<IndexT, kHasSrcIndex, kHasDstIndex>>(
-                cce::dim3{32, kDistSimtWarps}, sq_base, hdr, src_chunk, dst_chunk, args);
-            // The V-pipe marker is queued behind the worker, so this Wait fires when
-            // every lane store has completed.
-            set_flag(PIPE_V, PIPE_S, EVENT_ID0);
-            wait_flag(PIPE_V, PIPE_S, EVENT_ID0);
-
-            jetty_.AdvanceSq(chunk);
-            if constexpr (kSubmit) {
-                jetty_.RingDoorbell();
-            }
-            done += chunk;
-        }
     }
 
 private:

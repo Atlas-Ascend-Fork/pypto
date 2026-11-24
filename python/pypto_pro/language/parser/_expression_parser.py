@@ -1613,7 +1613,7 @@ class ExpressionParserMixin:
         return self._dispatch_op(op_name, node, op_func, obj=obj)
 
     _CHANNEL_METHODS = frozenset(
-        {"remote_ptr", "write", "read", "write_reduce", "atomic_fetch_add", "atomic_cas", "write_indexed",
+        {"remote_ptr", "write", "read", "write_reduce", "atomic_fetch_add", "atomic_cas",
          "write_notify", "submit", "drain", "lock", "unlock", "is_shared"}
     )
 
