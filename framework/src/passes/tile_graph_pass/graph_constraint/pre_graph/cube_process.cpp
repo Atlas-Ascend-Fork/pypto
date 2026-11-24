@@ -258,6 +258,21 @@ Status CubeProcess::GetL0CCopyOuts(Operation& op, std::vector<Operation*>& l0CCo
     return SUCCESS;
 }
 
+Status CubeProcess::ValidateAndCollectL0CCopyOuts(Operation& op, std::vector<Operation*>& l0CCopyOuts)
+{
+    if (CheckValidCube(op) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] is invalid. %s", op.GetOpcodeStr().c_str(), op.GetOpMagic(),
+                          GetFormatBacktrace(op).c_str());
+        return FAILED;
+    }
+    if (GetL0CCopyOuts(op, l0CCopyOuts) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Operation, "Get CopyOuts for %s[%d] failed. %s", op.GetOpcodeStr().c_str(),
+                          op.GetOpMagic(), GetFormatBacktrace(op).c_str());
+        return FAILED;
+    }
+    return SUCCESS;
+}
+
 Status CubeProcess::ReconnectGraph(Operation& mulOp, std::vector<Operation*> copyOutOps)
 {
     auto inputs = mulOp.GetIOperands();
@@ -332,25 +347,36 @@ Status CubeProcess::AlignGMTensor(Function& function, std::vector<Operation*>& l
     return SUCCESS;
 }
 
+Status CubeProcess::UpdateLiteCubeOp(Function& function)
+{
+    // Kirin9030/KirinX90 专用 Cube 处理；校验/收集 copyOut/重连逻辑与 UpdateCubeOp 云侧分支保持同步，
+    // 不涉及 AlignGMTensor / UpdateL0cDtype / UpdateCopyAttr（Kirin 不支持 NZ/scale/relu；UpdateL0cDtype 刻意跳过，L0C
+    // dtype 已由前端设定）。
+    for (auto& op : function.Operations()) {
+        if (op.GetOpcode() != Opcode::OP_A_MUL_B && op.GetOpcode() != Opcode::OP_A_MULACC_B) {
+            continue;
+        }
+        std::vector<Operation*> l0CCopyOuts{};
+        if (ValidateAndCollectL0CCopyOuts(op, l0CCopyOuts) != SUCCESS) {
+            return FAILED;
+        }
+        ReconnectGraph(op, l0CCopyOuts);
+    }
+    return SUCCESS;
+}
+
 Status CubeProcess::UpdateCubeOp(Function& function)
 {
     if (IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
-        return SUCCESS;
+        return UpdateLiteCubeOp(function);
     }
     for (auto& op : function.Operations()) {
         if (op.GetOpcode() != Opcode::OP_A_MUL_B && op.GetOpcode() != Opcode::OP_A_MULACC_B) {
             continue;
         }
-        if (CheckValidCube(op) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] is invalid. %s", op.GetOpcodeStr().c_str(), op.GetOpMagic(),
-                              GetFormatBacktrace(op).c_str());
-            return FAILED;
-        }
         // l0CCopyOuts包含所有从L0C搬出的op
         std::vector<Operation*> l0CCopyOuts{};
-        if (GetL0CCopyOuts(op, l0CCopyOuts) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Get CopyOuts for %s[%d] failed. %s", op.GetOpcodeStr().c_str(),
-                              op.GetOpMagic(), GetFormatBacktrace(op).c_str());
+        if (ValidateAndCollectL0CCopyOuts(op, l0CCopyOuts) != SUCCESS) {
             return FAILED;
         }
 

@@ -108,13 +108,13 @@ matmul(input, mat2, out_dtype, *, a_trans = False, b_trans = False, c_matrix_nz 
 - Atlas A3系列产品：不支持DT_HF8，DT_FP8E5M2，DT_FP8E4M3，不支持extend_params中的trans_mode参数。当输入矩阵的数据类型为DT_BF16时，bias_tensor数据类型不支持DT_BF16。
 <!-- end id5 -->
 <!-- npu="9030" id11 -->
-- Kirin9030处理器系列产品：具体数据类型请见[Kirin9030处理器系列产品支持的数据类型](#kirin9030处理器系列产品支持的数据类型)，不支持TILEOP_NZ format输入（input与mat2），不支持c_matrix_nz，不支持extend_params中的：scale、scale_tensor、relu_type、trans_mode。
+- Kirin9030处理器系列产品：具体数据类型请见[Kirin9030处理器系列产品支持的数据类型](#kirin9030处理器系列产品支持的数据类型)，不支持输入TILEOP_NZ format输入（input与mat2），不支持c_matrix_nz，不支持extend_params中的：scale、relu_type、trans_mode。
 <!-- end id11 -->
 <!-- npu="x90" id12 -->
-- KirinX90处理器系列产品：具体数据类型请见[KirinX90处理器系列产品支持的数据类型](#kirinx90处理器系列产品支持的数据类型)，不支持TILEOP_NZ format输入（input与mat2），不支持c_matrix_nz，不支持extend_params中的：scale、scale_tensor、relu_type、trans_mode。
+- KirinX90处理器系列产品：具体数据类型请见[KirinX90处理器系列产品支持的数据类型](#kirinx90处理器系列产品支持的数据类型)，不支持输入TILEOP_NZ format输入（input与mat2），不支持c_matrix_nz，不支持extend_params中的：scale、relu_type、trans_mode。
 <!-- end id12 -->
 <!-- npu="9050" id13 -->
-- Kirin9050处理器系列产品：具体数据类型请见[Kirin9050处理器系列产品支持的数据类型](#kirin9050处理器系列产品支持的数据类型)，不支持TILEOP_NZ format输入（input与mat2），不支持c_matrix_nz，不支持`a_trans`（Kirin9030处理器系列产品/KirinX90处理器系列产品的A矩阵随路转置），不支持extend_params中的：scale、scale_tensor、relu_type、trans_mode。如需对A矩阵转置，请先调用`pypto.transpose`手动转置`input`，再以`a_trans=False`调用`matmul`，例如：`a_t = pypto.transpose(a, -1, -2)`，`pypto.matmul(a_t, b, out_dtype, a_trans=False)`。
+- Kirin9050处理器系列产品：具体数据类型请见[Kirin9050处理器系列产品支持的数据类型](#kirin9050处理器系列产品支持的数据类型)，不支持输入TILEOP_NZ format输入（input与mat2），不支持c_matrix_nz，不支持`a_trans`（Kirin9030处理器系列产品/KirinX90处理器系列产品的A矩阵随路转置），不支持extend_params中的：scale、relu_type、trans_mode。如需对A矩阵转置，请先调用`pypto.transpose`手动转置`input`，再以`a_trans=False`调用`matmul`，例如：`a_t = pypto.transpose(a, -1, -2)`，`pypto.matmul(a_t, b, out_dtype, a_trans=False)`。
 <!-- end id13 -->
 - 调用matmul接口前需要通过pypto.set\_cube\_tile\_shapes设置M、K、N轴上的切分大小
 - 当矩阵维度为3维或者4维时，需要调用pypto.set\_vec\_tile\_shapes接口设置vector的TileShape切分，如未设置，接口内部会设置2维的vec\_tile\_shape，其值为128，128。
@@ -127,8 +127,11 @@ matmul(input, mat2, out_dtype, *, a_trans = False, b_trans = False, c_matrix_nz 
 | input | mat2 | out_dtype | bias_tensor |
 |:------|:-----|:----------|:------------|
 | DT_FP16 | DT_FP16 | DT_FP16 | DT_FP16 |
+| DT_FP16 | DT_FP16 | DT_INT8 | DT_FP16 |
 | DT_INT8 | DT_INT8 | DT_INT32 | DT_INT32 |
-
+| DT_INT8 | DT_INT8 | DT_FP16 | DT_INT32 |
+| DT_INT8 | DT_INT8 | DT_INT8 | DT_INT32 |
+- out_dtype为DT_INT8（量化）或DT_INT8输入且out_dtype为DT_FP16（反量化）的场景需通过extend_params传入scale_tensor。
 <!-- end id9 -->
 
 <!-- npu="x90" id10 -->
@@ -137,10 +140,12 @@ matmul(input, mat2, out_dtype, *, a_trans = False, b_trans = False, c_matrix_nz 
 | input | mat2 | out_dtype | bias_tensor |
 |:------|:-----|:----------|:------------|
 | DT_FP16 | DT_FP16 | DT_FP16 | DT_FP32 |
+| DT_FP16 | DT_FP16 | DT_INT8 | DT_FP32 |
 | DT_INT8 | DT_INT8 | DT_INT32 | DT_INT32 |
-
-- KirinX90要求fp16@fp16->fp16场景，bias按照fp32保存（有效数实际按照fp16保存），高16比特无效补零，低16比特有效
-
+| DT_INT8 | DT_INT8 | DT_FP16 | DT_INT32 |
+| DT_INT8 | DT_INT8 | DT_INT8 | DT_INT32 |
+- KirinX90要求fp16输入场景，bias按照fp32保存（有效数实际按照fp16保存），高16比特无效补零，低16比特有效
+- out_dtype为DT_INT8（量化）或DT_INT8输入且out_dtype为DT_FP16（反量化）的场景需通过extend_params传入scale_tensor。
 <!-- end id10 -->
 
 <!-- npu="9050" id14 -->

@@ -44,6 +44,11 @@ public:
     void test_matmul_s8s8_003();
     void test_matmul_s8s8_004();
     void test_matmul_gemv_001();
+    void test_matmul_quant_s8s8_s8();
+    void test_matmul_quant_s8s8_fp16();
+    void test_matmul_quant_f16f16_s8();
+    void test_matmul_invalid_dtype_f16_f32();
+    void test_matmul_invalid_dtype_s8_f32();
     static TestCodeGenMatmul& Instance();
 
 private:

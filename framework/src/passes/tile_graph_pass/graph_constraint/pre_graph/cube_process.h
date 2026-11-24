@@ -69,6 +69,7 @@ public:
 
     Status CheckValidCube(const Operation& op);
     Status UpdateCubeOp(Function& function);
+    Status UpdateLiteCubeOp(Function& function);
     Status UpdateCopyAttr(Operation& op) const;
     Status AddL1CopyInAttr(const std::shared_ptr<LogicalTensor> input, int nzValue, int mValue, int kValue,
                            int nValue) const;
@@ -77,6 +78,7 @@ public:
     Status AlignGMTensor(Function& function, std::vector<Operation*>& l0CCopyOuts, Operation& mulOp);
     void DFSSearch(Operation* op, std::vector<Operation*>& l0CCopyOuts, std::unordered_set<Operation*>& visitedOp);
     Status GetL0CCopyOuts(Operation& op, std::vector<Operation*>& l0CCopyOuts);
+    Status ValidateAndCollectL0CCopyOuts(Operation& op, std::vector<Operation*>& l0CCopyOuts);
     Status ReconnectGraph(Operation& mulOp, std::vector<Operation*> copyOutOps);
     Status TransferAttr(Operation& mulOp, std::vector<Operation*> copyOutOps);
 };

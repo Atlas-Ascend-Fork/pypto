@@ -152,6 +152,17 @@ void SetAMulBAttr(const MatmulGraphNodes& tensorGraphNodes, const MatmulAttrPara
     ASSERT(MatmulErrorCode::ERR_RUNTIME_NULLPTR, tensorGraphNodes.outTensorPtr != nullptr)
         << "outTensorPtr is nullptr, check output tensor C.";
 
+    // Kirin9030(DAV_3113)/KirinX90(DAV_3003) 非宏 Lite NPU 累加器 dtype 修正：
+    // L0C 累加器只支持 int32/half，int8 输入→int32，fp16 输入→fp16；
+    if (IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch()) &&
+        !Platform::Instance().GetSoc().IsSupportCubeEpilogue()) {
+        DataType accDtype = (tensorGraphNodes.aTensorPtr->Datatype() == DataType::DT_INT8) ? DataType::DT_INT32 :
+                                                                                             DataType::DT_FP16;
+        for (auto& output : op.GetOOperands()) {
+            output->tensor->datatype = accDtype;
+        }
+    }
+
     int64_t nzAttr = (static_cast<int64_t>(tensorGraphNodes.aTensorPtr->Format())) |
                      (static_cast<int64_t>(tensorGraphNodes.bTensorPtr->Format()) << 1) |
                      // 2含义：cTensorPtr的索引，同时也是cTensor NZ信息的编码偏移位数
@@ -807,19 +818,16 @@ void CheckOperandDtype(DataType outType, const Tensor& operand1, const Tensor& o
         CHECK(ExternalError::INVALID_TYPE, isFp16Input || isInt8Input)
             << "Kirin matmul only supports DT_FP16 or DT_INT8 input, got " << DataType2String(operand1Dtype);
         if (isFp16Input) {
-            // kirin9050 宏指令：f16 输入支持 s32(NoQuant)/fp16/s8(ReqS8) 输出
-            CHECK(ExternalError::INVALID_TYPE,
-                  outType == DataType::DT_FP16 || (Platform::Instance().GetSoc().IsSupportCubeEpilogue() &&
-                                                   (outType == DataType::DT_INT32 || outType == DataType::DT_INT8)))
-                << "Kirin matmul with DT_FP16 input only supports DT_FP16 output"
-                << " (kirin9050 macro instr also supports DT_INT32/DT_INT8), got " << DataType2String(outType);
+            // fp16 输入支持 fp16 / s8(requant) 输出
+            CHECK(ExternalError::INVALID_TYPE, outType == DataType::DT_FP16 || outType == DataType::DT_INT8)
+                << "Kirin matmul with DT_FP16 input only supports DT_FP16 or DT_INT8 output, got "
+                << DataType2String(outType);
         } else {
-            // kirin9050 宏指令 pre-stage quant/dequant：s8 输入支持 fp16(dequant)/int8(requant)/int32 输出
+            // int8 输入支持 int32 / fp16(dequant) / s8(requant) 输出
             CHECK(ExternalError::INVALID_TYPE,
-                  outType == DataType::DT_INT32 || (Platform::Instance().GetSoc().IsSupportCubeEpilogue() &&
-                                                    (outType == DataType::DT_FP16 || outType == DataType::DT_INT8)))
-                << "Kirin matmul with DT_INT8 input only supports DT_INT32 output"
-                << " (kirin9050 macro instr also supports DT_FP16/DT_INT8), got " << DataType2String(outType);
+                  outType == DataType::DT_INT32 || outType == DataType::DT_FP16 || outType == DataType::DT_INT8)
+                << "Kirin matmul with DT_INT8 input only supports DT_INT32, DT_FP16 or DT_INT8 output, got "
+                << DataType2String(outType);
         }
     }
 }
@@ -838,10 +846,6 @@ void CheckLiteNPUMatmulParam(const Tensor& operand1, const Tensor& operand2, con
     CHECK(ExternalError::INVALID_FORMAT, operand2.Format() == TileOpFormat::TILEOP_ND)
         << "Kirin matmul does not support TILEOP_NZ input format.";
     CHECK(ExternalError::INVALID_FORMAT, !attrParam.isCMatrixNZ) << "Kirin matmul does not support c_matrix_nz.";
-    // kirin9050 宏指令场景 scale_tensor 复用为 quant_pre，其余 LiteNPU 平台不支持 scale_tensor
-    CHECK(ExternalError::INVALID_OPERATION,
-          param.scaleTensor.GetStorage() == nullptr || Platform::Instance().GetSoc().IsSupportCubeEpilogue())
-        << "Kirin matmul does not support scale_tensor.";
     CHECK(ExternalError::INVALID_OPERATION, fabs(param.scaleValue) < EPSILON) << "Kirin matmul does not support scale.";
     CHECK(ExternalError::INVALID_OPERATION, param.reluType == ReLuType::NoReLu)
         << "Kirin matmul does not support relu_type.";

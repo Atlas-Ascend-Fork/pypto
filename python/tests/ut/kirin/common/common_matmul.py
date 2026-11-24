@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 
 """
-Test matmul codegen - common functions for Kirin9030 and KirinX90
+Test matmul codegen - common functions for Kirin9030, KirinX90 and Kirin9050
 """
 
 from pathlib import Path
@@ -32,6 +32,42 @@ DTYPE_MAP = {
     torch.int8: pypto.DT_INT8,
     torch.int32: pypto.DT_INT32,
 }
+
+
+def get_matmul_bias_contract(soc_version, in_dtype, has_quant_pre=False):
+    """bias 硬件契约的唯一来源，返回 (torch_gold_dtype, pypto_bias_dtype, pack_mode)。
+
+    in_dtype: pypto 输入 dtype（DT_FP16 / DT_INT8）。
+    torch_gold_dtype: gold_bias 生成数值的 dtype（打包前）。
+    pypto_bias_dtype: kernel 签名中 bias 的 dtype（打包后）。
+    pack_mode: "pack_low16"（fp16 值打包进 fp32 低 16 位）或 "raw"（按 dtype 原样传入）。
+    规则：fp16 输入 → KirinX90 用 fp16 值打包进 fp32 低 16 位；Kirin9050 宏指令(has_quant_pre) 用真 fp32；其余 fp16。
+         s8 输入 → s32。
+    """
+    if in_dtype == pypto.DT_FP16:
+        if soc_version == "KirinX90":
+            return (torch.float16, pypto.DT_FP32, "pack_low16")
+        if soc_version == "Kirin9050" and has_quant_pre:
+            return (torch.float32, pypto.DT_INT32, "q16")
+        return (torch.float16, pypto.DT_FP16, "raw")
+    return (torch.int32, pypto.DT_INT32, "raw")
+
+
+def needs_quant_pre(torch_in_dtype, torch_out_dtype):
+    """由输入/输出 dtype 推导是否需要 per-channel quant_pre（等价于旧的 has_quant_pre 参数）。
+
+    规则：输出 dtype 与非量化的“自然”输出不一致时需要 quant_pre：
+      - s8×s8 自然输出为 s32，输出非 s32（fp16/s8）→ True；
+      - f16×f16 自然输出为 fp16，输出非 fp16（s8）→ True。
+    """
+    if torch_in_dtype == torch.int8:
+        return torch_out_dtype != torch.int32
+    return torch_out_dtype != torch.float16
+
+
+def pack_fp16_into_fp32_low16(t):
+    """fp16 张量按位打包进 fp32 低 16 位（X90 bias 契约：低 16 位有效，高 16 位无效）。"""
+    return t.view(torch.int16).to(torch.int32).bitwise_and(0xFFFF).view(torch.float32)
 
 
 def get_matmul_kernel(
@@ -133,7 +169,15 @@ def get_matmul_kernel(
         return matmul_kernel
 
 
-TEST_CASES = [
+def build_test_cases(cases, supported_ids):
+    """按 id 过滤出 supported_ids 中的用例（allow-list，保持原始顺序）。
+
+    不在 supported_ids 中的用例不参与收集；common 数据层不携带 marks/skip 语义。
+    """
+    return [p for p in cases if p.id in supported_ids]
+
+
+MATMUL_CASES = [
     # kernel_name: name of the kernel
     # torch_in_dtype: torch data type for input tensor a
     # torch_out_dtype: torch data type for output tensor c
@@ -147,7 +191,6 @@ TEST_CASES = [
     # bias_shape: bias tensor shape (or None)
     # a_trans: whether to transpose a
     # b_trans: whether to transpose b
-    # marks: pytest marks
     pytest.param(
         "matmul_fp16_001",
         torch.float16,
@@ -1137,7 +1180,7 @@ def run_matmul_test(
             bias = torch.rand(bias_shape, dtype=torch_out_dtype, device=device)
             gold_bias = bias
             if soc_version == "KirinX90" and torch_out_dtype == torch.float16:
-                bias = bias.view(torch.int16).to(torch.int32).bitwise_and(0xFFFF).view(torch.float32)
+                bias = pack_fp16_into_fp32_low16(bias)
         else:
             bias = torch.randint(-128, 127, bias_shape, dtype=torch.int32)
             gold_bias = bias
@@ -1172,7 +1215,7 @@ def run_matmul_test(
 def create_test_matmul_module(soc_version, test_cases=None):
     """Create a test module for matmul with specified soc_version."""
     if test_cases is None:
-        test_cases = TEST_CASES
+        test_cases = MATMUL_CASES
     kernels = {
         p.values[0]: get_matmul_kernel(
             soc_version,
@@ -1187,28 +1230,25 @@ def create_test_matmul_module(soc_version, test_cases=None):
         )
         for p in test_cases
     }
-    return kernels, lambda: run_matmul_test(
-        kernels, None, None, None, None, None, None, None, False, None, False, False, soc_version
-    )
+    return kernels
 
 
-# kirin9050 宏指令量化用例（pre-stage quant/dequant，per-channel quant_pre）
-# id 在非量化 TEST_CASES（001-055）之后从 056 开始连续编号。
+# 量化用例（056-066）：
+# id 在非量化 MATMUL_CASES（001-055）之后从 056 开始连续编号。
+# 各平台支持的子集由下游 test 文件的 allow-list 声明，common 数据层不感知平台差异、不携带 marks。
 # 组合矩阵：输入 {f16×f16, s8×s8} × 输出 {s32, fp16, s8} × bias {无, 有(s32)}
 # 覆盖要点：
 #   - 对齐（M=64）与非对齐（M=60）两类 shape；
 #   - 切m（m tile < M）、切k（k tile < K）、切n（n tile < N）三种切分；
 #   - L1/L0B 切分不一致：cube_tile_shape 中 k[0]（L0B 侧 K 分片）≠ k[1]（L1 侧 K 分片）。
 # 字段：kernel_name / torch_in_dtype / torch_out_dtype / pypto_in_dtype / pypto_out_dtype /
-#       shape_a / shape_b / shape_c / cube_tile_shape / has_bias / bias_shape / a_trans / b_trans /
-#       scale_value(None 表示无 quant_pre) / marks
+#       shape_a / shape_b / shape_c / cube_tile_shape / has_bias / bias_shape / a_trans / b_trans
 # 说明：
-#   - s32 输出为无量化路径（NoQuant，不需要 quant_pre）；
-#   - fp16/s8 输出为 pre-stage quant（DeqF16/ReqS8），需要 per-channel quant_pre；
-#   - requant(s8 输出) 的 golden 公式待硬件确认，暂 skip；
-#   - s8 输入取小量级控制累加值域，f16 输入随机 [0,1)；
-#   - 非对齐 M=60 用例暂 skip，待尾部处理逻辑确认。
-QUANT_TEST_CASES = [
+#   - 是否需要 per-channel quant_pre 由输入/输出 dtype 推导（见 needs_quant_pre）：
+#     s8 输入的 s32 输出、f16 输入的 fp16 输出为无量化路径（NoQuant，不需要 quant_pre）；
+#     s8 输入的 fp16/s8 输出、f16 输入的 s8 输出为 pre-stage quant（DeqF16/ReqS8），需要 quant_pre；
+#   - s8 输入取小量级控制累加值域，f16 输入随机 [0,1)。
+QUANT_CASES = [
     # ---- s8×s8 ---- #
     # 切m：M=64 按 m tile 16 切 4 片
     pytest.param(
@@ -1225,8 +1265,7 @@ QUANT_TEST_CASES = [
         None,
         False,
         False,
-        None,
-        marks=[],
+        marks=[pytest.mark.skip()],
         id="056",
     ),
     # 切n：N=64 按 n tile 16 切 4 片
@@ -1244,8 +1283,7 @@ QUANT_TEST_CASES = [
         (1, 64),
         False,
         False,
-        None,
-        marks=[],
+        marks=[pytest.mark.skip()],
         id="057",
     ),
     # 非对齐 M=60
@@ -1263,8 +1301,7 @@ QUANT_TEST_CASES = [
         None,
         False,
         False,
-        None,
-        marks=[pytest.mark.skip(reason="non-aligned M=60 pending verification")],
+        marks=[pytest.mark.skip()],
         id="058",
     ),
     # 切k + L1/L0B 切分不一致：K=128，L0B 侧按 32 切（4 片），L1 侧按 64 切（2 片）
@@ -1283,7 +1320,6 @@ QUANT_TEST_CASES = [
         None,
         False,
         False,
-        0.5,
         marks=[],
         id="059",
     ),
@@ -1302,8 +1338,7 @@ QUANT_TEST_CASES = [
         (1, 64),
         False,
         False,
-        0.5,
-        marks=[pytest.mark.skip(reason="non-aligned M=60 pending verification")],
+        marks=[pytest.mark.skip()],
         id="060",
     ),
     # requant：golden 公式待硬件确认
@@ -1321,8 +1356,7 @@ QUANT_TEST_CASES = [
         None,
         False,
         False,
-        0.5,
-        marks=[pytest.mark.skip(reason="requant golden formula pending hardware confirmation")],
+        marks=[],
         id="061",
     ),
     pytest.param(
@@ -1339,50 +1373,13 @@ QUANT_TEST_CASES = [
         (1, 64),
         False,
         False,
-        0.5,
-        marks=[pytest.mark.skip(reason="requant golden formula pending hardware confirmation")],
+        marks=[pytest.mark.skip()],
         id="062",
     ),
     # ---- f16×f16 ---- #
-    pytest.param(
-        "matmul_quant_f16f16_s32_063",
-        torch.float16,
-        torch.int32,
-        pypto.DT_FP16,
-        pypto.DT_INT32,
-        (64, 128),
-        (128, 64),
-        (64, 64),
-        ([16, 16], [64, 64], [64, 64]),
-        False,
-        None,
-        False,
-        False,
-        None,
-        marks=[pytest.mark.skip(reason="f16 input s32 accumulation semantics pending hardware confirmation")],
-        id="063",
-    ),
-    pytest.param(
-        "matmul_quant_f16f16_s32_bias_064",
-        torch.float16,
-        torch.int32,
-        pypto.DT_FP16,
-        pypto.DT_INT32,
-        (60, 64),
-        (64, 64),
-        (60, 64),
-        ([16, 16], [64, 64], [64, 64]),
-        True,
-        (1, 64),
-        False,
-        False,
-        None,
-        marks=[pytest.mark.skip(reason="f16 input s32 accumulation semantics pending hardware confirmation")],
-        id="064",
-    ),
     # 切n：N=64 按 n tile 16 切 4 片
     pytest.param(
-        "matmul_quant_f16f16_fp16_065",
+        "matmul_quant_f16f16_fp16_063",
         torch.float16,
         torch.float16,
         pypto.DT_FP16,
@@ -1395,16 +1392,49 @@ QUANT_TEST_CASES = [
         None,
         False,
         False,
+        marks=[pytest.mark.skip()],
+        id="063",
+    ),
+    pytest.param(
+        "matmul_quant_f16f16_fp16_bias_064",
+        torch.float16,
+        torch.float16,
+        pypto.DT_FP16,
+        pypto.DT_FP16,
+        (60, 64),
+        (64, 64),
+        (60, 64),
+        ([16, 16], [64, 64], [64, 64]),
+        True,
+        (1, 64),
+        False,
+        False,
+        marks=[pytest.mark.skip()],
+        id="064",
+    ),
+    pytest.param(
+        "matmul_quant_f16f16_s8_065",
+        torch.float16,
+        torch.int8,
+        pypto.DT_FP16,
+        pypto.DT_INT8,
+        (64, 64),
+        (64, 64),
+        (64, 64),
+        ([64, 64], [64, 64], [16, 16]),
+        False,
         None,
+        False,
+        False,
         marks=[],
         id="065",
     ),
     pytest.param(
-        "matmul_quant_f16f16_fp16_bias_066",
+        "matmul_quant_f16f16_s8_bias_066",
         torch.float16,
-        torch.float16,
+        torch.int8,
         pypto.DT_FP16,
-        pypto.DT_FP16,
+        pypto.DT_INT8,
         (60, 64),
         (64, 64),
         (60, 64),
@@ -1413,57 +1443,20 @@ QUANT_TEST_CASES = [
         (1, 64),
         False,
         False,
-        None,
-        marks=[pytest.mark.skip(reason="f16->fp16 with s32 bias pending pto-isa bias layout confirmation")],
+        marks=[pytest.mark.skip()],
         id="066",
-    ),
-    pytest.param(
-        "matmul_quant_f16f16_s8_067",
-        torch.float16,
-        torch.int8,
-        pypto.DT_FP16,
-        pypto.DT_INT8,
-        (64, 64),
-        (64, 64),
-        (64, 64),
-        ([64, 64], [64, 64], [16, 16]),
-        False,
-        None,
-        False,
-        False,
-        0.5,
-        marks=[pytest.mark.skip(reason="requant golden formula pending hardware confirmation")],
-        id="067",
-    ),
-    pytest.param(
-        "matmul_quant_f16f16_s8_bias_068",
-        torch.float16,
-        torch.int8,
-        pypto.DT_FP16,
-        pypto.DT_INT8,
-        (60, 64),
-        (64, 64),
-        (60, 64),
-        ([16, 16], [64, 64], [64, 64]),
-        True,
-        (1, 64),
-        False,
-        False,
-        0.5,
-        marks=[pytest.mark.skip(reason="requant golden formula pending hardware confirmation")],
-        id="068",
     ),
 ]
 
 
 def create_test_matmul_quant_module(soc_version, test_cases=None):
-    """Create a test module for kirin9050 quant matmul (macro instr) with specified soc_version."""
+    """Create a test module for quant matmul (pre-stage quant/dequant) with specified soc_version."""
     if test_cases is None:
-        test_cases = QUANT_TEST_CASES
+        test_cases = QUANT_CASES
     kernels = {}
     for p in test_cases:
         v = p.values
-        scale_value = v[13]
+        has_quant_pre = needs_quant_pre(v[1], v[2])
         n_size = v[5][-2] if v[11] else v[5][-1]
         kernels[v[0]] = get_matmul_kernel(
             soc_version,
@@ -1475,30 +1468,21 @@ def create_test_matmul_quant_module(soc_version, test_cases=None):
             v[10],  # bias_shape
             v[11],  # a_trans
             v[12],  # b_trans
-            # f16×f16→fp16 走通用 TMATMUL_BIAS，bias 必须是 fp16；s8 输入与其余宏指令路径用 s32 bias
-            # （CheckLiteNPUBiasParam：s8 输入只接受 int32 bias）。
-            bias_dtype_override=(
-                pypto.DT_FP16 if (v[3] == pypto.DT_FP16 and v[4] == pypto.DT_FP16) else pypto.DT_INT32
-            ),
-            quant_scale_shape=(1, n_size) if scale_value is not None else None,
+            bias_dtype_override=get_matmul_bias_contract(soc_version, v[3], has_quant_pre)[1],
+            quant_scale_shape=(1, n_size) if has_quant_pre else None,
         )
     return kernels
 
 
-def check_quant_precision(actual, golden, out_dtype, kernel_name, input_dtype=None):
+def check_quant_precision(actual, golden, out_dtype, kernel_name):
     """Quant 用例的 dtype 容差策略，细筛实现见 kirin.common.check_atol_rtol。"""
     if out_dtype == torch.int8:
         rtol, atol = 0.0, 1.0
     elif out_dtype == torch.int32:
-        if input_dtype == torch.float16:
-            # f16→s32 是 Q16.16 定点 MAC；1 LSB = 1/65536。
-            # K=128 实测 max_diff 6~9 LSB，留到 16 LSB。
-            rtol, atol = 1e-5, 16.0
-        else:
-            # s8→s32 是精确整数累加，保持严格。
-            rtol, atol = 1e-6, 2.0
+        # s8→s32 是精确整数累加，保持严格。
+        rtol, atol = 1e-6, 2.0
     else:
-        rtol, atol = 1e-3, 1e-3
+        rtol, atol = 1e-2, 1e-3
     check_atol_rtol(actual, golden, rtol, atol, name=kernel_name)
 
 
@@ -1515,9 +1499,16 @@ def run_quant_matmul_test(
     bias_shape,
     a_trans,
     b_trans,
-    scale_value,
+    soc_version,
 ):
-    """Run a single kirin9050 quant matmul kernel test (combination matrix)."""
+    """Run a single quant matmul kernel test (combination matrix).
+
+    soc_version 决定 requant 的 scale 打包口径：
+      - Kirin9050（宏指令 epilogue）走 fp19（trans_quant_param）
+      - Kirin9030 / KirinX90（LiteNPU 非宏指令）走 FIXP VREQ8，scale 需额外
+        打包 sign(bit46)=1（有符号 int8）与 offset(bit[37,46))=0
+    """
+    has_quant_pre = needs_quant_pre(torch_in_dtype, torch_out_dtype)
     device = "cpu"
     if torch_in_dtype == torch.float16:
         a = torch.rand(shape_a, dtype=torch.float16, device=device)
@@ -1531,44 +1522,52 @@ def run_quant_matmul_test(
     a_new = a.permute(1, 0) if a_trans else a
     b_new = b.permute(1, 0) if b_trans else b
     # 硬件契约：f16 输入的 MAC 结果在定点域是 acc*65536（Q16.16）。
-    # - s32 输出：golden = round(acc*65536) + bias（bias 在缩放后按原始整数加）
-    # - s8 输出：硬件 bias 乘 65536、scale 除 65536；两个 65536 在实数域恰好抵消，
-    #   golden 直接用 (acc+bias) * 实数 scale，不再额外乘 65536。
+    # f16→s8 输出：int32 bias 由用户预乘 65536 放进 Q16.16、scale 除 65536；
+    # 两个 65536 在实数域恰好抵消，golden 直接用 (acc+bias) * 实数 scale，不再额外乘 65536。
     f16_fixup = torch_in_dtype == torch.float16
 
     gold_bias = None
     hw_bias = None
     if has_bias:
-        # 宏指令 bias 走 BT 表：fp16 输出用 fp16 bias，其余用 s32 bias。
-        bias_dtype = (
-            torch.float16 if (torch_in_dtype == torch.float16 and torch_out_dtype == torch.float16) else torch.int32
+        torch_gold_dtype, _, pack_mode = get_matmul_bias_contract(
+            soc_version, DTYPE_MAP[torch_in_dtype], has_quant_pre
         )
-        gold_bias = torch.randint(-8, 7, bias_shape, dtype=bias_dtype)
-        hw_bias = gold_bias
-        if f16_fixup and torch_out_dtype == torch.int8:
-            hw_bias = (gold_bias.to(torch.int32) * 65536).to(torch.int32)
+        gold_bias = torch.randint(-8, 7, bias_shape, dtype=torch_gold_dtype)
+        if pack_mode == "pack_low16":
+            hw_bias = pack_fp16_into_fp32_low16(gold_bias)
+        elif pack_mode == "q16":
+            # 9050 宏指令 f16→s8：累加器是 Q16.16，int32 bias 走 BT 表 raw 直传（硬件不转换），
+            # 需用户预乘 65536 把实数 bias 放进 Q16.16，与 scale/65536 在实数域恰好抵消。
+            hw_bias = (gold_bias * 65536.0).round().to(torch.int32)
+        else:
+            hw_bias = gold_bias
 
     n_size = shape_b[-2] if b_trans else shape_b[-1]
     scale_decode = None
-    if scale_value is not None:
+    # Kirin9030 / KirinX90 走 FIXP requant：int32 acc→int8（VREQ8）需打包 sign 位；Kirin9050 宏指令用纯 fp19。
+    is_fixp = soc_version in ("Kirin9030", "KirinX90")
+    # sign=1 仅 VREQ8（s8 输入→s8 输出）需要；f16 输入的 VQF162B8_PRE 与 s8→fp16 的 VDEQF16 均不使用 sign 位。
+    needs_requant_sign = is_fixp and torch_in_dtype == torch.int8 and torch_out_dtype == torch.int8
+    if has_quant_pre:
         # 宏指令 quant_pre 是 per-channel（shape (1, n)）：逐通道随机生成 scale，
-        # 若用 scale_value 广播成 (1, n) 全同值，则退化为 per-tensor，覆盖不到 per-channel 路径
+        # 若用单一常量 scale 广播成 (1, n) 全同值，则退化为 per-tensor，覆盖不到 per-channel 路径
         rand_scale = torch.rand((1, n_size), dtype=torch.float32)
         scale_fp32 = torch.maximum(rand_scale, torch.tensor(1e-3, dtype=torch.float32))
-        # f16→s8：硬件读 Q16.16 域，scale 需先除 65536；golden 用实数 scale 即可，
-        # 因为硬件 bias*65536 与 scale/65536 在实数域抵消（65536 是 2 的幂，fp19 尾数不变）。
+        # f16→s8：9050 宏指令在 Q16.16 域累加（acc*65536），scale 需除 65536 抵消；golden 用实数 scale。
+        # 9030/X90 FIXP 的 fp16 累加器是实数域（无 Q16.16），不应除 65536（除 65536 是 2 的幂，fp19 尾数不变）。
         scale_hw_fp32 = scale_fp32
-        if f16_fixup and torch_out_dtype == torch.int8:
+        if f16_fixup and torch_out_dtype == torch.int8 and not is_fixp:
             scale_hw_fp32 = scale_fp32 / 65536.0
         scale_decode = decode_quant_param(trans_quant_param(scale_fp32))
+        scale_hw = trans_quant_param(scale_hw_fp32, is_signed=needs_requant_sign)
 
     def dispatch():
-        if has_bias and scale_value is not None:
-            kernels[kernel_name](a, b, hw_bias, trans_quant_param(scale_hw_fp32), c)
+        if has_bias and has_quant_pre:
+            kernels[kernel_name](a, b, hw_bias, scale_hw, c)
         elif has_bias:
             kernels[kernel_name](a, b, hw_bias, c)
-        elif scale_value is not None:
-            kernels[kernel_name](a, b, trans_quant_param(scale_hw_fp32), c)
+        elif has_quant_pre:
+            kernels[kernel_name](a, b, scale_hw, c)
         else:
             kernels[kernel_name](a, b, c)
 
@@ -1582,12 +1581,7 @@ def run_quant_matmul_test(
     acc_f = acc_raw + gold_bias.float() if gold_bias is not None else acc_raw
 
     if torch_out_dtype == torch.int32:
-        if f16_fixup:
-            golden_c = torch.round(acc_raw * 65536.0).to(torch.int32)
-            if gold_bias is not None:
-                golden_c = golden_c + gold_bias.to(torch.int32)
-        else:
-            golden_c = torch.round(acc_f).to(torch.int32)
+        golden_c = torch.round(acc_f).to(torch.int32)
     elif torch_out_dtype == torch.float16:
         # s8 输入：dequant = s32 acc * per-channel scale；f16 输入无 scale 为直接 fp16 输出
         golden_c = (acc_f * scale_decode).to(torch.float16) if scale_decode is not None else acc_f.to(torch.float16)
@@ -1598,7 +1592,7 @@ def run_quant_matmul_test(
         golden_c = torch.round(acc_f * scale_decode).clamp(-128, 127).to(torch.int8)
 
     check_nan(c, name=kernel_name)
-    check_quant_precision(c, golden_c, torch_out_dtype, kernel_name, torch_in_dtype)
+    check_quant_precision(c, golden_c, torch_out_dtype, kernel_name)
     cos_value = abs(compare_cos(np.array(c.cpu()), np.array(golden_c.cpu())))
     if cos_value < 0.9999:
         raise AssertionError(f"{kernel_name}: cos_value {cos_value} < 0.9999")

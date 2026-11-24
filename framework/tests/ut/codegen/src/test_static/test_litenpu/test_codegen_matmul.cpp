@@ -335,3 +335,100 @@ void TestCodeGenMatmul::test_matmul_gemv_001()
     npu::tile_fwk::CodeGenLiteNPU codeGen(ctx);
     codeGen.GenCode(*function);
 }
+
+void TestCodeGenMatmul::test_matmul_quant_s8s8_s8()
+{
+    PROGRAM("MATMUL_QUANT_S8S8_S8")
+    {
+        Tensor a(DataType::DT_INT8, {64, 64}, "a");
+        Tensor b(DataType::DT_INT8, {64, 64}, "b");
+        Tensor scale(DataType::DT_INT64, {1, 64}, "scale");
+        auto c = Tensor(DataType::DT_INT8, {64, 64}, "c");
+        FUNCTION("MATMUL_QUANT_S8S8_S8")
+        {
+            TileShape::Current().SetCubeTile({64, 64}, {64, 64}, {32, 32});
+            npu::tile_fwk::Matrix::MatmulExtendParam extendParam;
+            extendParam.scaleTensor = scale;
+            c = npu::tile_fwk::Matrix::Matmul(DataType::DT_INT8, a, b, extendParam, false, false, false);
+        }
+    }
+
+    auto function = Program::GetInstance().GetFunctionByRawName(FUNCTION_PREFIX + "MATMUL_QUANT_S8S8_S8");
+    npu::tile_fwk::CodeGenCtx ctx;
+    npu::tile_fwk::CodeGenLiteNPU codeGen(ctx);
+    codeGen.GenCode(*function);
+}
+
+void TestCodeGenMatmul::test_matmul_quant_s8s8_fp16()
+{
+    PROGRAM("MATMUL_QUANT_S8S8_FP16")
+    {
+        Tensor a(DataType::DT_INT8, {64, 128}, "a");
+        Tensor b(DataType::DT_INT8, {128, 64}, "b");
+        Tensor scale(DataType::DT_INT64, {1, 64}, "scale");
+        auto c = Tensor(DataType::DT_FP16, {64, 64}, "c");
+        FUNCTION("MATMUL_QUANT_S8S8_FP16")
+        {
+            TileShape::Current().SetCubeTile({16, 16}, {32, 64}, {64, 64});
+            npu::tile_fwk::Matrix::MatmulExtendParam extendParam;
+            extendParam.scaleTensor = scale;
+            c = npu::tile_fwk::Matrix::Matmul(DataType::DT_FP16, a, b, extendParam, false, false, false);
+        }
+    }
+
+    auto function = Program::GetInstance().GetFunctionByRawName(FUNCTION_PREFIX + "MATMUL_QUANT_S8S8_FP16");
+    npu::tile_fwk::CodeGenCtx ctx;
+    npu::tile_fwk::CodeGenLiteNPU codeGen(ctx);
+    codeGen.GenCode(*function);
+}
+
+void TestCodeGenMatmul::test_matmul_quant_f16f16_s8()
+{
+    PROGRAM("MATMUL_QUANT_F16F16_S8")
+    {
+        Tensor a(DataType::DT_FP16, {64, 64}, "a");
+        Tensor b(DataType::DT_FP16, {64, 64}, "b");
+        Tensor scale(DataType::DT_INT64, {1, 64}, "scale");
+        auto c = Tensor(DataType::DT_INT8, {64, 64}, "c");
+        FUNCTION("MATMUL_QUANT_F16F16_S8")
+        {
+            TileShape::Current().SetCubeTile({64, 64}, {64, 64}, {16, 16});
+            npu::tile_fwk::Matrix::MatmulExtendParam extendParam;
+            extendParam.scaleTensor = scale;
+            c = npu::tile_fwk::Matrix::Matmul(DataType::DT_INT8, a, b, extendParam, false, false, false);
+        }
+    }
+
+    auto function = Program::GetInstance().GetFunctionByRawName(FUNCTION_PREFIX + "MATMUL_QUANT_F16F16_S8");
+    npu::tile_fwk::CodeGenCtx ctx;
+    npu::tile_fwk::CodeGenLiteNPU codeGen(ctx);
+    codeGen.GenCode(*function);
+}
+
+void TestCodeGenMatmul::test_matmul_invalid_dtype_f16_f32()
+{
+    PROGRAM("MATMUL_INVALID_DTYPE_F16_F32")
+    {
+        Tensor a(DataType::DT_FP16, {16, 16}, "a");
+        Tensor b(DataType::DT_FP16, {16, 16}, "b");
+        FUNCTION("MATMUL_INVALID_DTYPE_F16_F32")
+        {
+            // Kirin fp16 输入仅支持 fp16/int8 输出，DT_FP32 非法，覆盖 CheckOperandDtype fp16 分支错误消息
+            EXPECT_THROW((void)npu::tile_fwk::Matrix::Matmul(DataType::DT_FP32, a, b, false, false, false), Error);
+        }
+    }
+}
+
+void TestCodeGenMatmul::test_matmul_invalid_dtype_s8_f32()
+{
+    PROGRAM("MATMUL_INVALID_DTYPE_S8_F32")
+    {
+        Tensor a(DataType::DT_INT8, {16, 16}, "a");
+        Tensor b(DataType::DT_INT8, {16, 16}, "b");
+        FUNCTION("MATMUL_INVALID_DTYPE_S8_F32")
+        {
+            // Kirin int8 输入仅支持 int32/fp16/int8 输出，DT_FP32 非法，覆盖 CheckOperandDtype int8 分支错误消息
+            EXPECT_THROW((void)npu::tile_fwk::Matrix::Matmul(DataType::DT_FP32, a, b, false, false, false), Error);
+        }
+    }
+}
