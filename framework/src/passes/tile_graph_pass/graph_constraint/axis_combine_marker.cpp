@@ -59,8 +59,12 @@ void UpdateCopyinStatus(Operation* op, std::unordered_map<LogicalTensorPtr, Axis
     if (outputTensor->GetShape().back() == inputTensor->GetShape().back()) {
         if (tensorStatus.find(inputTensor) != tensorStatus.end() &&
             tensorStatus[inputTensor] == AxisReorderStatus::DISABLE) {
-            tensorStatus[outputTensor] = AxisReorderStatus::DISABLE;
-            return;
+            // 仅 view 判定的跨步 DISABLE 需要继承; COPY_OUT 升格等保守 DISABLE 不继承
+            auto& producers = inputTensor->GetProducers();
+            if (!producers.empty() && (*producers.begin())->GetOpcode() == Opcode::OP_VIEW) {
+                tensorStatus[outputTensor] = AxisReorderStatus::DISABLE;
+                return;
+            }
         }
         tensorStatus[outputTensor] = AxisReorderStatus::ENABLE;
         return;

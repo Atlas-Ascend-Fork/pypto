@@ -1210,3 +1210,33 @@ TEST_F(TestAxisCombineMarker, strided_view_copyin_inherit_disable)
     EXPECT_EQ(marker.IsTensorEnableAxisCombine(graph.GetTensor("vw")), false);
     EXPECT_EQ(marker.IsTensorEnableAxisCombine(graph.GetTensor("ub")), false);
 }
+
+/*
+before (gmm_finalize_routing 的 logit 中转链):
+    ub0[8](UB) --reshape--> ub1[8,1](UB) --copy_out--> vw[8,1](DDR) --copy_in--> ub2[8,1](UB)
+
+after:
+    reshape 为白名单 op → ub1 UNKNOWN; copy_out 输入非 ENABLE → 升格 DISABLE(vw);
+    copy_in 输入/输出尾轴相同, 走继承分支; vw 的生产者是 COPY_OUT 非 OP_VIEW,
+    不继承 → ub2 ENABLE, mul 广播链保持合轴。
+    修复前 vw 的保守 DISABLE 被无条件继承 → ub2 DISABLE, 组内 DISABLE 优先,
+    mul 链不合轴, EXPAND 物化导致 UB 超限。
+*/
+TEST_F(TestAxisCombineMarker, copyout_conservative_disable_not_inherited)
+{
+    ComputationalGraphBuilder graph;
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP32, {8}, MemoryType::MEM_UB, "ub0"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP32, {8, 1}, MemoryType::MEM_UB, "ub1"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP32, {8, 1}, MemoryType::MEM_DEVICE_DDR, "vw"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP32, {8, 1}, MemoryType::MEM_UB, "ub2"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_RESHAPE, {"ub0"}, {"ub1"}, "reshape", true), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_COPY_OUT, {"ub1"}, {"vw"}, "copy_out", true), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_COPY_IN, {"vw"}, {"ub2"}, "copy_in", true), true);
+
+    auto* rootFuncPtr = graph.GetFunction();
+    AxisCombineMarker marker;
+    marker.Run(*rootFuncPtr);
+
+    EXPECT_EQ(marker.IsTensorEnableAxisCombine(graph.GetTensor("vw")), false);
+    EXPECT_EQ(marker.IsTensorEnableAxisCombine(graph.GetTensor("ub2")), true);
+}
