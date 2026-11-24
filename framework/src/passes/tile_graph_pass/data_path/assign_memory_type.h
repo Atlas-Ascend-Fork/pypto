@@ -203,20 +203,22 @@ private:
 
     Status ResolveUnalignedUbMoves(Function& function);
 
-    Status ProcessL0C2L1SmallToLarge(Function& function);
-    Status ProcessL0C2L1LargeToSmall(Function& function);
+    Status ProcessL0C2L1SmallToLarge(const std::vector<Operation*>& slices);
+    Status ProcessL0C2L1LargeToSmall(const std::vector<Operation*>& contracts);
     bool CheckConsumerMoveInShapeMultiple(const LogicalTensorPtr& output, const LogicalTensorPtr& input);
     bool AreAllSliceConsumerShapesPreserved(const LogicalTensorPtr& tensor) const;
-    Status ProcessL0C2UBSmallToLarge(Function& function);
-    Status ProcessL0C2UBLargeToSmall(Function& function);
-    Status ProcessL12UBSmallToLarge(Function& function);
-    Status ProcessL12UBLargeToSmall(Function& function);
-    Status ProcessUB2UBContractSlice(Function& function);
-    Status ProcessUB2L1SmallToLarge(Function& function);
-    Status ProcessUB2L1LargeToSmall(Function& function);
-    Status ProcessL1DdrL1(Function& function);
+    Status ProcessL0C2UBEqualShape(const std::vector<Operation*>& contracts);
+    Status ProcessL0C2UBSmallToLarge(const std::vector<Operation*>& slices);
+    Status ProcessL0C2UBLargeToSmall(const std::vector<Operation*>& contracts);
+    Status TryUpgradeL0C2UBContractSlice(Operation& contract, const std::string& reason);
+    Status ProcessL12UBSmallToLarge(const std::vector<Operation*>& slices);
+    Status ProcessL12UBLargeToSmall(const std::vector<Operation*>& contracts);
+    Status ProcessUB2UBContractSlice(const std::vector<Operation*>& contracts);
+    Status ProcessUB2L1SmallToLarge(const std::vector<Operation*>& slices);
+    Status ProcessUB2L1LargeToSmall(const std::vector<Operation*>& contracts);
+    Status ProcessL1DdrL1(const std::vector<Operation*>& contracts);
     bool AreAllContractInputsFromL1(const LogicalTensorPtr& middle) const;
-    Status ProcessDdrMultiReshape(Function& function);
+    Status ProcessDdrMultiReshape(const std::vector<Operation*>& contracts);
     struct DdrReshapeBranches {
         std::vector<Operation*> branchViews;
         std::vector<Operation*> branchReshapes;

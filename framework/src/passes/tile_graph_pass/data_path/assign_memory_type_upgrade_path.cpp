@@ -512,22 +512,35 @@ Status AssignMemoryType::InferReshapeL0C2UBAndUB2L1PatternLiteNPU(Operation& op)
 // 按平台能力及固定顺序尝试路径升级，前序规则写入的类型供后续规则使用。
 Status AssignMemoryType::ApplyPlatformPathUpgradeRules(Function& function)
 {
-    RETURN_IF_NOT_SUCCESS(ProcessDdrMultiReshape(function));
-    RETURN_IF_NOT_SUCCESS(ProcessL1DdrL1(function));
-    RETURN_IF_NOT_SUCCESS(ProcessL0C2L1LargeToSmall(function));
-    RETURN_IF_NOT_SUCCESS(ProcessL0C2L1SmallToLarge(function));
+    // 按原图顺序收集候选算子。升级期间算子和 opcode 保持稳定，各规则读取当前图状态。
+    std::vector<Operation*> slices;
+    std::vector<Operation*> contracts;
+    for (auto& op : function.Operations()) {
+        const auto opcode = op.GetOpcode();
+        if (opcode == Opcode::OP_SLICE) {
+            slices.push_back(&op);
+        } else if (opcode == Opcode::OP_CONTRACT) {
+            contracts.push_back(&op);
+        }
+    }
+
+    RETURN_IF_NOT_SUCCESS(ProcessDdrMultiReshape(contracts));
+    RETURN_IF_NOT_SUCCESS(ProcessL1DdrL1(contracts));
+    RETURN_IF_NOT_SUCCESS(ProcessL0C2L1LargeToSmall(contracts));
+    RETURN_IF_NOT_SUCCESS(ProcessL0C2L1SmallToLarge(slices));
     if (Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510 ||
         IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
-        RETURN_IF_NOT_SUCCESS(ProcessL0C2UBSmallToLarge(function));
-        RETURN_IF_NOT_SUCCESS(ProcessL0C2UBLargeToSmall(function));
-        RETURN_IF_NOT_SUCCESS(ProcessUB2L1SmallToLarge(function));
-        RETURN_IF_NOT_SUCCESS(ProcessUB2L1LargeToSmall(function));
+        RETURN_IF_NOT_SUCCESS(ProcessL0C2UBEqualShape(contracts));
+        RETURN_IF_NOT_SUCCESS(ProcessL0C2UBSmallToLarge(slices));
+        RETURN_IF_NOT_SUCCESS(ProcessL0C2UBLargeToSmall(contracts));
+        RETURN_IF_NOT_SUCCESS(ProcessUB2L1SmallToLarge(slices));
+        RETURN_IF_NOT_SUCCESS(ProcessUB2L1LargeToSmall(contracts));
     }
     if (Platform::Instance().GetSoc().IsSupportCubeEpilogue()) {
-        RETURN_IF_NOT_SUCCESS(ProcessL12UBSmallToLarge(function));
-        RETURN_IF_NOT_SUCCESS(ProcessL12UBLargeToSmall(function));
+        RETURN_IF_NOT_SUCCESS(ProcessL12UBSmallToLarge(slices));
+        RETURN_IF_NOT_SUCCESS(ProcessL12UBLargeToSmall(contracts));
     }
-    RETURN_IF_NOT_SUCCESS(ProcessUB2UBContractSlice(function));
+    RETURN_IF_NOT_SUCCESS(ProcessUB2UBContractSlice(contracts));
     return SUCCESS;
 }
 
@@ -638,13 +651,11 @@ bool AssignMemoryType::CollectDdrReshapeBranches(const LogicalTensorPtr& input, 
 }
 
 // 对齐的 CONTRACT 后若所有 reshape 分支均落到 UB，将中间 DDR 驻留升级到 UB。
-Status AssignMemoryType::ProcessDdrMultiReshape(Function& function)
+Status AssignMemoryType::ProcessDdrMultiReshape(const std::vector<Operation*>& contracts)
 {
     constexpr MemoryType kUbMemoryType = MemoryType::MEM_UB;
-    for (auto& contract : function.Operations()) {
-        if (contract.GetOpcode() != Opcode::OP_CONTRACT) {
-            continue;
-        }
+    for (auto* contractOp : contracts) {
+        auto& contract = *contractOp;
         auto contractInput = contract.iOperand.front();
         auto contractOutput = contract.oOperand.front();
         if (contractOutput->GetProducers().size() != 1 || contractInput->GetMemoryTypeOriginal() != kUbMemoryType ||
@@ -693,11 +704,12 @@ bool AssignMemoryType::AreAllContractInputsFromL1(const LogicalTensorPtr& middle
 }
 
 // 当 CONTRACT 与 SLICE 两侧均可留在 L1 时，消除中间 DDR 驻留。
-Status AssignMemoryType::ProcessL1DdrL1(Function& function)
+Status AssignMemoryType::ProcessL1DdrL1(const std::vector<Operation*>& contracts)
 {
     std::unordered_set<LogicalTensorPtr> visitedOutputs;
-    for (auto& contract : function.Operations()) {
-        if (contract.GetOpcode() != Opcode::OP_CONTRACT || contract.oOperand.empty()) {
+    for (auto* contractOp : contracts) {
+        auto& contract = *contractOp;
+        if (contract.oOperand.empty()) {
             continue;
         }
         auto middle = contract.oOperand.front();
@@ -737,22 +749,21 @@ Status AssignMemoryType::ProcessL1DdrL1(Function& function)
     return SUCCESS;
 }
 
-Status AssignMemoryType::ProcessL0C2L1SmallToLarge(Function& function)
+Status AssignMemoryType::ProcessL0C2L1SmallToLarge(const std::vector<Operation*>& slices)
 {
-    for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_SLICE) {
-            continue;
-        }
+    for (auto* sliceOp : slices) {
+        auto& op = *sliceOp;
         RETURN_IF_NOT_SUCCESS(TryUpgradeSliceContractPath(op, MemoryType::MEM_L0C, MemoryType::MEM_L1,
                                                           "ProcessL0C2L1SmallToLarge", false, false, false));
     }
     return SUCCESS;
 }
 
-Status AssignMemoryType::ProcessUB2UBContractSlice(Function& function)
+Status AssignMemoryType::ProcessUB2UBContractSlice(const std::vector<Operation*>& contracts)
 {
-    for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_CONTRACT || op.oOperand.empty() || op.oOperand.front() == nullptr) {
+    for (auto* contractOp : contracts) {
+        auto& op = *contractOp;
+        if (op.oOperand.empty() || op.oOperand.front() == nullptr) {
             continue;
         }
         auto middle = op.oOperand.front();
@@ -780,10 +791,11 @@ Status AssignMemoryType::ProcessUB2UBContractSlice(Function& function)
     return SUCCESS;
 }
 
-Status AssignMemoryType::ProcessL0C2L1LargeToSmall(Function& function)
+Status AssignMemoryType::ProcessL0C2L1LargeToSmall(const std::vector<Operation*>& contracts)
 {
-    for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_CONTRACT || op.oOperand.empty() || op.oOperand.front() == nullptr) {
+    for (auto* contractOp : contracts) {
+        auto& op = *contractOp;
+        if (op.oOperand.empty() || op.oOperand.front() == nullptr) {
             continue;
         }
         // 由 TryUpgradeSingleContractSlicePath 检查单 CONTRACT 约束。
@@ -1043,12 +1055,44 @@ Status AssignMemoryType::ShouldSkipDirectPathUpgradeForBothSideOffsets(Operation
     return SUCCESS;
 }
 
-Status AssignMemoryType::ProcessL0C2UBSmallToLarge(Function& function)
+// 等形状候选由单个 CONTRACT 写入，按 GetShape() 比较 CONTRACT 输入、中间张量及各 SLICE 输出的静态形状。
+static bool IsEqualShapeContractSlice(const Operation& contract)
 {
-    for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_SLICE) {
+    if (contract.iOperand.size() != 1 || contract.oOperand.size() != 1) {
+        return false;
+    }
+    const auto& input = contract.iOperand.front();
+    const auto& middle = contract.oOperand.front();
+    if (input == nullptr || middle == nullptr || middle->GetProducers().size() != 1 ||
+        *middle->GetProducers().begin() != &contract || middle->GetConsumers().empty()) {
+        return false;
+    }
+    const auto& shape = middle->GetShape();
+    return input->GetShape() == shape &&
+           std::all_of(middle->GetConsumers().begin(), middle->GetConsumers().end(), [&shape](const Operation* slice) {
+               return slice != nullptr && slice->GetOpcode() == Opcode::OP_SLICE && slice->oOperand.size() == 1 &&
+                      slice->oOperand.front() != nullptr && slice->oOperand.front()->GetShape() == shape;
+           });
+}
+
+// 等形状路径优先让中间张量驻留 L0C，由各 SLICE 将数据搬入 UB。
+// 中间张量含负维时，由 CheckContractSliceTopology 拒绝直连升级。
+Status AssignMemoryType::ProcessL0C2UBEqualShape(const std::vector<Operation*>& contracts)
+{
+    const std::string reason = "ProcessL0C2UBEqualShape";
+    for (auto* contract : contracts) {
+        if (!IsEqualShapeContractSlice(*contract)) {
             continue;
         }
+        RETURN_IF_NOT_SUCCESS(TryUpgradeL0C2UBContractSlice(*contract, reason));
+    }
+    return SUCCESS;
+}
+
+Status AssignMemoryType::ProcessL0C2UBSmallToLarge(const std::vector<Operation*>& slices)
+{
+    for (auto* sliceOp : slices) {
+        auto& op = *sliceOp;
         bool skipUpgrade = false;
         RETURN_IF_NOT_SUCCESS(ShouldSkipDirectPathUpgradeForBothSideOffsets(op, MemoryType::MEM_L0C, MemoryType::MEM_UB,
                                                                             "ProcessL0C2UBSmallToLarge", skipUpgrade));
@@ -1062,55 +1106,62 @@ Status AssignMemoryType::ProcessL0C2UBSmallToLarge(Function& function)
     return SUCCESS;
 }
 
-Status AssignMemoryType::ProcessL0C2UBLargeToSmall(Function& function)
+Status AssignMemoryType::ProcessL0C2UBLargeToSmall(const std::vector<Operation*>& contracts)
 {
-    for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_CONTRACT) {
-            continue;
-        }
-        bool skipUpgrade = false;
-        RETURN_IF_NOT_SUCCESS(ShouldSkipDirectPathUpgradeForBothSideOffsets(op, MemoryType::MEM_L0C, MemoryType::MEM_UB,
-                                                                            "ProcessL0C2UBLargeToSmall", skipUpgrade));
-        if (skipUpgrade) {
-            continue;
-        }
-        // conv 多维 tile 放开 2 维限制 (requireMatrixShape=false)，对齐校验按维数分派
-        RETURN_IF_NOT_SUCCESS(TryUpgradeSingleContractSlicePath(op, MemoryType::MEM_L0C, MemoryType::MEM_UB,
-                                                                "ProcessL0C2UBLargeToSmall", false, true, false));
+    const std::string reason = "ProcessL0C2UBLargeToSmall";
+    for (auto* contract : contracts) {
+        RETURN_IF_NOT_SUCCESS(TryUpgradeL0C2UBContractSlice(*contract, reason));
     }
     return SUCCESS;
 }
 
-Status AssignMemoryType::ProcessL12UBSmallToLarge(Function& function)
+// 从单个 CONTRACT 尝试升级 SLICE 侧的 L0C 到 UB 直连，先检查双侧偏移，再按维数检查对齐。
+Status AssignMemoryType::TryUpgradeL0C2UBContractSlice(Operation& contract, const std::string& reason)
 {
-    for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_SLICE) {
-            continue;
-        }
+    bool skipUpgrade = false;
+    const auto offsetStatus = ShouldSkipDirectPathUpgradeForBothSideOffsets(contract, MemoryType::MEM_L0C,
+                                                                            MemoryType::MEM_UB, reason, skipUpgrade);
+    if (offsetStatus != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Operation, "%s failed to check L0C-to-UB offsets for CONTRACT[%d].", reason.c_str(),
+                          contract.GetOpMagic());
+        return offsetStatus;
+    }
+    if (skipUpgrade) {
+        return SUCCESS;
+    }
+    const auto upgradeStatus = TryUpgradeSingleContractSlicePath(contract, MemoryType::MEM_L0C, MemoryType::MEM_UB,
+                                                                 reason, false, true, false);
+    if (upgradeStatus != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Operation, "%s failed to upgrade L0C-to-UB slices for CONTRACT[%d].",
+                          reason.c_str(), contract.GetOpMagic());
+    }
+    return upgradeStatus;
+}
+
+Status AssignMemoryType::ProcessL12UBSmallToLarge(const std::vector<Operation*>& slices)
+{
+    for (auto* sliceOp : slices) {
+        auto& op = *sliceOp;
         RETURN_IF_NOT_SUCCESS(TryUpgradeSliceContractPath(op, MemoryType::MEM_L1, MemoryType::MEM_UB,
                                                           "ProcessL12UBSmallToLarge", false, true, false));
     }
     return SUCCESS;
 }
 
-Status AssignMemoryType::ProcessL12UBLargeToSmall(Function& function)
+Status AssignMemoryType::ProcessL12UBLargeToSmall(const std::vector<Operation*>& contracts)
 {
-    for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_CONTRACT) {
-            continue;
-        }
+    for (auto* contractOp : contracts) {
+        auto& op = *contractOp;
         RETURN_IF_NOT_SUCCESS(TryUpgradeSingleContractSlicePath(op, MemoryType::MEM_L1, MemoryType::MEM_UB,
                                                                 "ProcessL12UBLargeToSmall", false, true, false));
     }
     return SUCCESS;
 }
 
-Status AssignMemoryType::ProcessUB2L1SmallToLarge(Function& function)
+Status AssignMemoryType::ProcessUB2L1SmallToLarge(const std::vector<Operation*>& slices)
 {
-    for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_SLICE) {
-            continue;
-        }
+    for (auto* sliceOp : slices) {
+        auto& op = *sliceOp;
         RETURN_IF_NOT_SUCCESS(TryUpgradeSliceContractPath(op, MemoryType::MEM_UB, MemoryType::MEM_L1,
                                                           "ProcessUB2L1SmallToLarge", false, false, true));
     }
@@ -1162,12 +1213,10 @@ bool AssignMemoryType::ShouldSkipUB2L1SmallToLarge(const LogicalTensorPtr& iOper
     return !MemoryPathUtils::CheckInnerAxisC0Size(iOperand, oOperand);
 }
 
-Status AssignMemoryType::ProcessUB2L1LargeToSmall(Function& function)
+Status AssignMemoryType::ProcessUB2L1LargeToSmall(const std::vector<Operation*>& contracts)
 {
-    for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_CONTRACT) {
-            continue;
-        }
+    for (auto* contractOp : contracts) {
+        auto& op = *contractOp;
         RETURN_IF_NOT_SUCCESS(TryUpgradeSingleContractSlicePath(op, MemoryType::MEM_UB, MemoryType::MEM_L1,
                                                                 "ProcessUB2L1LargeToSmall", false, false, true));
     }

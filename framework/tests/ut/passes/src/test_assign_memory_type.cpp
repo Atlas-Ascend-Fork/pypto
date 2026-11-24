@@ -2540,7 +2540,7 @@ TEST_F(AssignMemoryTypeTest, SingleReshapeSliceFanoutPreservesDdrBoundary)
     }
 
     AssignMemoryType pass;
-    ASSERT_EQ(pass.ProcessDdrMultiReshape(*graph.GetFunction()), SUCCESS);
+    ASSERT_EQ(pass.ProcessDdrMultiReshape({graph.GetOp("contract")}), SUCCESS);
     EXPECT_EQ(graph.GetTensor("assembled")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
     EXPECT_EQ(graph.GetTensor("reshaped")->GetMemoryTypeOriginal(), MemoryType::MEM_DEVICE_DDR);
 }
@@ -2568,7 +2568,7 @@ TEST_F(AssignMemoryTypeTest, DdrMultiReshapeKeepsOutcastBoundary)
         ASSERT_TRUE(graph.SetOutCast(outcasts));
 
         pass.Init(*graph.GetFunction());
-        ASSERT_EQ(pass.ProcessDdrMultiReshape(*graph.GetFunction()), SUCCESS);
+        ASSERT_EQ(pass.ProcessDdrMultiReshape({graph.GetOp("contract")}), SUCCESS);
         auto expected = outcasts.empty() ? MEM_UB : MEM_DEVICE_DDR;
         for (const auto* name : {"assembled", "reshaped", "viewed", "branchReshaped"}) {
             EXPECT_EQ(graph.GetTensor(name)->GetMemoryTypeOriginal(), expected) << name;
@@ -2631,6 +2631,44 @@ TEST_F(AssignMemoryTypeTest, DdrMultiReshapeWithDirectSlice)
     EXPECT_EQ(directSliceOutput->GetMemoryTypeOriginal(), MemoryType::MEM_UB);
     EXPECT_EQ(branchSlice.GetOpcode(), Opcode::OP_VIEW);
     EXPECT_EQ(directSlice.GetOpcode(), Opcode::OP_VIEW);
+}
+
+TEST_F(AssignMemoryTypeTest, TestL0C2UBEqualShapePrefersSliceCopies)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    Platform::Instance().ReloadMemoryPaths("3510");
+    const Shape shape{NUM_32, NUM_64};
+    const Offset offset(shape.size(), 0);
+    auto& program = Program::GetInstance();
+    constexpr auto name = "EqualShapeSliceCopies";
+    auto function = std::make_shared<Function>(program, name, name, nullptr);
+    program.InsertFuncToFunctionMap(name, function);
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto middle = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    input->SetMemoryTypeBoth(MEM_L0C, true);
+    auto& contract = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_CONTRACT, {input}, {middle});
+    contract.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UNKNOWN, offset));
+    std::vector<Operation*> slices;
+    for (int i = 0; i < NUM_2; ++i) {
+        auto output = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+        auto& slice = IRBuilder().CreateTensorOpStmt(*function, Opcode::OP_SLICE, {middle}, {output});
+        slice.SetOpAttribute(std::make_shared<ViewOpAttribute>(offset, MEM_UB));
+        slices.push_back(&slice);
+    }
+
+    AssignMemoryType pass;
+    const auto status = pass.RunOnFunction(*function);
+    Platform::Instance().ReloadMemoryPaths("2201");
+    ASSERT_EQ(status, SUCCESS);
+    EXPECT_EQ(middle->GetMemoryTypeOriginal(), MEM_L0C);
+    EXPECT_EQ(middle->GetMemoryTypeToBe(), MEM_L0C);
+    EXPECT_EQ(contract.GetOpcode(), Opcode::OP_ASSEMBLE);
+    for (const auto* slice : slices) {
+        EXPECT_EQ(slice->GetOpcode(), Opcode::OP_SLICE);
+        EXPECT_EQ(slice->GetIOperands().front()->GetMemoryTypeOriginal(), MEM_L0C);
+        EXPECT_EQ(slice->GetOOperands().front()->GetMemoryTypeOriginal(), MEM_UB);
+    }
 }
 
 TEST_F(AssignMemoryTypeTest, TestL0C2UBSmallToLarge)
@@ -2934,7 +2972,7 @@ TEST_F(AssignMemoryTypeTest, MixedSlicePathsRespectMiddleMemoryAndConvProducer)
         pass.inserter.UpdateTensorTobeMap(input, contract, MEM_L0C);
         pass.inserter.UpdateTensorTobeMap(middle, smallSlice, middleType);
         pass.inserter.UpdateTensorTobeMap(middle, largeSlice, middleType);
-        ASSERT_EQ(pass.ProcessL0C2UBLargeToSmall(*function), SUCCESS);
+        ASSERT_EQ(pass.ProcessL0C2UBLargeToSmall({&contract}), SUCCESS);
 
         EXPECT_EQ(middle->GetMemoryTypeOriginal(), middleType);
         EXPECT_EQ(smallSlice.iOperand.front(), expectDirect ? input : middle);
