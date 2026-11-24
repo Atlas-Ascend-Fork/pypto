@@ -1654,10 +1654,10 @@ def _assemble_cv_source(
             ]
         )
     wrapper_lines.extend(["}", ""])
-
+    content = "\n".join([*(result.content for result in results), *wrapper_lines])
     return CodegenResult(
         build_dir=reference.build_dir,
-        content="\n".join([*(result.content for result in results), *wrapper_lines]),
+        content=content,
         kernel_name=reference.kernel_name,
         bisheng_cross_sync=any(result.bisheng_cross_sync for result in results),
         needs_print_debug=any(result.needs_print_debug for result in results),
@@ -1801,10 +1801,7 @@ def _add_kernel_header(result: CodegenResult) -> CodegenResult:
         # PTO headers contain namespace directives of their own, so all AscendC
         # interfaces must be parsed before pto-inst.hpp introduces PTO names.
         header += "#include <pto/pto-inst.hpp>\n\nusing namespace pto;\n"
-    return dataclasses.replace(
-        result,
-        content=f"{header}\n{result.content.lstrip()}",
-    )
+    return dataclasses.replace(result, content=f"{header}\n{result.content.lstrip()}")
 
 
 def _dump_pipeline_generated_source(

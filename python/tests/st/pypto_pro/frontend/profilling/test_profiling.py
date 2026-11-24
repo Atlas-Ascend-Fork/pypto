@@ -12,6 +12,7 @@
 
 """Validate core type and tensors for eager and captured PyPTO launches."""
 
+from contextlib import suppress
 import csv
 import ctypes
 import glob
@@ -19,6 +20,10 @@ import importlib
 import json
 import logging
 import os
+from pathlib import Path
+import shutil
+import signal
+import subprocess
 import sys
 import time
 
@@ -218,14 +223,7 @@ def test_profiler_api_outputs(tmp_path, kind, mode):
         logging.info("Trace file: %s, events=%d", trace_file, len(events))
 
 
-@pytest.mark.soc("950", "960")
-@pytest.mark.parametrize("name", [None, "pypto_pro_exact_profile_alias"])
-@pytest.mark.parametrize("mode", ["eager", "graph_before_collection", "graph_custom_op_core_limits"])
-def test_op_summary_exact_name(tmp_path, monkeypatch, name, mode):
-    """Require the exact Op Name; mangled names and extra prefixes must fail."""
-    _check_npu()
-    monkeypatch.setenv("ASCEND_WORK_PATH", str(tmp_path))
-
+def _named_case(name, mode):
     @pl.jit(name=name)
     def prof_named_kernel(out: pl.Tensor[[256], pl.DT_INT32, pl.Output]):
         with pl.section_vector():
@@ -234,6 +232,7 @@ def test_op_summary_exact_name(tmp_path, monkeypatch, name, mode):
 
     out = torch.zeros(256, dtype=torch.int32, device=ST_DEVICE)
     launch = prof_named_kernel[1]
+    library = None
     if mode == "graph_custom_op_core_limits":
         library = torch.library.Library("pypto_pro_profile_names", "FRAGMENT")
         op_name = "run_default" if name is None else "run_alias"
@@ -249,55 +248,124 @@ def test_op_summary_exact_name(tmp_path, monkeypatch, name, mode):
             with torch.npu.npugraph_ex.scope.limit_core_num(2, 2):
                 custom_op(output)
 
-    launch(out)
-    torch.npu.synchronize()
-    out.zero_()
-    torch.npu.synchronize()
     expected_output = torch.zeros_like(out)
     expected_output[0] = 7
     if mode == "graph_custom_op_core_limits":
         expected_output[128] = 7
-    output_dir = str(tmp_path / "profiler")
-    skip_first = int(mode != "eager")
-    with torch_npu.profiler.profile(
-        activities=[torch_npu.profiler.ProfilerActivity.NPU],
-        experimental_config=_build_experimental_config(),
-        schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=1, repeat=1, skip_first=skip_first),
-        on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(output_dir, analyse_flag=True),
-    ) as prof:
-        for step in range(skip_first + 1):
-            if mode == "eager":
-                launch(out)
-            else:
-                if step == 0:
-                    graph = torch.npu.NPUGraph()
-                    with torch.npu.graph(graph):
-                        launch(out)
-                out.zero_()
-                # Finish resetting the output before submitting graph replay.
-                torch.npu.synchronize()
-                graph.replay()
-            torch.npu.synchronize()
-            prof.step()
-    torch.testing.assert_close(out, expected_output, rtol=0, atol=0)
-    expected = name if name is not None else "prof_named_kernel"
+    # Keep the custom-op registration alive until all graph replays finish.
+    return launch, out, expected_output, library
+
+
+_PROFILE_NAMES = [None, "pypto_pro_exact_profile_alias"]
+_EXPECTED_NAMES = {"prof_named_kernel", "pypto_pro_exact_profile_alias"}
+
+
+def _assert_op_names(output_dir):
     files = []
-    names = []
+    names = set()
     for _ in range(60):
         files = glob.glob(os.path.join(output_dir, "**", "op_summary_*.csv"), recursive=True)
-        names = []
+        names = set()
         for csv_file in files:
             with open(csv_file, encoding="utf-8", newline="") as stream:
-                names.extend(row.get("Op Name", "") for row in csv.DictReader(stream))
-        if expected in names:
+                names.update(row.get("Op Name", "") for row in csv.DictReader(stream))
+        if _EXPECTED_NAMES <= names:
             break
         time.sleep(0.5)
-    assert expected in names, f"Expected exact Op Name {expected!r}; files={files}, observed={names}"
+    assert _EXPECTED_NAMES <= names, f"Expected exact names {_EXPECTED_NAMES}; files={files}, observed={names}"
 
 
 @pytest.mark.soc("950", "960")
-@pytest.mark.parametrize("warm_kernel", [False, True], ids=["loaded_during_collection", "loaded_before_collection"])
-def test_tensor_reports_stop_with_collection(tmp_path, monkeypatch, warm_kernel):
+@pytest.mark.parametrize("mode", ["graph_before_collection", "graph_custom_op_core_limits"])
+def test_op_summary_exact_name(tmp_path, monkeypatch, mode):
+    """Collect default and explicit names together, including graphs captured before collection."""
+    _check_npu()
+    monkeypatch.setenv("ASCEND_WORK_PATH", str(tmp_path))
+    cases = [_named_case(name, mode) for name in _PROFILE_NAMES]
+    for launch, out, expected_output, _ in cases:
+        launch(out)
+        torch.npu.synchronize()
+        torch.testing.assert_close(out, expected_output, rtol=0, atol=0)
+        out.zero_()
+    torch.npu.synchronize()
+    output_dir = str(tmp_path / "profiler")
+    with torch_npu.profiler.profile(
+        activities=[torch_npu.profiler.ProfilerActivity.NPU],
+        experimental_config=_build_experimental_config(),
+        schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=1, repeat=1, skip_first=1),
+        on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(output_dir, analyse_flag=True),
+    ) as prof:
+        for step in range(2):
+            if step == 0:
+                graph = torch.npu.NPUGraph()
+                with torch.npu.graph(graph):
+                    for launch, out, _, _ in cases:
+                        launch(out)
+            for _, out, _, _ in cases:
+                out.zero_()
+            # Finish resetting every output before submitting graph replay.
+            torch.npu.synchronize()
+            graph.replay()
+            torch.npu.synchronize()
+            for _, out, expected_output, _ in cases:
+                torch.testing.assert_close(out, expected_output, rtol=0, atol=0)
+            prof.step()
+    _assert_op_names(output_dir)
+
+
+def _run_msprof_workloads():
+    """Collect default and explicit eager operator names in one CLI session."""
+    _check_npu()
+    for name in _PROFILE_NAMES:
+        launch, out, expected, _ = _named_case(name, "eager")
+        launch(out)
+        torch.npu.synchronize()
+        torch.testing.assert_close(out, expected, rtol=0, atol=0)
+    print("All profiling workloads passed")
+
+
+def _run_msprof(command, environment, log_path, timeout):
+    # Files avoid waiting for pipe EOF from descendants after msprof exits.
+    with log_path.open("w", encoding="utf-8") as log:
+        process = subprocess.Popen(
+            command, env=environment, stdout=log, stderr=subprocess.STDOUT, start_new_session=True,
+        )
+        timed_out = False
+        try:
+            process.wait(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            timed_out = True
+        finally:
+            if timed_out or process.poll() is None:
+                # subprocess.run only kills msprof itself, leaving its workload alive.
+                with suppress(ProcessLookupError):
+                    os.killpg(process.pid, signal.SIGKILL)
+                process.wait(timeout=10)
+    output = log_path.read_text(encoding="utf-8", errors="replace")
+    if timed_out:
+        phase = ("collector shutdown/export" if "All profiling workloads passed" in output
+                 else "workload execution")
+        pytest.fail(f"msprof timed out after {timeout}s during {phase}; log: {log_path}\n{output[-8000:]}")
+    assert process.returncode == 0, f"msprof exited with {process.returncode}; log: {log_path}\n{output[-8000:]}"
+    return output
+
+
+@pytest.mark.soc("950", "960")
+@pytest.mark.skipif(shutil.which("msprof") is None, reason="msprof is required for eager profiling")
+def test_msprof_eager_names(tmp_path):
+    """Check exact eager operator names from a single msprof capture."""
+    _check_npu()
+    output = tmp_path / "capture"
+    environment = {**os.environ, "ASCEND_WORK_PATH": str(tmp_path / "work"), "PARALLEL_COMPILE": "0"}
+    command = [shutil.which("msprof"), f"--output={output}", sys.executable, "-u",
+               str(Path(__file__).resolve()), "--msprof-workloads"]
+    log = _run_msprof(command, environment, tmp_path / "msprof.log", timeout=180)
+    assert "All profiling workloads passed" in log, log
+    _assert_op_names(str(output))
+
+
+@pytest.mark.soc("950", "960")
+def test_tensor_reports_stop_with_collection(tmp_path, monkeypatch):
     """Count reporting before/during/after collection, including loading a library while profiling."""
     _check_npu()
     monkeypatch.setenv("ASCEND_WORK_PATH", str(tmp_path))
@@ -321,44 +389,54 @@ def test_tensor_reports_stop_with_collection(tmp_path, monkeypatch, warm_kernel)
 
     monkeypatch.setattr(jit, "_generate_caller_cpp", instrument)
 
-    @pl.jit()
-    def switch_kernel(out: pl.Tensor[[32], pl.DT_INT32, pl.Output]):
-        with pl.section_cube():
-            out[0] = 3
+    def make_case(name):
+        @pl.jit(name=name)
+        def switch_kernel(out: pl.Tensor[[32], pl.DT_INT32, pl.Output]):
+            with pl.section_cube():
+                out[0] = 3
+        return switch_kernel, torch.zeros(32, dtype=torch.int32, device=ST_DEVICE)
 
-    out = torch.zeros(32, dtype=torch.int32, device=ST_DEVICE)
-    expected = torch.zeros_like(out)
+    warm = make_case("switch_kernel_loaded_before_collection")
+    cold = make_case("switch_kernel_loaded_during_collection")
+    expected = torch.zeros(32, dtype=torch.int32, device=ST_DEVICE)
     expected[0] = 3
 
-    def launch():
+    def launch(case):
+        kernel, out = case
         out.zero_()
-        switch_kernel(out)
+        kernel(out)
         torch.npu.synchronize()
         torch.testing.assert_close(out, expected, rtol=0, atol=0)
 
-    def counts():
-        compiled, = switch_kernel._compiled_by_signature.values()
+    def counts(case):
+        kernel, _ = case
+        compiled, = kernel._compiled_by_signature.values()
         counter = compiled.entry.lib.pypto_test_reports
         counter.argtypes = [ctypes.c_bool]
         counter.restype = ctypes.c_uint
         return counter(True), counter(False)
 
-    if warm_kernel:
-        launch()
-        assert counts() == (0, 0)
+    # The cold kernel is first loaded inside collection; both libraries have
+    # independent counters and share the same two start/stop transitions.
+    launch(warm)
+    assert counts(warm) == (0, 0)
 
     for session in range(2):
         with torch_npu.profiler.profile(
             activities=[torch_npu.profiler.ProfilerActivity.NPU],
             experimental_config=_build_experimental_config(),
             schedule=torch_npu.profiler.schedule(wait=0, warmup=0, active=1, repeat=1),
-            on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(str(tmp_path / f"profile_{session}")),
+            on_trace_ready=torch_npu.profiler.tensorboard_trace_handler(
+                str(tmp_path / f"profile_{session}"), analyse_flag=False,
+            ),
         ) as prof:
-            launch()
-            assert counts() == (session + 1, 0)
+            for case in (warm, cold):
+                launch(case)
+                assert counts(case) == (session + 1, 0)
             prof.step()
-        launch()
-        assert counts() == (session + 1, 0), "Tensor reports continued after collection stopped"
+        for case in (warm, cold):
+            launch(case)
+            assert counts(case) == (session + 1, 0), "Tensor reports continued after collection stopped"
 
 
 @pytest.mark.soc("950", "960")
@@ -408,4 +486,7 @@ def test_graph_replay_preserves_each_launch_shape(tmp_path):
 
 
 if __name__ == "__main__":
-    sys.exit(pytest.main([__file__, "-q", "-s"]))
+    if sys.argv[1:] == ["--msprof-workloads"]:
+        _run_msprof_workloads()
+    else:
+        sys.exit(pytest.main([__file__, "-q", "-s"]))

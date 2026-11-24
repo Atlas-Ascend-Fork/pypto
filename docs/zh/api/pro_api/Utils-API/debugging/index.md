@@ -5,6 +5,7 @@
 :titlesonly:
 
 dump_data
+mark_stamp
 printf
 pto_assert
 trap

@@ -28,6 +28,7 @@
 #include "ir/kind_traits.h"
 #include "ir/op_attr_types.h"
 #include "ir/op_registry.h"
+#include "ir/pipe.h"
 #include "ir/scalar_expr.h"
 #include "ir/type.h"
 #include "test_op_helpers.h"
@@ -37,6 +38,62 @@ namespace pypto {
 namespace ir {
 
 using namespace test_helpers;
+
+// ============================================================================
+// system.mark_stamp
+// ============================================================================
+
+TEST(SyncOpsPmuStampTest, RegisteredAsSyncOp)
+{
+    const auto& entry = OpRegistry::GetInstance().GetEntry("system.mark_stamp");
+    EXPECT_EQ(entry.GetName(), "system.mark_stamp");
+    EXPECT_EQ(entry.GetOpCategory(), "SyncOp");
+}
+
+TEST(SyncOpsPmuStampTest, NoOperandsReturnsNoneAndPreservesAttributes)
+{
+    auto& reg = OpRegistry::GetInstance();
+    for (auto pipe :
+         {PipeType::S, PipeType::MTE2, PipeType::MTE1, PipeType::M, PipeType::FIX, PipeType::V, PipeType::MTE3}) {
+        for (int id : {0, 4095}) {
+            SCOPED_TRACE(std::to_string(static_cast<int>(pipe)) + ":" + std::to_string(id));
+            std::vector<std::pair<std::string, std::any>> kwargs = {{"pipe", static_cast<int>(pipe)}, {"stamp_id", id}};
+            auto call = reg.Create("system.mark_stamp", {}, kwargs, Sp());
+            ASSERT_NE(call, nullptr);
+            EXPECT_EQ(call->name_, "system.mark_stamp");
+            EXPECT_TRUE(call->args_.empty());
+            EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
+            ASSERT_EQ(call->kwargs_.size(), 2);
+            EXPECT_EQ(call->GetKwarg<int>("pipe"), static_cast<int>(pipe));
+            EXPECT_EQ(call->GetKwarg<int>("stamp_id"), id);
+        }
+    }
+}
+
+TEST(SyncOpsPmuStampTest, RejectsInvalidAttributeTypes)
+{
+    auto& reg = OpRegistry::GetInstance();
+    for (const std::any& pipe : {std::any(std::string("S")), std::any(true)}) {
+        std::vector<std::pair<std::string, std::any>> kwargs = {{"pipe", pipe}, {"stamp_id", 0}};
+        EXPECT_THROW((void)reg.Create("system.mark_stamp", {}, kwargs, Sp()), npu::tile_fwk::Error);
+    }
+    for (const std::any& id : {std::any(true), std::any(1.5), std::any(std::string("1"))}) {
+        std::vector<std::pair<std::string, std::any>> kwargs = {{"pipe", static_cast<int>(PipeType::S)},
+                                                                {"stamp_id", id}};
+        EXPECT_THROW((void)reg.Create("system.mark_stamp", {}, kwargs, Sp()), npu::tile_fwk::Error);
+    }
+}
+
+TEST(SyncOpsPmuStampTest, RejectsUnknownAttributes)
+{
+    auto& reg = OpRegistry::GetInstance();
+    for (const char* attribute : {"name", "stamp_nops", "id"}) {
+        SCOPED_TRACE(attribute);
+        std::vector<std::pair<std::string, std::any>> kwargs = {
+            {"pipe", static_cast<int>(PipeType::S)}, {"stamp_id", 0}, {attribute, 1}};
+        EXPECT_THROW((void)reg.Create("system.mark_stamp", {}, kwargs, Sp()), ValueError);
+    }
+}
 
 // ============================================================================
 // system.mutex_lock_dyn / system.mutex_unlock_dyn

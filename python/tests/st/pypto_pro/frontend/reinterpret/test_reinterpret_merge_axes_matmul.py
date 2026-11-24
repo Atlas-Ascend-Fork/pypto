@@ -48,6 +48,7 @@ Tiling: M_TILE rows of the merged axis, K_TILE down D with accumulation, N_TILE 
 No tail handling -- the tests choose S, D and NCOL as whole multiples of the tile sizes.
 """
 
+from functools import lru_cache
 import logging
 import os
 
@@ -186,11 +187,14 @@ def _merged_s_step(g):
     return M_TILE // g
 
 
+# Keep static specializations alive across parameter cases and JIT discovery;
+# runtime shapes and valid windows do not require a new compilation.
+@lru_cache(maxsize=None)
 def _make_static_g_matmul(g):
     """Same matmul with a static G > 0 that divides M_TILE."""
     s_step = _merged_s_step(g)
 
-    @pl.jit(auto_mutex=True)
+    @pl.jit(auto_mutex=True, name=f"merged_static_g{g}")
     def kernel(
         x: pl.Tensor[[DYN, DYN, DYN, g, DYN], pl.DT_FP16],
         w: pl.Tensor[[DYN, DYN], pl.DT_FP16],
@@ -980,12 +984,22 @@ def test_full_grouped_matmul_rejects_nondivisor_before_launch(g):
         _run(grouped_matmul_fp16, g, torch.float16, "cpu")
 
 
+_MERGED_DTYPE_KERNELS = {}
+
+
 def _make_merged_dtype_matmul(dtype, transposed, inner_extent=DYN):
+    # Bound DataType objects are not hashable. Runtime shapes stay out of this key.
+    key = (str(dtype), transposed, inner_extent)
+    if key in _MERGED_DTYPE_KERNELS:
+        return _MERGED_DTYPE_KERNELS[key]
+
     rows, reduction = (64, 32) if transposed else (32, 64)
     layout = pl.ZN if transposed else pl.NZ
     order = [4, 3, 1] if transposed else [1, 3, 4]
 
-    @pl.jit(auto_mutex=True)
+    extent = "dynamic" if inner_extent == DYN else str(inner_extent)
+
+    @pl.jit(auto_mutex=True, name=f"merged_dtype_{dtype}_t{int(transposed)}_g{extent}")
     def kernel(
         x: pl.Tensor[[1, DYN, 2, inner_extent, 64], dtype],
         w: pl.Tensor[[reduction, reduction], dtype],
@@ -1009,6 +1023,7 @@ def _make_merged_dtype_matmul(dtype, transposed, inner_extent=DYN):
             pl.matmul(c.current(), a.current(), b.current())
             pl.store(out, c.current(), [0, 0])
 
+    _MERGED_DTYPE_KERNELS[key] = kernel
     return kernel
 
 
@@ -1069,6 +1084,7 @@ def test_merged_load_static_inner_matches_dynamic(inner, transposed):
           f"dynamic max error={(dynamic_result - reference).abs().max().item()}")
 
 
+@lru_cache(maxsize=None)
 def _make_merged_window_kernel(transposed, matrix_stride=0):
     rows, reduction = (64, 128) if transposed else (128, 64)
     shape = [rows, reduction]
@@ -1076,7 +1092,7 @@ def _make_merged_window_kernel(transposed, matrix_stride=0):
     layout = pl.ZN if transposed else pl.NZ
     outer_offset = 0 if matrix_stride else 1
 
-    @pl.jit(auto_mutex=True)
+    @pl.jit(auto_mutex=True, name=f"merged_window_t{int(transposed)}_stride{matrix_stride}")
     def window(
         x: pl.Tensor[[DYN, DYN, DYN, DYN, DYN], pl.DT_FP16],
         w: pl.Tensor[[reduction, reduction], pl.DT_FP16],
@@ -1157,8 +1173,9 @@ def test_merged_single_matrix_does_not_use_outer_stride(transposed, matrix_strid
     torch.testing.assert_close(actual, host[0, 0, 1].float(), rtol=0, atol=0)
 
 
+@lru_cache(maxsize=None)
 def _make_reused_merged_descriptor_kernel(use_view):
-    @pl.jit(auto_mutex=True)
+    @pl.jit(auto_mutex=True, name=f"merged_reused_descriptor_view{int(use_view)}")
     def kernel(
         x: pl.Tensor[[DYN, DYN, DYN, DYN, DYN], pl.DT_FP16],
         out: pl.Tensor[[4, 64, 64], pl.DT_FP32],

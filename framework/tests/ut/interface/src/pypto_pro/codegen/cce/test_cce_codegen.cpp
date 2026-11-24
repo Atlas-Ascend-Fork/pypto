@@ -18,6 +18,7 @@
 #include <utility>
 #include <vector>
 
+#include "backend/backend_cce.h"
 #include "codegen/cce/cce_codegen.h"
 #include "ir/debug_info.h"
 #include "ir/function.h"
@@ -121,6 +122,100 @@ size_t CountOccurrences(const std::string& text, const std::string& needle)
 }
 
 } // namespace
+
+TEST(CCECodegenPmuTest, EmitsNativeStampsWithoutBorrowingUserEvents)
+{
+    const auto* info = backend::BackendCCE::Instance().GetOpInfo("system.mark_stamp");
+    ASSERT_NE(info, nullptr);
+    ASSERT_TRUE(info->pipe.has_value());
+    EXPECT_EQ(*info->pipe, ir::PipeType::S);
+    for (auto target : {ir::SectionKind::Cube, ir::SectionKind::Vector}) {
+        const auto pipe = target == ir::SectionKind::Cube ? ir::PipeType::M : ir::PipeType::V;
+        auto call = std::make_shared<const ir::Call>(
+            "system.mark_stamp", std::vector<ir::ExprPtr>{},
+            std::vector<std::pair<std::string, std::any>>{{"pipe", static_cast<int>(pipe)}, {"stamp_id", 4095}},
+            std::make_shared<const ir::NoneType>(), ir::Span::Unknown());
+        auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown());
+        CCECodegen codegen(target);
+        auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
+        EXPECT_EQ(generated.find("__pypto_pmu_selected"), std::string::npos);
+        EXPECT_EQ(generated.find("get_block_idx"), std::string::npos);
+        EXPECT_EQ(generated.find("get_subblockid"), std::string::npos);
+        EXPECT_NE(generated.find("bisheng::cce::mark_stamp<" + codegen.GetTypeConverter().ConvertPipeType(pipe) +
+                                 ", 4095>();"),
+                  std::string::npos);
+        EXPECT_EQ(generated.find("set_flag"), std::string::npos);
+        EXPECT_EQ(generated.find("wait_flag"), std::string::npos);
+        EXPECT_EQ(CountOccurrences(generated, "pipe_barrier(PIPE_ALL)"), 1U);
+        EXPECT_LT(generated.find("mark_stamp<"), generated.find("pipe_barrier(PIPE_ALL)"));
+        EXPECT_EQ(CountOccurrences(generated, "asm volatile(\"nop\")"), 1U);
+        EXPECT_LT(generated.find("pipe_barrier(PIPE_ALL)"), generated.find("asm volatile(\"nop\")"));
+
+        // Reusing the generator must not carry a stamped function's tail into the next program.
+        auto empty = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{}, ir::Span::Unknown());
+        const auto plain = codegen.GenerateSingle(MakeProgram(empty), npu::tile_fwk::NPUArch::DAV_3510);
+        EXPECT_EQ(plain.find("mark_stamp<"), std::string::npos);
+        EXPECT_EQ(plain.find("pipe_barrier(PIPE_ALL)"), std::string::npos);
+        EXPECT_EQ(plain.find("__pypto_pmu_pad"), std::string::npos);
+        EXPECT_EQ(codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510), generated);
+    }
+}
+
+TEST(CCECodegenPmuTest, RejectsUnsupportedStampIR)
+{
+    const auto program = [](ir::PipeType pipe, int id) {
+        auto call = std::make_shared<const ir::Call>(
+            "system.mark_stamp", std::vector<ir::ExprPtr>{},
+            std::vector<std::pair<std::string, std::any>>{{"pipe", static_cast<int>(pipe)}, {"stamp_id", id}},
+            std::make_shared<const ir::NoneType>(), ir::Span::Unknown());
+        return MakeProgram(
+            std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, call, ir::Span::Unknown()));
+    };
+    for (auto pipe : {ir::PipeType::M, ir::PipeType::MTE1, ir::PipeType::FIX, static_cast<ir::PipeType>(-1)}) {
+        CCECodegen codegen(ir::SectionKind::Vector);
+        EXPECT_THROW((void)codegen.GenerateSingle(program(pipe, 0), npu::tile_fwk::NPUArch::DAV_3510),
+                     npu::tile_fwk::Error);
+    }
+    for (int id : {-1, 4096}) {
+        CCECodegen codegen(ir::SectionKind::Vector);
+        EXPECT_THROW((void)codegen.GenerateSingle(program(ir::PipeType::V, id), npu::tile_fwk::NPUArch::DAV_3510),
+                     npu::tile_fwk::Error);
+    }
+    CCECodegen codegen(ir::SectionKind::Vector);
+    EXPECT_THROW((void)codegen.GenerateSingle(program(ir::PipeType::V, 0), npu::tile_fwk::NPUArch::DAV_9201),
+                 npu::tile_fwk::Error);
+}
+
+TEST(CCECodegenPmuTest, RejectsStampsInVectorFunctionsAndSimtKernels)
+{
+    auto stamp = std::make_shared<const ir::Call>(
+        "system.mark_stamp", std::vector<ir::ExprPtr>{},
+        std::vector<std::pair<std::string, std::any>>{{"pipe", static_cast<int>(ir::PipeType::S)}, {"stamp_id", 0}},
+        std::make_shared<const ir::NoneType>(), ir::Span::Unknown());
+    auto body = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{}, stamp, ir::Span::Unknown());
+    for (auto type : {ir::FunctionType::SIMD_VF, ir::FunctionType::SIMD_CALLEE, ir::FunctionType::SIMT_VF,
+                      ir::FunctionType::SIMT_CALLEE, ir::FunctionType::SIMT_KERNEL}) {
+        auto function = std::make_shared<const ir::Function>(
+            "invalid_stamp", std::vector<ir::VarPtr>{}, std::vector<ir::TypePtr>{}, body, ir::Span::Unknown(), type,
+            type == ir::FunctionType::SIMT_KERNEL, std::vector<std::pair<std::string, std::any>>{{"max_threads", 32}});
+        std::vector<ir::FunctionPtr> functions{function};
+        if (type != ir::FunctionType::SIMT_KERNEL) {
+            functions.push_back(std::make_shared<const ir::Function>(
+                "kernel", std::vector<ir::VarPtr>{}, std::vector<ir::TypePtr>{},
+                std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{}, ir::Span::Unknown()),
+                ir::Span::Unknown(), ir::FunctionType::IN_CORE, true));
+        }
+        auto program = std::make_shared<const ir::Program>(functions, "test_program", ir::Span::Unknown(),
+                                                           std::make_shared<ir::IRDebugInfo>());
+        CCECodegen codegen(ir::SectionKind::Vector);
+        try {
+            (void)codegen.GenerateSingle(program, npu::tile_fwk::NPUArch::DAV_3510);
+            FAIL() << "Expected rejection for stamp in function type " << static_cast<int>(type);
+        } catch (const npu::tile_fwk::Error& error) {
+            EXPECT_NE(std::string(error.what()).find("PMU stamps are not supported"), std::string::npos);
+        }
+    }
+}
 
 TEST(CCECodegenHeaderTest, CoversHeaderOnlyStateAccessors)
 {
@@ -626,6 +721,26 @@ TEST(CCECodegenTest, UsesOneBackingArrayForDynamicAndStaticTupleReads)
     EXPECT_NE(generated.find("static_cast<int64_t>(11)"), std::string::npos);
     EXPECT_NE(generated.find("[index"), std::string::npos);
     EXPECT_NE(generated.find("[0]"), std::string::npos);
+}
+
+TEST(CCECodegenTest, ValuelessTupleNeedsNoBackingArray)
+{
+    auto none = MakeVar("none", ir::GetNoneType());
+    auto values = std::make_shared<const ir::MakeTuple>(std::vector<ir::ExprPtr>{none, none}, ir::Span::Unknown());
+    auto tuple_var = MakeVar("values", values->GetType());
+    auto selected = MakeVar("selected", ir::GetNoneType());
+    auto tuple_assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{tuple_var}, values,
+                                                               ir::Span::Unknown());
+    auto read = std::make_shared<const ir::AssignStmt>(
+        std::vector<ir::VarPtr>{selected},
+        std::make_shared<const ir::GetItemExpr>(tuple_var, MakeConstInt(0), ir::Span::Unknown()), ir::Span::Unknown());
+    auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{tuple_assign, read}, ir::Span::Unknown());
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    std::string generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
+
+    EXPECT_EQ(generated.find("values["), std::string::npos);
+    EXPECT_EQ(generated.find("selected ="), std::string::npos);
 }
 
 TEST(CCECodegenTest, SharesBackingArrayAcrossTupleAliases)

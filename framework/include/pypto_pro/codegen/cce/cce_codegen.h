@@ -577,6 +577,7 @@ private:
     const ir::SectionKind target_;                                      ///< Fixed Cube/Vector target for this generator
     bool inVfSection_ = false;                                          ///< True inside a nested VF section
     bool needsScalarHelpers_ = false;
+    bool needsPmuTail_ = false; ///< Set by successfully emitted stamps; reset for each function.
     /// True when this GenerateSingle call emits the AICPU bare body.
     /// Impl head qualifier: empty for the bare body (impl is a plain helper under the entry wrapper).
     [[nodiscard]] std::string ImplHeadQualifier(const ir::FunctionPtr& func) const

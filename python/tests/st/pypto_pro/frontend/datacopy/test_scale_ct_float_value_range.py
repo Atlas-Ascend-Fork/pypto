@@ -133,20 +133,22 @@ def _make_ct_kernel(scale_value: float):
 # 输入通过 matmul(q, k)（k=eye），因此输出 == q，便于 golden 计算
 
 
+# The literal controls compilation; tensor shapes are runtime arguments. Sweep
+# every literal once and retain partial-row/padded-stride checks for scale=2.0.
 @pytest.mark.soc("950", "960")
-@pytest.mark.parametrize("m,n", [(64, 64), (48, 96), (96, 96)], ids=["full", "row_tail", "dual_tail"])
 @pytest.mark.parametrize(
-    "scale_value,pattern",
+    "scale_value,pattern,m,n",
     [
-        (2.0, "mixed"),
-        (-1.0, "mixed"),
-        (0.0, "mixed"),
-        (1.0, "mixed"),
-        (0.5, "mixed"),
-        (1e-6, "large_magnitude"),
-        (1e6, "mixed"),
+        pytest.param(2.0, "mixed", 64, 64, id="positive-full"),
+        pytest.param(-1.0, "mixed", 64, 64, id="negative-full"),
+        pytest.param(0.0, "mixed", 64, 64, id="zero-full"),
+        pytest.param(1.0, "mixed", 64, 64, id="unit-full"),
+        pytest.param(0.5, "mixed", 64, 64, id="fraction-full"),
+        pytest.param(1e-6, "large_magnitude", 64, 64, id="very_small-full"),
+        pytest.param(1e6, "mixed", 64, 64, id="very_large-full"),
+        pytest.param(2.0, "mixed", 48, 96, id="positive-row_tail"),
+        pytest.param(2.0, "mixed", 96, 96, id="positive-padded_stride"),
     ],
-    ids=["positive", "negative", "zero", "unit", "fraction", "very_small", "very_large"],
 )
 def test_ct_float_scale_value_range(scale_value, pattern, m, n):
     """编译期 float scale 值域：与 clamp(round(x * scale)) golden 对比"""

@@ -21,6 +21,8 @@ compile/launch):
   ``<<<1>>>``, so a block_dim would be validated and silently dropped).
 """
 
+import os
+
 from pypto_pro._errors import InvalidArgument, NotSupported
 import pypto_pro.language as pl
 from pypto_pro.runtime.jit import _TileJitKernel
@@ -112,6 +114,7 @@ class TestAcceptedOptionsStillRun:
 
         if not torch.npu.is_available():
             pytest.skip("NPU device not available")
+        torch.npu.set_device(int(os.environ.get("TILE_FWK_DEVICE_ID", "0")))
         # Probe the CANN runtime before the smoke: a present-but-broken CANN install
         # (e.g. ASCEND_OPP_PATH unset) passes is_available() and then fails every
         # device op with a RuntimeError -- skip instead of FAIL on such hosts.
@@ -119,9 +122,6 @@ class TestAcceptedOptionsStillRun:
             torch.zeros(1, dtype=torch.int32, device="npu")
         except RuntimeError:
             pytest.skip("CANN runtime not usable on this host (device op probe failed)")
-
-        # Pin a healthy card: the machine's default card 0 may be wedged.
-        torch.npu.set_device(1)
 
         kernel = _decorate(arch="3510", name="opt_aicpu", compile_timeout=300)
         t = torch.tensor([1, 2, 3], dtype=torch.int32, device="npu")

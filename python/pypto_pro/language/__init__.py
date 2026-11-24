@@ -10,6 +10,7 @@
 """PyPTO Language module - Type-safe DSL API for writing IR functions."""
 
 __all__ = [
+    "mark_stamp",
     "inline",
     "vector_function",
     "parser",
@@ -397,6 +398,7 @@ from ._api import (
     lt,
     make_tile,
     make_tile_group,
+    mark_stamp,
     matmul,
     matmul_acc,
     matmul_mx,

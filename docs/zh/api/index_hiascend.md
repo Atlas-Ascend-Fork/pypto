@@ -751,6 +751,7 @@
       - [pypto_pro.language.ceildiv](pro_api/Utils-API/python_syntax_sugar/ceildiv.md)
     - [调测API](pro_api/Utils-API/debugging/index.md)
       - [pypto_pro.language.dump_data](pro_api/Utils-API/debugging/dump_data.md)
+      - [pypto_pro.language.mark_stamp](pro_api/Utils-API/debugging/mark_stamp.md)
       - [pypto_pro.language.printf](pro_api/Utils-API/debugging/printf.md)
       - [pypto_pro.language.pto_assert](pro_api/Utils-API/debugging/pto_assert.md)
       - [pypto_pro.language.trap](pro_api/Utils-API/debugging/trap.md)

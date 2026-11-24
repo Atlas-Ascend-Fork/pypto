@@ -107,6 +107,14 @@ REGISTER_OP("system.sync_dst_dyn")
     .set_attr<int>("wait_pipe")
     .f_deduce_type(DeduceUnknownType);
 
+REGISTER_OP("system.mark_stamp")
+    .set_description("Instruction profiling stamp (3510)")
+    .set_op_category("SyncOp")
+    .no_argument()
+    .set_attr<int>("pipe")
+    .set_attr<int>("stamp_id")
+    .f_deduce_type(DeduceNoneType);
+
 // Register system.bar_m (Matrix Barrier)
 // Attributes: None
 REGISTER_OP("system.bar_m")

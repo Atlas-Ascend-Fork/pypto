@@ -11,7 +11,7 @@
 
 """Element-wise add on Ascend 3510 using make_tile_group double buffer.
 
-Shape: [M, N] with M=8192, N=4096, each core processes 128*4096.
+Shape: [M, N] with multiple row and column tiles per core.
 Uses make_tile_group with auto_mutex for synchronization (no manual sync_src/sync_dst).
 
 The second kernel is the same computation with its block ops spelled as bare imported
@@ -71,11 +71,11 @@ def test_add():
     device = ST_DEVICE
     torch.npu.set_device(device)
 
-    m_size = 8192
-    n_size = 4096
-    # 请求不得超过流预算（vector 核 56）；超出会直接报错而非钳制。
+    # Two row rounds and three column tiles wrap both double-buffer slots.
     vector_budget = torch.npu.get_stream_limit(torch.npu.current_stream())["vector_core_num"]
-    num_cores = min(m_size // 128, vector_budget)
+    num_cores = min(4, vector_budget)
+    m_size = 2 * num_cores * TILE_M
+    n_size = 3 * TILE_N
 
     torch.manual_seed(0)
     dtype = torch.float16

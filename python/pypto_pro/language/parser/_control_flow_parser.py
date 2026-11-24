@@ -576,6 +576,8 @@ class ControlFlowParserMixin:
         """Parse an IfStmt using only its reachable Yield predecessors."""
         condition = self.parse_expression(stmt.test)
         span = self.span_tracker.get_span(stmt)
+        if isinstance(condition, ir.Expr) and isinstance(condition.type, (ir.NoneType, ir.UnknownType)):
+            raise InvalidType("Condition requires a scalar value; the expression returns no value", span=span)
 
         if isinstance(condition, (ir.ConstBool, ir.ConstInt)):
             is_true = condition.value if isinstance(condition, ir.ConstBool) else condition.value != 0

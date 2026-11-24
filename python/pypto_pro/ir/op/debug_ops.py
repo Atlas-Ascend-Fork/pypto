@@ -26,7 +26,15 @@ from ..._errors import (
     InvalidVal,
     NotSupported,
 )
-from .._utils import _const_int_value, _get_span_or_capture, _to_make_tuple, require_const_bool, require_int
+from .._utils import (
+    _const_int_value,
+    _get_span_or_capture,
+    _to_make_tuple,
+    require_const_bool,
+    require_const_int,
+    require_enum,
+    require_int,
+)
 from ._op_registry import op_impl
 
 _INTEGER_CONVERSIONS = {"d", "i", "u", "x"}
@@ -334,6 +342,26 @@ def trap(*, span: Span | None = None) -> Call:
 # ---------------------------------------------------------------------------
 # Value-facing implementations
 # ---------------------------------------------------------------------------
+
+@op_impl("mark_stamp")
+def _build_mark_stamp(self, pipe: _ir_core.PipeType, id: Expr, *, span: Span) -> Call:
+    pipe = require_enum(pipe, _ir_core.PipeType, subject="mark_stamp 'pipe'")
+    target = "Cube" if self.target == _ir_core.SectionKind.Cube else "Vector"
+    pipes = (_ir_core.PipeType.S, _ir_core.PipeType.MTE2, _ir_core.PipeType.MTE3)
+    pipes += ((_ir_core.PipeType.MTE1, _ir_core.PipeType.M, _ir_core.PipeType.FIX) if target == "Cube"
+              else (_ir_core.PipeType.V,))
+    if pipe not in pipes:
+        supported = tuple(value.name for value in pipes)
+        raise InvalidArgument(f"mark_stamp PIPE_{pipe.name} is unavailable on {target}; use {supported}", span=span)
+    stamp_id = require_const_int(id, subject="mark_stamp 'id'", lower_bound=0, upper_bound=4095)
+    if stamp_id in self.mark_stamp_ids:
+        raise InvalidArgument(
+            f"Duplicate mark_stamp id {stamp_id} on {target}; assign each call site a unique id", span=span,
+        )
+    self.mark_stamp_ids.add(stamp_id)
+    return _ir_core.create_op_call(
+        "system.mark_stamp", [], {"pipe": pipe, "stamp_id": stamp_id}, span,
+    )
 
 
 @op_impl("dump_data")

@@ -36,6 +36,7 @@ from pypto.ir import (
     AccToVecMode,
     AtomicType,
     FillPadMode,
+    PipeType,
     QuantMode,
     ReluPreMode,
     RoundMode,
@@ -1524,6 +1525,43 @@ def fill_index(out: Tile, start: Union[int, float]) -> None:
 # ===================================================================
 # Section E: Debug ops
 # ===================================================================
+
+
+@_api_decl
+def mark_stamp(pipe: PipeType, id: int) -> None:
+    """Insert a PMU point on every block that reaches this statement (3510 only).
+
+    No JIT option is needed. Kernels without this call emit no PMU instrumentation.
+    ``pipe`` (pl.PipeType) and ``id`` are compile-time constants. IDs are 0..4095
+    (excluding bool) and must be unique per target/call site, including across
+    different pipes. Runtime IDs are not supported.
+    Cube supports S, MTE2, MTE1, M, FIX and MTE3; Vector supports S, MTE2, V
+    and MTE3. Choose the pipe executing the work being observed: MTE2 for
+    input transfers, MTE1 for L1-to-L0 transfers, M for matrix computation,
+    V for vector computation, FIX for matrix-result conversion/transfers,
+    MTE3 for output transfers, and S for scalar progress. ALL is not supported.
+    Call this operation outside @pl.vector_function; SIMT kernels and functions
+    are not supported. It returns no value; its result cannot be used in tuples,
+    lists, function arguments, calculations, comparisons or conditions. A direct
+    assignment is allowed only if the result is unused.
+    No block or subblock filter is inserted. Use an explicit condition on
+    pl.get_block_idx() to restrict which logical blocks emit a point. The Vector
+    index includes the subblock index; it is not a physical processor ID.
+
+    Hardware profiling records contain the numeric ID, not a user-defined name.
+    No extra barrier, event handshake or per-point NOP spacing is inserted.
+    CANN may insert required MTE barriers inside mark_stamp; V points do not
+    wait for all pipelines. These are checkpoints, not guaranteed operation
+    start/completion timestamps. Prefer sparse points near existing program
+    synchronization; do not add synchronization merely to align the graph.
+    Dense points can be lost by the collector. Targets with stamps retain a
+    final drain and 16384-iteration NOP tail on every block for collection, even
+    if a runtime condition skips the points. Total kernel time therefore includes
+    instrumentation overhead.
+    Collect with ``msprof --instr-profiling=on``; compare performance against an
+    uninstrumented kernel.
+    """
+    ...
 
 
 @_api_decl

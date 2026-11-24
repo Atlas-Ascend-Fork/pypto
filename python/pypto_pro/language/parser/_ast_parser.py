@@ -216,6 +216,7 @@ class ASTParser(
         if target not in (ir.SectionKind.Cube, ir.SectionKind.Vector):
             raise NotSupported(f"Unsupported parser target: {target}")
         self._target = target
+        self.mark_stamp_ids: set[int] = set()
         self.matched_target = False
         self.has_tile_function: bool = False
         # Launch facts collected while this target Program is parsed. Tile

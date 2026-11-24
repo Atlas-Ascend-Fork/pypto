@@ -10,6 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 """Ordinary scalar BF16 arithmetic, casts and control flow (no SIMT)."""
 
+from functools import lru_cache
 import os
 
 import pypto_pro.language as pl
@@ -63,8 +64,9 @@ def _arithmetic(a, b, result, comparisons, control):
         result[7, i] = (x + y) - y
 
 
+@lru_cache(maxsize=None)
 def make_arithmetic_kernel(cube):
-    @pl.jit(auto_mutex=False)
+    @pl.jit(auto_mutex=False, name=f"bf16_arithmetic_cube{int(cube)}")
     def kernel(a: pl.Tensor[[pl.DYNAMIC], pl.DT_BF16], b: pl.Tensor[[pl.DYNAMIC], pl.DT_BF16],
                result: pl.Tensor[[8, pl.DYNAMIC], pl.DT_BF16],
                comparisons: pl.Tensor[[9, pl.DYNAMIC], pl.DT_BOOL],
@@ -103,23 +105,28 @@ def test_bf16_scalar_arithmetic_and_control(cube):
     torch.testing.assert_close(control.cpu(), x.bool().int().expand(2, -1))
 
 
-def make_cast_kernel(source, destination, cube=False, implicit=False):
-    @pl.jit(auto_mutex=False)
-    def kernel(a: pl.Tensor[[pl.DYNAMIC], source], out: pl.Tensor[[pl.DYNAMIC], destination]):
+_CAST_KERNELS = {}
+
+
+def make_cast_kernel(source, destination, cube=False):
+    # Bound DataType objects are not hashable; names identify these scalar types.
+    key = (str(source), str(destination), cube)
+    if key in _CAST_KERNELS:
+        return _CAST_KERNELS[key]
+
+    @pl.jit(auto_mutex=False, name=f"bf16_cast_{source}_{destination}_cube{int(cube)}")
+    def kernel(a: pl.Tensor[[pl.DYNAMIC], source], out: pl.Tensor[[2, pl.DYNAMIC], destination]):
         if cube:
             with pl.section_cube():
                 for i in pl.range(a.shape[0]):
-                    if implicit:
-                        out[i] = a[i]
-                    else:
-                        out[i] = pl.astype(a[i], destination)
+                    out[0, i] = pl.astype(a[i], destination)
+                    out[1, i] = a[i]
         else:
             with pl.section_vector():
                 for i in pl.range(a.shape[0]):
-                    if implicit:
-                        out[i] = a[i]
-                    else:
-                        out[i] = pl.astype(a[i], destination)
+                    out[0, i] = pl.astype(a[i], destination)
+                    out[1, i] = a[i]
+    _CAST_KERNELS[key] = kernel
     return kernel
 
 
@@ -143,12 +150,21 @@ def _integer_bf16_reference(values):
     return torch.tensor(encodings, dtype=torch.int32).to(torch.int16).view(torch.bfloat16)
 
 
+# BF16 -> BF16 is identical in both directions. Check explicit and implicit
+# conversion in separate output rows of one kernel, sharing compilation.
+CAST_CASES = [
+    pytest.param(dtype, torch_dtype, from_bf16,
+                 id=f"{'from' if from_bf16 else 'to'}_bf16-{dtype}")
+    for dtype, torch_dtype in DTYPES
+    for from_bf16 in (False, True)
+    if not (dtype == pl.DT_BF16 and from_bf16)
+]
+
+
 @pytest.mark.soc("950")
-@pytest.mark.parametrize("dtype, torch_dtype", DTYPES, ids=[str(pair[0]) for pair in DTYPES])
-@pytest.mark.parametrize("from_bf16", [False, True], ids=["to_bf16", "from_bf16"])
+@pytest.mark.parametrize("dtype, torch_dtype, from_bf16", CAST_CASES)
 @pytest.mark.parametrize("cube", [False, True], ids=["vector", "cube"])
-@pytest.mark.parametrize("implicit", [False, True], ids=["astype", "store"])
-def test_bf16_scalar_cast(dtype, torch_dtype, from_bf16, cube, implicit):
+def test_bf16_scalar_cast(dtype, torch_dtype, from_bf16, cube):
     torch.npu.set_device(DEVICE)
     source, destination = (pl.DT_BF16, dtype) if from_bf16 else (dtype, pl.DT_BF16)
     source_torch, destination_torch = (torch.bfloat16, torch_dtype) if from_bf16 else (torch_dtype, torch.bfloat16)
@@ -170,10 +186,10 @@ def test_bf16_scalar_cast(dtype, torch_dtype, from_bf16, cube, implicit):
     expected = a.to(destination_torch)
     if not from_bf16 and not floating:
         expected = _integer_bf16_reference(a.tolist())
-    out = torch.empty(a.shape, dtype=destination_torch, device=DEVICE)
-    make_cast_kernel(source, destination, cube, implicit)[None, 1](a.to(DEVICE), out)
+    out = torch.empty((2, a.numel()), dtype=destination_torch, device=DEVICE)
+    make_cast_kernel(source, destination, cube)[None, 1](a.to(DEVICE), out)
     torch.npu.synchronize()
-    torch.testing.assert_close(out.cpu(), expected, rtol=0, atol=0, equal_nan=True)
+    torch.testing.assert_close(out.cpu(), expected.expand(2, -1), rtol=0, atol=0, equal_nan=True)
 
 
 @pytest.mark.soc("950")
@@ -182,10 +198,10 @@ def test_bf16_to_fp32_all_encodings(cube):
     torch.npu.set_device(DEVICE)
     bits = torch.arange(65536, dtype=torch.int32)
     a = bits.to(torch.int16).view(torch.bfloat16)
-    out = torch.empty(a.shape, dtype=torch.float32, device=DEVICE)
+    out = torch.empty((2, a.numel()), dtype=torch.float32, device=DEVICE)
     make_cast_kernel(pl.DT_BF16, pl.DT_FP32, cube)[None, 1](a.to(DEVICE), out)
     torch.npu.synchronize()
-    torch.testing.assert_close(out.cpu().view(torch.int32), bits << 16, rtol=0, atol=0)
+    torch.testing.assert_close(out.cpu().view(torch.int32), (bits << 16).expand(2, -1), rtol=0, atol=0)
 
 
 @pl.jit(auto_mutex=False)

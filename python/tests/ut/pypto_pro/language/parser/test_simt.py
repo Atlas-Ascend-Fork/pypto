@@ -1685,7 +1685,7 @@ def test_half_precision_atomic_result_cannot_be_returned(dtype):
     def add_result(dst):
         return pl.simt.atomic_add(dst, [0, 0], 1.0)
 
-    with pytest.raises(InvalidVal, match="must return None or one scalar value"):
+    with pytest.raises(InvalidType, match="returns no value"):
         _parse_one_tile_function(add_result, dtype)
 
 

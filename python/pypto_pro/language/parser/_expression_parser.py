@@ -36,7 +36,7 @@ from ..._errors import (
 )
 from ._expr_evaluator import ExprEvaluator
 from ._tuple_type_registry import TupleTypeInfo
-from ._utils import _is_const_expr, _is_simt_func_type
+from ._utils import _check_expression_value, _is_const_expr, _is_simt_func_type
 from .diagnostics import (
     check_fits_dtype,
     make_const_int,
@@ -215,7 +215,9 @@ class ExpressionParserMixin:
             IR expression
         """
         if expr in self._parsed_expr_cache:
-            return self._parsed_expr_cache[expr]
+            result = self._parsed_expr_cache[expr]
+            _check_expression_value(result, self.span_tracker.get_span(expr), nested=nested)
+            return result
         self._current_node = expr
         try:
             # Publish where this expression was written, so anything raised while
@@ -257,6 +259,7 @@ class ExpressionParserMixin:
                 with current_span(span):
                     result = self.expr_evaluator.python_value_to_ir(value, span)
 
+        _check_expression_value(result, self.span_tracker.get_span(expr), nested=nested)
         if nested:
             result = self._materialize_nested_expr(result, self.span_tracker.get_span(expr))
         self._parsed_expr_cache[expr] = result
@@ -710,6 +713,7 @@ class ExpressionParserMixin:
             is_true = condition.value if isinstance(condition, ir.ConstBool) else condition.value != 0
             chosen = expr.body if is_true else expr.orelse
             result = self.parse_expression(chosen, nested=False)
+            _check_expression_value(result, self.span_tracker.get_span(chosen), nested=True)
             if _is_enum_value(result):
                 return result
             if not isinstance(result, ir.Expr):
@@ -737,6 +741,10 @@ class ExpressionParserMixin:
         )
         ast.fix_missing_locations(lowered_if)
         self.parse_if_statement(lowered_if)
+        # The synthetic branch assignments parse their RHS with nested=False,
+        # but a conditional expression still requires a value from each branch.
+        for branch in (expr.body, expr.orelse):
+            _check_expression_value(self._parsed_expr_cache[branch], self.span_tracker.get_span(branch), nested=True)
         result = self.lookup_expr_by_name(tmp_name)
         if not isinstance(result, ir.Expr):
             branch = expr.body if result is None else expr.orelse

@@ -1067,6 +1067,32 @@ REGISTER_BACKEND_OP(BackendCCE, "system.bar_fix")
         return "";
     });
 
+REGISTER_BACKEND_OP(BackendCCE, "system.mark_stamp")
+    // Classify the control operation separately from its checkpoint target pipe.
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen_base) {
+        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
+            << "PMU stamps require arch 3510; remove manual stamps on other architectures";
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, !codegen.IsInSimdContext() && !codegen.IsInSimtContext())
+            << "PMU stamps are not supported inside vector functions or SIMT kernels";
+        const auto pipe = static_cast<ir::PipeType>(op->GetKwarg<int>("pipe"));
+        const int id = op->GetKwarg<int>("stamp_id");
+        const bool common = pipe == ir::PipeType::S || pipe == ir::PipeType::MTE2 || pipe == ir::PipeType::MTE3;
+        const bool vector = codegen.GetTarget() == ir::SectionKind::Vector;
+        PRO_CODEGEN_CHECK(
+            ExternalError::INVALID_ARGUMENT,
+            common || (vector ? pipe == ir::PipeType::V :
+                                (pipe == ir::PipeType::M || pipe == ir::PipeType::MTE1 || pipe == ir::PipeType::FIX)))
+            << "PMU stamp pipe is not supported by this target";
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, id >= 0 && id < 4096) << "PMU stamp id must be in [0, 4095]";
+        // Preserve the compiler's required MTE ordering inside mark_stamp, without an extra barrier.
+        // V checkpoints do not drain local pipes or borrow synchronization events.
+        codegen.Emit("bisheng::cce::mark_stamp<" + codegen.GetTypeConverter().ConvertPipeType(pipe) + ", " +
+                     std::to_string(id) + ">();");
+        return "";
+    });
+
 REGISTER_BACKEND_OP(BackendCCE, "system.bar_all")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {

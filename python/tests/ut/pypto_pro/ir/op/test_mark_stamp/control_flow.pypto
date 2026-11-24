@@ -1,0 +1,15 @@
+function kernel incast(int32_t %count_0) outcast() #entry(false) #type(pro) {
+    for %i__iterator_0 inrange 0, %count_0, 1 iter { } {
+        int64_t %i_0 = %i__iterator_0;
+        system.mark_stamp(pipe=4, stamp_id=9);
+        bool %_expr_tmp_0_0 = (%i_0 eq 0);
+        if %_expr_tmp_0_0 then {
+            system.mark_stamp(pipe=5, stamp_id=10);
+            yield;
+        } else {
+            yield;
+        }
+        continue;
+    }
+    return;
+}

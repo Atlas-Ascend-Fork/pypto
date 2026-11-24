@@ -476,6 +476,7 @@ void CCECodegen::ResetFunctionGenerationState()
     yieldBuffer_.clear();
 
     tileOffsetCounter_ = 0;
+    needsPmuTail_ = false;
     currentFunctionType_ = ir::FunctionType::OPAQUE;
 }
 
@@ -1284,11 +1285,38 @@ void DropTopLevelTrailingBareReturn(const ir::FunctionPtr& func)
 
 void CCECodegen::GenerateBody(const ir::FunctionPtr& func)
 {
+    // Buffer the body once; successful op emission determines whether it needs a tail.
+    const auto prologue = emitter_.GetCode();
+    const int bodyIndent = emitter_.GetIndentLevel();
+    emitter_.Clear();
+    emitter_.SetIndentLevel(bodyIndent);
     if (func->body_) {
         if (currentKernelType_ == ir::FunctionType::AICPU_KERNEL) {
             DropTopLevelTrailingBareReturn(func);
         }
         VisitStmt(func->body_);
+    }
+    const auto body = emitter_.GetCode();
+    emitter_.Clear();
+    emitter_.EmitRaw(prologue);
+    emitter_.SetIndentLevel(bodyIndent);
+    if (needsPmuTail_) {
+        // Returns leave the body, then every block drains its checkpoints exactly once.
+        emitter_.EmitLine("[&]() __aicore__ {");
+        std::istringstream lines(body);
+        std::string line;
+        while (std::getline(lines, line)) {
+            emitter_.EmitLine(line);
+        }
+        emitter_.EmitLine("}();");
+        emitter_.EmitLine("pipe_barrier(PIPE_ALL);");
+        emitter_.EmitLine("for (uint32_t __pypto_pmu_pad = 0; __pypto_pmu_pad < 16384; ++__pypto_pmu_pad) {");
+        emitter_.IncreaseIndent();
+        emitter_.EmitLine("asm volatile(\"nop\");");
+        emitter_.DecreaseIndent();
+        emitter_.EmitLine("}");
+    } else {
+        emitter_.EmitRaw(body);
     }
 
     if (currentKernelType_ == ir::FunctionType::AICPU_KERNEL) {
@@ -1558,6 +1586,10 @@ bool CCECodegen::IsArrayTuple(const ir::TupleTypePtr& tt) const
     if (!tt || tt->types_.empty())
         return false;
     if (GetTupleTypeInfo(tt) != nullptr || IsImplicitSimtGroup(tt->types_.front()) || !IsHomogeneousTuple(tt))
+        return false;
+    // Valueless tuple elements have no C++ storage. Keep the tuple as an IR
+    // aggregate so selecting or discarding a None result needs no backing array.
+    if (ir::As<ir::NoneType>(tt->types_[0]) || ir::As<ir::UnknownType>(tt->types_[0]))
         return false;
     auto elemTuple = ir::As<ir::TupleType>(tt->types_[0]);
     return !elemTuple || GetStructName(elemTuple) != nullptr;
@@ -2494,6 +2526,7 @@ void CCECodegen::VisitExpr_(const ir::CallPtr& op)
         << "Unknown call '" << op->name_ << "' reached CCE codegen; helper calls must be inlined";
 
     std::string result = opInfo->codegenFunc(op, *this);
+    needsPmuTail_ = needsPmuTail_ || op->name_ == "system.mark_stamp";
     currentExprValue_ = result;
 }
 

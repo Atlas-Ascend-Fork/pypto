@@ -1,0 +1,6 @@
+function kernel incast() outcast() #entry(false) #type(pro) {
+    system.mark_stamp(pipe=5, stamp_id=0);
+    system.mark_stamp(pipe=3, stamp_id=3);
+    system.mark_stamp(pipe=6, stamp_id=4095);
+    return;
+}
