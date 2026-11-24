@@ -446,6 +446,31 @@ TEST_F(OperationOpsTest, QuantMX_RoundUpFp8AndFp4Output)
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
 }
 
+TEST_F(OperationOpsTest, QuantMX_ScaleOutputWithoutReshape)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
+    TileShape::Current().SetVecTile(64, 128);
+    Tensor input(DT_FP16, {128, 128});
+    FUNCTION("QuantMXWithoutReshape", {input})
+    {
+        for (int64_t axis : {-1, -2}) {
+            for (bool performanceMode : {false, true}) {
+                auto result = QuantMX(input, DT_FP8E4M3, DequantScaleRoundingMode::ROUND_DOWN, axis, performanceMode);
+                const auto& scale = std::get<1>(result);
+                EXPECT_EQ(scale.GetShape(),
+                          axis == -1 ? std::vector<int64_t>({128, 2, 2}) : std::vector<int64_t>({2, 128, 2}));
+                const auto& op = Program::GetInstance().GetCurrentFunction()->Operations(false).back();
+                EXPECT_EQ(op.GetOpcode(), Opcode::OP_QUANT_MX);
+                EXPECT_EQ(op.GetOOperands().at(1), scale.GetStorage());
+            }
+        }
+        for (const auto& op : Program::GetInstance().GetCurrentFunction()->Operations(false)) {
+            EXPECT_NE(op.GetOpcode(), Opcode::OP_RESHAPE);
+        }
+    }
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_UNKNOWN);
+}
+
 TEST_F(OperationOpsTest, QuantMX_Fp32ToFp4Unsupported)
 {
     Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);

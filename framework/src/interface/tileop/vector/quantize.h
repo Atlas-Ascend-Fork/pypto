@@ -420,7 +420,12 @@ TILEOP void TQuantMXDn(T0 dst, T1 exp, T2 maxScratch, T3 scalingScratch, T4 src)
     auto dstTile = PtoTile<T0>(dst);
     auto maxTile = PtoTile<T2>(maxScratch);
     auto scalingTile = PtoTile<T3>(scalingScratch);
-    auto srcTile = PtoTile<T4>(src);
+    // Other UB consumers may pad the plane height. Quantize only complete 64-row groups at the original row pitch.
+    constexpr auto srcCols = TileOp::GetTensorTileShapeDim<T4, DIM_5TH, MAX_DIMS>();
+    using SrcTile = pto::Tile<pto::TileType::Vec, typename T4::Type, expTileH * 64, srcCols, pto::BLayout::RowMajor, -1,
+                              -1>;
+    SrcTile srcTile(src.GetLayout().template GetShapeDim<DIM_4TH, MAX_DIMS>(),
+                    src.GetLayout().template GetShapeDim<DIM_5TH, MAX_DIMS>());
     ExpByteTile expByteTile(expLayout.template GetShapeDim<DIM_4TH, MAX_DIMS>(),
                             expLayout.template GetShapeDim<DIM_5TH, MAX_DIMS>());
 
@@ -434,12 +439,12 @@ TILEOP void TQuantMXDn(T0 dst, T1 exp, T2 maxScratch, T3 scalingScratch, T4 src)
                 dstTile.Assign(dst, tileOffsets);
                 maxTile.Assign(maxScratch, tileOffsets);
                 scalingTile.Assign(scalingScratch, tileOffsets);
-                srcTile.Assign(srcTileAddr);
+                pto::TASSIGN(srcTile, srcTileAddr);
                 pto::TASSIGN(expByteTile, (uint64_t)(exp.GetAddr() + expTileOffset * sizeof(typename T1::Type)));
                 if constexpr (DEQUANT_SCALE_ROUNDING_MODE == kDequantScaleRoundingModeRoundDown ||
                               DEQUANT_SCALE_ROUNDING_MODE == kDequantScaleRoundingModeRoundUp) {
-                    QuantMXDispatchDn<DEQUANT_SCALE_ROUNDING_MODE>(dstTile.Data(), srcTile.Data(), expByteTile,
-                                                                   maxTile.Data(), scalingTile.Data());
+                    QuantMXDispatchDn<DEQUANT_SCALE_ROUNDING_MODE>(dstTile.Data(), srcTile, expByteTile, maxTile.Data(),
+                                                                   scalingTile.Data());
                 } else {
                     static_assert(DEQUANT_SCALE_ROUNDING_MODE == kDequantScaleRoundingModeRoundDown ||
                                       DEQUANT_SCALE_ROUNDING_MODE == kDequantScaleRoundingModeRoundUp,
@@ -456,7 +461,6 @@ TILEOP void TQuantMXPerformance(T0 dst, T1 exp, T2 maxScratch, T3 scalingScratch
 {
     (void)AXIS;
     const auto dstLayout = dst.GetLayout();
-    const auto expLayout = exp.GetLayout();
     const auto maxLayout = maxScratch.GetLayout();
     const auto scalingLayout = scalingScratch.GetLayout();
     const auto srcLayout = src.GetLayout();
@@ -489,7 +493,7 @@ TILEOP void TQuantMXPerformance(T0 dst, T1 exp, T2 maxScratch, T3 scalingScratch
         for (LoopVar n1Index = 0; n1Index < shape1; ++n1Index) {
             for (LoopVar n2Index = 0; n2Index < shape2; ++n2Index) {
                 auto tileOffsets = TileOffset(n0Index, n1Index, n2Index);
-                auto expTileOffset = GetQuantMXPerformanceGroupedOffset<T4>(expLayout, n0Index, n1Index, n2Index);
+                auto expTileOffset = GenTileOffset(exp, tileOffsets);
                 auto maxTileOffset = GetQuantMXPerformanceGroupedOffset<T4>(maxLayout, n0Index, n1Index, n2Index);
                 auto scalingTileOffset = GetQuantMXPerformanceGroupedOffset<T4>(scalingLayout, n0Index, n1Index,
                                                                                 n2Index);
@@ -519,13 +523,95 @@ template <int DEQUANT_SCALE_ROUNDING_MODE = kDequantScaleRoundingModeRoundDown, 
           typename T0, typename T1, typename T2, typename T3, typename T4>
 TILEOP void TQuantMX(T0 dst, T1 exp, T2 maxScratch, T3 scalingScratch, T4 src)
 {
+    auto scale = MakeMxScaleTensor<T1>(exp);
     constexpr auto srcRank = Std::tuple_size<typename T4::Shape>::value;
     if constexpr (srcRank >= 2 && AXIS == static_cast<int>(srcRank) - 2) {
-        TQuantMXDn<DEQUANT_SCALE_ROUNDING_MODE, AXIS>(dst, exp, maxScratch, scalingScratch, src);
+        TQuantMXDn<DEQUANT_SCALE_ROUNDING_MODE, AXIS>(dst, scale, maxScratch, scalingScratch, src);
     } else if constexpr (PERFORMANCE_MODE == kQuantMXPerformanceModeOn) {
-        TQuantMXPerformance<DEQUANT_SCALE_ROUNDING_MODE, AXIS>(dst, exp, maxScratch, scalingScratch, src);
+        constexpr auto rowWidth = TileOp::GetTensorTileShapeDim<decltype(scale), DIM_5TH, MAX_DIMS>();
+        const auto groups = (src.GetLayout().template GetShapeDim<DIM_5TH, MAX_DIMS>() + 31) / 32;
+        // The flat performance tile requires contiguous scale rows.
+        if (rowWidth != groups) {
+            TQuantMXGeneral<DEQUANT_SCALE_ROUNDING_MODE, AXIS>(dst, scale, maxScratch, scalingScratch, src);
+            return;
+        }
+        TQuantMXPerformance<DEQUANT_SCALE_ROUNDING_MODE, AXIS>(dst, scale, maxScratch, scalingScratch, src);
     } else {
-        TQuantMXGeneral<DEQUANT_SCALE_ROUNDING_MODE, AXIS>(dst, exp, maxScratch, scalingScratch, src);
+        TQuantMXGeneral<DEQUANT_SCALE_ROUNDING_MODE, AXIS>(dst, scale, maxScratch, scalingScratch, src);
+    }
+}
+
+template <int MODE, int AXIS, int PERFORMANCE_MODE, typename T0, typename T1, typename T2, typename T3, typename T4>
+TILEOP void TQuantMXPadded(T0 dst, T1 exp, T2 maxScratch, T3 scalingScratch, T4 src)
+{
+    constexpr auto pairsPerBlock = 32 / sizeof(uint16_t);
+    constexpr auto rank = Std::tuple_size<typename T4::Shape>::value;
+    constexpr bool dn = rank >= 2 && AXIS == static_cast<int>(rank) - 2;
+    constexpr auto srcCols = TileOp::GetTensorTileShapeDim<T4, DIM_5TH, MAX_DIMS>();
+    // The ISA scale tile follows the quantization input, independently of the consumer's UB padding.
+    constexpr auto rowPairs = dn ? srcCols : (srcCols + 63) / 64;
+    constexpr auto tileRows = TileOp::GetTensorTileShapeDim<T1, DIM_3RD, MAX_DIMS>();
+    using PackedLayout = LocalLayout5Dim<TileOp::GetTensorTileShapeDim<T1, DIM_1ST, MAX_DIMS>(),
+                                         TileOp::GetTensorTileShapeDim<T1, DIM_2ND, MAX_DIMS>(), tileRows,
+                                         (rowPairs + pairsPerBlock - 1) / pairsPerBlock * pairsPerBlock, 2>;
+    const auto layout = exp.GetLayout();
+    auto batches = layout.template GetShapeDim<DIM_1ST, MAX_DIMS>();
+    auto planes = layout.template GetShapeDim<DIM_2ND, MAX_DIMS>();
+    auto rows = layout.template GetShapeDim<DIM_3RD, MAX_DIMS>();
+    auto pairs = layout.template GetShapeDim<DIM_4TH, MAX_DIMS>();
+    constexpr auto packedPairs = (rowPairs + pairsPerBlock - 1) / pairsPerBlock * pairsPerBlock;
+    constexpr auto dstRowBytes = TileOp::GetTensorTileShapeDim<T1, DIM_4TH, MAX_DIMS>() *
+                                 TileOp::GetTensorTileShapeDim<T1, DIM_5TH, MAX_DIMS>();
+    static_assert(packedPairs * sizeof(uint16_t) <= dstRowBytes);
+    TileTensor<typename T1::Type, PackedLayout> packed(exp.GetAddr(), Shape5Dim(batches, planes, rows, pairs, 2));
+    TQuantMX<MODE, AXIS, PERFORMANCE_MODE>(dst, packed, maxScratch, scalingScratch, src);
+
+    constexpr unsigned lanes = CCE_VL / sizeof(uint16_t);
+    constexpr unsigned dstStride = TileOp::GetTensorStrideDim<T1, DIM_4TH, MAX_DIMS>() / sizeof(uint16_t);
+    using SrcRow = pto::Tile<pto::TileType::Vec, uint16_t, 1, lanes, pto::BLayout::RowMajor, -1, -1>;
+    using DstCol = pto::Tile<pto::TileType::Vec, uint16_t, lanes, dstStride, pto::BLayout::RowMajor, -1, -1>;
+    constexpr auto maxBytes = GetAllAxisTileProduct<T2>() * sizeof(typename T2::Type);
+    constexpr auto scalingBytes = GetAllAxisTileProduct<T3>() * sizeof(typename T3::Type);
+    // TMOV loads a full vector even for the last partial chunk of a packed row.
+    constexpr auto readBytes = (packedPairs + lanes - 1) / lanes * CCE_VL;
+    constexpr bool useTranspose = dstRowBytes >= readBytes && (maxBytes >= CCE_VL || scalingBytes >= CCE_VL);
+    if constexpr (!useTranspose) {
+        set_flag(PIPE_V, PIPE_S, EVENT_ID0);
+        wait_flag(PIPE_V, PIPE_S, EVENT_ID0);
+    }
+    // Expand backwards so a destination row or chunk cannot overwrite unread packed pairs.
+    for (auto b = batches; b > 0; --b) {
+        for (auto p = planes; p > 0; --p) {
+            for (auto r = rows; r > 0; --r) {
+                const auto row = TileOffset(b - 1, p - 1, r - 1);
+                if constexpr (useTranspose) {
+                    const auto scratchAddr = maxBytes >= CCE_VL ? maxScratch.GetAddr() : scalingScratch.GetAddr();
+                    for (auto end = pairs; end > 0;) {
+                        const auto start = (end - 1) / lanes * lanes;
+                        const auto count = end - start;
+                        SrcRow packedRow(1, count);
+                        SrcRow srcRow(1, count);
+                        DstCol dstCol(count, 1);
+                        pto::TASSIGN(packedRow, packed.GetLinearAddr(row) + start * sizeof(uint16_t));
+                        pto::TASSIGN(srcRow, scratchAddr);
+                        pto::TASSIGN(dstCol, exp.GetLinearAddr(row) + start * dstStride * sizeof(uint16_t));
+                        pto::TMOV(srcRow, packedRow);
+                        pto::TTRANS(dstCol, srcRow, srcRow);
+                        end = start;
+                    }
+                } else {
+                    auto* srcPairs = reinterpret_cast<volatile __ubuf__ uint16_t*>(packed.GetLinearAddr(row));
+                    auto* dstPairs = reinterpret_cast<volatile __ubuf__ uint16_t*>(exp.GetLinearAddr(row));
+                    for (auto i = pairs; i > 0; --i) {
+                        dstPairs[(i - 1) * dstStride] = srcPairs[i - 1];
+                    }
+                }
+            }
+        }
+    }
+    if constexpr (!useTranspose) {
+        set_flag(PIPE_S, PIPE_V, EVENT_ID0);
+        wait_flag(PIPE_S, PIPE_V, EVENT_ID0);
     }
 }
 #endif // defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)

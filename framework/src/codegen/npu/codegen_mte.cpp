@@ -1162,7 +1162,10 @@ std::string CodeGenOpNPU::PrintMemCopyWithUBTileTensor(const PrintMemCopyWithUBP
         int64_t isAcc{0};
         GetOpAttr(OpAttributeKey::atomicAdd, isAcc);
         std::string att = isAcc == 0 ? "pto::AtomicType::AtomicNone" : "pto::AtomicType::AtomicAdd";
-        std::string storeConfig = WrapParamByAngleBrackets({att});
+        bool mxScaleLayout = false;
+        GetOpAttr(OpAttributeKey::mxScaleLayout, mxScaleLayout);
+        std::string storeConfig = mxScaleLayout ? WrapParamByAngleBrackets({att, "true"}) :
+                                                  WrapParamByAngleBrackets({att});
         oss << "<" << TSTORE_CONF_VEC << storeConfig << ">";
     }
     oss << WrapParamByParentheses(tileOpParamList);

@@ -18,6 +18,20 @@
 
 namespace npu::tile_fwk {
 
+bool PassOperationUtils::IsPackedQuantMxScale(const LogicalTensorPtr& tensor)
+{
+    if (tensor->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
+        return false;
+    }
+    for (const auto* producer : tensor->GetProducers()) {
+        if (producer->GetOpcode() == Opcode::OP_QUANT_MX && producer->GetOutputOperand(1) == tensor &&
+            !producer->GetBoolAttribute(OpAttributeKey::mxScalePadded)) {
+            return true;
+        }
+    }
+    return false;
+}
+
 bool PassOperationUtils::HasExplicitOrderDependency(const Operation& op)
 {
     if (!op.tokens_.empty() || !op.result_token_.empty() || !op.GetDependOperands().empty()) {

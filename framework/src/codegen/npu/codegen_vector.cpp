@@ -1476,7 +1476,9 @@ std::string CodeGenOpNPU::GenQuantMXOp() const
     std::vector<int64_t> templateParams = {mode, axis, performanceMode};
 
     std::ostringstream oss;
-    oss << tileOpName;
+    bool padded = false;
+    GetOpAttr(OpAttributeKey::mxScalePadded, padded);
+    oss << (padded ? "TQuantMXPadded" : tileOpName);
     oss << WrapParamByAngleBrackets(templateParams);
     oss << WrapParamByParentheses(GetTileOpParamsByOrder());
     oss << STMT_END;

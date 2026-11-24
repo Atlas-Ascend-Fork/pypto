@@ -135,6 +135,8 @@ public:
     static const std::string vecMergeHashOrder;
     static const std::string vecMergeSubgraphCount;
     static const std::string atomicAdd;
+    static const std::string mxScaleLayout;
+    static const std::string mxScalePadded;
     static const std::string splitMN; // for L0C->UB Dual Dst
     // HashOrder attribute keys for conv
     static const std::string postK;

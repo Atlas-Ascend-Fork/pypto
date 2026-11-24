@@ -4077,11 +4077,10 @@ static void CopyQuantMXOutputs(const std::pair<torch::Tensor, torch::Tensor>& to
                                const std::pair<torch::Tensor, torch::Tensor>& tmax,
                                const std::pair<torch::Tensor, torch::Tensor>& tscaling, const torch::Tensor& quantRaw,
                                const torch::Tensor& expRaw, const torch::Tensor& maxTemp,
-                               const torch::Tensor& scalingTemp, const QuantMXShapes& shapes, bool performanceMode)
+                               const torch::Tensor& scalingTemp, const QuantMXShapes& shapes)
 {
     tout.first.copy_(quantRaw);
-    const bool tailPerformanceMode = performanceMode && !shapes.isDnAxis;
-    texp.first.copy_(tailPerformanceMode ? expRaw.reshape(shapes.performanceGroupedShape) : expRaw);
+    texp.first.copy_(expRaw.reshape(texp.first.sizes()));
     tmax.second.copy_(shapes.isDnAxis ? maxTemp : maxTemp.reshape(shapes.performanceGroupedShape));
     tscaling.second.copy_(scalingTemp);
 }
@@ -4113,7 +4112,7 @@ static void QuantMX(const TensorData& out, const TensorData& exp, const TensorDa
         auto inputContiguous = inputFlat.contiguous();
         FillQuantMXDn(inputContiguous.data_ptr<float>(), quantRaw.data_ptr<uint8_t>(), expRaw.data_ptr<uint8_t>(),
                       scalingTemp.data_ptr<float>(), maxTemp.data_ptr<float>(), shapes, self.dtype, out.dtype, mode);
-        CopyQuantMXOutputs(tout, texp, tmax, tscaling, quantRaw, expRaw, maxTemp, scalingTemp, shapes, performanceMode);
+        CopyQuantMXOutputs(tout, texp, tmax, tscaling, quantRaw, expRaw, maxTemp, scalingTemp, shapes);
         return;
     }
     auto inputFlat = input.view({shapes.rows, shapes.cols});
@@ -4130,7 +4129,7 @@ static void QuantMX(const TensorData& out, const TensorData& exp, const TensorDa
 
     FillQuantMXRows(inputPtr, quantPtr, expPtr, scalingPtr, maxPtr, shapes.rows, shapes.cols, shapes.groupCols,
                     shapes.quantCols, self.dtype, out.dtype, performanceMode, mode);
-    CopyQuantMXOutputs(tout, texp, tmax, tscaling, quantRaw, expRaw, maxTemp, scalingTemp, shapes, performanceMode);
+    CopyQuantMXOutputs(tout, texp, tmax, tscaling, quantRaw, expRaw, maxTemp, scalingTemp, shapes);
 }
 
 #define HIF4_QUANT_BLOCK 64

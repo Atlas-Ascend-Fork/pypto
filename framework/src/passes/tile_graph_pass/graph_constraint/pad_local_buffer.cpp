@@ -14,9 +14,11 @@
  */
 
 #include "pad_local_buffer.h"
+#include "passes/pass_utils/pass_operation_utils.h"
 #include "passes/pass_log/pass_log.h"
 #include "passes/pass_utils/alignment_utils.h"
 #include "passes/pass_utils/reschedule_utils.h"
+#include <algorithm>
 #include <numeric>
 
 #define MODULE_NAME "PadLocalBuffer"
@@ -448,6 +450,20 @@ bool PadLocalBuffer::ShouldSkipVectorPad(Operation& op, LogicalTensorPtr& in)
     if (HandleUb2L1CopyOp(op, in)) {
         return true;
     }
+    if (PassOperationUtils::IsPackedQuantMxScale(in)) {
+        auto& rawshape = in->tensor->rawshape;
+        if (rawshape.size() < SHAPE_DIM2) {
+            APASS_LOG_ERROR_F(Elements::Tensor, "Packed QuantMX scale tensor %d requires at least two raw dimensions.",
+                              in->magic);
+            return true;
+        }
+        const auto& oriRawshape = SetOriRawshape(in);
+        const auto rowAxis = rawshape.size() - SHAPE_DIM2;
+        // 尾轴的两个 E8M0 元素组成一对，倒数第二轴按每个 32B 块可容纳的对数补齐。
+        rawshape[rowAxis] = AlignmentUtils::Pad(oriRawshape[rowAxis],
+                                                AlignmentUtils::GetLastDimAlignBase(in) / NUM_VALUE_2);
+        return true;
+    }
     if (in->shape.empty()) {
         APASS_LOG_ERROR_F(Elements::Operation,
                           "Vector Op %d %s input %d shape is empty; Please check the input size. %s", op.opmagic,
@@ -732,12 +748,52 @@ void PadLocalBuffer::PadVectorForAxisCombine(Operation& op, LogicalTensorPtr& in
     AlignedRawTensorIfNeed(in, lastIdx, paddingValue);
 }
 
+static bool CanStorePackedMxScale(const Operation* consumer)
+{
+    if (consumer->GetOpcode() != Opcode::OP_COPY_OUT) {
+        return false;
+    }
+    // GM strides are row-major products of the raw dimensions. Only adjacent pairs can be flattened.
+    const auto& gm = consumer->GetOutputOperand(0)->GetRawTensor();
+    if (gm->GetRawShape().size() < NUM_VALUE_2 || gm->GetRawShape().back() != NUM_VALUE_2) {
+        return false;
+    }
+    const auto copy = std::static_pointer_cast<CopyOpAttribute>(consumer->GetOpAttribute());
+    if (copy != nullptr && !copy->GetRawShape().empty()) {
+        const auto& width = copy->GetRawShape().back();
+        return width.IsSpecified() && width.GetSpecifiedValue().IsImmediate() &&
+               width.GetSpecifiedValue().Concrete() == NUM_VALUE_2;
+    }
+    const auto& shape = gm->GetDynRawShape();
+    return shape.empty() || (shape.back().IsImmediate() && shape.back().Concrete() == NUM_VALUE_2);
+}
+
+static void PrepareQuantMxScaleConsumers(Function& function)
+{
+    for (auto& op : function.Operations()) {
+        if (op.GetOpcode() != Opcode::OP_QUANT_MX) {
+            continue;
+        }
+        const auto scale = op.GetOutputOperand(1);
+        const auto& consumers = scale->GetConsumers();
+        const bool padded = !std::all_of(consumers.begin(), consumers.end(), CanStorePackedMxScale);
+        if (padded) {
+            op.SetAttribute(OpAttributeKey::mxScalePadded, true);
+        } else {
+            for (auto* consumer : consumers) {
+                consumer->SetAttribute(OpAttributeKey::mxScaleLayout, true);
+            }
+        }
+    }
+}
+
 Status PadLocalBuffer::RunOnFunction(Function& function)
 {
     combineAxis_ = function.paramConfigs_.combineAxis;
     APASS_LOG_INFO_F(Elements::Operation, "======> Start PadLocalBuffer in COMBINE_AXIS=%d mode.", combineAxis_);
     oriRawshapeMap_.clear(); // 清空原始 rawshape 存储映射
     broadcastLastAxis_.clear();
+    PrepareQuantMxScaleConsumers(function);
     if (combineAxis_) {
         axisCombineMarker_.Run(function);
     } else {

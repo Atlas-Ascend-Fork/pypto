@@ -87,6 +87,33 @@ __aicore__ inline constexpr size_t GetTileSizeBytes()
 }
 } // namespace TileOp
 
+// Present the contiguous scale pair as part of the row width to the ISA.
+template <typename Local, typename T>
+__aicore__ inline auto MakeMxScaleTensor(T tensor)
+{
+    constexpr auto width = TileOp::GetTensorTileShapeDim<Local, DIM_5TH, MAX_DIMS>();
+    constexpr auto height = TileOp::GetTensorTileShapeDim<Local, DIM_4TH, MAX_DIMS>();
+    static_assert(TileOp::GetPackedByteOffset<typename Local::Type>(height * width) % 32 == 0,
+                  "Merged copy row must be 32-byte aligned.");
+    using CopyTileShape = TileOp::TileShape<
+        Std::Int<1>, Std::Int<TileOp::GetTensorTileShapeDim<Local, DIM_1ST, MAX_DIMS>()>,
+        Std::Int<TileOp::GetTensorTileShapeDim<Local, DIM_2ND, MAX_DIMS>()>,
+        Std::Int<TileOp::GetTensorTileShapeDim<Local, DIM_3RD, MAX_DIMS>()>, Std::Int<height * width>>;
+    using CopyLayout = TileOp::Layout<Shape5Dim, Stride5Dim, CopyTileShape>;
+    const auto layout = tensor.GetLayout();
+    const auto lastDim = layout.template GetShapeDim<DIM_5TH, MAX_DIMS>();
+    const auto lastStride = layout.template GetStrideDim<DIM_5TH, MAX_DIMS>();
+    PTO_ASSERT((lastStride == 1 && layout.template GetStrideDim<DIM_4TH, MAX_DIMS>() == lastDim),
+               "Trailing copy dimensions must be contiguous to merge.");
+    auto shape = Shape5Dim(
+        1, layout.template GetShapeDim<DIM_1ST, MAX_DIMS>(), layout.template GetShapeDim<DIM_2ND, MAX_DIMS>(),
+        layout.template GetShapeDim<DIM_3RD, MAX_DIMS>(), layout.template GetShapeDim<DIM_4TH, MAX_DIMS>() * lastDim);
+    auto stride = Stride5Dim(0, layout.template GetStrideDim<DIM_1ST, MAX_DIMS>(),
+                             layout.template GetStrideDim<DIM_2ND, MAX_DIMS>(),
+                             layout.template GetStrideDim<DIM_3RD, MAX_DIMS>(), lastStride);
+    return TileTensor<typename T::Type, CopyLayout, T::FORMAT>(tensor.GetAddr(), CopyLayout(shape, stride));
+}
+
 template <typename T, typename Shape, typename Stride, bool need_mask = false>
 class PtoGlobal {
 public:

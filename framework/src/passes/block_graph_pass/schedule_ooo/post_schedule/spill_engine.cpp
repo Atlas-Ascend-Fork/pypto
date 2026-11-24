@@ -21,6 +21,7 @@
 #include "spill_engine.h"
 #include <algorithm>
 #include "tilefwk/symbolic_scalar.h"
+#include "passes/pass_utils/pass_operation_utils.h"
 #include "passes/pass_utils/reschedule_utils.h"
 #include "passes/pass_utils/mem_path_utils.h"
 #include "passes/pass_utils/pass_token_utils.h"
@@ -468,7 +469,8 @@ bool SpillEngine::CanSaveTensorToDDR(LogicalTensorPtr tensor)
     if (tensor->GetMemoryTypeOriginal() == MemoryType::MEM_DEVICE_DDR) {
         return true;
     }
-    return MemPathUtils::CanSaveToDDR(tensor->GetMemoryTypeOriginal()) && !HasLayoutWrite(tensor);
+    return MemPathUtils::CanSaveToDDR(tensor->GetMemoryTypeOriginal()) && !HasLayoutWrite(tensor) &&
+           !PassOperationUtils::IsPackedQuantMxScale(tensor);
 }
 
 bool SpillEngine::IsDataComplete(LogicalTensorPtr tensor)

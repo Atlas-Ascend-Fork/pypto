@@ -19,9 +19,11 @@
 #include "utils/layout.h"
 #include "utils/tile_tensor.h"
 
-template <pto::AtomicType att = pto::AtomicType::AtomicNone>
+template <pto::AtomicType att = pto::AtomicType::AtomicNone, bool mxScaleLayout = false>
 struct TStoreConfigVec {
     static constexpr pto::AtomicType kAtomicType = att;
+    static_assert(!mxScaleLayout || att == pto::AtomicType::AtomicNone, "MX scale does not support atomic stores.");
+    static constexpr bool kMergeLastTwoDims = mxScaleLayout;
 };
 
 #define OP_TILE_OP_UB_COPY_IN TLoad
@@ -78,9 +80,8 @@ __aicore__ inline void CallStore(T dst, U src)
     pto::TSTORE<U, T, config::kAtomicType>(dst, src);
 }
 
-#define OP_TILE_OP_UB_COPY_OUT TStoreVec
 template <typename config, typename T, typename U, typename C>
-__aicore__ inline void TStoreVec(T dst, U src, C coordinate)
+__aicore__ inline void TStoreVecImpl(T dst, U src, C coordinate)
 {
     if constexpr (U::FORMAT == Hardware::UB && T::FORMAT == Hardware::GM) {
         const auto srcLayout = src.GetLayout();
@@ -122,6 +123,19 @@ __aicore__ inline void TStoreVec(T dst, U src, C coordinate)
                 }
             }
         }
+    }
+}
+
+#define OP_TILE_OP_UB_COPY_OUT TStoreVec
+template <typename config, typename T, typename U, typename C>
+__aicore__ inline void TStoreVec(T dst, U src, C coordinate)
+{
+    if constexpr (config::kMergeLastTwoDims && U::FORMAT == Hardware::UB && T::FORMAT == Hardware::GM) {
+        auto offset = dst.GetLayout().template GetGmOffset<C, MAX_DIMS>(coordinate);
+        dst.SetAddr(TileOp::GetPackedGmAddr<typename T::Type>(dst.GetAddr(), offset));
+        TStoreVecImpl<config>(MakeMxScaleTensor<U>(dst), MakeMxScaleTensor<U>(src), Coord5Dim(0, 0, 0, 0, 0));
+    } else {
+        TStoreVecImpl<config>(dst, src, coordinate);
     }
 }
 

@@ -18,6 +18,8 @@ namespace npu::tile_fwk {
 
 class PassOperationUtils {
 public:
+    static bool IsPackedQuantMxScale(const LogicalTensorPtr& tensor);
+
     // Explicit data-independent ordering constraints must survive graph rewrites.
     static bool HasExplicitOrderDependency(const Operation& op);
 

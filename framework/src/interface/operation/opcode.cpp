@@ -682,7 +682,7 @@ void OpcodeManager::RegisterVectorQuant()
                  {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {"TileOp::TQuantMX", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::OTHER,
                  {OpAttributeKey::excludeBufferReuse, OpAttributeKey::mxQuantMode, OpAttributeKey::mxQuantAxis,
-                  OpAttributeKey::mxQuantPerformanceMode});
+                  OpAttributeKey::mxQuantPerformanceMode, OpAttributeKey::mxScalePadded});
     RegisterInfo(Opcode::OP_QUANT_HIF4, OpCoreType::AIV, "QUANT_HIF4", {MemoryType::MEM_UB},
                  {MemoryType::MEM_UB, MemoryType::MEM_UB, MemoryType::MEM_UB},
                  {"TileOp::TQuantHIF4", PIPE_V, PIPE_V, CoreType::AIV}, OpCalcType::OTHER,
@@ -1287,7 +1287,8 @@ void OpcodeManager::RegisterCommon()
     RegisterInfo(Opcode::OP_COPY_IN, OpCoreType::ANY, "COPY_IN", {}, {}, {}, OpCalcType::MOVE_IN,
                  {OpAttributeKey::outputCombineAxis, OpAttributeKey::excludeBufferReuse});
     RegisterInfo(Opcode::OP_COPY_OUT, OpCoreType::ANY, "COPY_OUT", {}, {}, {}, OpCalcType::MOVE_OUT,
-                 {OP_ATTR_PREFIX + "atomic_add", OpAttributeKey::inputCombineAxis, OpAttributeKey::excludeBufferReuse});
+                 {OpAttributeKey::atomicAdd, OpAttributeKey::mxScaleLayout, OpAttributeKey::inputCombineAxis,
+                  OpAttributeKey::excludeBufferReuse});
     RegisterInfo(Opcode::OP_CALL, OpCoreType::ANY, "CALL", {}, {}, {}, OpCalcType::SYS);
     RegisterInfo(Opcode::OP_PRINT, OpCoreType::ANY, "OP_DUMP", {}, {}, {}, OpCalcType::SYS, {});
     RegisterInfo(Opcode::OP_BLOCK_CALL, OpCoreType::ANY, "BLOCK_CALL", {}, {}, {}, OpCalcType::SYS);

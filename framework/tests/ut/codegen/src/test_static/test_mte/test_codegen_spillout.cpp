@@ -103,6 +103,45 @@ UBTileTensorFP32Dim2_1 ubTensor_1((uint64_t)UB_S0_E0_T);
     EXPECT_EQ(res, expect);
 }
 
+TEST_F(TestCodegenSpillOut, StoreLayoutMergeOnlyForMxScalePair)
+{
+    config::SetCodeGenConfig(KEY_CODEGEN_SUPPORT_TILE_TENSOR, true);
+    auto function = GenMockFuncStatic("StoreLayoutMerge");
+    const std::vector<int64_t> shape{2, 16, 2};
+    struct StoreCase {
+        bool mxScaleLayout;
+        bool atomicAdd;
+        const char* expected;
+    };
+    const StoreCase cases[] = {
+        {false, false, "TStoreVec<TStoreConfigVec<pto::AtomicType::AtomicNone>>"},
+        {true, false, "TStoreVec<TStoreConfigVec<pto::AtomicType::AtomicNone, true>>"},
+        {false, true, "TStoreVec<TStoreConfigVec<pto::AtomicType::AtomicAdd>>"},
+    };
+    for (const auto& [mxScaleLayout, atomicAdd, expected] : cases) {
+        const auto dtype = atomicAdd ? DT_FP32 : DT_FP8E8M0;
+        auto gm = CreateLogicalTensor(
+            {*function, dtype, MemoryType::MEM_DEVICE_DDR, shape, "storeOutput", SYMBOL_STACK_BASE, {}});
+        gm->SetAttr(OpAttributeKey::workspaceBaseOffset, int64_t(0));
+        auto ub = CreateLogicalTensor({*function, dtype, MemoryType::MEM_UB, shape});
+        auto& op = function->AddOperation(Opcode::OP_COPY_OUT, {ub}, {gm});
+        if (mxScaleLayout) {
+            op.SetAttribute(OpAttributeKey::mxScaleLayout, true);
+        }
+        auto shapeImme = OpImmediate::Specified(shape);
+        op.SetOpAttribute(
+            std::make_shared<CopyOpAttribute>(MEM_UB, OpImmediate::Specified({0, 0, 0}), shapeImme, shapeImme));
+        op.SetAttr(OpAttributeKey::workspaceBaseOffset, int64_t(0));
+        if (atomicAdd) {
+            op.SetAttribute(OpAttributeKey::atomicAdd, int64_t{1});
+        }
+        std::shared_ptr<SymbolManager> symbolManager;
+        auto cop = GenOpCloudNPUFromOp(*function, op, symbolManager);
+        const auto code = cop.GenOpCode();
+        EXPECT_NE(code.find(expected), std::string::npos) << code;
+    }
+}
+
 TEST_F(TestCodegenSpillOut, L1SpillOut)
 {
     auto function = GenMockFuncStatic("L1SpillOut");

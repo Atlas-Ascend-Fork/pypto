@@ -1665,3 +1665,92 @@ TEST_F(TestPadLocalBuffer, PadLastDimOnUBForWholeByteDtypes)
     AlignmentUtils::ProcessLastDim32BAlignedOnUB(tensor);
     EXPECT_EQ(tensor->tensor->rawshape.back(), 104);
 }
+
+TEST_F(TestPadLocalBuffer, MxScalePairKeepsLastDim)
+{
+    auto check = [](bool combineAxis, bool withCast) {
+        ComputationalGraphBuilder graph;
+        const Shape scaleShape{7, 3, 2};
+        ASSERT_TRUE(graph.AddTensor(DT_FP32, {7, 192}, MEM_UB, "input"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP8E4M3, {7, 192}, MEM_UB, "quant"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP32, {42}, MEM_UB, "maxScratch"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP32, {84}, MEM_UB, "scalingScratch"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP8E8M0, scaleShape, MEM_UB, "scaleUb"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP8E8M0, scaleShape, MEM_DEVICE_DDR, "scaleOut"));
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_QUANT_MX, {"input"}, {"quant", "scaleUb", "maxScratch", "scalingScratch"},
+                                "quantMx", true));
+        graph.GetOp("quantMx")->SetAttribute(OpAttributeKey::mxQuantAxis, int64_t{1});
+        ASSERT_TRUE(graph.AddTensor(DT_FP8E8M0, scaleShape, MEM_DEVICE_DDR, "reloadGm"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP8E8M0, scaleShape, MEM_UB, "reloadUb"));
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_COPY_IN, {"reloadGm"}, {"reloadUb"}, "reload", true));
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_COPY_OUT, {"scaleUb"}, {"scaleOut"}, "copyOut", true));
+        // 相同 shape 的普通 FP8 仍按向量规则 pad。
+        ASSERT_TRUE(graph.AddTensor(DT_FP8E4M3, scaleShape, MEM_DEVICE_DDR, "dataGm"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP8E4M3, scaleShape, MEM_UB, "dataUb"));
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_COPY_IN, {"dataGm"}, {"dataUb"}, "copyData", true));
+        auto* function = graph.GetFunction();
+        ASSERT_TRUE(graph.AddTensor(DT_FP8E8M0, scaleShape, MEM_DEVICE_DDR, "ordinaryOut"));
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_COPY_OUT, {"reloadUb"}, {"ordinaryOut"}, "ordinaryCopyOut", true));
+        ASSERT_TRUE(graph.AddTensor(DT_FP8E8M0, scaleShape, MEM_DEVICE_DDR, "scaleOut2"));
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_COPY_OUT, {"scaleUb"}, {"scaleOut2"}, "copyOut2", true));
+        if (withCast) {
+            ASSERT_TRUE(graph.AddTensor(DT_FP32, scaleShape, MEM_UB, "castUb"));
+            ASSERT_TRUE(graph.AddOp(Opcode::OP_CAST, {"scaleUb"}, {"castUb"}, "castScale", true));
+            ASSERT_TRUE(graph.AddTensor(DT_FP32, scaleShape, MEM_DEVICE_DDR, "castOut"));
+            ASSERT_TRUE(graph.AddOp(Opcode::OP_COPY_OUT, {"castUb"}, {"castOut"}, "copyCast", true));
+        }
+        function->paramConfigs_.combineAxis = combineAxis;
+        PadLocalBuffer pass;
+        ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+        EXPECT_EQ(graph.GetOp("quantMx")->GetOutputOperandSize(), 4U);
+        EXPECT_EQ(graph.GetTensor("maxScratch")->tensor->GetRawDataSize(), 192);
+        EXPECT_EQ(graph.GetOp("quantMx")->GetBoolAttribute(OpAttributeKey::mxScalePadded), withCast);
+        EXPECT_EQ(graph.GetOp("copyOut")->GetBoolAttribute(OpAttributeKey::mxScaleLayout), !withCast);
+        EXPECT_EQ(graph.GetOp("copyOut2")->GetBoolAttribute(OpAttributeKey::mxScaleLayout), !withCast);
+        EXPECT_FALSE(graph.GetOp("ordinaryCopyOut")->GetBoolAttribute(OpAttributeKey::mxScaleLayout));
+        if (withCast) {
+            EXPECT_EQ(graph.GetOp("castScale")->GetInputOperand(0), graph.GetTensor("scaleUb"));
+            EXPECT_EQ(graph.GetTensor("scaleUb")->tensor->GetRawShape().back(), 32);
+        } else {
+            auto scale = graph.GetTensor("scaleUb");
+            EXPECT_EQ(scale->tensor->GetRawShape(), (Shape{7, 16, 2}));
+            EXPECT_EQ(pass.GetOriRawshape(scale), scaleShape);
+        }
+        EXPECT_EQ(graph.GetTensor("dataUb")->tensor->GetRawShape().back(), 32);
+        EXPECT_EQ(graph.GetTensor("reloadUb")->tensor->GetRawShape().back(), 32);
+    };
+    for (bool combineAxis : {false, true}) {
+        check(combineAxis, false);
+        check(combineAxis, true);
+    }
+}
+
+TEST_F(TestPadLocalBuffer, MxScaleCopyOutRequiresPackedGmLayout)
+{
+    const Shape scaleShape{7, 3, 2};
+    auto check = [&](int64_t gmWidth, const Shape& copyShape, const std::vector<SymbolicScalar>& dynGmShape) {
+        ComputationalGraphBuilder graph;
+        ASSERT_TRUE(graph.AddTensor(DT_FP32, {7, 192}, MEM_UB, "input"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP8E4M3, {7, 192}, MEM_UB, "quant"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP8E8M0, scaleShape, MEM_UB, "scale"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP32, {42}, MEM_UB, "maxScratch"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP32, {84}, MEM_UB, "scalingScratch"));
+        ASSERT_TRUE(graph.AddTensor(DT_FP8E8M0, {7, 3, gmWidth}, MEM_DEVICE_DDR, "out"));
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_QUANT_MX, {"input"}, {"quant", "scale", "maxScratch", "scalingScratch"},
+                                "quantMx", true));
+        ASSERT_TRUE(graph.AddOp(Opcode::OP_COPY_OUT, {"scale"}, {"out"}, "copyOut", true));
+        auto copyOut = graph.GetOp("copyOut");
+        auto attr = std::static_pointer_cast<CopyOpAttribute>(copyOut->GetOpAttribute());
+        attr->SetRawShape(OpImmediate::Specified(copyShape));
+        graph.GetTensor("out")->GetRawTensor()->UpdateDynRawShape(dynGmShape);
+
+        PadLocalBuffer pass;
+        ASSERT_EQ(pass.RunOnFunction(*graph.GetFunction()), SUCCESS);
+        EXPECT_TRUE(graph.GetOp("quantMx")->GetBoolAttribute(OpAttributeKey::mxScalePadded));
+        EXPECT_FALSE(copyOut->GetBoolAttribute(OpAttributeKey::mxScaleLayout));
+        EXPECT_EQ(graph.GetTensor("scale")->GetRawTensor()->GetRawShape().back(), 32);
+    };
+    check(4, scaleShape, {});
+    check(2, {7, 3, 4}, {});
+    check(2, {}, {7, 3, CreateTestScalarVar("gmWidth")});
+}
