@@ -119,10 +119,11 @@ TILEOP void DynL1CopyInNZ2NZ(__cbuf__ L1T* dst, __gm__ GMT* src, unsigned TShape
     }
 
     constexpr int64_t c0Size = BLOCK_ALIGN_BYTE / sizeof(GMT);
-    int64_t batchSize = curH * curW;
-    int64_t offsetElem = GmOffset0 * GmShape1 + GmOffset1;
+    int64_t batchSize = static_cast<int64_t>(curH) * curW;
+    int64_t offsetElem = static_cast<int64_t>(GmOffset0) * GmShape1 + GmOffset1;
     int64_t batchIndex = offsetElem / batchSize;
-    int64_t srcOffset = batchIndex * batchSize + (GmOffset1 * curH) + (GmOffset0 - batchIndex * curH) * c0Size;
+    int64_t srcOffset = batchIndex * batchSize + (static_cast<int64_t>(GmOffset1) * curH) +
+                        (GmOffset0 - batchIndex * curH) * c0Size;
     uint16_t nBurst = TShape1 / c0Size;
     uint16_t lenBurst = TShape0 * c0Size * sizeof(GMT) / BLOCK_ALIGN_BYTE;
     uint16_t srcStride = (curH - TShape0) * c0Size * sizeof(GMT) / BLOCK_ALIGN_BYTE;
@@ -459,7 +460,7 @@ TILEOP void DynL0CCopyOut(__gm__ GMT* dst, __cc__ L0CT* src, unsigned oriTShape0
     uint32_t dstStrideDstD = GmShape1;
     uint16_t srcStride = CeilAlign<uint16_t>(oriTShape0, BLOCK_CUBE_M_N);
     bool channelSplit = false;
-    int64_t gmOffset = (GmOffset0 * GmShape1) + GmOffset1;
+    int64_t gmOffset = static_cast<int64_t>(GmOffset0) * GmShape1 + GmOffset1;
 
     if constexpr (!enableNZ2ND) {
         // s32搬出不涉及channel split，因此C0=16
@@ -468,7 +469,8 @@ TILEOP void DynL0CCopyOut(__gm__ GMT* dst, __cc__ L0CT* src, unsigned oriTShape0
         int64_t wAlign = CeilAlign<int64_t>(curW, c0Size);
         int64_t elemPerBatch = curH * wAlign;
         int64_t batchIdx = gmOffset / elemPerBatch;
-        gmOffset = batchIdx * elemPerBatch + (GmOffset1 * curH) + (GmOffset0 - batchIdx * curH) * c0Size;
+        gmOffset = batchIdx * elemPerBatch + (static_cast<int64_t>(GmOffset1) * curH) +
+                   (GmOffset0 - batchIdx * curH) * c0Size;
         // fp32搬出默认开启channel split
         channelSplit = std::is_same<GMT, float>::value;
         // dst stride between the start addresses of different bursts in unit of 32B
@@ -714,13 +716,14 @@ TILEOP void DynL1CopyInNZ2NZ(__cbuf__ L1T* dst, __gm__ GMT* src, unsigned GmShap
 {
     auto inputC0Size = 32 / sizeof(L1T);
     // 计算在那个Batch块中;
-    auto batchSize = curH * curW;
+    int64_t batchSize = static_cast<int64_t>(curH) * curW;
     // 计算当前的偏移点
-    auto offsetElem = GmOffset0 * GmShape1 + GmOffset1;
-    auto batchIndex = offsetElem / batchSize;
+    int64_t offsetElem = static_cast<int64_t>(GmOffset0) * GmShape1 + GmOffset1;
+    int64_t batchIndex = offsetElem / batchSize;
     // auto batchIndex = CalcLinearOffset(GmShape1, GmOffset0, GmOffset1) / batchSize;
     // NZ的offset转换
-    auto offsetWithNZ = batchIndex * batchSize + (GmOffset1 * curH) + (GmOffset0 - batchIndex * curH) * inputC0Size;
+    int64_t offsetWithNZ = batchIndex * batchSize + (static_cast<int64_t>(GmOffset1) * curH) +
+                           (GmOffset0 - batchIndex * curH) * inputC0Size;
     int32_t C0 = 32 / sizeof(GMT);
     uint16_t nBurst = TShape1 / C0;
     uint16_t lenBurst = TShape0 * C0 * sizeof(GMT) / 32;
