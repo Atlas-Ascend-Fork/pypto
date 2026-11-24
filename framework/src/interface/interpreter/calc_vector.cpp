@@ -1261,7 +1261,8 @@ void ExecuteOpQuantizeSym(ExecuteOperationContext* ctx)
     auto& ret = ctx->ooperandInplaceDataViewList->at(0);
     auto& input = ctx->ioperandDataViewList->at(0);
     auto& scale = ctx->ioperandDataViewList->at(1);
-    calc::Quantize(ret, input, scale, nullptr);
+    int64_t axis = ctx->op->GetIntAttribute("op_attr_axis");
+    calc::Quantize(ret, input, scale, nullptr, axis);
 }
 REGISTER_CALC_OP(OP_QUANTIZE_SYM, Opcode::OP_QUANTIZE_SYM, ExecuteOpQuantizeSym);
 
@@ -1271,7 +1272,8 @@ void ExecuteOpQuantizeAsym(ExecuteOperationContext* ctx)
     auto& input = ctx->ioperandDataViewList->at(0);
     auto& scale = ctx->ioperandDataViewList->at(1);
     auto& zeropoints = ctx->ioperandDataViewList->at(2);
-    calc::Quantize(ret, input, scale, zeropoints);
+    int64_t axis = ctx->op->GetIntAttribute("op_attr_axis");
+    calc::Quantize(ret, input, scale, zeropoints, axis);
 }
 REGISTER_CALC_OP(OP_QUANTIZE_ASYM, Opcode::OP_QUANTIZE_ASYM, ExecuteOpQuantizeAsym);
 

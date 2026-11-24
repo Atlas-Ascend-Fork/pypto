@@ -946,7 +946,7 @@ TEST_F(TorchAdaptorTest, QuantizeSymmetricToInt8)
     auto out = makeTensorData(DT_INT8, {2, 2}, static_cast<int8_t>(0));
     auto golden = makeTensorData(DT_INT8, {2, 2}, goldenData);
 
-    calc::Quantize(out, input, scale, nullptr);
+    calc::Quantize(out, input, scale, nullptr, -1);
     ASSERT_ALLCLOSE(out, golden);
 }
 
@@ -967,7 +967,7 @@ TEST_F(TorchAdaptorTest, QuantizeAsymmetricToUInt8)
     auto out = makeTensorData(DT_UINT8, {2, 2}, static_cast<uint8_t>(0));
     auto golden = makeTensorData(DT_UINT8, {2, 2}, goldenData);
 
-    calc::Quantize(out, input, scale, zeroPoints);
+    calc::Quantize(out, input, scale, zeroPoints, -1);
     ASSERT_ALLCLOSE(out, golden);
 }
 
@@ -985,7 +985,7 @@ TEST_F(TorchAdaptorTest, QuantizeSymmetricClamp)
     auto out = makeTensorData(DT_INT8, {1, 2}, static_cast<int8_t>(0));
     auto golden = makeTensorData(DT_INT8, {1, 2}, goldenData);
 
-    calc::Quantize(out, input, scale, nullptr);
+    calc::Quantize(out, input, scale, nullptr, -1);
     ASSERT_ALLCLOSE(out, golden);
 }
 
@@ -1005,7 +1005,7 @@ TEST_F(TorchAdaptorTest, QuantizeAsymmetricClamp)
     auto out = makeTensorData(DT_UINT8, {1, 2}, static_cast<uint8_t>(0));
     auto golden = makeTensorData(DT_UINT8, {1, 2}, goldenData);
 
-    calc::Quantize(out, input, scale, zeroPoints);
+    calc::Quantize(out, input, scale, zeroPoints, -1);
     ASSERT_ALLCLOSE(out, golden);
 }
 
@@ -1087,7 +1087,7 @@ TEST_F(TorchAdaptorTest, QuantizeDequantizeRoundTrip)
 
     auto zeroPoints = makeTensorData(DT_INT32, {1}, 0);
 
-    calc::Quantize(quantized, input, scale, nullptr);
+    calc::Quantize(quantized, input, scale, nullptr, -1);
     calc::Dequantize(out, quantized, scale, zeroPoints);
     ASSERT_ALLCLOSE(out, golden);
 }

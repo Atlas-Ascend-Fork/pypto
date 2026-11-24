@@ -15,7 +15,8 @@
  * - INT8_SYM:  FP32 -> INT8,  范围 [-128, 127]
  * - INT8_ASYM: FP32 -> UINT8, 范围 [0, 255]
  *
- * 只支持逐行量化 (axis=-1)，逐列量化在 Operation 层通过 Transpose 实现
+ * 支持逐行量化 (axis=-1, scale 行广播) 与逐列量化 (axis=-2, scale 列广播)，
+ * 由模板参数 quantAxis 编译期分派，无需在 Operation 层做 Transpose。
  */
 
 #ifndef TILEOP_TILE_OPERATOR_QUANTIZE__H
@@ -23,6 +24,7 @@
 
 #include "pto_tile.h"
 #include "utils/layout.h"
+#include "utils/sync.h"
 #include "utils/tile_tensor.h"
 #include <type_traits>
 
@@ -34,21 +36,61 @@ constexpr size_t TILE_ALIGNMENT_BYTES = TileOp::BLOCK_SIZE;
 #define PTO_CEIL(x, y) ((((x) + (y) - 1) / (y)) * (y))
 #endif
 
+#if !defined(PTO_NPU_ARCH_A5) && !defined(PTO_NPU_ARCH_A6)
+template <typename Dst, typename Src>
+TILEOP void QuantizeS32ToF16(Dst& dst, Src& src)
+{
+    // VCONV.DEQ uses 8-bit repeat strides in 32-byte blocks.
+    constexpr unsigned srcRowBytes = Src::RowStride * sizeof(int32_t);
+    constexpr unsigned dstRowBytes = Dst::RowStride * sizeof(half);
+    if constexpr (srcRowBytes / TILE_ALIGNMENT_BYTES > pto::REPEAT_STRIDE_MAX ||
+                  dstRowBytes / TILE_ALIGNMENT_BYTES > pto::REPEAT_STRIDE_MAX) {
+        constexpr unsigned elemsPerRepeat = pto::REPEAT_BYTE / sizeof(int32_t);
+        const auto validCols = dst.GetValidCol();
+        const auto validRows = dst.GetValidRow();
+        if (validRows > 1 && validCols % elemsPerRepeat != 0) {
+            using SrcRow = pto::Tile<pto::TileType::Vec, int32_t, 1, Src::Cols, pto::BLayout::RowMajor, -1, -1>;
+            using DstRow = pto::Tile<pto::TileType::Vec, half, 1, Dst::Cols, pto::BLayout::RowMajor, -1, -1>;
+            SrcRow srcRow(1, validCols);
+            DstRow dstRow(1, validCols);
+            const auto srcAddr = reinterpret_cast<uint64_t>(src.data());
+            const auto dstAddr = reinterpret_cast<uint64_t>(dst.data());
+            for (LoopVar row = 0; row < validRows; ++row) {
+                pto::TASSIGN(srcRow, srcAddr + row * srcRowBytes);
+                pto::TASSIGN(dstRow, dstAddr + row * dstRowBytes);
+                pto::TCVT(dstRow, srcRow, pto::RoundMode::CAST_RINT);
+            }
+            return;
+        }
+    }
+    pto::TCVT(dst, src, pto::RoundMode::CAST_RINT);
+}
+#endif
+
 // =============================================================================
 // INT8 对称量化
 // =============================================================================
 #define OP_TILE_OP_TQUANT_INT8_SYM TQuantInt8Sym
 
 /**
- * @brief INT8 对称量化 (逐行)
+ * @brief INT8 对称量化
  * @param dst   输出 INT8 张量, 形状 [..., H, W]
  * @param src   输入 FP32 张量, 形状 [..., H, W]
- * @param scale 缩放因子, 形状 [..., H]
+ * @param scale 缩放因子: axis=-1 形状 [..., H] (行广播), axis=-2 形状 [..., W] (列广播)
  * @param tmp   临时缓冲区
+ * @tparam quantAxis 量化轴: -1 逐行量化 / -2 逐列量化
+ *
+ * ISA 指令拼接 (不依赖 TQUANT 组合指令的内部 tmp 布局):
+ *   scaled = src * broadcast(scale) -> s32(RINT) -> f16(RINT) -> int8(RINT, 饱和)
+ * tmp 分段 (按 float/int32 元素计, 与 host 侧 workspaceSize 公式逐字一致):
+ *   [scaled/f16 平面 (ceil8(H) x ceil8(W))][s32 平面 (同尺寸)][axis=-1 行广播 vbrcb 缓冲 (ceil8(H) x 8)]
  */
-template <typename T0, typename T1, typename T2, typename T3>
+template <pto::QuantType quantType, int quantAxis, typename T0, typename T1, typename T2, typename T3>
 TILEOP void TQuantInt8Sym(T0 dst, T1 src, T2 scale, T3 tmp)
 {
+    static_assert(quantType == pto::QuantType::INT8_SYM, "TQuantInt8Sym only supports INT8_SYM.");
+    static_assert(quantAxis == -1 || quantAxis == -2, "TQuantInt8Sym only supports axis=-1/-2.");
+
     const auto dstLayout = dst.GetLayout();
     const auto srcLayout = src.GetLayout();
     const auto scaleLayout = scale.GetLayout();
@@ -80,7 +122,7 @@ TILEOP void TQuantInt8Sym(T0 dst, T1 src, T2 scale, T3 tmp)
     auto scaleStride2 = scaleLayout.template GetStrideDim<DIM_3RD, MAX_DIMS>();
     auto scaleStride3 = scaleLayout.template GetStrideDim<DIM_4TH, MAX_DIMS>();
 
-    // 获取 Tile 形状并计算对齐
+    // 获取 Tile 形状并计算对齐 (UB 局部 buffer 末维按 32B 对齐)
     constexpr auto dstTileH = TileOp::GetTensorTileShapeDim<T0, DIM_4TH, MAX_DIMS>();
     constexpr auto dstTileW = TileOp::GetTensorTileShapeDim<T0, DIM_5TH, MAX_DIMS>();
     constexpr int paddedCol_dst = PTO_CEIL(dstTileW, static_cast<int>(TILE_ALIGNMENT_BYTES / sizeof(int8_t)));
@@ -88,27 +130,47 @@ TILEOP void TQuantInt8Sym(T0 dst, T1 src, T2 scale, T3 tmp)
     constexpr auto srcTileH = TileOp::GetTensorTileShapeDim<T1, DIM_4TH, MAX_DIMS>();
     constexpr auto srcTileW = TileOp::GetTensorTileShapeDim<T1, DIM_5TH, MAX_DIMS>();
     constexpr int paddedCol_src = PTO_CEIL(srcTileW, static_cast<int>(TILE_ALIGNMENT_BYTES / sizeof(float)));
-    constexpr int paddedRow_src = PTO_CEIL(
-        srcTileH, static_cast<int>(TILE_ALIGNMENT_BYTES / sizeof(float))); // vbrcb processes in groups of 8 rows
 
     constexpr auto scaleTileW = TileOp::GetTensorTileShapeDim<T2, DIM_5TH, MAX_DIMS>();
     constexpr int paddedRow_scale = PTO_CEIL(scaleTileW, static_cast<int>(TILE_ALIGNMENT_BYTES / sizeof(float)));
+
     // 数据类型
     using DstDtype = typename T0::Type;
     using SrcDtype = typename T1::Type;
     using ScaleDtype = typename T2::Type;
-    using TmpDtype = int32_t;
 
-    // 定义 Tile 类型
+    // 输出/输入/中转 tile (两轴同几何: tile 内紧凑, 无切片/共享块)
     using DstTileDefine = pto::Tile<pto::TileType::Vec, DstDtype, dstTileH, paddedCol_dst, pto::BLayout::RowMajor, -1,
                                     -1>;
     using SrcTileDefine = pto::Tile<pto::TileType::Vec, SrcDtype, srcTileH, paddedCol_src, pto::BLayout::RowMajor, -1,
                                     -1>;
-    using ParaTileDefine = pto::Tile<pto::TileType::Vec, ScaleDtype, paddedRow_scale, 1, pto::BLayout::ColMajor, -1,
-                                     -1>;
-    // tmpbuf: aligned size with int32_t type
-    using TmpTileDefine = pto::Tile<pto::TileType::Vec, TmpDtype, paddedRow_src, paddedCol_src, pto::BLayout::RowMajor,
-                                    -1, -1>;
+    using ScaledTileDefine = pto::Tile<pto::TileType::Vec, float, srcTileH, paddedCol_src, pto::BLayout::RowMajor, -1,
+                                       -1>;
+    using S32TileDefine = pto::Tile<pto::TileType::Vec, int32_t, srcTileH, paddedCol_src, pto::BLayout::RowMajor, -1,
+                                    -1>;
+    // fp16 视图复用 scaled 平面: 列宽按 half 计为 fp32 区的 2 倍 (字节等宽, 行跨步一致)
+    constexpr int paddedCol_f16 = paddedCol_src * 2;
+    using F16TileDefine = pto::Tile<pto::TileType::Vec, half, srcTileH, paddedCol_f16, pto::BLayout::RowMajor, -1, -1>;
+
+    // scale tile 按量化轴选择: -1 行广播 ColMajor 列向量 / -2 列广播 RowMajor 行向量
+    using ScaleRowTileDefine = pto::Tile<pto::TileType::Vec, ScaleDtype, paddedRow_scale, 1, pto::BLayout::ColMajor, -1,
+                                         -1>;
+    using ScaleColTileDefine = pto::Tile<pto::TileType::Vec, ScaleDtype, 1, paddedRow_scale, pto::BLayout::RowMajor, -1,
+                                         -1>;
+
+#if !defined(PTO_NPU_ARCH_A5) && !defined(PTO_NPU_ARCH_A6)
+    // A2/A3 行广播 vbrcb 缓冲 (仅 axis=-1 使用), 实际写入 ceil(H/8)*256B
+    constexpr int bcastRows = PTO_CEIL(srcTileH < 256 ? srcTileH : 256, 8);
+    using BcastTileDefine = pto::Tile<pto::TileType::Vec, SrcDtype, bcastRows, 64, pto::BLayout::RowMajor, -1, -1>;
+#endif
+
+    // tmp 分段 (元素数, 与 host 侧公式逐字一致): [scaled/f16][s32] (A2/A3 另有 [bcast])
+    constexpr int planeElems = PTO_CEIL(srcTileH, 8) * paddedCol_src;
+    constexpr int scaledOff = 0;
+    constexpr int s32Off = planeElems;
+#if !defined(PTO_NPU_ARCH_A5) && !defined(PTO_NPU_ARCH_A6)
+    constexpr int bcastOff = 2 * planeElems;
+#endif
 
     // 遍历所有 Tile
     for (LoopVar n0Index = 0; n0Index < dstShape0; ++n0Index) {
@@ -116,21 +178,75 @@ TILEOP void TQuantInt8Sym(T0 dst, T1 src, T2 scale, T3 tmp)
             for (LoopVar n2Index = 0; n2Index < dstShape2; ++n2Index) {
                 DstTileDefine dstTile(dstShape3, dstShape4);
                 SrcTileDefine srcTile(srcShape3, srcShape4);
-                ParaTileDefine scaleTile(srcShape3, 1);
-                TmpTileDefine tmpTile(srcShape3, srcShape4);
+                ScaledTileDefine scaledTile(srcShape3, srcShape4);
+                S32TileDefine s32Tile(srcShape3, srcShape4);
+                F16TileDefine f16Tile(srcShape3, srcShape4);
 
                 auto dstOffset = n0Index * dstStride0 + n1Index * dstStride1 + n2Index * dstStride2;
                 auto srcOffset = n0Index * srcStride0 + n1Index * srcStride1 + n2Index * srcStride2;
-                // scaleOffset should need to be shifted
                 auto scaleOffset = n0Index * scaleStride1 + n1Index * scaleStride2 + n2Index * scaleStride3;
 
                 pto::TASSIGN(dstTile, (uint64_t)(dst.GetAddr() + dstOffset * sizeof(DstDtype)));
                 pto::TASSIGN(srcTile, (uint64_t)(src.GetAddr() + srcOffset * sizeof(SrcDtype)));
-                pto::TASSIGN(scaleTile, (uint64_t)(scale.GetAddr() + scaleOffset * sizeof(ScaleDtype)));
-                // tmpbuf 从单独的 tmp 参数获取地址
-                pto::TASSIGN(tmpTile, (uint64_t)(tmp.GetAddr()));
 
-                pto::TQUANT<pto::QuantType::INT8_SYM>(dstTile, srcTile, scaleTile, tmpTile);
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
+                (void)tmp;
+                if constexpr (quantAxis == -2) {
+                    // A5/A6 列广播: TCOLEXPANDMUL + 寄存器级 TCVT 链。
+                    // A5/A6 的 tile 级 TCVT 不支持 int32->half, 需与原生链一致: fp32 -> s32 -> fp32 -> f16 -> int8。
+                    // 平面复用: scaled 平面先存 scaled fp32, s32 转换后再接回 s32->fp32; f16 复用 s32 平面。
+                    ScaleColTileDefine scaleTile(1, srcShape4);
+                    pto::TASSIGN(scaleTile, (uint64_t)(scale.GetAddr() + scaleOffset * sizeof(ScaleDtype)));
+                    pto::TASSIGN(scaledTile, (uint64_t)(tmp.GetAddr()) + scaledOff * sizeof(int32_t));
+                    pto::TASSIGN(s32Tile, (uint64_t)(tmp.GetAddr()) + s32Off * sizeof(int32_t));
+                    pto::TASSIGN(f16Tile, (uint64_t)(tmp.GetAddr()) + s32Off * sizeof(int32_t));
+                    SyncV();
+                    pto::TCOLEXPANDMUL(scaledTile, srcTile, scaleTile);
+                    SyncV();
+                    pto::TCVT(s32Tile, scaledTile, pto::RoundMode::CAST_RINT); // fp32 -> s32
+                    SyncV();
+                    pto::TCVT(scaledTile, s32Tile, pto::RoundMode::CAST_RINT); // s32 -> fp32
+                    SyncV();
+                    pto::TCVT(f16Tile, scaledTile, pto::RoundMode::CAST_RINT); // fp32 -> f16
+                    SyncV();
+                    pto::TCVT(dstTile, f16Tile, pto::RoundMode::CAST_RINT, pto::SaturationMode::ON);
+                } else {
+                    // A5/A6 原生 INT8 量化: 行 scale 由 vlds BRC_B32 广播, 整条转换链在寄存器内完成, 不使用 tmp
+                    ScaleRowTileDefine scaleTile(srcShape3, 1);
+                    pto::TASSIGN(scaleTile, (uint64_t)(scale.GetAddr() + scaleOffset * sizeof(ScaleDtype)));
+                    pto::TQUANT<quantType>(dstTile, srcTile, scaleTile);
+                }
+#else
+                pto::TASSIGN(scaledTile, (uint64_t)(tmp.GetAddr()) + scaledOff * sizeof(int32_t));
+                pto::TASSIGN(f16Tile, (uint64_t)(tmp.GetAddr()) + scaledOff * sizeof(int32_t));
+                pto::TASSIGN(s32Tile, (uint64_t)(tmp.GetAddr()) + s32Off * sizeof(int32_t));
+
+                if constexpr (quantAxis == -2) {
+                    // 列广播: scale[c] 沿 H 方向广播
+                    ScaleColTileDefine scaleTile(1, srcShape4);
+                    pto::TASSIGN(scaleTile, (uint64_t)(scale.GetAddr() + scaleOffset * sizeof(ScaleDtype)));
+                    pipe_barrier(PIPE_V);
+                    pto::TCOLEXPANDMUL(scaledTile, srcTile, scaleTile);
+                    pipe_barrier(PIPE_V);
+                } else {
+                    // 行广播: scale[r] 沿 W 方向广播
+                    ScaleRowTileDefine scaleTile(srcShape3, 1);
+                    BcastTileDefine bcastTile;
+                    pto::TASSIGN(scaleTile, (uint64_t)(scale.GetAddr() + scaleOffset * sizeof(ScaleDtype)));
+                    pto::TASSIGN(bcastTile, (uint64_t)(tmp.GetAddr()) + bcastOff * sizeof(int32_t));
+                    pipe_barrier(PIPE_V);
+                    pto::TROWEXPANDMUL(scaledTile, srcTile, scaleTile, bcastTile);
+                    pipe_barrier(PIPE_V);
+                }
+
+                // fp32 -> s32 -> fp16 -> int8: 与 golden 的 round+饱和语义一致
+                pto::TCVT(s32Tile, scaledTile, pto::RoundMode::CAST_RINT);
+                pipe_barrier(PIPE_V);
+                QuantizeS32ToF16(f16Tile, s32Tile);
+                pipe_barrier(PIPE_V);
+                pto::TCVT(dstTile, f16Tile, pto::RoundMode::CAST_RINT, pto::SaturationMode::ON);
+                pipe_barrier(PIPE_V);
+#endif
             }
         }
     }
@@ -142,16 +258,24 @@ TILEOP void TQuantInt8Sym(T0 dst, T1 src, T2 scale, T3 tmp)
 #define OP_TILE_OP_TQUANT_INT8_ASYM TQuantInt8Asym
 
 /**
- * @brief INT8 非对称量化 (逐行)
+ * @brief INT8 非对称量化
  * @param dst    输出 UINT8 张量, 形状 [..., H, W]
  * @param src    输入 FP32 张量, 形状 [..., H, W]
- * @param scale  缩放因子, 形状 [..., H]
- * @param offset 零点偏移, 形状 [..., H]
+ * @param scale  缩放因子: axis=-1 形状 [..., H] (行广播), axis=-2 形状 [..., W] (列广播)
+ * @param offset 零点偏移, 形状与 scale 相同
  * @param tmp    临时缓冲区
+ * @tparam quantAxis 量化轴: -1 逐行量化 / -2 逐列量化
+ *
+ * ISA 指令拼接, 与 TQuantInt8Sym 同构, 仅多一步 offset 广播加:
+ *   rounded = src * broadcast(scale) + broadcast(offset) -> s32(RINT) -> f16(RINT) -> uint8(RINT, 饱和)
+ * tmp 分段与 TQuantInt8Sym 完全一致。
  */
-template <typename T0, typename T1, typename T2, typename T3, typename T4>
+template <pto::QuantType quantType, int quantAxis, typename T0, typename T1, typename T2, typename T3, typename T4>
 TILEOP void TQuantInt8Asym(T0 dst, T1 src, T2 scale, T3 offset, T4 tmp)
 {
+    static_assert(quantType == pto::QuantType::INT8_ASYM, "TQuantInt8Asym only supports INT8_ASYM.");
+    static_assert(quantAxis == -1 || quantAxis == -2, "TQuantInt8Asym only supports axis=-1/-2.");
+
     const auto dstLayout = dst.GetLayout();
     const auto srcLayout = src.GetLayout();
     const auto scaleLayout = scale.GetLayout();
@@ -188,33 +312,62 @@ TILEOP void TQuantInt8Asym(T0 dst, T1 src, T2 scale, T3 offset, T4 tmp)
     auto offsetStride2 = offsetLayout.template GetStrideDim<DIM_3RD, MAX_DIMS>();
     auto offsetStride3 = offsetLayout.template GetStrideDim<DIM_4TH, MAX_DIMS>();
 
-    // 获取 Tile 形状
+    // 获取 Tile 形状并计算对齐 (UB 局部 buffer 末维按 32B 对齐)
     constexpr auto dstTileH = TileOp::GetTensorTileShapeDim<T0, DIM_4TH, MAX_DIMS>();
     constexpr auto dstTileW = TileOp::GetTensorTileShapeDim<T0, DIM_5TH, MAX_DIMS>();
+    constexpr int paddedCol_dst = PTO_CEIL(dstTileW, static_cast<int>(TILE_ALIGNMENT_BYTES / sizeof(uint8_t)));
 
     constexpr auto srcTileH = TileOp::GetTensorTileShapeDim<T1, DIM_4TH, MAX_DIMS>();
     constexpr auto srcTileW = TileOp::GetTensorTileShapeDim<T1, DIM_5TH, MAX_DIMS>();
     constexpr int paddedCol_src = PTO_CEIL(srcTileW, static_cast<int>(TILE_ALIGNMENT_BYTES / sizeof(float)));
-    constexpr int paddedRow_src = PTO_CEIL(
-        srcTileH, static_cast<int>(TILE_ALIGNMENT_BYTES / sizeof(float))); // vbrcb processes in groups of 8 rows
 
     constexpr auto scaleTileW = TileOp::GetTensorTileShapeDim<T2, DIM_5TH, MAX_DIMS>();
     constexpr int paddedRow_scale = PTO_CEIL(scaleTileW, static_cast<int>(TILE_ALIGNMENT_BYTES / sizeof(float)));
+
     // 数据类型
     using DstDtype = typename T0::Type;
     using SrcDtype = typename T1::Type;
     using ScaleDtype = typename T2::Type;
     using OffsetDtype = typename T3::Type;
-    using TmpDtype = int32_t;
 
-    // 定义 Tile 类型
-    using DstTileDefine = pto::Tile<pto::TileType::Vec, DstDtype, dstTileH, dstTileW, pto::BLayout::RowMajor, -1, -1>;
-    using SrcTileDefine = pto::Tile<pto::TileType::Vec, SrcDtype, srcTileH, srcTileW, pto::BLayout::RowMajor, -1, -1>;
-    using ParaTileDefine = pto::Tile<pto::TileType::Vec, ScaleDtype, paddedRow_scale, 1, pto::BLayout::ColMajor, -1,
-                                     -1>;
-    // tmpbuf: aligned size with int32_t type
-    using TmpTileDefine = pto::Tile<pto::TileType::Vec, TmpDtype, paddedRow_src, paddedCol_src, pto::BLayout::RowMajor,
-                                    -1, -1>;
+    // 输出/输入/中转 tile (两轴同几何: tile 内紧凑, 无切片/共享块)
+    using DstTileDefine = pto::Tile<pto::TileType::Vec, DstDtype, dstTileH, paddedCol_dst, pto::BLayout::RowMajor, -1,
+                                    -1>;
+    using SrcTileDefine = pto::Tile<pto::TileType::Vec, SrcDtype, srcTileH, paddedCol_src, pto::BLayout::RowMajor, -1,
+                                    -1>;
+    using ScaledTileDefine = pto::Tile<pto::TileType::Vec, float, srcTileH, paddedCol_src, pto::BLayout::RowMajor, -1,
+                                       -1>;
+    using S32TileDefine = pto::Tile<pto::TileType::Vec, int32_t, srcTileH, paddedCol_src, pto::BLayout::RowMajor, -1,
+                                    -1>;
+    // fp16 视图复用 scaled 平面: 列宽按 half 计为 fp32 区的 2 倍 (字节等宽, 行跨步一致)
+    constexpr int paddedCol_f16 = paddedCol_src * 2;
+    using F16TileDefine = pto::Tile<pto::TileType::Vec, half, srcTileH, paddedCol_f16, pto::BLayout::RowMajor, -1, -1>;
+
+    // scale/offset tile 按量化轴选择: -1 行广播 ColMajor 列向量 / -2 列广播 RowMajor 行向量。
+    // offset tile 与 scale 同样按 ScaleDtype 实例化 (行/列广播指令要求操作数与 dst 同 dtype;
+    // 与旧 TQUANT 路径的 ParaTileDefine 行为保持一致, 地址仍按 OffsetDtype 元素大小计算)。
+    using ScaleRowTileDefine = pto::Tile<pto::TileType::Vec, ScaleDtype, paddedRow_scale, 1, pto::BLayout::ColMajor, -1,
+                                         -1>;
+    using ScaleColTileDefine = pto::Tile<pto::TileType::Vec, ScaleDtype, 1, paddedRow_scale, pto::BLayout::RowMajor, -1,
+                                         -1>;
+    using OffsetRowTileDefine = pto::Tile<pto::TileType::Vec, ScaleDtype, paddedRow_scale, 1, pto::BLayout::ColMajor,
+                                          -1, -1>;
+    using OffsetColTileDefine = pto::Tile<pto::TileType::Vec, ScaleDtype, 1, paddedRow_scale, pto::BLayout::RowMajor,
+                                          -1, -1>;
+
+#if !defined(PTO_NPU_ARCH_A5) && !defined(PTO_NPU_ARCH_A6)
+    // A2/A3 行广播 vbrcb 缓冲 (仅 axis=-1 使用), 实际写入 ceil(H/8)*256B
+    constexpr int bcastRows = PTO_CEIL(srcTileH < 256 ? srcTileH : 256, 8);
+    using BcastTileDefine = pto::Tile<pto::TileType::Vec, SrcDtype, bcastRows, 64, pto::BLayout::RowMajor, -1, -1>;
+#endif
+
+    // tmp 分段 (元素数, 与 host 侧公式逐字一致): [scaled/f16][s32] (A2/A3 另有 [bcast])
+    constexpr int planeElems = PTO_CEIL(srcTileH, 8) * paddedCol_src;
+    constexpr int scaledOff = 0;
+    constexpr int s32Off = planeElems;
+#if !defined(PTO_NPU_ARCH_A5) && !defined(PTO_NPU_ARCH_A6)
+    constexpr int bcastOff = 2 * planeElems;
+#endif
 
     // 遍历所有 Tile
     for (LoopVar n0Index = 0; n0Index < dstShape0; ++n0Index) {
@@ -222,24 +375,90 @@ TILEOP void TQuantInt8Asym(T0 dst, T1 src, T2 scale, T3 offset, T4 tmp)
             for (LoopVar n2Index = 0; n2Index < dstShape2; ++n2Index) {
                 DstTileDefine dstTile(dstShape3, dstShape4);
                 SrcTileDefine srcTile(srcShape3, srcShape4);
-                ParaTileDefine scaleTile(srcShape3, 1);
-                ParaTileDefine offsetTile(srcShape3, 1);
-                TmpTileDefine tmpTile(srcShape3, srcShape4);
+                ScaledTileDefine scaledTile(srcShape3, srcShape4);
+                S32TileDefine s32Tile(srcShape3, srcShape4);
+                F16TileDefine f16Tile(srcShape3, srcShape4);
 
                 auto dstOffset = n0Index * dstStride0 + n1Index * dstStride1 + n2Index * dstStride2;
                 auto srcOffset = n0Index * srcStride0 + n1Index * srcStride1 + n2Index * srcStride2;
-                // scaleOffset & offsetOffset should need to be shifted
                 auto scaleOffset = n0Index * scaleStride1 + n1Index * scaleStride2 + n2Index * scaleStride3;
                 auto offsetOffset = n0Index * offsetStride1 + n1Index * offsetStride2 + n2Index * offsetStride3;
 
                 pto::TASSIGN(dstTile, (uint64_t)(dst.GetAddr() + dstOffset * sizeof(DstDtype)));
                 pto::TASSIGN(srcTile, (uint64_t)(src.GetAddr() + srcOffset * sizeof(SrcDtype)));
-                pto::TASSIGN(scaleTile, (uint64_t)(scale.GetAddr() + scaleOffset * sizeof(ScaleDtype)));
-                pto::TASSIGN(offsetTile, (uint64_t)(offset.GetAddr() + offsetOffset * sizeof(OffsetDtype)));
-                // tmpbuf 从单独的 tmp 参数获取地址
-                pto::TASSIGN(tmpTile, (uint64_t)(tmp.GetAddr()));
 
-                pto::TQUANT<pto::QuantType::INT8_ASYM>(dstTile, srcTile, scaleTile, tmpTile, &offsetTile);
+#if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)
+                (void)tmp;
+                if constexpr (quantAxis == -2) {
+                    // A5/A6 列广播: TCOLEXPANDMUL/ADD + 寄存器级 TCVT 链。
+                    // A5/A6 的 tile 级 TCVT 不支持 int32->half, 需与原生链一致: fp32 -> s32 -> fp32 -> f16 -> uint8。
+                    // 平面复用: scaled 平面先存 scaled fp32, s32 转换后再接回 s32->fp32; f16 复用 s32 平面。
+                    ScaleColTileDefine scaleTile(1, srcShape4);
+                    OffsetColTileDefine offsetTile(1, srcShape4);
+                    pto::TASSIGN(scaleTile, (uint64_t)(scale.GetAddr() + scaleOffset * sizeof(ScaleDtype)));
+                    pto::TASSIGN(offsetTile, (uint64_t)(offset.GetAddr() + offsetOffset * sizeof(OffsetDtype)));
+                    pto::TASSIGN(scaledTile, (uint64_t)(tmp.GetAddr()) + scaledOff * sizeof(int32_t));
+                    pto::TASSIGN(s32Tile, (uint64_t)(tmp.GetAddr()) + s32Off * sizeof(int32_t));
+                    pto::TASSIGN(f16Tile, (uint64_t)(tmp.GetAddr()) + s32Off * sizeof(int32_t));
+                    SyncV();
+                    pto::TCOLEXPANDMUL(scaledTile, srcTile, scaleTile);
+                    SyncV();
+                    pto::TCOLEXPANDADD(scaledTile, scaledTile, offsetTile);
+                    SyncV();
+                    pto::TCVT(s32Tile, scaledTile, pto::RoundMode::CAST_RINT); // fp32 -> s32
+                    SyncV();
+                    pto::TCVT(scaledTile, s32Tile, pto::RoundMode::CAST_RINT); // s32 -> fp32
+                    SyncV();
+                    pto::TCVT(f16Tile, scaledTile, pto::RoundMode::CAST_RINT); // fp32 -> f16
+                    SyncV();
+                    pto::TCVT(dstTile, f16Tile, pto::RoundMode::CAST_RINT, pto::SaturationMode::ON);
+                } else {
+                    // A5/A6 原生 INT8 非对称量化: 行 scale/offset 由 vlds BRC_B32 广播, 不使用 tmp
+                    ScaleRowTileDefine scaleTile(srcShape3, 1);
+                    OffsetRowTileDefine offsetTile(srcShape3, 1);
+                    pto::TASSIGN(scaleTile, (uint64_t)(scale.GetAddr() + scaleOffset * sizeof(ScaleDtype)));
+                    pto::TASSIGN(offsetTile, (uint64_t)(offset.GetAddr() + offsetOffset * sizeof(OffsetDtype)));
+                    pto::TQUANT<quantType>(dstTile, srcTile, scaleTile, &offsetTile);
+                }
+#else
+                pto::TASSIGN(scaledTile, (uint64_t)(tmp.GetAddr()) + scaledOff * sizeof(int32_t));
+                pto::TASSIGN(f16Tile, (uint64_t)(tmp.GetAddr()) + scaledOff * sizeof(int32_t));
+                pto::TASSIGN(s32Tile, (uint64_t)(tmp.GetAddr()) + s32Off * sizeof(int32_t));
+
+                if constexpr (quantAxis == -2) {
+                    // 列广播: scale[c]/offset[c] 沿 H 方向广播
+                    ScaleColTileDefine scaleTile(1, srcShape4);
+                    OffsetColTileDefine offsetTile(1, srcShape4);
+                    pto::TASSIGN(scaleTile, (uint64_t)(scale.GetAddr() + scaleOffset * sizeof(ScaleDtype)));
+                    pto::TASSIGN(offsetTile, (uint64_t)(offset.GetAddr() + offsetOffset * sizeof(OffsetDtype)));
+                    pipe_barrier(PIPE_V);
+                    pto::TCOLEXPANDMUL(scaledTile, srcTile, scaleTile);
+                    pipe_barrier(PIPE_V);
+                    pto::TCOLEXPANDADD(scaledTile, scaledTile, offsetTile);
+                    pipe_barrier(PIPE_V);
+                } else {
+                    // 行广播: scale[r]/offset[r] 沿 W 方向广播
+                    ScaleRowTileDefine scaleTile(srcShape3, 1);
+                    OffsetRowTileDefine offsetTile(srcShape3, 1);
+                    BcastTileDefine bcastTile;
+                    pto::TASSIGN(scaleTile, (uint64_t)(scale.GetAddr() + scaleOffset * sizeof(ScaleDtype)));
+                    pto::TASSIGN(offsetTile, (uint64_t)(offset.GetAddr() + offsetOffset * sizeof(OffsetDtype)));
+                    pto::TASSIGN(bcastTile, (uint64_t)(tmp.GetAddr()) + bcastOff * sizeof(int32_t));
+                    pipe_barrier(PIPE_V);
+                    pto::TROWEXPANDMUL(scaledTile, srcTile, scaleTile, bcastTile);
+                    pipe_barrier(PIPE_V);
+                    pto::TROWEXPANDADD(scaledTile, scaledTile, offsetTile, bcastTile);
+                    pipe_barrier(PIPE_V);
+                }
+
+                // fp32 -> s32 -> fp16 -> uint8: 与 golden 的 round+饱和语义一致
+                pto::TCVT(s32Tile, scaledTile, pto::RoundMode::CAST_RINT);
+                pipe_barrier(PIPE_V);
+                QuantizeS32ToF16(f16Tile, s32Tile);
+                pipe_barrier(PIPE_V);
+                pto::TCVT(dstTile, f16Tile, pto::RoundMode::CAST_RINT, pto::SaturationMode::ON);
+                pipe_barrier(PIPE_V);
+#endif
             }
         }
     }
@@ -254,22 +473,22 @@ TILEOP void TQuantInt8Asym(T0 dst, T1 src, T2 scale, T3 offset, T4 tmp)
  * @brief 统一量化接口
  * @tparam quantType INT8_SYM 或 INT8_ASYM
  */
-template <pto::QuantType quantType, typename T0, typename T1, typename T2, typename T3>
+template <pto::QuantType quantType, int quantAxis, typename T0, typename T1, typename T2, typename T3>
 TILEOP void TQuant(T0 dst, T1 src, T2 scale, T3 tmp)
 {
     static_assert(quantType == pto::QuantType::INT8_SYM,
                   "TQuant with 4 parameters only supports INT8_SYM. "
                   "TQuant only supports INT8_SYM(4 parameters) and INT8_ASYM(5 parameters).");
-    TQuantInt8Sym(dst, src, scale, tmp);
+    TQuantInt8Sym<quantType, quantAxis>(dst, src, scale, tmp);
 }
 
-template <pto::QuantType quantType, typename T0, typename T1, typename T2, typename T3, typename T4>
+template <pto::QuantType quantType, int quantAxis, typename T0, typename T1, typename T2, typename T3, typename T4>
 TILEOP void TQuant(T0 dst, T1 src, T2 scale, T3 offset, T4 tmp)
 {
     static_assert(quantType == pto::QuantType::INT8_ASYM,
                   "TQuant with 5 parameters only supports INT8_ASYM."
                   "TQuant only supports INT8_SYM(4 parameters) and INT8_ASYM(5 parameters).");
-    TQuantInt8Asym(dst, src, scale, offset, tmp);
+    TQuantInt8Asym<quantType, quantAxis>(dst, src, scale, offset, tmp);
 }
 
 #if defined(PTO_NPU_ARCH_A5) || defined(PTO_NPU_ARCH_A6)

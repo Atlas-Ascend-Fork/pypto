@@ -2775,14 +2775,15 @@ void IndexAdd(const TensorData& out, const TensorData& self, const TensorData& s
 }
 
 static void Quantize(const TensorData& out, const TensorData& input, const TensorData& scale,
-                     const TensorData& zeroPoints)
+                     const TensorData& zeroPoints, int64_t axis)
 {
     auto tout = From(out);
     auto tinput = From(input);
     auto tscale = From(scale);
 
     int inputRank = tinput.second.dim();
-    int normalizedAxis = inputRank - 1;
+    // axis=-1: scale 形状为输入去掉末维, 在末维前补 1; axis=-2: 去掉次尾维, 在次尾维前补 1
+    int64_t normalizedAxis = axis >= 0 ? axis - inputRank : axis;
 
     // Broadcast scale to match input shape based on axis
     auto scaleTensor = tscale.second;

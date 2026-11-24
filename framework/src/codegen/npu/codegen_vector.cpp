@@ -1393,9 +1393,6 @@ std::string CodeGenOpNPU::GenQuantizeOp() const
 
 std::string CodeGenOpNPU::PrintQuantizeTileTensor() const
 {
-    // Note: axis parameter is handled at Operation layer via Transpose
-    // TileOp layer only supports axis=-1 (per-row quantization)
-
     // Determine quantization type based on opcode
     std::string quantType;
     if (opCode == Opcode::OP_QUANTIZE_SYM) {
@@ -1404,9 +1401,14 @@ std::string CodeGenOpNPU::PrintQuantizeTileTensor() const
         quantType = "pto::QuantType::INT8_ASYM";
     }
 
+    // 量化轴模板参数: tileop 按 quantAxis 编译期分派 行广播(-1) / 列广播(-2), 不做 Transpose
+    int64_t quantAxis = -1;
+    (void)GetOpAttr(OP_ATTR_PREFIX + "axis", quantAxis);
+
     std::ostringstream oss;
     std::vector<std::string> templateParamList;
     templateParamList.emplace_back(quantType);
+    templateParamList.emplace_back(std::to_string(quantAxis));
 
     // Use GetTileOpParamsWithTmpBuf to put tmpbuf at the end
     std::vector<std::string> paramList = GetTileOpParamsWithTmpBuf({ToUnderlying(MIMOIdx::TMP_IDX)});

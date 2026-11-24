@@ -48,7 +48,7 @@ quantize(input: Tensor, scale: Tensor, otype: DataType, axis: int, zero_points: 
 | scale  | 输入      | 缩放因子。<br>支持的类型为：Tensor。<br>Tensor数据类型与input一致，支持：DT_FP32;<br>不支持空Tensor；<br>Shape比input少一维，仅支持1-3维；<br>Shape Size不大于2147483647（即INT32_MAX）;<br>axis = -1或input.shape.size() -1时，shape = [..., row]<br>axis = -2或input.shape.size() -2时，shape = [..., col]|
 | otype  | 输入      | 返回值的数值类型<br>目前支持int8和uint8，分别对应对称量化和非对称量化。|
 | axis  | 输入      | 指定量化压缩的轴<br>目前支持末尾两轴，即 -1/-2或者input.shape.size() -1/input.shape.size()-2<br>**当input为1D时，仅支持-1** |
-| zero_points  | 输入      | 可选的非对称量化的偏移因子<br>支持的类型为：Tensor。<br>Tensor数据类型与input一致，支持：DT_FP32;<br>支持空Tensor；<br>Shape比input少一维，仅支持1-3维；<br>Shape Size不大于2147483647（即INT32_MAX）;<br>axis = -1或input.shape.size() -1时，shape = [..., row]<br>axis = -2或input.shape.size() -2时，shape = [..., col] |
+| zero_points  | 输入      | 可选的非对称量化的偏移因子<br>支持的类型为：Tensor。<br>Tensor数据类型与input一致，支持：DT_FP32;<br>支持空Tensor；<br>Shape比input少一维，仅支持1-3维，且Shape须与scale一致（axis = -1时为 [..., row]，axis = -2时为 [..., col]），否则报错：`zero_points shape should be the same as scale`；<br>Shape Size不大于2147483647（即INT32_MAX）;<br>axis = -1或input.shape.size() -1时，shape = [..., row]<br>axis = -2或input.shape.size() -2时，shape = [..., col] |
 
 ## 返回值说明
 
@@ -57,7 +57,16 @@ quantize(input: Tensor, scale: Tensor, otype: DataType, axis: int, zero_points: 
 ## 约束说明
 
 - Tensor类型输入不支持`TileOpFormat.TILEOP_NZ`格式。
-- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape的次尾轴为H（若不存在则取1），尾轴为W，H和W分别向上对齐到8记为HAlign和WAlign，则使用临时空间（DT_INT32类型）大小为`HAlign * WAlign * sizeof(DT_INT32)`字节。当axis为-2或input.shape.size\(\)-2时，接口内部会拆解为转置、沿末轴量化和转置还原，除上述临时空间外还会使用转置临时空间，参见[pypto.transpose](pypto-transpose.md)的约束说明。
+- 由于存在临时内存使用，设置TileShape时需保证输入Tile、输出Tile及临时空间的总占用小于可用UB。记TileShape的次尾轴为H（若不存在则取1），尾轴为W，H和W分别向上对齐到8记为HAlign和WAlign，则使用临时空间（DT_INT32类型）大小要求如下：
+   <!-- npu="950" id7 -->
+   - Ascend 950PR&950DT系列产品：axis = -1或input.shape.size\(\)-1时无临时空间需求；axis = -2或input.shape.size\(\)-2时为`2 * HAlign * WAlign * sizeof(DT_INT32)`字节。
+   <!-- end id7 -->
+   <!-- npu="A3" id8 -->
+   - Atlas A3系列产品：axis = -1或input.shape.size\(\)-1时为`(2 * HAlign * WAlign + HAlign * 8) * sizeof(DT_INT32)`字节；axis = -2或input.shape.size\(\)-2时为`2 * HAlign * WAlign * sizeof(DT_INT32)`字节。
+   <!-- end id8 -->
+   <!-- npu="910b" id9 -->
+   - Atlas A2系列产品：axis = -1或input.shape.size\(\)-1时为`(2 * HAlign * WAlign + HAlign * 8) * sizeof(DT_INT32)`字节；axis = -2或input.shape.size\(\)-2时为`2 * HAlign * WAlign * sizeof(DT_INT32)`字节。
+   <!-- end id9 -->
 
 ## 调用示例
 

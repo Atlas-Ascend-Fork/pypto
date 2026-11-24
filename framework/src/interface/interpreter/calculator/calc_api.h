@@ -257,7 +257,7 @@ struct CalcOps {
     void (*QuantPreCompute)(const TensorData&, const TensorData&, const TensorData*, uint64_t, int);
     void (*MatMul)(const TensorData&, const TensorData&, const TensorData&, const TensorData*, MatMulParam&);
 
-    void (*Quantize)(const TensorData&, const TensorData&, const TensorData&, const TensorData&);
+    void (*Quantize)(const TensorData&, const TensorData&, const TensorData&, const TensorData&, int64_t);
     void (*Dequantize)(const TensorData&, const TensorData&, const TensorData&, const TensorData&);
 
     void (*Conv)(const TensorData&, const TensorData&, const TensorData&, const TensorData*, ConvParam&);

@@ -643,14 +643,14 @@ inline void Sort(LogicalTensorDataPtr value, LogicalTensorDataPtr index, Logical
 
 // Quantize
 inline void Quantize(LogicalTensorDataPtr out, LogicalTensorDataPtr input, LogicalTensorDataPtr scale,
-                     LogicalTensorDataPtr zeroPoints)
+                     LogicalTensorDataPtr zeroPoints, int64_t axis)
 {
     TensorData scaleData = Trans(scale);
     if (zeroPoints == nullptr) {
         TensorData emptyZeroPoints = {nullptr, {}, {}, {}, 0, DataType::DT_FP32, false};
-        GetCalcOps()->Quantize(Trans(out), Trans(input), scaleData, emptyZeroPoints);
+        GetCalcOps()->Quantize(Trans(out), Trans(input), scaleData, emptyZeroPoints, axis);
     } else {
-        GetCalcOps()->Quantize(Trans(out), Trans(input), scaleData, Trans(zeroPoints));
+        GetCalcOps()->Quantize(Trans(out), Trans(input), scaleData, Trans(zeroPoints), axis);
     }
 }
 

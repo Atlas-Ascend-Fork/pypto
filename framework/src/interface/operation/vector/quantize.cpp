@@ -13,12 +13,12 @@
  * \brief Quantization operation implementation for INT8 symmetric and asymmetric quantization
  */
 
+#include "tilefwk/platform.h"
 #include "interface/utils/operator_tracer.h"
 #include "interface/operation/opcode.h"
 #include "interface/operation/operation_common.h"
 #include "interface/function/function.h"
 #include "interface/program/program.h"
-#include "interface/operation/vector/tensor_transformation.h"
 
 #include <unordered_set>
 
@@ -26,6 +26,37 @@ namespace npu::tile_fwk {
 
 namespace {
 constexpr size_t QUANT_MX_MIN_RANK = 1;
+
+// 输入第 cur 维对应的 scale/offset 维; 返回 -1 表示该维不参与切分。
+// axis=-1: scale 形状为输入去掉末维, 前置各维按位置对齐;
+// axis=-2: scale 形状为输入去掉量化轴 (rank-2), 量化轴跳过, 输入末维对应 scale 末维。
+int64_t GetScaleDimForInputDim(int64_t cur, int64_t inputRank, int64_t scaleRank, int64_t axis)
+{
+    if (axis == -NUM_VALUE_2) {
+        if (cur == inputRank - 1) {
+            return scaleRank - 1;
+        }
+        if (cur + NUM_VALUE_2 != inputRank && cur < scaleRank) {
+            return cur;
+        }
+        return -1;
+    }
+    return cur < scaleRank ? cur : -1;
+}
+
+// Quantize tmp 的 workspace 需求 (int32 元素数):
+// - A2/A3: [scaled/f16 平面] + [s32 平面], axis=-1 另需 vbrcb 广播缓冲;
+// - A5/A6 (DAV_3510/DAV_9201): axis=-1 走原生 TQuant (寄存器内完成行广播与转换, 不使用 tmp,
+//   仅保留最小占位), axis=-2 仍使用两个中转平面。
+uint32_t CalcQuantizeWorkspaceSize(int64_t axis, int64_t tmpRows, int64_t tmpCols)
+{
+    int64_t planeElems = tmpRows * tmpCols;
+    NPUArch arch = Platform::Instance().GetSoc().GetNPUArch();
+    if (arch == NPUArch::DAV_3510 || arch == NPUArch::DAV_9201) {
+        return static_cast<uint32_t>(axis == -NUM_VALUE_2 ? NUM_VALUE_2 * planeElems : NUM_VALUE_8);
+    }
+    return static_cast<uint32_t>(NUM_VALUE_2 * planeElems + (axis == -1 ? tmpRows * NUM_VALUE_8 : 0));
+}
 
 // =============================================================================
 // Symmetric Quantization (FP32 -> INT8)
@@ -64,13 +95,15 @@ void TiledQuantizeSymmetric(Function& function, const TileShape& tileShape, size
             srcInput.tileInfo.offset[cur] = i;
         }
 
-        // Update scale tile info - scale may have different shape depending on axis
-        if (cur < scaleInput.tensor.GetShape().size()) {
-            // If scale's dimension is 1 (broadcast dimension), use modulo which gives 0
-            // Otherwise use the same index as src/dst
-            int64_t scaleIdx = i % scaleInput.tensor.GetShape()[cur];
-            scaleInput.tileInfo.shape[cur] = std::min(scaleInput.tensor.GetShape()[cur] - scaleIdx, vecTile[cur]);
-            scaleInput.tileInfo.offset[cur] = scaleIdx;
+        // Update scale tile info - 维映射按量化轴区分 (axis=-1 行量化 / axis=-2 列量化)
+        int64_t scaleCur = GetScaleDimForInputDim(static_cast<int64_t>(cur),
+                                                  static_cast<int64_t>(dstInput.tensor.GetShape().size()),
+                                                  static_cast<int64_t>(scaleInput.tensor.GetShape().size()), axis);
+        if (scaleCur >= 0) {
+            int64_t scaleIdx = i % scaleInput.tensor.GetShape()[scaleCur];
+            scaleInput.tileInfo.shape[scaleCur] = std::min(scaleInput.tensor.GetShape()[scaleCur] - scaleIdx,
+                                                           vecTile[cur]);
+            scaleInput.tileInfo.offset[scaleCur] = scaleIdx;
         }
 
         TiledQuantizeSymmetric(function, tileShape, cur + 1, srcInput, scaleInput, dstInput, axis, workspaceSize);
@@ -138,18 +171,22 @@ void TiledQuantizeAsymmetric(Function& function, const TileShape& tileShape, siz
             srcInput.tileInfo.offset[cur] = i;
         }
 
-        // Update scale tile info - scale may have different shape depending on axis
-        if (cur < scaleInput.tensor.GetShape().size()) {
-            int64_t scaleIdx = i % scaleInput.tensor.GetShape()[cur];
-            scaleInput.tileInfo.shape[cur] = std::min(scaleInput.tensor.GetShape()[cur] - scaleIdx, vecTile[cur]);
-            scaleInput.tileInfo.offset[cur] = scaleIdx;
-        }
-
-        // Update offset tile info - offset has same shape as scale
-        if (cur < offsetInput.tensor.GetShape().size()) {
-            int64_t offsetIdx = i % offsetInput.tensor.GetShape()[cur];
-            offsetInput.tileInfo.shape[cur] = std::min(offsetInput.tensor.GetShape()[cur] - offsetIdx, vecTile[cur]);
-            offsetInput.tileInfo.offset[cur] = offsetIdx;
+        // Update scale/offset tile info - 维映射按量化轴区分 (offset 与 scale 同形)
+        int64_t scaleCur = GetScaleDimForInputDim(static_cast<int64_t>(cur),
+                                                  static_cast<int64_t>(dstInput.tensor.GetShape().size()),
+                                                  static_cast<int64_t>(scaleInput.tensor.GetShape().size()), axis);
+        if (scaleCur >= 0) {
+            int64_t scaleIdx = i % scaleInput.tensor.GetShape()[scaleCur];
+            scaleInput.tileInfo.shape[scaleCur] = std::min(scaleInput.tensor.GetShape()[scaleCur] - scaleIdx,
+                                                           vecTile[cur]);
+            scaleInput.tileInfo.offset[scaleCur] = scaleIdx;
+            // offset 维号复用 scaleCur, 需确保不超过 offset 自身秩 (Quantize 入口已校验两者同形)
+            if (scaleCur < static_cast<int64_t>(offsetInput.tensor.GetShape().size())) {
+                int64_t offsetIdx = i % offsetInput.tensor.GetShape()[scaleCur];
+                offsetInput.tileInfo.shape[scaleCur] = std::min(offsetInput.tensor.GetShape()[scaleCur] - offsetIdx,
+                                                                vecTile[cur]);
+                offsetInput.tileInfo.offset[scaleCur] = offsetIdx;
+            }
         }
 
         TiledQuantizeAsymmetric(function, tileShape, cur + 1, srcInput, scaleInput, offsetInput, dstInput, axis,
@@ -254,29 +291,6 @@ Tensor QuantizeAlongLastAxis(const Tensor& input, const Tensor& scale, DataType 
                 scale.GetStorage(), axis);
 }
 
-Tensor QuantizeAlongSecondLastAxis(const Tensor& input, const Tensor& scale, DataType dtype, const Tensor& zeroPoints)
-{
-    int ndim = static_cast<int>(input.GetShape().size());
-    int lastDim = ndim - 1;
-    int secondLastDim = ndim - NUM_VALUE_2;
-    Tensor transposedInput = Transpose(input, {secondLastDim, lastDim});
-    VecTile oriVectile = TileShape::Current().GetVecTile();
-    VecTile tmpVectile = TileShape::Current().GetVecTile();
-    std::swap(tmpVectile[secondLastDim], tmpVectile[lastDim]);
-    TileShape::Current().SetVecTile(tmpVectile);
-    auto tmpValidShape = input.GetStorage()->dynValidShape_;
-    std::swap(tmpValidShape[secondLastDim], tmpValidShape[lastDim]);
-    transposedInput.GetStorage()->UpdateDynValidShape(tmpValidShape);
-
-    Tensor quantizedResult = QuantizeAlongLastAxis(transposedInput, scale, dtype, -1, zeroPoints);
-    quantizedResult.GetStorage()->UpdateDynValidShape(tmpValidShape);
-    TileShape::Current().SetVecTile(tmpVectile);
-    Tensor result = Transpose(quantizedResult, {secondLastDim, lastDim});
-    result.GetStorage()->UpdateDynValidShape(input.GetStorage()->dynValidShape_);
-    TileShape::Current().SetVecTile(oriVectile);
-    return result;
-}
-
 } // namespace
 
 Tensor Quantize(const Tensor& input, const Tensor& scale, DataType dtype, int axis, const Tensor& zeroPoints)
@@ -287,6 +301,8 @@ Tensor Quantize(const Tensor& input, const Tensor& scale, DataType dtype, int ax
 
     if (zeroPoints.GetStorage() != nullptr) {
         CheckVectorOperand(zeroPoints.GetStorage(), "Quantize");
+        CHECK(VectorErrorCode::ERR_PARAM_INVALID, zeroPoints.GetShape() == scale.GetShape())
+            << "zero_points shape should be the same as scale";
     }
 
     CHECK(VectorErrorCode::ERR_PARAM_SHAPE_DIM_UNSUPPORTED,
@@ -309,9 +325,8 @@ Tensor Quantize(const Tensor& input, const Tensor& scale, DataType dtype, int ax
     CHECK(VectorErrorCode::ERR_PARAM_INVALID, normalizedAxis == -1 || normalizedAxis == -NUM_VALUE_2)
         << "Only axis=-1 (per-row) and axis=-2 (per-column) are supported";
 
-    Tensor result = normalizedAxis == -NUM_VALUE_2 ?
-                        QuantizeAlongSecondLastAxis(processedInput, scale, dtype, zeroPoints) :
-                        QuantizeAlongLastAxis(processedInput, scale, dtype, normalizedAxis, zeroPoints);
+    // axis 原样下传: tileop 按量化轴编译期分派 行广播(axis=-1) / 列广播(axis=-2), 不再做 Transpose
+    Tensor result = QuantizeAlongLastAxis(processedInput, scale, dtype, normalizedAxis, zeroPoints);
     return is1DInput ? RestoreQuantize1DResult(result, input, originalVecTile) : result;
 }
 
@@ -337,8 +352,8 @@ void QuantizeSymmetricOperationTileFunc(Function& function, const TileShape& til
     tmpCols = (tmpCols + alignElements - 1) / alignElements * alignElements;
     tmpRows = (tmpRows + alignElements - 1) / alignElements * alignElements;
 
-    // workspaceSize is element count, not bytes (LogicalTensor constructor takes shape)
-    uint32_t workspaceSize = tmpRows * tmpCols;
+    // workspaceSize is element count (int32), not bytes (LogicalTensor constructor takes shape).
+    uint32_t workspaceSize = CalcQuantizeWorkspaceSize(axis, tmpRows, tmpCols);
 
     TiledQuantizeSymmetric(function, tileShape, iOperand[0], iOperand[1], oOperand[0], axis, workspaceSize);
 }
@@ -361,8 +376,8 @@ void QuantizeAsymmetricOperationTileFunc(Function& function, const TileShape& ti
     tmpCols = (tmpCols + alignElements - 1) / alignElements * alignElements;
     tmpRows = (tmpRows + alignElements - 1) / alignElements * alignElements;
 
-    // workspaceSize is element count, not bytes (LogicalTensor constructor takes shape)
-    uint32_t workspaceSize = tmpRows * tmpCols;
+    // workspaceSize is element count (int32), not bytes (LogicalTensor constructor takes shape).
+    uint32_t workspaceSize = CalcQuantizeWorkspaceSize(axis, tmpRows, tmpCols);
 
     TiledQuantizeAsymmetric(function, tileShape, iOperand[0], iOperand[1], iOperand[NUM_VALUE_2], oOperand[0], axis,
                             workspaceSize);
