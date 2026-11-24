@@ -213,6 +213,7 @@ DEFINE_BINARY_EXPR_NODE(Sub, "Subtraction expression (left - right)");
 DEFINE_BINARY_EXPR_NODE(Mul, "Multiplication expression (left * right)");
 DEFINE_BINARY_EXPR_NODE(FloorDiv, "Floor division expression (left // right)");
 DEFINE_BINARY_EXPR_NODE(FloorMod, "Floor modulo expression (left % right)");
+DEFINE_BINARY_EXPR_NODE(CeilDiv, "Ceiling division expression (ceil(left / right))");
 DEFINE_BINARY_EXPR_NODE(FloatDiv, "Float division expression (left / right)");
 DEFINE_BINARY_EXPR_NODE(Min, "Minimum expression (min(left, right)");
 DEFINE_BINARY_EXPR_NODE(Max, "Maximum expression (max(left, right)");
@@ -275,6 +276,8 @@ DEFINE_UNARY_EXPR_NODE(Neg, "Negation expression (-operand)");
 DEFINE_UNARY_EXPR_NODE(Not, "Logical not expression (not operand)");
 DEFINE_UNARY_EXPR_NODE(BitNot, "Bitwise not expression (~operand)");
 DEFINE_UNARY_EXPR_NODE(Cast, "Cast expression (cast operand to dtype)");
+DEFINE_UNARY_EXPR_NODE(Ceil, "Ceiling expression (ceil(operand))");
+DEFINE_UNARY_EXPR_NODE(Floor, "Floor expression (floor(operand))");
 
 #undef DEFINE_UNARY_EXPR_NODE
 

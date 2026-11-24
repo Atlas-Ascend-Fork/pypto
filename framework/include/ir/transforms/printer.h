@@ -42,6 +42,7 @@ class IRVisitor;
     PYPTO_IR_PRINTER_VISIT_EXPR(FloorDivPtr)        \
     PYPTO_IR_PRINTER_VISIT_EXPR(FloorModPtr)        \
     PYPTO_IR_PRINTER_VISIT_EXPR(FloatDivPtr)        \
+    PYPTO_IR_PRINTER_VISIT_EXPR(CeilDivPtr)         \
     PYPTO_IR_PRINTER_VISIT_EXPR(MinPtr)             \
     PYPTO_IR_PRINTER_VISIT_EXPR(MaxPtr)             \
     PYPTO_IR_PRINTER_VISIT_EXPR(PowPtr)             \
@@ -64,6 +65,8 @@ class IRVisitor;
     PYPTO_IR_PRINTER_VISIT_EXPR(NotPtr)             \
     PYPTO_IR_PRINTER_VISIT_EXPR(BitNotPtr)          \
     PYPTO_IR_PRINTER_VISIT_EXPR(CastPtr)            \
+    PYPTO_IR_PRINTER_VISIT_EXPR(CeilPtr)            \
+    PYPTO_IR_PRINTER_VISIT_EXPR(FloorPtr)           \
     PYPTO_IR_PRINTER_VISIT_STMT(AssignStmtPtr)      \
     PYPTO_IR_PRINTER_VISIT_STMT(IfStmtPtr)          \
     PYPTO_IR_PRINTER_VISIT_STMT(YieldStmtPtr)       \

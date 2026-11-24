@@ -75,6 +75,7 @@ Precedence GetPrecedence(const ExprPtr& expr)
         {std::type_index(typeid(Mul)), Precedence::kMulDivMod},
         {std::type_index(typeid(FloorDiv)), Precedence::kMulDivMod},
         {std::type_index(typeid(FloatDiv)), Precedence::kMulDivMod},
+        {std::type_index(typeid(CeilDiv)), Precedence::kMulDivMod},
         {std::type_index(typeid(FloorMod)), Precedence::kMulDivMod},
         {std::type_index(typeid(Pow)), Precedence::kPow},
 
@@ -85,6 +86,8 @@ Precedence GetPrecedence(const ExprPtr& expr)
         // Function-like operators and atoms
         {std::type_index(typeid(Abs)), Precedence::kCall},
         {std::type_index(typeid(Cast)), Precedence::kCall},
+        {std::type_index(typeid(Ceil)), Precedence::kCall},
+        {std::type_index(typeid(Floor)), Precedence::kCall},
         {std::type_index(typeid(Min)), Precedence::kCall},
         {std::type_index(typeid(Max)), Precedence::kCall},
         {std::type_index(typeid(Call)), Precedence::kCall},
@@ -714,6 +717,7 @@ void IRPrinter::VisitExpr_(const MulPtr& op) { PrintBinaryOp(op, "*"); }
 void IRPrinter::VisitExpr_(const FloorDivPtr& op) { PrintBinaryOp(op, "//"); }
 void IRPrinter::VisitExpr_(const FloorModPtr& op) { PrintBinaryOp(op, "%"); }
 void IRPrinter::VisitExpr_(const FloatDivPtr& op) { PrintBinaryOp(op, "/"); }
+void IRPrinter::VisitExpr_(const CeilDivPtr& op) { PrintFunctionBinaryOp(op, "ceildiv"); }
 void IRPrinter::VisitExpr_(const PowPtr& op) { PrintBinaryOp(op, "**"); }
 
 // Function-style binary operators
@@ -757,6 +761,20 @@ void IRPrinter::VisitExpr_(const NegPtr& op)
 void IRPrinter::VisitExpr_(const AbsPtr& op)
 {
     stream_ << prefix_ << ".abs(";
+    VisitExpr(op->operand_);
+    stream_ << ")";
+}
+
+void IRPrinter::VisitExpr_(const CeilPtr& op)
+{
+    stream_ << prefix_ << ".ceil(";
+    VisitExpr(op->operand_);
+    stream_ << ")";
+}
+
+void IRPrinter::VisitExpr_(const FloorPtr& op)
+{
+    stream_ << prefix_ << ".floor(";
     VisitExpr(op->operand_);
     stream_ << ")";
 }

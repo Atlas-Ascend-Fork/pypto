@@ -95,6 +95,7 @@
 #define IR_KW_SCALAR_BOP_DIV "div"
 #define IR_KW_SCALAR_BOP_MOD "mod"
 #define IR_KW_SCALAR_BOP_FDIV "fdiv"
+#define IR_KW_SCALAR_BOP_CEILDIV "ceildiv"
 #define IR_KW_SCALAR_BOP_MIN "min"
 #define IR_KW_SCALAR_BOP_MAX "max"
 #define IR_KW_SCALAR_BOP_POW "pow"
@@ -119,6 +120,8 @@
 #define IR_KW_SCALAR_UOP_NOT "not"
 #define IR_KW_SCALAR_UOP_INV "inv"
 #define IR_KW_SCALAR_UOP_CAST "cast"
+#define IR_KW_SCALAR_UOP_CEIL "ceil"
+#define IR_KW_SCALAR_UOP_FLOOR "floor"
 
 // ---- Symbolic scalar (scalarv0) opcode keywords ----
 #define IR_KWV0_SCALAR_ELEMENT "v0elem"
@@ -220,6 +223,7 @@ enum class IRTextLexerTokenKind {
     KwBOpDiv,
     KwBOpMod,
     KwBOpFdiv,
+    KwBOpCeilDiv,
     KwBOpMin,
     KwBOpMax,
     KwBOpPow,
@@ -243,6 +247,9 @@ enum class IRTextLexerTokenKind {
     KwUOpNot,
     KwUOpInv,
     KwUOpCast,
+    KwUOpCeil,
+    KwUOpFloor,
+    KwWordKeywordEnd = KwUOpFloor,
     // Symbolic scalar (scalarv0) op keywords
     KwV0ScalarUOpPos,
     KwV0ScalarUOpNeg,
@@ -372,6 +379,7 @@ static inline const npu::tile_fwk::BiMap<IRTextLexerTokenKind>& IRTextGetLexerTo
         {IRTextLexerTokenKind::KwBOpDiv, IR_KW_SCALAR_BOP_DIV},
         {IRTextLexerTokenKind::KwBOpMod, IR_KW_SCALAR_BOP_MOD},
         {IRTextLexerTokenKind::KwBOpFdiv, IR_KW_SCALAR_BOP_FDIV},
+        {IRTextLexerTokenKind::KwBOpCeilDiv, IR_KW_SCALAR_BOP_CEILDIV},
         {IRTextLexerTokenKind::KwBOpMin, IR_KW_SCALAR_BOP_MIN},
         {IRTextLexerTokenKind::KwBOpMax, IR_KW_SCALAR_BOP_MAX},
         {IRTextLexerTokenKind::KwBOpPow, IR_KW_SCALAR_BOP_POW},
@@ -395,6 +403,8 @@ static inline const npu::tile_fwk::BiMap<IRTextLexerTokenKind>& IRTextGetLexerTo
         {IRTextLexerTokenKind::KwUOpNot, IR_KW_SCALAR_UOP_NOT},
         {IRTextLexerTokenKind::KwUOpInv, IR_KW_SCALAR_UOP_INV},
         {IRTextLexerTokenKind::KwUOpCast, IR_KW_SCALAR_UOP_CAST},
+        {IRTextLexerTokenKind::KwUOpCeil, IR_KW_SCALAR_UOP_CEIL},
+        {IRTextLexerTokenKind::KwUOpFloor, IR_KW_SCALAR_UOP_FLOOR},
         // Symbolic scalar (scalarv0) op keywords
         {IRTextLexerTokenKind::KwV0ScalarUOpPos, IR_KWV0_SCALAR_UOP_POS},
         {IRTextLexerTokenKind::KwV0ScalarUOpNeg, IR_KWV0_SCALAR_UOP_NEG},
@@ -599,6 +609,7 @@ static inline const npu::tile_fwk::BiMap<ObjectKind>& GetBinaryOpDict()
         {ObjectKind::FloorDiv, IR_KW_SCALAR_BOP_DIV},
         {ObjectKind::FloorMod, IR_KW_SCALAR_BOP_MOD},
         {ObjectKind::FloatDiv, IR_KW_SCALAR_BOP_FDIV},
+        {ObjectKind::CeilDiv, IR_KW_SCALAR_BOP_CEILDIV},
         {ObjectKind::Min, IR_KW_SCALAR_BOP_MIN},
         {ObjectKind::Max, IR_KW_SCALAR_BOP_MAX},
         {ObjectKind::Pow, IR_KW_SCALAR_BOP_POW},
@@ -628,6 +639,8 @@ static inline const npu::tile_fwk::BiMap<ObjectKind>& GetUnaryOpDict()
         {ObjectKind::Not, IR_KW_SCALAR_UOP_NOT},
         {ObjectKind::BitNot, IR_KW_SCALAR_UOP_INV},
         {ObjectKind::Cast, IR_KW_SCALAR_UOP_CAST},
+        {ObjectKind::Ceil, IR_KW_SCALAR_UOP_CEIL},
+        {ObjectKind::Floor, IR_KW_SCALAR_UOP_FLOOR},
     }};
     return dict;
 }

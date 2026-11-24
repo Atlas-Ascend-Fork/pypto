@@ -16,7 +16,7 @@ import ast
 from pypto.pypto_impl import ir as _ir_core
 from pypto.pypto_impl.ir import Expr, Span
 
-from ..._errors import InvalidType
+from ..._errors import InvalidType, NotSupported
 from .._utils import (
     require_dtype_in,
     require_dtypes_match,
@@ -38,6 +38,42 @@ def _build_min(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
 def _build_max(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
     result = _ir_core.max_(lhs, rhs, span)
     folded = self._fold_const_binop("max", result, span) if isinstance(result, _ir_core.BinaryExpr) else None
+    return result if folded is None else folded
+
+
+@op_impl("scalar_abs")
+def _build_scalar_abs(self, x: Expr, *, span: Span) -> Expr:
+    result = _ir_core.abs_(x, span)
+    folded = self._fold_const_unaryop("abs", result, span)
+    return result if folded is None else folded
+
+
+@op_impl("ceil")
+def _build_scalar_ceil(self, x: Expr, *, span: Span) -> Expr:
+    result = _ir_core.ceil(x, span)
+    folded = self._fold_const_unaryop("ceil", result, span)
+    return result if folded is None else folded
+
+
+@op_impl("floor")
+def _build_scalar_floor(self, x: Expr, *, span: Span) -> Expr:
+    result = _ir_core.floor(x, span)
+    folded = self._fold_const_unaryop("floor", result, span)
+    return result if folded is None else folded
+
+
+@op_impl("ceildiv")
+def _build_ceildiv(self, lhs: Expr, rhs: Expr, *, span: Span) -> Expr:
+    # Floating-point ceiling division lowers to fmod-driven scalar math, which the VF vector scope
+    # cannot hold; integer operands keep the truncating-quotient form and stay supported there.
+    if self._in_simd_vf_body() and (lhs.type.dtype.is_float() or rhs.type.dtype.is_float()):
+        raise NotSupported(
+            "Floating-point 'pl.ceildiv' is not supported inside a vector function",
+            span=span,
+            hint="Use integer scalars, or hoist the division to the kernel level.",
+        )
+    result = _ir_core.ceildiv(lhs, rhs, span)
+    folded = self._fold_const_binop("ceildiv", result, span) if isinstance(result, _ir_core.BinaryExpr) else None
     return result if folded is None else folded
 
 

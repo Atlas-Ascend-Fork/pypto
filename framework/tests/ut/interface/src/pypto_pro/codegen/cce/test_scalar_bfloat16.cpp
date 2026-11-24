@@ -112,7 +112,8 @@ TEST(ScalarBFloat16Test, ArithmeticAndComparisonsShareScalarConversion)
          {ir::MakeAdd(left, right), ir::MakeSub(left, right), ir::MakeMul(left, right), ir::MakeFloatDiv(left, right),
           ir::MakeFloorDiv(left, right), ir::MakeFloorMod(left, right), ir::MakeEq(left, right),
           ir::MakeNe(left, right), ir::MakeLt(left, right), ir::MakeLe(left, right), ir::MakeGt(left, right),
-          ir::MakeGe(left, right), ir::MakeAnd(left, right), ir::MakeOr(left, right), ir::MakeXor(left, right)}) {
+          ir::MakeGe(left, right), ir::MakeAnd(left, right), ir::MakeOr(left, right), ir::MakeXor(left, right),
+          ir::MakeCeilDiv(left, right)}) {
         auto lowered = LowerExpression(expr);
         EXPECT_EQ(ir::GetScalarDtype(lowered), ir::GetScalarDtype(expr));
         if (ir::GetScalarDtype(expr) == ir::DataType::BF16) {

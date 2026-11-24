@@ -218,6 +218,24 @@ TEST_F(IoTextDumpRoundTripTest, TestExprRoundTrip)
     EXPECT_EQ(TextDump(TextLoadExpr("(cast float 1)", error)), "(cast float 1)");
     EXPECT_TRUE(error.empty());
 
+    // CeilDiv: (1 ceildiv 2)
+    auto ceildiv = std::make_shared<CeilDiv>(one, two, DataType::INT32, Sp());
+    EXPECT_EQ(TextDump(ceildiv), "(1 ceildiv 2)");
+    EXPECT_EQ(TextDump(TextLoadExpr("(1 ceildiv 2)", error)), "(1 ceildiv 2)");
+    EXPECT_TRUE(error.empty());
+
+    // Ceil: (ceil 3.5)
+    auto ceil = std::make_shared<Ceil>(b, DataType::FP32, Sp());
+    EXPECT_EQ(TextDump(ceil), "(ceil 3.5)");
+    EXPECT_EQ(TextDump(TextLoadExpr("(ceil 3.5)", error)), "(ceil 3.5)");
+    EXPECT_TRUE(error.empty());
+
+    // Floor: (floor 3.5)
+    auto floor = std::make_shared<Floor>(b, DataType::FP32, Sp());
+    EXPECT_EQ(TextDump(floor), "(floor 3.5)");
+    EXPECT_EQ(TextDump(TextLoadExpr("(floor 3.5)", error)), "(floor 3.5)");
+    EXPECT_TRUE(error.empty());
+
     // MakeTuple: tuple(1, 2)
     auto tup = std::make_shared<MakeTuple>(std::vector<ExprPtr>{one, two}, Sp());
     EXPECT_EQ(TextDump(tup), "tuple(1, 2)");

@@ -2525,6 +2525,30 @@ std::string BuildPythonIntegerDivModExpression(const std::string& left, const st
     return "(" + left + (returnRemainder ? " % " : " / ") + right + ")";
 }
 
+std::string BuildPythonIntegerCeilDivExpression(const std::string& left, const std::string& right,
+                                                const DataType& dtype)
+{
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dtype.IsInt())
+        << "Internal error: integer CeilDiv requires an integer dtype";
+    const std::string cppType = dtype.ToCTypeString();
+    if (dtype.IsSignedInt()) {
+        std::ostringstream code;
+        // Truncating quotient plus a correction: ceil(a / b) == a / b + (a % b != 0 && sign(a) == sign(b)).
+        // Negating the dividend instead would overflow at the dtype minimum.
+        code << "({" << cppType << " __pypto_lhs = (" << left << "), __pypto_rhs = (" << right << ");" << cppType
+             << " __pypto_quot = __pypto_lhs / __pypto_rhs;"
+             << "__pypto_quot + (((__pypto_lhs % __pypto_rhs) != 0 && "
+                "((__pypto_lhs < 0) == (__pypto_rhs < 0))) ? 1 : 0);})";
+        return code.str();
+    }
+    // Unsigned operands are non-negative, so any non-zero remainder rounds the truncated quotient up.
+    std::ostringstream code;
+    code << "({" << cppType << " __pypto_lhs = (" << left << "), __pypto_rhs = (" << right << ");" << cppType
+         << " __pypto_quot = __pypto_lhs / __pypto_rhs;"
+         << "__pypto_quot + (((__pypto_lhs % __pypto_rhs) != 0) ? 1 : 0);})";
+    return code.str();
+}
+
 std::string BuildFP32FloorExpression(const std::string& value)
 {
     // Clear the fractional significand bits directly because the CCE scalar floor intrinsic is unavailable.
@@ -2548,6 +2572,45 @@ std::string BuildFP32FloorExpression(const std::string& value)
     return code.str();
 }
 
+std::string BuildFP32CeilExpression(const std::string& value)
+{
+    // Round toward +infinity by clearing the fractional significand bits, because the CCE scalar
+    // ceil intrinsic is unavailable.
+    std::ostringstream code;
+    code << "({float __pypto_ceil_input = (" << value << ");"
+         << "uint32_t __pypto_ceil_bits = reinterpret_cast<uint32_t&>(__pypto_ceil_input);"
+         << "uint32_t __pypto_ceil_abs = __pypto_ceil_bits & 0x7fffffffu;"
+         << "uint32_t __pypto_ceil_exp = __pypto_ceil_abs >> 23;"
+         << "float __pypto_ceil_result = __pypto_ceil_input;"
+         << "if (__pypto_ceil_abs != 0 && __pypto_ceil_exp < 127u) {"
+         << "if (__pypto_ceil_bits & 0x80000000u) {"
+         << "uint32_t __pypto_ceil_zero_bits = __pypto_ceil_bits & 0x80000000u;"
+         << "__pypto_ceil_result = reinterpret_cast<float&>(__pypto_ceil_zero_bits);"
+         << "} else {"
+         << "__pypto_ceil_result = 1.0f;"
+         << "}"
+         << "} else if (__pypto_ceil_exp >= 127u && __pypto_ceil_exp < 150u) {"
+         << "uint32_t __pypto_ceil_frac_mask = (1u << (150u - __pypto_ceil_exp)) - 1u;"
+         << "if (__pypto_ceil_abs & __pypto_ceil_frac_mask) {"
+         << "uint32_t __pypto_ceil_trunc_bits = __pypto_ceil_bits & ~__pypto_ceil_frac_mask;"
+         << "__pypto_ceil_result = reinterpret_cast<float&>(__pypto_ceil_trunc_bits);"
+         << "if (!(__pypto_ceil_bits & 0x80000000u)) { __pypto_ceil_result += 1.0f; }"
+         << "}"
+         << "}"
+         << "__pypto_ceil_result;})";
+    return code.str();
+}
+
+void AppendPythonFloatDivPrologue(std::ostringstream& code, const std::string& floatLeft, const std::string& floatRight,
+                                  bool withQuotient)
+{
+    code << "({float __pypto_lhs = " << floatLeft << ", __pypto_rhs = " << floatRight << ";"
+         << "float __pypto_mod = " << BuildFP32FmodExpression("__pypto_lhs", "__pypto_rhs") << ";";
+    if (withQuotient) {
+        code << "float __pypto_div = (__pypto_lhs - __pypto_mod) / __pypto_rhs;";
+    }
+}
+
 std::string BuildPythonFloatDivModExpression(const std::string& left, const std::string& right, const DataType& dtype,
                                              bool returnRemainder)
 {
@@ -2555,8 +2618,7 @@ std::string BuildPythonFloatDivModExpression(const std::string& left, const std:
         << "Internal error: floating-point FloorDiv/FloorMod requires a float dtype";
     const std::string cppType = dtype.ToCTypeString();
     std::ostringstream code;
-    code << "({float __pypto_lhs = (float)(" << left << "), __pypto_rhs = (float)(" << right << ");"
-         << "float __pypto_mod = " << BuildFP32FmodExpression("__pypto_lhs", "__pypto_rhs") << ";";
+    AppendPythonFloatDivPrologue(code, "(float)(" + left + ")", "(float)(" + right + ")", !returnRemainder);
     if (returnRemainder) {
         code << "if (__pypto_mod == 0.0f) {"
              << "uint32_t __pypto_zero = reinterpret_cast<uint32_t&>(__pypto_rhs) & 0x80000000u;"
@@ -2567,8 +2629,7 @@ std::string BuildPythonFloatDivModExpression(const std::string& left, const std:
         code << "(" << cppType << ")__pypto_mod;})";
         return code.str();
     }
-    code << "float __pypto_div = (__pypto_lhs - __pypto_mod) / __pypto_rhs;"
-         << "if (__pypto_mod != 0.0f && ((__pypto_rhs < 0.0f) != (__pypto_mod < 0.0f))) {"
+    code << "if (__pypto_mod != 0.0f && ((__pypto_rhs < 0.0f) != (__pypto_mod < 0.0f))) {"
          << "__pypto_div -= 1.0f;"
          << "}"
          << "float __pypto_floor_div;"
@@ -2593,6 +2654,31 @@ std::string BuildPythonDivModExpression(const std::string& left, const std::stri
     return BuildPythonIntegerDivModExpression(left, right, dtype, returnRemainder);
 }
 
+// Yields the FP32 ceiling quotient; narrowing to the result dtype is the caller's job so BF16 keeps
+// using the pypto_scalar cast.
+std::string BuildPythonFloatCeilDivExpression(const std::string& left, const std::string& right)
+{
+    std::ostringstream code;
+    AppendPythonFloatDivPrologue(code, left, right, true);
+    // Truncating quotient plus a same-sign-remainder correction:
+    // ceil(a / b) == a / b + (a % b != 0 && sign(a) == sign(b)).
+    code << "if (__pypto_mod != 0.0f && ((__pypto_rhs < 0.0f) == (__pypto_mod < 0.0f))) {"
+         << "__pypto_div += 1.0f;"
+         << "}"
+         << "float __pypto_ceil_div;"
+         << "if (__pypto_div != 0.0f) {"
+         // The quotient division can round a hair below the exact integer: snap it back up.
+         << "__pypto_ceil_div = " << BuildFP32FloorExpression("__pypto_div") << ";"
+         << "if (__pypto_div - __pypto_ceil_div > 0.5f) { __pypto_ceil_div += 1.0f; }"
+         << "} else {"
+         << "uint32_t __pypto_zero = (reinterpret_cast<uint32_t&>(__pypto_lhs) ^ "
+            "reinterpret_cast<uint32_t&>(__pypto_rhs)) & 0x80000000u;"
+         << "__pypto_ceil_div = reinterpret_cast<float&>(__pypto_zero);"
+         << "}"
+         << "__pypto_ceil_div;})";
+    return code.str();
+}
+
 std::string BuildBFloat16MinMaxExpression(const std::string& left, const std::string& right, const std::string& op)
 {
     // BF16 occupies the upper 16 bits of FP32. Keep the expanded bit patterns in scalar registers:
@@ -2611,6 +2697,15 @@ std::string BuildBFloat16MinMaxExpression(const std::string& left, const std::st
     return code.str();
 }
 
+std::string Build16BitAbsExpression(const std::string& operand, const std::string& type)
+{
+    std::ostringstream code;
+    code << "({" << type << " __pypto_abs_value = (" << operand << ");"
+         << "uint16_t __pypto_abs_bits = reinterpret_cast<uint16_t&>(__pypto_abs_value);"
+         << "__pypto_abs_bits &= 0x7FFFu;"
+         << "reinterpret_cast<" << type << "&>(__pypto_abs_bits);})";
+    return code.str();
+}
 } // namespace
 
 std::string CCECodegen::ScalarCast(const std::string& value, const DataType& source, const DataType& target)
@@ -2624,6 +2719,20 @@ std::string CCECodegen::ScalarCast(const std::string& value, const DataType& sou
         return "pypto_scalar::Cast<" + cppType + ">(" + value + ")";
     }
     return "((" + cppType + ")" + value + ")";
+}
+
+std::string CCECodegen::BuildHalfFloorExpression(const std::string& operand, const DataType& dtype)
+{
+    // Every FP16/BF16 value converts to FP32 exactly and floor never grows the magnitude, so the
+    // round-trip is lossless; the FP32 bit-level floor is the path FloorDiv already emits.
+    const std::string floatOperand = ScalarCast(operand, dtype, DataType::FP32);
+    return ScalarCast(BuildFP32FloorExpression(floatOperand), DataType::FP32, dtype);
+}
+
+std::string CCECodegen::BuildHalfCeilExpression(const std::string& operand, const DataType& dtype)
+{
+    const std::string floatOperand = ScalarCast(operand, dtype, DataType::FP32);
+    return ScalarCast(BuildFP32CeilExpression(floatOperand), DataType::FP32, dtype);
 }
 
 #define IMPLEMENT_BINARY_OP(OpType, OpName, CppOp)                                                   \
@@ -2684,6 +2793,28 @@ void CCECodegen::VisitExpr_(const ir::FloorDivPtr& op)
     const std::string left = GetExprAsCode(op->left_);
     const std::string right = GetExprAsCode(op->right_);
     currentExprValue_ = BuildPythonDivModExpression(left, right, scalarType->dtype_, false);
+}
+
+// CeilDiv mirrors FloorDiv's lowering split: floats use the FP32 truncating-quotient form with a
+// same-sign-remainder correction, integers use the truncating quotient plus a remainder correction.
+void CCECodegen::VisitExpr_(const ir::CeilDivPtr& op)
+{
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr)
+        << "Internal error: null CeilDiv";
+    auto scalarType = ir::As<ir::ScalarType>(op->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, scalarType != nullptr)
+        << "Internal error: CeilDiv result must be a scalar";
+    const std::string left = GetExprAsCode(op->left_);
+    const std::string right = GetExprAsCode(op->right_);
+    const DataType dtype = scalarType->dtype_;
+    if (!dtype.IsFloat()) {
+        currentExprValue_ = BuildPythonIntegerCeilDivExpression(left, right, dtype);
+        return;
+    }
+    // Widen and narrow through ScalarCast so BF16 stays on the pypto_scalar helpers outside SIMT.
+    const std::string floatLeft = ScalarCast(left, dtype, DataType::FP32);
+    const std::string floatRight = ScalarCast(right, dtype, DataType::FP32);
+    currentExprValue_ = ScalarCast(BuildPythonFloatCeilDivExpression(floatLeft, floatRight), DataType::FP32, dtype);
 }
 
 void CCECodegen::VisitExpr_(const ir::FloorModPtr& op)
@@ -2782,7 +2913,69 @@ void CCECodegen::VisitExpr_(const ir::AbsPtr& op)
         << "Internal error: null Abs";
     VisitExpr(op->operand_);
     std::string operand = currentExprValue_;
+    const auto scalarType = ir::As<ir::ScalarType>(op->GetType());
+    if (scalarType && scalarType->dtype_ == DataType::BF16 && !IsInSimtContext()) {
+        needsScalarHelpers_ = true;
+        currentExprValue_ = "pypto_scalar::ChangeSign<true>(" + operand + ")";
+        return;
+    }
+    if (scalarType && (scalarType->dtype_ == DataType::BF16 || scalarType->dtype_ == DataType::FP16)) {
+        currentExprValue_ = Build16BitAbsExpression(operand, scalarType->dtype_.ToCTypeString());
+        return;
+    }
     currentExprValue_ = "abs(" + operand + ")";
+}
+
+void CCECodegen::VisitExpr_(const ir::CeilPtr& op)
+{
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr)
+        << "Internal error: null Ceil";
+    VisitExpr(op->operand_);
+    std::string operand = currentExprValue_;
+    const auto scalarType = ir::As<ir::ScalarType>(op->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, scalarType != nullptr)
+        << "Internal error: Ceil result must be a scalar";
+    const DataType dtype = scalarType->dtype_;
+    if (dtype.IsInt()) {
+        currentExprValue_ = operand; // ceil of an integer is itself
+        return;
+    }
+    if (dtype == DataType::FP16 || dtype == DataType::BF16) {
+        currentExprValue_ = BuildHalfCeilExpression(operand, dtype);
+        return;
+    }
+    if (IsInSimtContext()) {
+        // The SIMT runtime provides a scalar ceil intrinsic; this path only sees FP32.
+        currentExprValue_ = "__ceilf(" + operand + ")";
+        return;
+    }
+    currentExprValue_ = BuildFP32CeilExpression(operand);
+}
+
+void CCECodegen::VisitExpr_(const ir::FloorPtr& op)
+{
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, op != nullptr)
+        << "Internal error: null Floor";
+    VisitExpr(op->operand_);
+    std::string operand = currentExprValue_;
+    const auto scalarType = ir::As<ir::ScalarType>(op->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, scalarType != nullptr)
+        << "Internal error: Floor result must be a scalar";
+    const DataType dtype = scalarType->dtype_;
+    if (dtype.IsInt()) {
+        currentExprValue_ = operand; // floor of an integer is itself
+        return;
+    }
+    if (dtype == DataType::FP16 || dtype == DataType::BF16) {
+        currentExprValue_ = BuildHalfFloorExpression(operand, dtype);
+        return;
+    }
+    if (IsInSimtContext()) {
+        // The SIMT runtime provides a scalar floor intrinsic; this path only sees FP32.
+        currentExprValue_ = "__floorf(" + operand + ")";
+        return;
+    }
+    currentExprValue_ = BuildFP32FloorExpression(operand);
 }
 
 void CCECodegen::VisitExpr_(const ir::CastPtr& op)

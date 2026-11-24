@@ -400,6 +400,20 @@ class FloatDiv(BinaryExpr):
         """
 
 
+class CeilDiv(BinaryExpr):
+    """Ceiling division expression (ceil(left / right))."""
+
+    def __init__(self, left: Expr, right: Expr, dtype: DataType, span: Span) -> None:
+        """Create a ceiling division expression.
+
+        Args:
+            left: Left operand
+            right: Right operand
+            dtype: Data type
+            span: Source location
+        """
+
+
 class Min(BinaryExpr):
     """Minimum expression (min(left, right))."""
 
@@ -656,6 +670,32 @@ class Neg(UnaryExpr):
 
     def __init__(self, operand: Expr, dtype: DataType, span: Span) -> None:
         """Create a negation expression.
+
+        Args:
+            operand: Operand expression
+            dtype: Data type
+            span: Source location
+        """
+
+
+class Ceil(UnaryExpr):
+    """Ceiling expression (ceil(operand))."""
+
+    def __init__(self, operand: Expr, dtype: DataType, span: Span) -> None:
+        """Create a ceiling expression.
+
+        Args:
+            operand: Operand expression
+            dtype: Data type
+            span: Source location
+        """
+
+
+class Floor(UnaryExpr):
+    """Floor expression (floor(operand))."""
+
+    def __init__(self, operand: Expr, dtype: DataType, span: Span) -> None:
+        """Create a floor expression.
 
         Args:
             operand: Operand expression

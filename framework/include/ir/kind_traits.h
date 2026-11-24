@@ -49,6 +49,7 @@ DEFINE_KIND_TRAIT(Mul, ObjectKind::Mul);
 DEFINE_KIND_TRAIT(FloorDiv, ObjectKind::FloorDiv);
 DEFINE_KIND_TRAIT(FloorMod, ObjectKind::FloorMod);
 DEFINE_KIND_TRAIT(FloatDiv, ObjectKind::FloatDiv);
+DEFINE_KIND_TRAIT(CeilDiv, ObjectKind::CeilDiv);
 DEFINE_KIND_TRAIT(Min, ObjectKind::Min);
 DEFINE_KIND_TRAIT(Max, ObjectKind::Max);
 DEFINE_KIND_TRAIT(Pow, ObjectKind::Pow);
@@ -73,6 +74,8 @@ DEFINE_KIND_TRAIT(Neg, ObjectKind::Neg);
 DEFINE_KIND_TRAIT(Not, ObjectKind::Not);
 DEFINE_KIND_TRAIT(BitNot, ObjectKind::BitNot);
 DEFINE_KIND_TRAIT(Cast, ObjectKind::Cast);
+DEFINE_KIND_TRAIT(Ceil, ObjectKind::Ceil);
+DEFINE_KIND_TRAIT(Floor, ObjectKind::Floor);
 
 // Symbolic expression types
 DEFINE_KIND_TRAIT(ScalarExpr, ObjectKind::ScalarExpr);
@@ -150,6 +153,7 @@ struct KindTrait<Expr> {
         ObjectKind::FloorDiv,
         ObjectKind::FloorMod,
         ObjectKind::FloatDiv,
+        ObjectKind::CeilDiv,
         ObjectKind::Min,
         ObjectKind::Max,
         ObjectKind::Pow,
@@ -173,6 +177,8 @@ struct KindTrait<Expr> {
         ObjectKind::Not,
         ObjectKind::BitNot,
         ObjectKind::Cast,
+        ObjectKind::Ceil,
+        ObjectKind::Floor,
         ObjectKind::ScalarExpr,
     };
     static constexpr size_t count = sizeof(kinds) / sizeof(ObjectKind);
@@ -182,20 +188,20 @@ struct KindTrait<Expr> {
 template <>
 struct KindTrait<BinaryExpr> {
     static constexpr ObjectKind kinds[] = {
-        ObjectKind::Add,      ObjectKind::Sub,          ObjectKind::Mul,          ObjectKind::FloorDiv,
-        ObjectKind::FloorMod, ObjectKind::FloatDiv,     ObjectKind::Min,          ObjectKind::Max,
-        ObjectKind::Pow,      ObjectKind::Eq,           ObjectKind::Ne,           ObjectKind::Lt,
-        ObjectKind::Le,       ObjectKind::Gt,           ObjectKind::Ge,           ObjectKind::And,
-        ObjectKind::Or,       ObjectKind::Xor,          ObjectKind::BitAnd,       ObjectKind::BitOr,
-        ObjectKind::BitXor,   ObjectKind::BitShiftLeft, ObjectKind::BitShiftRight};
+        ObjectKind::Add,      ObjectKind::Sub,      ObjectKind::Mul,          ObjectKind::FloorDiv,
+        ObjectKind::FloorMod, ObjectKind::FloatDiv, ObjectKind::CeilDiv,      ObjectKind::Min,
+        ObjectKind::Max,      ObjectKind::Pow,      ObjectKind::Eq,           ObjectKind::Ne,
+        ObjectKind::Lt,       ObjectKind::Le,       ObjectKind::Gt,           ObjectKind::Ge,
+        ObjectKind::And,      ObjectKind::Or,       ObjectKind::Xor,          ObjectKind::BitAnd,
+        ObjectKind::BitOr,    ObjectKind::BitXor,   ObjectKind::BitShiftLeft, ObjectKind::BitShiftRight};
     static constexpr size_t count = sizeof(kinds) / sizeof(ObjectKind);
 };
 
 // UnaryExpr base class - matches any unary expression kind
 template <>
 struct KindTrait<UnaryExpr> {
-    static constexpr ObjectKind kinds[] = {ObjectKind::Abs, ObjectKind::Neg, ObjectKind::Not, ObjectKind::BitNot,
-                                           ObjectKind::Cast};
+    static constexpr ObjectKind kinds[] = {ObjectKind::Abs,  ObjectKind::Neg,  ObjectKind::Not,  ObjectKind::BitNot,
+                                           ObjectKind::Cast, ObjectKind::Ceil, ObjectKind::Floor};
     static constexpr size_t count = sizeof(kinds) / sizeof(ObjectKind);
 };
 

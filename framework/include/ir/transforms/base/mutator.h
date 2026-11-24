@@ -59,6 +59,7 @@ protected:
     ExprPtr VisitExpr_(const AddPtr& op) override;
     ExprPtr VisitExpr_(const SubPtr& op) override;
     ExprPtr VisitExpr_(const MulPtr& op) override;
+    ExprPtr VisitExpr_(const CeilDivPtr& op) override;
     ExprPtr VisitExpr_(const FloorDivPtr& op) override;
     ExprPtr VisitExpr_(const FloorModPtr& op) override;
     ExprPtr VisitExpr_(const FloatDivPtr& op) override;
@@ -85,6 +86,8 @@ protected:
     ExprPtr VisitExpr_(const NegPtr& op) override;
     ExprPtr VisitExpr_(const NotPtr& op) override;
     ExprPtr VisitExpr_(const BitNotPtr& op) override;
+    ExprPtr VisitExpr_(const CeilPtr& op) override;
+    ExprPtr VisitExpr_(const FloorPtr& op) override;
     ExprPtr VisitExpr_(const CastPtr& op) override;
 
     // Statement types

@@ -29,10 +29,6 @@ result = pypto_pro.language.const(value, dtype, /)
 | value | 输入 | 数值常量，支持Python int或float常量值。 |
 | dtype | 输入 | 目标数据类型，支持pypto_pro.language.DT_INT8、pypto_pro.language.DT_INT16、pypto_pro.language.DT_INT32、pypto_pro.language.DT_INT64、pypto_pro.language.DT_UINT8、pypto_pro.language.DT_UINT16、pypto_pro.language.DT_UINT32、pypto_pro.language.DT_UINT64、pypto_pro.language.DT_FP16、pypto_pro.language.DT_FP32、pypto_pro.language.DT_BF16、pypto_pro.language.DT_BOOL等。 |
 
-## 约束说明
-
-- 不支持仅用于存储的低精度类型：DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_FP4、DT_FP4E2M1、DT_FP4E1M2、DT_HF8、DT_HF4、DT_INT4、DT_UINT4。
-
 ## 返回值说明
 
 标量值（Scalar），类型由dtype指定。

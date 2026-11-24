@@ -70,6 +70,7 @@ public:
     void VisitExpr_(const AddPtr& op) override { VisitBinaryExpr(op); }
     void VisitExpr_(const SubPtr& op) override { VisitBinaryExpr(op); }
     void VisitExpr_(const MulPtr& op) override { VisitBinaryExpr(op); }
+    void VisitExpr_(const CeilDivPtr& op) override { VisitBinaryExpr(op); }
     void VisitExpr_(const FloorDivPtr& op) override { VisitBinaryExpr(op); }
     void VisitExpr_(const FloorModPtr& op) override { VisitBinaryExpr(op); }
     void VisitExpr_(const FloatDivPtr& op) override { VisitBinaryExpr(op); }
@@ -94,6 +95,8 @@ public:
     void VisitExpr_(const NegPtr& op) override { VisitUnaryExpr(op); }
     void VisitExpr_(const NotPtr& op) override { VisitUnaryExpr(op); }
     void VisitExpr_(const BitNotPtr& op) override { VisitUnaryExpr(op); }
+    void VisitExpr_(const CeilPtr& op) override { VisitUnaryExpr(op); }
+    void VisitExpr_(const FloorPtr& op) override { VisitUnaryExpr(op); }
     void VisitExpr_(const CastPtr& op) override { VisitUnaryExpr(op); }
     void VisitStmt_(const IfStmtPtr& op) override;
     void VisitStmt_(const ForStmtPtr& op) override;

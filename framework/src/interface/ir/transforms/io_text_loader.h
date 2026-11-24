@@ -120,7 +120,7 @@ using IRTextParserVarDefListPtr = IRTextParserDataPtr<VarDefList>;
 
 inline bool IsKw(IRTextLexerTokenKind k)
 {
-    return k >= IRTextLexerTokenKind::KwProgram && k <= IRTextLexerTokenKind::KwUOpCast;
+    return k >= IRTextLexerTokenKind::KwProgram && k <= IRTextLexerTokenKind::KwWordKeywordEnd;
 }
 
 inline bool IsDTypeKw(IRTextLexerTokenKind k)
@@ -180,7 +180,8 @@ public:
     static bool IsUnaryOpName(const std::string& s)
     {
         return s == IR_KW_SCALAR_UOP_ABS || s == IR_KW_SCALAR_UOP_NEG || s == IR_KW_SCALAR_UOP_NOT ||
-               s == IR_KW_SCALAR_UOP_INV || s == IR_KW_SCALAR_UOP_CAST;
+               s == IR_KW_SCALAR_UOP_INV || s == IR_KW_SCALAR_UOP_CAST || s == IR_KW_SCALAR_UOP_CEIL ||
+               s == IR_KW_SCALAR_UOP_FLOOR;
     }
 
     // ---- Type parsing (per-branch, dispatched by token) ----

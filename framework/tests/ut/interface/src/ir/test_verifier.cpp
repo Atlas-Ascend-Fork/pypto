@@ -672,6 +672,7 @@ TEST_F(VerifierNoNestedCallTest, CallInBinaryExpr_ReportsError)
     verify_binary(std::make_shared<BitAnd>(call_expr, one, DataType::INT32, Sp()));
     verify_binary(std::make_shared<FloorDiv>(call_expr, one, DataType::INT32, Sp()));
     verify_binary(std::make_shared<FloorMod>(call_expr, one, DataType::INT32, Sp()));
+    verify_binary(std::make_shared<CeilDiv>(call_expr, one, DataType::INT32, Sp()));
     verify_binary(std::make_shared<FloatDiv>(call_expr, one, DataType::INT32, Sp()));
     verify_binary(std::make_shared<Min>(call_expr, one, DataType::INT32, Sp()));
     verify_binary(std::make_shared<Max>(call_expr, one, DataType::INT32, Sp()));
@@ -702,6 +703,8 @@ TEST_F(VerifierNoNestedCallTest, CallInUnaryExpr_ReportsError)
 
     verify_unary(std::make_shared<Neg>(call_expr, DataType::INT32, Sp()));
     verify_unary(std::make_shared<Abs>(call_expr, DataType::FP32, Sp()));
+    verify_unary(std::make_shared<Ceil>(call_expr, DataType::FP32, Sp()));
+    verify_unary(std::make_shared<Floor>(call_expr, DataType::FP32, Sp()));
     verify_unary(std::make_shared<Not>(call_expr, DataType::BOOL, Sp()));
     verify_unary(std::make_shared<BitNot>(call_expr, DataType::INT32, Sp()));
     verify_unary(std::make_shared<Cast>(call_expr, DataType::FP32, Sp()));

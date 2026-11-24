@@ -60,10 +60,11 @@ protected:
     virtual R VisitExpr_(const ScalarExprPtr& op, Args... args) = 0;
     virtual R VisitExpr_(const GetItemExprPtr& op, Args... args) = 0;
 
-    // Binary operations (22 types)
+    // Binary operations
     virtual R VisitExpr_(const AddPtr& op, Args... args) = 0;
     virtual R VisitExpr_(const SubPtr& op, Args... args) = 0;
     virtual R VisitExpr_(const MulPtr& op, Args... args) = 0;
+    virtual R VisitExpr_(const CeilDivPtr& op, Args... args) = 0;
     virtual R VisitExpr_(const FloorDivPtr& op, Args... args) = 0;
     virtual R VisitExpr_(const FloorModPtr& op, Args... args) = 0;
     virtual R VisitExpr_(const FloatDivPtr& op, Args... args) = 0;
@@ -85,11 +86,13 @@ protected:
     virtual R VisitExpr_(const BitShiftLeftPtr& op, Args... args) = 0;
     virtual R VisitExpr_(const BitShiftRightPtr& op, Args... args) = 0;
 
-    // Unary operations (5 types)
+    // Unary operations
     virtual R VisitExpr_(const AbsPtr& op, Args... args) = 0;
     virtual R VisitExpr_(const NegPtr& op, Args... args) = 0;
     virtual R VisitExpr_(const NotPtr& op, Args... args) = 0;
     virtual R VisitExpr_(const BitNotPtr& op, Args... args) = 0;
+    virtual R VisitExpr_(const CeilPtr& op, Args... args) = 0;
+    virtual R VisitExpr_(const FloorPtr& op, Args... args) = 0;
     virtual R VisitExpr_(const CastPtr& op, Args... args) = 0;
 };
 
@@ -118,6 +121,7 @@ R ExprFunctor<R, Args...>::VisitExpr(const ExprPtr& expr, Args... args)
     EXPR_FUNCTOR_DISPATCH(Add);
     EXPR_FUNCTOR_DISPATCH(Sub);
     EXPR_FUNCTOR_DISPATCH(Mul);
+    EXPR_FUNCTOR_DISPATCH(CeilDiv);
     EXPR_FUNCTOR_DISPATCH(FloorDiv);
     EXPR_FUNCTOR_DISPATCH(FloorMod);
     EXPR_FUNCTOR_DISPATCH(FloatDiv);
@@ -144,6 +148,8 @@ R ExprFunctor<R, Args...>::VisitExpr(const ExprPtr& expr, Args... args)
     EXPR_FUNCTOR_DISPATCH(Neg);
     EXPR_FUNCTOR_DISPATCH(Not);
     EXPR_FUNCTOR_DISPATCH(BitNot);
+    EXPR_FUNCTOR_DISPATCH(Ceil);
+    EXPR_FUNCTOR_DISPATCH(Floor);
     EXPR_FUNCTOR_DISPATCH(Cast);
 
     // Should never reach here if all types are handled

@@ -63,6 +63,7 @@ private:
     LOWER_BINARY(Sub)
     LOWER_BINARY(Mul)
     LOWER_BINARY(FloatDiv)
+    LOWER_BINARY(CeilDiv)
     LOWER_BINARY(FloorDiv)
     LOWER_BINARY(FloorMod)
     LOWER_BINARY(Eq)

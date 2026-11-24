@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import ast
+import math
 from typing import Any
 
 from pypto.pypto_impl import ir
@@ -975,8 +976,8 @@ class ExpressionParserMixin:
         """Fold a validated binary scalar operation using its promoted operands."""
         left_value = self._const_scalar_value(operation.left)
         right_value = self._const_scalar_value(operation.right)
-        if op_name in ("truediv", "floordiv", "mod") and right_value == 0:
-            operator = {"truediv": "/", "floordiv": "//", "mod": "%"}[op_name]
+        if op_name in ("truediv", "floordiv", "mod", "ceildiv") and right_value == 0:
+            operator = {"truediv": "/", "floordiv": "//", "mod": "%", "ceildiv": "ceildiv"}[op_name]
             raise InvalidVal(
                 f"Operator '{operator}' does not allow a zero divisor",
                 span=span,
@@ -999,6 +1000,7 @@ class ExpressionParserMixin:
             "bit_shift_right": lambda: left_value >> right_value,
             "min": lambda: min(left_value, right_value),
             "max": lambda: max(left_value, right_value),
+            "ceildiv": lambda: -((-left_value) // right_value),
         }
         if op_name in binary_ops:
             try:
@@ -1029,6 +1031,9 @@ class ExpressionParserMixin:
             "not": lambda: not value,
             "invert": lambda: ~value,
             "pos": lambda: value,
+            "abs": lambda: abs(value),
+            "ceil": lambda: math.ceil(value),
+            "floor": lambda: math.floor(value),
         }
         return self._make_scalar_constant(unary_ops[op_name](), operation.type.dtype, span)
 

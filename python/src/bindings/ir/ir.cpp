@@ -1249,6 +1249,7 @@ void BindExpr(py::module_& ir)
     BIND_BINARY_EXPR(Add, "Addition expression (left + right)");
     BIND_BINARY_EXPR(Sub, "Subtraction expression (left - right)");
     BIND_BINARY_EXPR(Mul, "Multiplication expression (left * right)");
+    BIND_BINARY_EXPR(CeilDiv, "Ceiling division expression (ceil(left / right))");
     BIND_BINARY_EXPR(FloorDiv, "Floor division expression (left // right)");
     BIND_BINARY_EXPR(FloorMod, "Floor modulo expression (left % right)");
     BIND_BINARY_EXPR(FloatDiv, "Float division expression (left / right)");
@@ -1283,6 +1284,8 @@ void BindExpr(py::module_& ir)
     BIND_UNARY_EXPR(Neg, "Negation expression (-operand)");
     BIND_UNARY_EXPR(Not, "Logical not expression (not operand)");
     BIND_UNARY_EXPR(BitNot, "Bitwise not expression (~operand)");
+    BIND_UNARY_EXPR(Ceil, "Ceiling expression (ceil(operand))");
+    BIND_UNARY_EXPR(Floor, "Floor expression (floor(operand))");
     BIND_UNARY_EXPR(Cast, "Cast expression (cast operand to dtype)");
 
 #undef BIND_UNARY_EXPR
@@ -1691,6 +1694,17 @@ void BindHelpers(py::module_& ir)
     ir.def("not_", &MakeNot, py::arg("operand"), py::arg("span") = Span::Unknown(), "Logical not operator");
     ir.def("min_", &MakeMin, py::arg("lhs"), py::arg("rhs"), py::arg("span") = Span::Unknown(), "Minimum operator");
     ir.def("max_", &MakeMax, py::arg("lhs"), py::arg("rhs"), py::arg("span") = Span::Unknown(), "Maximum operator");
+    ir.def("abs_", &MakeScalarAbs, py::arg("operand"), py::arg("span") = Span::Unknown(),
+           "Absolute value operator (rejects non-scalar operands; supported dtypes: "
+           "int8, int16, int32, int64, index, fp16, bf16, fp32)");
+    ir.def("ceil", &MakeScalarCeil, py::arg("operand"), py::arg("span") = Span::Unknown(),
+           "Ceiling operator (rejects non-scalar operands; supported dtypes: "
+           "int8, int16, int32, int64, index, fp16, bf16, fp32)");
+    ir.def("floor", &MakeScalarFloor, py::arg("operand"), py::arg("span") = Span::Unknown(),
+           "Floor operator (rejects non-scalar operands; supported dtypes: "
+           "int8, int16, int32, int64, index, fp16, bf16, fp32)");
+    ir.def("ceildiv", &MakeCeilDiv, py::arg("lhs"), py::arg("rhs"), py::arg("span") = Span::Unknown(),
+           "Ceiling-division operator (ceil(lhs / rhs); operand rules follow floordiv)");
 
     // Op conversion registry bindings
     ir.def(

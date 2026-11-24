@@ -8,4 +8,8 @@ const
 astype
 max
 min
+scalar_abs
+ceil
+floor
+ceildiv
 ```

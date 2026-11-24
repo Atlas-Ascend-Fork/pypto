@@ -18,6 +18,7 @@
     DEFINE_BINARY_EXPR(FloorDiv)     \
     DEFINE_BINARY_EXPR(FloorMod)     \
     DEFINE_BINARY_EXPR(FloatDiv)     \
+    DEFINE_BINARY_EXPR(CeilDiv)      \
     DEFINE_BINARY_EXPR(Min)          \
     DEFINE_BINARY_EXPR(Max)          \
     DEFINE_BINARY_EXPR(Pow)          \
@@ -38,6 +39,8 @@
 
 #define DEFINE_UNARY_EXPR_ALL() \
     DEFINE_UNARY_EXPR(Abs)      \
+    DEFINE_UNARY_EXPR(Ceil)     \
+    DEFINE_UNARY_EXPR(Floor)    \
     DEFINE_UNARY_EXPR(Neg)      \
     DEFINE_UNARY_EXPR(Not)      \
     DEFINE_UNARY_EXPR(Cast)     \

@@ -55,6 +55,8 @@ ExprPtr ReconstructBinaryExpr(ObjectKind kind, ExprPtr left, ExprPtr right, Data
             return std::make_shared<const FloorMod>(std::move(left), std::move(right), dtype, span);
         case ObjectKind::FloatDiv:
             return std::make_shared<const FloatDiv>(std::move(left), std::move(right), dtype, span);
+        case ObjectKind::CeilDiv:
+            return std::make_shared<const CeilDiv>(std::move(left), std::move(right), dtype, span);
         case ObjectKind::Min:
             return std::make_shared<const Min>(std::move(left), std::move(right), dtype, span);
         case ObjectKind::Max:
@@ -109,6 +111,10 @@ ExprPtr ReconstructUnaryExpr(ObjectKind kind, ExprPtr operand, DataType dtype, c
             return std::make_shared<const BitNot>(std::move(operand), dtype, span);
         case ObjectKind::Cast:
             return std::make_shared<const Cast>(std::move(operand), dtype, span);
+        case ObjectKind::Ceil:
+            return std::make_shared<const Ceil>(std::move(operand), dtype, span);
+        case ObjectKind::Floor:
+            return std::make_shared<const Floor>(std::move(operand), dtype, span);
         default:
             INTERNAL_CHECK_SPAN(false, span) << "Unknown unary expression kind in ReconstructUnaryExpr";
     }
@@ -302,6 +308,7 @@ DEFINE_BINARY_MUTATOR(Mul)
 DEFINE_BINARY_MUTATOR(FloorDiv)
 DEFINE_BINARY_MUTATOR(FloorMod)
 DEFINE_BINARY_MUTATOR(FloatDiv)
+DEFINE_BINARY_MUTATOR(CeilDiv)
 DEFINE_BINARY_MUTATOR(Min)
 DEFINE_BINARY_MUTATOR(Max)
 DEFINE_BINARY_MUTATOR(Pow)
@@ -330,6 +337,8 @@ DEFINE_UNARY_MUTATOR(Neg)
 DEFINE_UNARY_MUTATOR(Not)
 DEFINE_UNARY_MUTATOR(BitNot)
 DEFINE_UNARY_MUTATOR(Cast)
+DEFINE_UNARY_MUTATOR(Ceil)
+DEFINE_UNARY_MUTATOR(Floor)
 
 #undef DEFINE_UNARY_MUTATOR
 

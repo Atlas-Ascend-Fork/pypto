@@ -342,6 +342,7 @@ class _InlineReturnLowerer(ast.NodeTransformer):
 _BUILTIN_TO_OP: dict[str, str] = {
     "min": "min",
     "max": "max",
+    "abs": "scalar_abs",
 }
 
 
@@ -468,7 +469,9 @@ class CallParserMixin:
     # one VEC_SCOPE, which bisheng requires to hold VF instructions only, so the
     # survivors are exactly the ops that lower to a scalar expression or a loop
     # bound and emit no pipe, buffer or section work of their own.
-    _VF_SCALAR_PL_OPS: frozenset[str] = frozenset({"range", "min", "max", "const"})
+    _VF_SCALAR_PL_OPS: frozenset[str] = frozenset(
+        {"range", "min", "max", "const", "scalar_abs", "ceil", "floor", "ceildiv"}
+    )
 
     # Tile-group cursor accessors emit scalar work that must stay outside VEC_SCOPE.
     _TILE_GROUP_ACCESSORS: frozenset[str] = frozenset({"next", "current", "previous"})
@@ -904,7 +907,8 @@ class CallParserMixin:
         if op_name not in self._VF_SCALAR_PL_OPS:
             raise NotSupported(
                 f"Operation 'pl.{op_name}' is not supported inside @pl.vector_function",
-                hint="VF bodies support vf.* operations, pl.range, and scalar pl.min/pl.max/pl.const. "
+                hint="VF bodies support vf.* operations, pl.range, and scalar "
+                "pl.min/pl.max/pl.const/pl.scalar_abs/pl.ceil/pl.floor/pl.ceildiv. "
                 "Move other pl.* operations outside the vector function and pass their results as arguments.",
             )
 

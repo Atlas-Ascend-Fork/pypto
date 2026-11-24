@@ -1626,6 +1626,73 @@ def max(lhs: Union[int, float], rhs: Union[int, float], /) -> Scalar:
     """
 
 
+@_api_decl
+def scalar_abs(x: Union[int, float], /) -> Scalar:
+    """Return the absolute value of a scalar: ``|x|``.
+
+    Scalar-only operation for loop-bound calculations etc.
+    The supported operand dtypes are INT8, INT16, INT32, INT64, INDEX, FP16,
+    BF16 and FP32. For tile element-wise absolute value, use ``pl.abs``.
+
+    Args:
+        x: Source operand (scalar)
+
+    Returns:
+        Scalar result.
+    """
+
+
+@_api_decl
+def ceil(x: Union[int, float], /) -> Scalar:
+    """Return the ceiling of a scalar: the smallest integer >= ``x``.
+
+    Scalar-only operation for scalar value computation; a floating-point result
+    cannot be used as a loop bound. Integer operands, signed or unsigned, are
+    unchanged; floating-point operands (FP16/BF16/FP32) are rounded up.
+
+    Args:
+        x: Source operand (scalar)
+
+    Returns:
+        Scalar result.
+    """
+
+
+@_api_decl
+def floor(x: Union[int, float], /) -> Scalar:
+    """Return the floor of a scalar: the largest integer <= ``x``.
+
+    Scalar-only operation for scalar value computation; a floating-point result
+    cannot be used as a loop bound. Integer operands, signed or unsigned, are
+    unchanged; floating-point operands (FP16/BF16/FP32) are rounded down.
+
+    Args:
+        x: Source operand (scalar)
+
+    Returns:
+        Scalar result.
+    """
+
+
+@_api_decl
+def ceildiv(lhs: Union[int, float], rhs: Union[int, float], /) -> Scalar:
+    """Return the ceiling division of two scalars: ``ceil(lhs / rhs)``.
+
+    Scalar-only operation for loop-bound calculations etc. Integer operands
+    yield an integer ceiling, floating-point operands a floating-point one;
+    operand dtypes follow the floor-division (``//``) rule set, unsigned
+    integers included. For tile element-wise ceiling division, use the tensor
+    API ``pypto.ceil_div``.
+
+    Args:
+        lhs: Dividend operand (scalar)
+        rhs: Divisor operand (scalar); a compile-time zero divisor is rejected
+
+    Returns:
+        Scalar result.
+    """
+
+
 # ===================================================================
 # Section G: Tile min/max (element-wise + reduce overload)
 #

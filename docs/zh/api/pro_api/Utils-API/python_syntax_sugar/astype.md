@@ -28,13 +28,10 @@ result = pypto_pro.language.astype(x, dtype, /)
 | 参数名 | 输入/输出 | 说明                                     |
 | ------ | --------- | ---------------------------------------- |
 | x      | 输入      | 源标量表达式，Scalar类型，按位置传递。   |
-| dtype  | 输入      | 目标数据类型，DataType类型，按位置传递。 |
+| dtype  | 输入      | 目标数据类型，DataType类型，按位置传递；支持DT_INT8、DT_INT16、DT_INT32、DT_INT64、DT_UINT8、DT_UINT16、DT_UINT32、DT_UINT64、DT_FP16、DT_BF16、DT_FP32、DT_BOOL。 |
 
 ## 约束说明
 
-- 源标量和目标标量数据类型均不支持仅用于存储的低精度类型：DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_FP4、DT_FP4E2M1、DT_FP4E1M2、DT_HF8、DT_HF4、DT_INT4、DT_UINT4。
-- 普通Scalar支持DT_BF16与DT_BOOL、整数、DT_FP16、DT_FP32之间的转换。转换为DT_BF16时采用最近偶数舍入；
-  DT_BF16转换为整数时向零截断，输入须位于目标整数类型的有效范围内。
 - 普通Scalar的运行期DT_BF16算术先将操作数精确扩展为DT_FP32，再将每个操作的结果舍入为DT_BF16。
 - 当前前端常量折叠使用Python浮点精度，尚未按FP16/BF16/FP32逐步舍入，因此常量表达式与运行期表达式可能不同。
   例如BF16常量表达式`1.0 % 0.1`折叠后约为`0.1`，而相同输入的运行期BF16计算结果为`0.09912109375`。

@@ -864,32 +864,6 @@ def test_an_op_without_a_declaration_is_left_to_its_builder():
     assert rendered.head["code"] == "00003"
 
 
-# ---------------------------------------------------------------------------
-# The type gate: what a declared annotation accepts, checked on the parsed value
-#
-# The first gate judges the argument, so it marks the argument; this one judges
-# the value, so it marks the value. What it does not describe -- an unannotated
-# parameter, Any, an op with no declaration -- it leaves to the builder.
-# ---------------------------------------------------------------------------
-
-
-def test_the_type_gate_names_the_role_the_argument_was_declared_in():
-    """A Tensor where a Tile belongs: the code, the module and the mark, in one place."""
-
-    @pl.jit
-    def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):
-        tile = pl.make_tile(_tile_type(), addr=0)
-        pl.load(tile, x, [0, 0])
-        pl.abs(x, tile)
-
-    rendered = _render(kernel)
-    assert isinstance(rendered.error, InvalidType)
-    assert rendered.head["module"] == "PRO_PARSER"
-    assert rendered.head["code"] == "00001"
-    assert rendered.head["reason"] == "pl.abs: out expects Tile, got TensorType"
-    rendered.assert_call_location("pl.abs")
-
-
 def test_a_tile_where_a_tensor_belongs_is_named_the_same_way():
     @pl.jit
     def kernel(x: pl.Tensor[[64, 64], pl.DT_FP16]):

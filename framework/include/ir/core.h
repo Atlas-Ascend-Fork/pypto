@@ -53,6 +53,7 @@ enum class ObjectKind {
     FloorDiv,
     FloorMod,
     FloatDiv,
+    CeilDiv,
     Min,
     Max,
     Pow,
@@ -77,6 +78,8 @@ enum class ObjectKind {
     Not,
     BitNot,
     Cast,
+    Ceil,
+    Floor,
 
     // Symbolic expression types
     ScalarExpr,

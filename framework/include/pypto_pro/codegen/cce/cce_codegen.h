@@ -171,6 +171,10 @@ public:
     bool needsSimtGroupHeader_ = false;
     std::string GetExprAsCode(const ir::ExprPtr& expr) override;
     std::string ScalarCast(const std::string& value, const ir::DataType& source, const ir::DataType& target);
+    /// Half-precision ceil/floor: an exact round-trip through FP32 because the device runtime has no
+    /// half/bfloat16_t scalar overloads; ScalarCast keeps non-SIMT BF16 on the pypto_scalar helpers.
+    std::string BuildHalfCeilExpression(const std::string& operand, const ir::DataType& dtype);
+    std::string BuildHalfFloorExpression(const std::string& operand, const ir::DataType& dtype);
     std::string GetGeneratedType(const ir::TypePtr& type) const;
 
     /// Resolve a tuple-typed expression to the MakeTuple backing it (the tuple counterpart of
@@ -351,6 +355,7 @@ protected:
     void VisitExpr_(const ir::SubPtr& op) override;
     void VisitExpr_(const ir::MulPtr& op) override;
     void VisitExpr_(const ir::FloorDivPtr& op) override;
+    void VisitExpr_(const ir::CeilDivPtr& op) override;
     void VisitExpr_(const ir::FloorModPtr& op) override;
     void VisitExpr_(const ir::FloatDivPtr& op) override;
     void VisitExpr_(const ir::MinPtr& op) override;
@@ -377,6 +382,8 @@ protected:
     void VisitExpr_(const ir::NotPtr& op) override;
     void VisitExpr_(const ir::BitNotPtr& op) override;
     void VisitExpr_(const ir::CastPtr& op) override;
+    void VisitExpr_(const ir::CeilPtr& op) override;
+    void VisitExpr_(const ir::FloorPtr& op) override;
 
 private:
     /**

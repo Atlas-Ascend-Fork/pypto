@@ -30,16 +30,12 @@ pypto_pro.language.max(
 
 | 参数名 | 输入/输出 | 说明 |
 |---|---|---|
-| lhs | 输入 | 左操作数（Python int、Python float或Kernel内整型或浮点型标量表达式） |
-| rhs | 输入 | 右操作数（Python int、Python float或Kernel内整型或浮点型标量表达式） |
+| lhs | 输入 | 左操作数（Python int、Python float或Kernel内整型或浮点型标量表达式）。 |
+| rhs | 输入 | 右操作数（Python int、Python float或Kernel内整型或浮点型标量表达式）；同一数值类别（整型/浮点型）内按位宽较大一侧提升，位宽相同时取lhs类型；整型与浮点型混用时，两侧操作数转换为DT_FP32后比较。 |
 
 ## 约束说明
 
-- **仅用于标量**：用于循环边界、索引计算等场景
-- 不支持仅用于存储的低精度类型：DT_FP8E4M3FN、DT_FP8E5M2、DT_FP8E8M0、DT_FP4、DT_FP4E2M1、DT_FP4E1M2、DT_HF8、DT_HF4、DT_INT4、DT_UINT4。
-- **Tile逐元素取最大值**：使用[pypto_pro.language.maximum](../../SIMD-API/tile_computation/elementwise/maximum.md)
-- **不支持多参数**：仅接受恰好2个参数，max(a, b, c)不支持
-- **类型提升**：混合整型和浮点型操作数时，两侧操作数转换为DT_FP32后比较。
+- **适用范围**：本接口仅用于标量取最大值，常用于循环边界、索引计算；针对Tile逐元素取最大值请使用[pypto_pro.language.maximum](../../SIMD-API/tile_computation/elementwise/maximum.md)。
 
 ## 返回值说明
 

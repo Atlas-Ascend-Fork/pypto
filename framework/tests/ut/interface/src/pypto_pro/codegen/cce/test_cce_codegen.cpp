@@ -923,6 +923,204 @@ TEST(CCECodegenTest, KeepsNativeMinMaxForOtherScalarTypes)
     }
 }
 
+TEST(CCECodegenTest, LowersScalarAbsFor16BitFloats)
+{
+    auto fp16_type = std::make_shared<const ir::ScalarType>(ir::DataType::FP16);
+    auto bf16_type = std::make_shared<const ir::ScalarType>(ir::DataType::BF16);
+    auto lhs = MakeVar("lhs", fp16_type);
+    auto rhs = MakeVar("rhs", bf16_type);
+    auto fp16_abs = std::make_shared<const ir::Abs>(lhs, ir::DataType::FP16, ir::Span::Unknown());
+    auto bf16_abs = std::make_shared<const ir::Abs>(rhs, ir::DataType::BF16, ir::Span::Unknown());
+
+    for (auto target : {ir::SectionKind::Cube, ir::SectionKind::Vector}) {
+        CCECodegen codegen(target);
+        // FP16 has no device abs() overload; clear only the sign bit.
+        const std::string fp16_code = codegen.GetExprAsCode(fp16_abs);
+        EXPECT_NE(fp16_code.find("({half __pypto_abs_value = (lhs);"), std::string::npos);
+        EXPECT_NE(fp16_code.find("uint16_t __pypto_abs_bits = reinterpret_cast<uint16_t&>(__pypto_abs_value);"),
+                  std::string::npos);
+        EXPECT_NE(fp16_code.find("__pypto_abs_bits &= 0x7FFFu;"), std::string::npos);
+        EXPECT_NE(fp16_code.find("reinterpret_cast<half&>(__pypto_abs_bits);})"), std::string::npos);
+        EXPECT_EQ(fp16_code.find("abs(lhs)"), std::string::npos);
+    }
+
+    // A non-SIMT function with BF16 abs pulls in the pypto_scalar include.
+    auto result = MakeVar("result", bf16_type);
+    auto assign = std::make_shared<const ir::AssignStmt>(std::vector<ir::VarPtr>{result}, bf16_abs,
+                                                         ir::Span::Unknown());
+    auto body = std::make_shared<const ir::SeqStmts>(std::vector<ir::StmtPtr>{assign}, ir::Span::Unknown());
+    CCECodegen codegen(ir::SectionKind::Vector);
+    std::string generated = codegen.GenerateSingle(MakeProgram(body, {rhs}), npu::tile_fwk::NPUArch::DAV_3510);
+    EXPECT_NE(generated.find("#include <pypto_scalar.h>"), std::string::npos);
+    EXPECT_NE(generated.find("pypto_scalar::ChangeSign<true>(rhs)"), std::string::npos);
+
+    // Signed integers and FP32 keep the native abs() spelling.
+    for (auto dtype : {ir::DataType::INT32, ir::DataType::INT64, ir::DataType::FP32}) {
+        auto var_type = std::make_shared<const ir::ScalarType>(dtype);
+        auto var = MakeVar("value", var_type);
+        CCECodegen abs_codegen(ir::SectionKind::Vector);
+        const std::string code = abs_codegen.GetExprAsCode(
+            std::make_shared<const ir::Abs>(var, dtype, ir::Span::Unknown()));
+        EXPECT_EQ(code, "abs(value)");
+    }
+}
+
+TEST(CCECodegenTest, LowersScalarCeilAndFloorThroughFP32For16BitFloats)
+{
+    auto fp32_type = std::make_shared<const ir::ScalarType>(ir::DataType::FP32);
+    auto fp16_type = std::make_shared<const ir::ScalarType>(ir::DataType::FP16);
+    auto int64_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
+    auto fp32 = MakeVar("value", fp32_type);
+    auto fp16 = MakeVar("half_value", fp16_type);
+    auto int64 = MakeVar("count", int64_type);
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    // FP32 uses the bit-level floor and ceil helpers directly.
+    const std::string fp32_floor = codegen.GetExprAsCode(
+        std::make_shared<const ir::Floor>(fp32, ir::DataType::FP32, ir::Span::Unknown()));
+    EXPECT_NE(fp32_floor.find("__pypto_floor_frac_mask"), std::string::npos);
+    const std::string fp32_ceil = codegen.GetExprAsCode(
+        std::make_shared<const ir::Ceil>(fp32, ir::DataType::FP32, ir::Span::Unknown()));
+    EXPECT_NE(fp32_ceil.find("__pypto_ceil_input = (value)"), std::string::npos);
+    EXPECT_NE(fp32_ceil.find("__pypto_ceil_frac_mask"), std::string::npos);
+
+    // FP16 has no device floor/ceil overload: round-trip through the FP32 bit-level path.
+    const std::string fp16_floor = codegen.GetExprAsCode(
+        std::make_shared<const ir::Floor>(fp16, ir::DataType::FP16, ir::Span::Unknown()));
+    EXPECT_NE(fp16_floor.find("(float)half_value"), std::string::npos);
+    EXPECT_NE(fp16_floor.find("__pypto_floor_frac_mask"), std::string::npos);
+    EXPECT_NE(fp16_floor.find("((half)"), std::string::npos);
+    const std::string fp16_ceil = codegen.GetExprAsCode(
+        std::make_shared<const ir::Ceil>(fp16, ir::DataType::FP16, ir::Span::Unknown()));
+    EXPECT_NE(fp16_ceil.find("(float)half_value"), std::string::npos);
+    EXPECT_NE(fp16_ceil.find("((half)"), std::string::npos);
+
+    // Integer ceil/floor are identities.
+    EXPECT_EQ(codegen.GetExprAsCode(std::make_shared<const ir::Ceil>(int64, ir::DataType::INT64, ir::Span::Unknown())),
+              "count");
+    EXPECT_EQ(codegen.GetExprAsCode(std::make_shared<const ir::Floor>(int64, ir::DataType::INT64, ir::Span::Unknown())),
+              "count");
+}
+
+TEST(CCECodegenTest, LowersScalarCeilDivForEveryScalarFamily)
+{
+    auto fp32_type = std::make_shared<const ir::ScalarType>(ir::DataType::FP32);
+    auto int64_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
+    auto uint64_type = std::make_shared<const ir::ScalarType>(ir::DataType::UINT64);
+    auto fp32_operand = MakeVar("value", fp32_type);
+    auto int64_operand = MakeVar("dividend", int64_type);
+    auto uint64_operand = MakeVar("unsigned_dividend", uint64_type);
+    auto divisor = MakeVar("divisor", int64_type);
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    // Floating point uses the truncating quotient plus a same-sign remainder correction.
+    const std::string fp32_code = codegen.GetExprAsCode(
+        std::make_shared<const ir::CeilDiv>(fp32_operand, fp32_operand, ir::DataType::FP32, ir::Span::Unknown()));
+    EXPECT_NE(fp32_code.find("__pypto_ceil_div"), std::string::npos);
+    EXPECT_EQ(fp32_code.find("__pypto_floor_div"), std::string::npos);
+
+    // Signed integers use the truncating quotient plus a sign-aware remainder correction.
+    const std::string int64_code = codegen.GetExprAsCode(
+        std::make_shared<const ir::CeilDiv>(int64_operand, divisor, ir::DataType::INT64, ir::Span::Unknown()));
+    EXPECT_NE(int64_code.find("__pypto_quot"), std::string::npos);
+    EXPECT_NE(int64_code.find("__pypto_lhs < 0"), std::string::npos);
+
+    // Unsigned integers need no sign correction; negating them would be wrong.
+    const std::string uint64_code = codegen.GetExprAsCode(
+        std::make_shared<const ir::CeilDiv>(uint64_operand, uint64_operand, ir::DataType::UINT64, ir::Span::Unknown()));
+    EXPECT_NE(uint64_code.find("__pypto_quot"), std::string::npos);
+    EXPECT_EQ(uint64_code.find("__pypto_lhs < 0"), std::string::npos);
+}
+
+TEST(CCECodegenTest, LowersScalarFloorForBF16ThroughTheScalarHelpers)
+{
+    auto bf16_type = std::make_shared<const ir::ScalarType>(ir::DataType::BF16);
+    auto bf16 = MakeVar("half_value", bf16_type);
+    auto result = MakeVar("result", bf16_type);
+    auto body = std::make_shared<const ir::SeqStmts>(
+        std::vector<ir::StmtPtr>{std::make_shared<const ir::AssignStmt>(
+            std::vector<ir::VarPtr>{result},
+            std::make_shared<const ir::Floor>(bf16, ir::DataType::BF16, ir::Span::Unknown()), ir::Span::Unknown())},
+        ir::Span::Unknown());
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    const std::string generated = codegen.GenerateSingle(MakeProgram(body, {bf16}), npu::tile_fwk::NPUArch::DAV_3510);
+    // Non-SIMT BF16 conversions cannot use plain C casts: they route through pypto_scalar.
+    EXPECT_NE(generated.find("#include <pypto_scalar.h>"), std::string::npos);
+    EXPECT_NE(generated.find("pypto_scalar::Cast<float>"), std::string::npos);
+    EXPECT_NE(generated.find("pypto_scalar::Cast<bfloat16_t>"), std::string::npos);
+}
+
+TEST(CCECodegenTest, LowersScalarCeilDivForBF16ThroughTheScalarHelpers)
+{
+    auto bf16_type = std::make_shared<const ir::ScalarType>(ir::DataType::BF16);
+    auto bf16 = MakeVar("half_value", bf16_type);
+    auto result = MakeVar("result", bf16_type);
+    auto body = std::make_shared<const ir::SeqStmts>(
+        std::vector<ir::StmtPtr>{std::make_shared<const ir::AssignStmt>(
+            std::vector<ir::VarPtr>{result},
+            std::make_shared<const ir::CeilDiv>(bf16, bf16, ir::DataType::BF16, ir::Span::Unknown()),
+            ir::Span::Unknown())},
+        ir::Span::Unknown());
+
+    CCECodegen codegen(ir::SectionKind::Vector);
+    const std::string generated = codegen.GenerateSingle(MakeProgram(body, {bf16}), npu::tile_fwk::NPUArch::DAV_3510);
+    // The lowering pass promotes the division to FP32 before codegen, so both the widening and the
+    // narrowing still route through pypto_scalar rather than a plain C cast.
+    EXPECT_NE(generated.find("pypto_scalar::Cast<float>"), std::string::npos);
+    EXPECT_NE(generated.find("__pypto_ceil_div"), std::string::npos);
+    EXPECT_NE(generated.find("pypto_scalar::Cast<bfloat16_t>"), std::string::npos);
+}
+
+TEST(CCECodegenTest, LowersScalarCeilFloorAndCeilDivFor16BitFloats)
+{
+    auto fp16_type = std::make_shared<const ir::ScalarType>(ir::DataType::FP16);
+    auto bf16_type = std::make_shared<const ir::ScalarType>(ir::DataType::BF16);
+    auto lhs = MakeVar("lhs", fp16_type);
+    auto rhs = MakeVar("rhs", bf16_type);
+    CCECodegen codegen(ir::SectionKind::Vector);
+
+    // FP16 has no device ceil()/floor() overload: round in FP32 and narrow back.
+    const std::string fp16_ceil = codegen.GetExprAsCode(
+        std::make_shared<const ir::Ceil>(lhs, ir::DataType::FP16, ir::Span::Unknown()));
+    EXPECT_NE(fp16_ceil.find("__pypto_ceil_input"), std::string::npos);
+    EXPECT_NE(fp16_ceil.find("((half)"), std::string::npos);
+    EXPECT_EQ(fp16_ceil.find("__ceilf("), std::string::npos);
+
+    const std::string fp16_floor = codegen.GetExprAsCode(
+        std::make_shared<const ir::Floor>(lhs, ir::DataType::FP16, ir::Span::Unknown()));
+    EXPECT_NE(fp16_floor.find("__pypto_floor_input"), std::string::npos);
+    EXPECT_NE(fp16_floor.find("((half)"), std::string::npos);
+    EXPECT_EQ(fp16_floor.find("__floorf("), std::string::npos);
+
+    // BF16 conversions go through the pypto_scalar helpers in both directions.
+    const std::string bf16_ceil = codegen.GetExprAsCode(
+        std::make_shared<const ir::Ceil>(rhs, ir::DataType::BF16, ir::Span::Unknown()));
+    EXPECT_NE(bf16_ceil.find("pypto_scalar::Cast<float>(rhs)"), std::string::npos);
+    EXPECT_NE(bf16_ceil.find("__pypto_ceil_input"), std::string::npos);
+    EXPECT_NE(bf16_ceil.find("pypto_scalar::Cast<bfloat16_t>"), std::string::npos);
+
+    const std::string bf16_floor = codegen.GetExprAsCode(
+        std::make_shared<const ir::Floor>(rhs, ir::DataType::BF16, ir::Span::Unknown()));
+    EXPECT_NE(bf16_floor.find("__pypto_floor_input"), std::string::npos);
+    EXPECT_NE(bf16_floor.find("pypto_scalar::Cast<bfloat16_t>"), std::string::npos);
+
+    // CeilDiv widens the half operands to FP32, corrects the truncating quotient and narrows the
+    // result back through the same casts.
+    const std::string fp16_ceildiv = codegen.GetExprAsCode(
+        std::make_shared<const ir::CeilDiv>(lhs, lhs, ir::DataType::FP16, ir::Span::Unknown()));
+    EXPECT_NE(fp16_ceildiv.find("({float __pypto_lhs = ((float)lhs"), std::string::npos);
+    EXPECT_NE(fp16_ceildiv.find("__pypto_ceil_div"), std::string::npos);
+    EXPECT_EQ(fp16_ceildiv.find("pypto_scalar::"), std::string::npos);
+    EXPECT_NE(fp16_ceildiv.find("((half)({"), std::string::npos);
+
+    const std::string bf16_ceildiv = codegen.GetExprAsCode(
+        std::make_shared<const ir::CeilDiv>(rhs, rhs, ir::DataType::BF16, ir::Span::Unknown()));
+    EXPECT_NE(bf16_ceildiv.find("({float __pypto_lhs = pypto_scalar::Cast<float>(rhs)"), std::string::npos);
+    EXPECT_NE(bf16_ceildiv.find("__pypto_ceil_div"), std::string::npos);
+    EXPECT_NE(bf16_ceildiv.find("pypto_scalar::Cast<bfloat16_t>("), std::string::npos);
+}
+
 TEST(CCECodegenTest, EmitsPythonSemanticsForFloorDivAndMod)
 {
     auto scalar_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);

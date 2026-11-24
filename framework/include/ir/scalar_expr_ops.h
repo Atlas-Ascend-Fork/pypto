@@ -194,6 +194,15 @@ inline ExprPtr MakeFloorMod(const ExprPtr& left, const ExprPtr& right, const Spa
     return std::make_shared<FloorMod>(operands.left, operands.right, operands.dtype, span);
 }
 
+inline ExprPtr MakeCeilDiv(const ExprPtr& left, const ExprPtr& right, const Span& span = Span::Unknown())
+{
+    // Ceiling division follows the floor-division operand rule set (same promotion and accepted
+    // dtypes), including unsigned integers: the lowering is a truncating quotient plus a remainder
+    // correction, which is well defined for every integer dtype.
+    auto operands = PromoteFloorDivModOperands(left, right, "ceildiv", span);
+    return std::make_shared<CeilDiv>(operands.left, operands.right, operands.dtype, span);
+}
+
 inline ExprPtr MakePow(const ExprPtr& left, const ExprPtr& right, const Span& span = Span::Unknown())
 {
     auto operands = PromoteBinaryOperands(left, right, "pow", span);
@@ -326,6 +335,63 @@ inline ExprPtr MakeAbs(const ExprPtr& operand, const Span& span = Span::Unknown(
     return std::make_shared<Abs>(operand, dtype, span);
 }
 
+inline ExprPtr MakeCeil(const ExprPtr& operand, const Span& span = Span::Unknown())
+{
+    DataType dtype = NormalizeBoolDtype(GetScalarDtype(operand, span));
+    return std::make_shared<Ceil>(operand, dtype, span);
+}
+
+inline ExprPtr MakeFloor(const ExprPtr& operand, const Span& span = Span::Unknown())
+{
+    DataType dtype = NormalizeBoolDtype(GetScalarDtype(operand, span));
+    return std::make_shared<Floor>(operand, dtype, span);
+}
+
+// The absolute value of an unsigned integer is the identity, but neither the device runtime nor
+// C++ provides an abs() overload for unsigned operands, so scalar abs stays on signed integers.
+inline bool IsSupportedScalarAbsDtype(const DataType& dtype)
+{
+    return dtype == DataType::INT8 || dtype == DataType::INT16 || dtype == DataType::INT32 ||
+           dtype == DataType::INT64 || dtype == DataType::FP16 || dtype == DataType::BF16 || dtype == DataType::FP32;
+}
+
+// Rounding an integer is the identity, so every non-storage integer dtype is accepted, unsigned
+// included; storage-only integers (int4/uint4) have no scalar representation.
+inline bool IsSupportedScalarCeilFloorDtype(const DataType& dtype)
+{
+    return (dtype.IsInt() && !dtype.IsStorageOnly()) || dtype == DataType::FP16 || dtype == DataType::BF16 ||
+           dtype == DataType::FP32;
+}
+
+inline ExprPtr MakeScalarCeil(const ExprPtr& operand, const Span& span = Span::Unknown())
+{
+    DataType dtype = NormalizeBoolDtype(GetScalarDtype(operand, span));
+    IRCHECK(IsSupportedScalarCeilFloorDtype(dtype))
+        << "Operator 'ceil' does not support dtype " << dtype.ToString()
+        << ", supported: int8, int16, int32, int64, uint8, uint16, uint32, uint64, fp16, bf16, fp32 at "
+        << span.ToString();
+    return MakeCeil(operand, span);
+}
+
+inline ExprPtr MakeScalarFloor(const ExprPtr& operand, const Span& span = Span::Unknown())
+{
+    DataType dtype = NormalizeBoolDtype(GetScalarDtype(operand, span));
+    IRCHECK(IsSupportedScalarCeilFloorDtype(dtype))
+        << "Operator 'floor' does not support dtype " << dtype.ToString()
+        << ", supported: int8, int16, int32, int64, uint8, uint16, uint32, uint64, fp16, bf16, fp32 at "
+        << span.ToString();
+    return MakeFloor(operand, span);
+}
+
+inline ExprPtr MakeScalarAbs(const ExprPtr& operand, const Span& span = Span::Unknown())
+{
+    DataType dtype = NormalizeBoolDtype(GetScalarDtype(operand, span));
+    IRCHECK(IsSupportedScalarAbsDtype(dtype))
+        << "Operator 'abs' does not support dtype " << dtype.ToString()
+        << ", supported: int8, int16, int32, int64, fp16, bf16, fp32 at " << span.ToString();
+    return MakeAbs(operand, span);
+}
+
 // ========== Name-dispatched factory functions (for IR text loader) ==========
 
 /**
@@ -354,6 +420,8 @@ inline ExprPtr MakeBinaryOp(const std::string& opName, const ExprPtr& left, cons
         return MakeFloorMod(left, right, span);
     if (opName == IR_KW_SCALAR_BOP_FDIV)
         return MakeFloatDiv(left, right, span);
+    if (opName == IR_KW_SCALAR_BOP_CEILDIV)
+        return MakeCeilDiv(left, right, span);
     if (opName == IR_KW_SCALAR_BOP_MIN)
         return MakeMin(left, right, span);
     if (opName == IR_KW_SCALAR_BOP_MAX)
@@ -414,6 +482,10 @@ inline ExprPtr MakeUnaryOp(const std::string& opName, const ExprPtr& operand, Da
         return MakeBitNot(operand, span);
     if (opName == IR_KW_SCALAR_UOP_CAST)
         return MakeCast(operand, castDtype, span);
+    if (opName == IR_KW_SCALAR_UOP_CEIL)
+        return MakeCeil(operand, span);
+    if (opName == IR_KW_SCALAR_UOP_FLOOR)
+        return MakeFloor(operand, span);
     return nullptr;
 }
 
