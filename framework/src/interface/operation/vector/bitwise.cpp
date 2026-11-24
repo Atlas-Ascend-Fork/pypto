@@ -62,12 +62,12 @@ Tensor BitwiseNot(const Tensor& self)
 {
     DECLARE_TRACER();
     CheckVectorOperand(self.GetStorage(), "BitwiseNot");
+    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISENOT);
+    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "BitwiseNot");
 
     if (self.GetDataType() == DT_BOOL) {
         return LogicalNot(self);
     }
-    const auto& combinations = ConfigManager::Instance().GetOpSupportedInputDtypes(Opcode::OP_BITWISENOT);
-    CheckTensorDataTypeCombination({self.GetDataType()}, combinations, "BitwiseNot");
     RETURN_CALL(UnaryOperation<UnaryOpType::BITWISENOT>, *Program::GetInstance().GetCurrentFunction(),
                 self.GetStorage());
 }

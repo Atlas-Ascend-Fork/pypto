@@ -228,6 +228,9 @@
         "BITWISENOT": {
             "input_tensors_dtype_combinations": [
                 [
+                    "bool"
+                ],
+                [
                     "int8"
                 ],
                 [
