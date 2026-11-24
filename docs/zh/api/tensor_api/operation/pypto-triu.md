@@ -74,7 +74,7 @@ pypto.set_vec_tile_shapes(4, 16)
 ### 接口调用示例
 
 ```python
-x = pypto.tensor([3, 3], pypto.data_type.DT_INT32)        # shape (3, 3)
+x = pypto.tensor([3, 3], pypto.DT_INT32)        # shape (3, 3)
 diagonal = 0
 out = pypto.triu(x, diagonal)
 ```

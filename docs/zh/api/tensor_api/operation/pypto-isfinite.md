@@ -69,7 +69,7 @@ pypto.set_vec_tile_shapes(4, 32)
 ### 接口调用示例
 
 ```python
-self = pypto.tensor([3, 3], pypto.data_type.DT_FP32)
+self = pypto.tensor([3, 3], pypto.DT_FP32)
 out = pypto.isfinite(self)
 ```
 
