@@ -741,6 +741,15 @@ Status GenerateMoveOp::ProcessL0CCopyUBConv(Operation& op) const
     if (topoRet != SUCCESS || transFormatOp == nullptr) {
         return topoRet;
     }
+    // 拓扑校验(ValidateTransFormatProducer)已保证 TRANS_FORMAT 操作数长度为 1 且元素非空,
+    // 此处只需校验 raw tensor 存在, 保护 CreateConvCopyAttrBase 对 GetDynRawShape 的解引用
+    if (transFormatOp->GetIOperands().front()->GetRawTensor() == nullptr) {
+        APASS_LOG_ERROR_F(Elements::Operation,
+                          "ProcessL0CCopyUBConv: op[%d] TRANS_FORMAT input tensor has no raw "
+                          "tensor.",
+                          op.GetOpMagic());
+        return FAILED;
+    }
     auto copyAttrUb = std::dynamic_pointer_cast<CopyOpAttribute>(op.GetOpAttribute());
     if (!copyAttrUb) {
         APASS_LOG_ERROR_F(Elements::Operation, "ProcessL0CCopyUBConv: op[%d] copy attribute is nullptr.",
@@ -1011,6 +1020,11 @@ static Status MergeAssembleToOffsetIntoCopyOut(Operation& op, Operation* consume
 Status GenerateMoveOp::ProcessL1CopyInConv(Operation& op) const
 {
     // 1. 获取 L1_COPY_IN_CONV 的 producer view-family op
+    if (op.GetIOperands().empty() || op.GetIOperands().front() == nullptr) {
+        APASS_LOG_ERROR_F(Elements::Operation, "L1_COPY_IN_CONV op[%d]: input operand is empty or null.",
+                          op.GetOpMagic());
+        return FAILED;
+    }
     auto inputTensor = op.GetIOperands()[0];
     const auto& producers = inputTensor->GetProducers();
     if (producers.empty()) {
@@ -1036,12 +1050,25 @@ Status GenerateMoveOp::ProcessL1CopyInConv(Operation& op) const
         APASS_LOG_ERROR_F(Elements::Operation, "L1_COPY_IN_CONV op[%d]: CopyOpAttribute is null.", op.GetOpMagic());
         return FAILED;
     }
+    if (producerOp->GetIOperands().empty() || producerOp->GetIOperands().front() == nullptr ||
+        producerOp->GetIOperands().front()->GetRawTensor() == nullptr) {
+        APASS_LOG_ERROR_F(Elements::Operation,
+                          "L1_COPY_IN_CONV op[%d]: view producer[%d] input tensor is empty or "
+                          "has no raw tensor.",
+                          op.GetOpMagic(), producerOp->GetOpMagic());
+        return FAILED;
+    }
     return MergeViewFromOffsetIntoCopyIn(op, producerOp, viewAttr, copyAttr);
 }
 
 Status GenerateMoveOp::ProcessL0CCopyOutConv(Operation& op) const
 {
     // 1. 获取 L0C_COPY_OUT_CONV 的 consumer assemble-family op
+    if (op.GetOOperands().empty() || op.GetOOperands().front() == nullptr) {
+        APASS_LOG_ERROR_F(Elements::Operation, "L0C_COPY_OUT_CONV op[%d]: output operand is empty or null.",
+                          op.GetOpMagic());
+        return FAILED;
+    }
     auto outputTensor = op.GetOOperands()[0];
     const auto& consumers = outputTensor->GetConsumers();
     if (consumers.empty()) {
@@ -1066,6 +1093,14 @@ Status GenerateMoveOp::ProcessL0CCopyOutConv(Operation& op) const
     auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(op.GetOpAttribute());
     if (copyAttr == nullptr) {
         APASS_LOG_ERROR_F(Elements::Operation, "L0C_COPY_OUT_CONV op[%d]: CopyOpAttribute is null.", op.GetOpMagic());
+        return FAILED;
+    }
+    if (consumerOp->GetOOperands().empty() || consumerOp->GetOOperands().front() == nullptr ||
+        consumerOp->GetOOperands().front()->GetRawTensor() == nullptr) {
+        APASS_LOG_ERROR_F(Elements::Operation,
+                          "L0C_COPY_OUT_CONV op[%d]: assemble consumer[%d] output tensor is "
+                          "empty or has no raw tensor.",
+                          op.GetOpMagic(), consumerOp->GetOpMagic());
         return FAILED;
     }
     return MergeAssembleToOffsetIntoCopyOut(op, consumerOp, assembleAttr, copyAttr);

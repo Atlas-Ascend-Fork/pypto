@@ -700,6 +700,10 @@ void RemoveUnalignedReshape::CollectSiblingCopyInConsumersOfDDRReshapeInput(Logi
                                                                             Operation& reshapeOp,
                                                                             std::vector<Operation*>& copyInOps)
 {
+    // 入口先判空与内存类型检查，再解引用，避免空指针在循环内判空前已崩溃
+    if (reshapeInput == nullptr || reshapeInput->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
+        return;
+    }
     auto consumers = reshapeInput->GetConsumers();
     for (auto* consumerOp : consumers) {
         if (consumerOp == nullptr || consumerOp->GetOpMagic() == reshapeOp.GetOpMagic() ||
@@ -708,8 +712,7 @@ void RemoveUnalignedReshape::CollectSiblingCopyInConsumersOfDDRReshapeInput(Logi
             continue;
         }
         auto copyInOutput = consumerOp->GetOOperands().front();
-        if (reshapeInput == nullptr || copyInOutput == nullptr ||
-            reshapeInput->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
+        if (copyInOutput == nullptr) {
             continue;
         }
         if (copyInOutput->GetMemoryTypeOriginal() == MemoryType::MEM_UB ||

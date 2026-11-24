@@ -599,6 +599,46 @@ TEST_F(CodegenPreprocTest, TestGenGmOoRCheckInfoNonDdrSkipped)
     EXPECT_EQ(copyinAttr->GetGmOutOfRangeCheck(), nullptr);
 }
 
+// DDR copy op 缺少 CopyOpAttribute 时，判空断言必须先于任何解引用立即触发（issue #3891）
+TEST_F(CodegenPreprocTest, TestGenGmOoRCheckInfoMissingAttrThrowsEarly)
+{
+    ComputationalGraphBuilder graph;
+    std::vector<int64_t> shape = {4, 8};
+
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP32, shape, MemoryType::MEM_DEVICE_DDR, "ddr_in"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP32, shape, MemoryType::MEM_UB, "ub_buf"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_COPY_IN, {"ddr_in"}, {"ub_buf"}, "copyin", true), true);
+
+    auto copyinOp = graph.GetOp("copyin");
+    ASSERT_NE(std::dynamic_pointer_cast<CopyOpAttribute>(copyinOp->GetOpAttribute()), nullptr);
+    // SetOpAttribute 对 copy 类算子有 FE_ASSERT 保护，这里直接置空以复现属性缺失场景
+    copyinOp->opAttribute_ = nullptr;
+
+    CodegenPreproc codegenPreprocPass;
+    EXPECT_THROW(codegenPreprocPass.GenGmOoRCheckInfoForOp(*copyinOp), npu::tile_fwk::Error);
+}
+
+// DDR copy op 输入操作数元素为空指针时告警跳过，不得在内存类型读取处崩溃
+TEST_F(CodegenPreprocTest, TestGenGmOoRCheckInfoNullOperandSkips)
+{
+    ComputationalGraphBuilder graph;
+    std::vector<int64_t> shape = {4, 8};
+
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP32, shape, MemoryType::MEM_DEVICE_DDR, "ddr_in"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP32, shape, MemoryType::MEM_UB, "ub_buf"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_COPY_IN, {"ddr_in"}, {"ub_buf"}, "copyin", true), true);
+
+    auto copyinOp = graph.GetOp("copyin");
+    auto copyinAttr = std::dynamic_pointer_cast<CopyOpAttribute>(copyinOp->GetOpAttribute());
+    ASSERT_NE(copyinAttr, nullptr);
+    // 模拟异常 IR: 输入操作数元素为空指针
+    copyinOp->iOperand[0] = nullptr;
+
+    CodegenPreproc codegenPreprocPass;
+    EXPECT_NO_THROW(codegenPreprocPass.GenGmOoRCheckInfoForOp(*copyinOp));
+    EXPECT_EQ(copyinAttr->GetGmOutOfRangeCheck(), nullptr);
+}
+
 TEST_F(CodegenPreprocTest, NormalizeDanglingActualRawMagicBeforeMachineEncode)
 {
     auto function = std::make_shared<Function>(Program::GetInstance(), "NormalizeActualRaw", "NormalizeActualRaw",

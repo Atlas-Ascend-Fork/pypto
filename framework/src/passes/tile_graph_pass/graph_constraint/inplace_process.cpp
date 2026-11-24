@@ -209,6 +209,14 @@ void InplaceProcess::ProcessHubAssembleChain(Function& function, Operation& hubO
                                              std::shared_ptr<LogicalTensor> hubInput,
                                              std::shared_ptr<LogicalTensor> hubOutput)
 {
+    // 先校验操作数再解引用，写法与 generate_move_op 的守卫保持一致
+    if (assembleOp.GetIOperands().empty() || assembleOp.GetIOperands().front() == nullptr ||
+        assembleOp.GetOOperands().empty() || assembleOp.GetOOperands().front() == nullptr) {
+        APASS_LOG_WARN_F(Elements::Operation,
+                         "Assemble op %d operands are empty or null, skip HUB memory reuse processing.",
+                         assembleOp.GetOpMagic());
+        return;
+    }
     auto assembleInput = assembleOp.GetIOperands()[0];
     auto assembleOutput = assembleOp.GetOOperands()[0];
     if (assembleInput.get() != hubOutput.get()) {
@@ -241,8 +249,15 @@ void InplaceProcess::ProcessHubAssembleChain(Function& function, Operation& hubO
                          hubInputMemType, hubOutputMemType, assembleOutputMemType);
         return;
     }
-    hubInput->tensor = assembleOutput->tensor;
     auto assembleOpAttribute = dynamic_cast<AssembleOpAttribute*>(assembleOp.GetOpAttribute().get());
+    // 与 replace_tensor.cpp 的 HUB 复用处理对齐：属性缺失时告警跳过，
+    // 且必须在改写 hubInput/hubOutput 的 tensor 之前完成校验
+    if (assembleOpAttribute == nullptr) {
+        APASS_LOG_WARN_F(Elements::Operation, "Assemble op %d attribute is nullptr, skip HUB memory reuse processing.",
+                         assembleOp.GetOpMagic());
+        return;
+    }
+    hubInput->tensor = assembleOutput->tensor;
     hubInput->UpdateOffset(assembleOpAttribute->GetToTensorOffset());
     hubOutput->tensor = assembleOutput->tensor;
     hubOutput->UpdateOffset(assembleOpAttribute->GetToTensorOffset());

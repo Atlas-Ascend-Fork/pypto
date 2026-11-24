@@ -2587,5 +2587,46 @@ TEST_F(ReplaceTensorTest, RunOnFunctionFailsForOversizedDdrReshape)
     }
 }
 
+// UnionFind::Find 查询未注册张量时返回自身，不得解引用尾后迭代器（issue #3943）
+TEST_F(ReplaceTensorTest, UnionFindFindUnregisteredTensorReturnsSelf)
+{
+    std::unordered_map<LogicalTensorPtr, int> emptyIndex;
+    UnionFind uf(emptyIndex);
+
+    std::vector<int64_t> shape{kNumEight, kNumEight};
+    std::vector<int64_t> offset{kNumZero, kNumZero};
+    auto rawTensor = std::make_shared<RawTensor>(DT_FP32, shape);
+    auto unregistered = npu::tile_fwk::IRBuilder().CreateTensorVar(rawTensor, offset, shape,
+                                                                   CreateTestConstIntVector(shape));
+
+    // 未注册的非空张量自成独立集合，以自身为代表元素
+    EXPECT_EQ(uf.Find(unregistered), unregistered);
+    // 空张量维持原有约定返回空
+    EXPECT_EQ(uf.Find(nullptr), nullptr);
+    // 无任何注册节点时分组为空
+    EXPECT_TRUE(uf.GetGroups().empty());
+}
+
+// Unite 传入未注册张量时按独立集合补注册并正常归并，不得抛出 std::out_of_range
+TEST_F(ReplaceTensorTest, UnionFindUniteUnregisteredTensorRegistersAsSingleton)
+{
+    std::unordered_map<LogicalTensorPtr, int> emptyIndex;
+    UnionFind uf(emptyIndex);
+
+    std::vector<int64_t> shape{kNumEight, kNumEight};
+    std::vector<int64_t> offset{kNumZero, kNumZero};
+    auto rawTensor = std::make_shared<RawTensor>(DT_FP32, shape);
+    auto first = npu::tile_fwk::IRBuilder().CreateTensorVar(rawTensor, offset, shape, CreateTestConstIntVector(shape));
+    auto second = npu::tile_fwk::IRBuilder().CreateTensorVar(rawTensor, offset, shape, CreateTestConstIntVector(shape));
+
+    uf.Unite(first, second);
+
+    // 未注册张量被补注册并归并为一组，Find 同根且不抛非约定异常
+    EXPECT_EQ(uf.Find(first), uf.Find(second));
+    auto groups = uf.GetGroups();
+    ASSERT_EQ(groups.size(), 1);
+    ASSERT_EQ(groups[0].size(), 2);
+}
+
 } // namespace tile_fwk
 } // namespace npu

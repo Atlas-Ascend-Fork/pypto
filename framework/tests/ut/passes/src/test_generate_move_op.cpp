@@ -1910,5 +1910,198 @@ TEST_F(GenerateMoveOpPassTest, UB2L1ViewPreservesDynamicValidShape)
     EXPECT_EQ(OpImmediate::ToSpecified(copyAttr->GetFromOffset())[1].Concrete(), 16);
     EXPECT_EQ(op.GetIntAttribute(OpAttributeKey::localCopyLocalMode), static_cast<int64_t>(Matrix::CopyMode::EXTRACT));
 }
+
+// ========== Conv 搬运融合空保护测试（issue #3898） ==========
+
+// SLICE producer 的输入缺少 raw tensor 时应返回 FAILED 而非链式解引用
+TEST_F(GenerateMoveOpPassTest, l1CopyInConvNullRawTensorFails)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "l1CopyInConvNullRaw", "l1CopyInConvNullRaw",
+                                           nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("l1CopyInConvNullRaw", func);
+
+    std::vector<int64_t> shape{16, 16};
+    auto input = CreateTestLogicalTensor(MEM_DEVICE_DDR, TileOpFormat::TILEOP_ND, shape);
+    auto mid = CreateTestLogicalTensor(MEM_L1, TileOpFormat::TILEOP_ND, shape);
+    auto output = CreateTestLogicalTensor(MEM_L1, TileOpFormat::TILEOP_ND, shape);
+
+    auto& viewOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_SLICE, {input}, {mid});
+    viewOp.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{1, 2}));
+
+    auto& copyOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_L1_COPY_IN_CONV, {mid}, {output});
+    std::vector<OpImmediate> shapeImm = {OpImmediate::Specified(IRBuilder().CreateConstInt(shape[0])),
+                                         OpImmediate::Specified(IRBuilder().CreateConstInt(shape[1]))};
+    std::vector<OpImmediate> fromOffset = {OpImmediate::Specified(IRBuilder().CreateConstInt(3)),
+                                           OpImmediate::Specified(IRBuilder().CreateConstInt(4))};
+    copyOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(fromOffset, MEM_L1, shapeImm, shapeImm));
+
+    input->tensor = nullptr;
+
+    GenerateMoveOp pass;
+    EXPECT_EQ(pass.ProcessL1CopyInConv(copyOp), FAILED);
+    EXPECT_FALSE(viewOp.IsDeleted());
+}
+
+// CONTRACT consumer 的输出缺少 raw tensor 时应返回 FAILED 而非链式解引用
+TEST_F(GenerateMoveOpPassTest, l0CCopyOutConvNullRawTensorFails)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "l0CCopyOutConvNullRaw", "l0CCopyOutConvNullRaw",
+                                           nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("l0CCopyOutConvNullRaw", func);
+
+    std::vector<int64_t> shape{16, 16};
+    auto input = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_ND, shape);
+    auto mid = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_ND, shape);
+    auto output = CreateTestLogicalTensor(MEM_DEVICE_DDR, TileOpFormat::TILEOP_ND, shape);
+
+    auto& copyOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_L0C_COPY_OUT_CONV, {input}, {mid});
+    std::vector<OpImmediate> shapeImm = {OpImmediate::Specified(IRBuilder().CreateConstInt(shape[0])),
+                                         OpImmediate::Specified(IRBuilder().CreateConstInt(shape[1]))};
+    std::vector<OpImmediate> toOffset = {OpImmediate::Specified(IRBuilder().CreateConstInt(1)),
+                                         OpImmediate::Specified(IRBuilder().CreateConstInt(2))};
+    copyOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(MEM_L0C, toOffset, shapeImm, shapeImm));
+
+    auto& assembleOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_CONTRACT, {mid}, {output});
+    assembleOp.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{3, 4}));
+
+    output->tensor = nullptr;
+
+    GenerateMoveOp pass;
+    EXPECT_EQ(pass.ProcessL0CCopyOutConv(copyOp), FAILED);
+    EXPECT_FALSE(assembleOp.IsDeleted());
+}
+
+// TRANS_FORMAT 输入缺少 raw tensor 时应返回 FAILED 而非链式解引用
+TEST_F(GenerateMoveOpPassTest, l0CCopyUBConvNullRawTensorFails)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "l0CCopyUBConvNullRaw", "l0CCopyUBConvNullRaw",
+                                           nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("l0CCopyUBConvNullRaw", func);
+
+    std::vector<int64_t> l0cShape{256, 16};
+    std::vector<int64_t> tileShape{1, 16, 16, 16};
+    std::vector<int64_t> wholeShape{2, 32, 16, 16};
+    auto convOutput = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_NZ, l0cShape);
+    auto transFormatOutput = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_ND, tileShape);
+    auto ubOutput = CreateTestLogicalTensor(MEM_UB, TileOpFormat::TILEOP_ND, wholeShape);
+
+    auto& transFormatOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_TRANS_FORMAT_L0C, {convOutput},
+                                                         {transFormatOutput});
+    transFormatOp.SetAttribute(OpAttributeKey::isConv, true);
+
+    auto& l0cCopyUbOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_L0C_COPY_UB, {transFormatOutput}, {ubOutput});
+    std::vector<OpImmediate> fromOffset = {OpImmediate::Specified(IRBuilder().CreateConstInt(0)),
+                                           OpImmediate::Specified(IRBuilder().CreateConstInt(0))};
+    std::vector<OpImmediate> wholeShapeImm;
+    for (int64_t dim : wholeShape) {
+        wholeShapeImm.push_back(OpImmediate::Specified(IRBuilder().CreateConstInt(dim)));
+    }
+    auto insertAttr = std::make_shared<CopyOpAttribute>(
+        fromOffset, MEM_UB, wholeShapeImm, OpImmediate::Specified(transFormatOutput->tensor->GetDynRawShape()),
+        wholeShapeImm);
+    // 与 SUCCESS 用例(l0CCopyUBConvInsertPathRecordsLandingTile)保持一致的 4 维落点偏移,
+    // 确保 FAILED 只能由 raw tensor 判空触发, 而非 toOffset 缺失导致的早退
+    insertAttr->SetToOffset(
+        {OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(16)),
+         OpImmediate::Specified(IRBuilder().CreateConstInt(0)), OpImmediate::Specified(IRBuilder().CreateConstInt(0))});
+    l0cCopyUbOp.SetOpAttribute(insertAttr);
+    l0cCopyUbOp.SetAttribute(OpAttributeKey::localCopyLocalMode, static_cast<int64_t>(Matrix::CopyMode::INSERT));
+
+    convOutput->tensor = nullptr;
+
+    GenerateMoveOp pass;
+    EXPECT_EQ(pass.ProcessL0CCopyUBConv(l0cCopyUbOp), FAILED);
+    EXPECT_FALSE(transFormatOp.IsDeleted());
+}
+
+// ========== Conv 搬运融合操作数队列保护测试 ==========
+
+// L1_COPY_IN_CONV 自身输入操作数为空时应返回 FAILED 而非对空 vector 取下标
+TEST_F(GenerateMoveOpPassTest, l1CopyInConvEmptyOwnOperandFails)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "l1CopyInConvEmptyOwn", "l1CopyInConvEmptyOwn",
+                                           nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("l1CopyInConvEmptyOwn", func);
+
+    auto output = CreateTestLogicalTensor(MEM_L1, TileOpFormat::TILEOP_ND, {16, 16});
+    auto& copyOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_L1_COPY_IN_CONV, LogicalTensors{}, {output});
+
+    GenerateMoveOp pass;
+    EXPECT_EQ(pass.ProcessL1CopyInConv(copyOp), FAILED);
+}
+
+// SLICE producer 的输入操作数队列被清空时应返回 FAILED 而非对空 vector 取首元素
+TEST_F(GenerateMoveOpPassTest, l1CopyInConvEmptyProducerOperandsFails)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "l1CopyInConvEmptyProd", "l1CopyInConvEmptyProd",
+                                           nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("l1CopyInConvEmptyProd", func);
+
+    std::vector<int64_t> shape{16, 16};
+    auto input = CreateTestLogicalTensor(MEM_DEVICE_DDR, TileOpFormat::TILEOP_ND, shape);
+    auto mid = CreateTestLogicalTensor(MEM_L1, TileOpFormat::TILEOP_ND, shape);
+    auto output = CreateTestLogicalTensor(MEM_L1, TileOpFormat::TILEOP_ND, shape);
+
+    auto& viewOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_SLICE, {input}, {mid});
+    viewOp.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{1, 2}));
+
+    auto& copyOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_L1_COPY_IN_CONV, {mid}, {output});
+    std::vector<OpImmediate> shapeImm = {OpImmediate::Specified(IRBuilder().CreateConstInt(shape[0])),
+                                         OpImmediate::Specified(IRBuilder().CreateConstInt(shape[1]))};
+    std::vector<OpImmediate> fromOffset = {OpImmediate::Specified(IRBuilder().CreateConstInt(3)),
+                                           OpImmediate::Specified(IRBuilder().CreateConstInt(4))};
+    copyOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(fromOffset, MEM_L1, shapeImm, shapeImm));
+
+    // 模拟异常 IR: 正常接线后 slice 生产者的输入操作数队列丢失
+    viewOp.iOperand.clear();
+
+    GenerateMoveOp pass;
+    EXPECT_EQ(pass.ProcessL1CopyInConv(copyOp), FAILED);
+    EXPECT_FALSE(viewOp.IsDeleted());
+}
+
+// L0C_COPY_OUT_CONV 自身输出操作数为空时应返回 FAILED 而非对空 vector 取下标
+TEST_F(GenerateMoveOpPassTest, l0CCopyOutConvEmptyOwnOperandFails)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "l0CCopyOutConvEmptyOwn", "l0CCopyOutConvEmptyOwn",
+                                           nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("l0CCopyOutConvEmptyOwn", func);
+
+    auto input = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_ND, {16, 16});
+    auto& copyOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_L0C_COPY_OUT_CONV, {input}, LogicalTensors{});
+
+    GenerateMoveOp pass;
+    EXPECT_EQ(pass.ProcessL0CCopyOutConv(copyOp), FAILED);
+}
+
+// CONTRACT consumer 的输出操作数队列被清空时应返回 FAILED 而非对空 vector 取首元素
+TEST_F(GenerateMoveOpPassTest, l0CCopyOutConvEmptyConsumerOperandsFails)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "l0CCopyOutConvEmptyCons", "l0CCopyOutConvEmptyCons",
+                                           nullptr);
+    Program::GetInstance().InsertFuncToFunctionMap("l0CCopyOutConvEmptyCons", func);
+
+    std::vector<int64_t> shape{16, 16};
+    auto input = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_ND, shape);
+    auto mid = CreateTestLogicalTensor(MEM_L0C, TileOpFormat::TILEOP_ND, shape);
+    auto output = CreateTestLogicalTensor(MEM_DEVICE_DDR, TileOpFormat::TILEOP_ND, shape);
+
+    auto& copyOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_L0C_COPY_OUT_CONV, {input}, {mid});
+    std::vector<OpImmediate> shapeImm = {OpImmediate::Specified(IRBuilder().CreateConstInt(shape[0])),
+                                         OpImmediate::Specified(IRBuilder().CreateConstInt(shape[1]))};
+    std::vector<OpImmediate> toOffset = {OpImmediate::Specified(IRBuilder().CreateConstInt(1)),
+                                         OpImmediate::Specified(IRBuilder().CreateConstInt(2))};
+    copyOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(MEM_L0C, toOffset, shapeImm, shapeImm));
+
+    auto& assembleOp = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_CONTRACT, {mid}, {output});
+    assembleOp.SetOpAttribute(std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{3, 4}));
+
+    // 模拟异常 IR: 正常接线后 assemble 消费者的输出操作数队列丢失
+    assembleOp.oOperand.clear();
+
+    GenerateMoveOp pass;
+    EXPECT_EQ(pass.ProcessL0CCopyOutConv(copyOp), FAILED);
+    EXPECT_FALSE(assembleOp.IsDeleted());
+}
 } // namespace tile_fwk
 } // namespace npu

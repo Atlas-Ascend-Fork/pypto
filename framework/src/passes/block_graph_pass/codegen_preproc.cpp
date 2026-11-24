@@ -456,8 +456,22 @@ GmOutOfRangeCheckInfo CodegenPreproc::ComputeGmOoRCheckInfo(const Operation& op,
 void CodegenPreproc::GenGmOoRCheckInfoForOp(Operation& op) const
 {
     auto attr = std::dynamic_pointer_cast<CopyOpAttribute>(op.GetOpAttribute());
+    // 先判空再解引用，避免属性缺失时在末尾断言前已触发空指针崩溃
+    ASSERT(OperErr::ATTRIBUTE_INVALID, attr != nullptr)
+        << "GmOutOfRangeCheck copy op=" << op.GetOpMagic() << " opcode=" << op.GetOpcodeStr()
+        << " is missing CopyOpAttribute.";
     bool isCopyOut = attr->IsCopyOut();
     bool isCopyIn = !isCopyOut;
+    if (isCopyIn && !op.iOperand.empty() && op.iOperand[0] == nullptr) {
+        APASS_LOG_WARN_F(Elements::Operation, "GMOutOfRangeCheck skip op=%d opcode=%s: input operand is nullptr.",
+                         op.GetOpMagic(), op.GetOpcodeStr().c_str());
+        return;
+    }
+    if (isCopyOut && !op.oOperand.empty() && op.oOperand[0] == nullptr) {
+        APASS_LOG_WARN_F(Elements::Operation, "GMOutOfRangeCheck skip op=%d opcode=%s: output operand is nullptr.",
+                         op.GetOpMagic(), op.GetOpcodeStr().c_str());
+        return;
+    }
     if (isCopyIn && !op.iOperand.empty() && op.iOperand[0]->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
         APASS_LOG_WARN_F(Elements::Operation, "GMOutOfRangeCheck skip op=%d opcode=%s: input is not DDR, memType=%s",
                          op.GetOpMagic(), op.GetOpcodeStr().c_str(),
@@ -482,7 +496,7 @@ void CodegenPreproc::GenGmOoRCheckInfoForOp(Operation& op) const
     auto gmInfo = ComputeGmOoRCheckInfo(op, dynOffset, *dynValidShapeOpt, rawShape, accessType);
     attr->SetGmOutOfRangeCheck(gmInfo);
 
-    ASSERT(OperErr::ATTRIBUTE_INVALID, attr != nullptr && attr->GetGmOutOfRangeCheck() != nullptr)
+    ASSERT(OperErr::ATTRIBUTE_INVALID, attr->GetGmOutOfRangeCheck() != nullptr)
         << "GmOutOfRangeCheckInfo is missing for DDR copy op op=" << op.GetOpMagic() << " opcode=" << op.GetOpcodeStr()
         << ". All CopyIn from DDR and CopyOut to DDR must have valid GmOutOfRangeCheckInfo.";
 }

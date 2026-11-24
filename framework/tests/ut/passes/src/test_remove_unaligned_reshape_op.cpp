@@ -2046,3 +2046,33 @@ TEST_F(TestRemoveUnalignedReshapeOp, reshaped_axis_combine_padded_ub)
     EXPECT_EQ(consumer->GetOpcode(), Opcode::OP_COPY_IN);
     EXPECT_EQ(consumer->GetOOperands().front(), output);
 }
+
+// CollectSiblingCopyInConsumersOfDDRReshapeInput 入口判空与非 DDR 检查前置（issue #3892）
+TEST_F(TestRemoveUnalignedReshapeOp, TestSiblingCopyInCollectorNullAndNonDdrInputSafe)
+{
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "SiblingCollectorNullInput",
+                                                      "SiblingCollectorNullInput", nullptr);
+    std::vector<int64_t> shape = {8, 8};
+    auto input = CreateTestTensor(MemoryType::MEM_DEVICE_DDR, shape);
+    auto output = CreateTestTensor(MemoryType::MEM_DEVICE_DDR, shape);
+    auto& reshapeOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_RESHAPE, {input}, {output});
+
+    // 非 DDR 输入配套一个 UB 输出的 COPY_IN 消费者，若入口内存类型检查失效会被误收集
+    auto ubInput = CreateTestTensor(MemoryType::MEM_UB, shape);
+    auto ubOutput = CreateTestTensor(MemoryType::MEM_UB, shape);
+    auto& siblingCopyInOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_COPY_IN, {ubInput}, {ubOutput});
+    siblingCopyInOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(
+        OpImmediate::Specified(std::vector<int64_t>{0, 0}), MemoryType::MEM_UB,
+        OpImmediate::Specified(ubInput->GetShape()), OpImmediate::Specified(ubInput->GetRawTensor()->GetRawShape())));
+
+    RemoveUnalignedReshape removeUnalignedReshapeOpTest;
+    std::vector<Operation*> copyInOps;
+
+    // 空指针输入：入口直接返回，不得解引用
+    removeUnalignedReshapeOpTest.CollectSiblingCopyInConsumersOfDDRReshapeInput(nullptr, reshapeOp, copyInOps);
+    EXPECT_TRUE(copyInOps.empty());
+
+    // 非 DDR 输入：入口内存类型检查前置，同样不收集
+    removeUnalignedReshapeOpTest.CollectSiblingCopyInConsumersOfDDRReshapeInput(ubInput, reshapeOp, copyInOps);
+    EXPECT_TRUE(copyInOps.empty());
+}

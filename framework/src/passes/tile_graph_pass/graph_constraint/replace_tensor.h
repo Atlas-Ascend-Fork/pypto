@@ -90,6 +90,16 @@ public:
         if (xRoot == yRoot) {
             return;
         }
+        // 与 Find 的未注册契约对齐: 未注册的根节点按秩 1 的独立集合补注册,
+        // 避免 rankMap.at 抛出非约定的 std::out_of_range
+        if (parentMap.find(xRoot) == parentMap.end()) {
+            parentMap.emplace(xRoot, xRoot);
+            rankMap.emplace(xRoot, 1);
+        }
+        if (parentMap.find(yRoot) == parentMap.end()) {
+            parentMap.emplace(yRoot, yRoot);
+            rankMap.emplace(yRoot, 1);
+        }
         if (rankMap.at(xRoot) < rankMap.at(yRoot)) {
             parentMap[xRoot] = yRoot;
         } else if (rankMap.at(xRoot) > rankMap.at(yRoot)) {
@@ -127,6 +137,10 @@ private:
             return nullptr;
         }
         auto it = parentMap.find(x);
+        if (it == parentMap.end()) {
+            // 未注册的张量自成一个独立集合，以自身为代表，避免解引用尾后迭代器
+            return x;
+        }
         if (it->second != x) {
             it->second = Find(it->second);
         }

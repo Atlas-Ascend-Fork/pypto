@@ -24,6 +24,7 @@
 #include "interface/configs/config_manager.h"
 #include "ut_json/ut_json_tool.h"
 #include "passes/tile_graph_pass/graph_constraint/inplace_process.h"
+#include "symbolic_scalar_test_utils.h"
 #include "computational_graph_builder.h"
 
 using namespace npu::tile_fwk;
@@ -1168,6 +1169,67 @@ TEST_F(InplaceProcessTest, TestAssembleOnL1)
     EXPECT_EQ(mat_a_partial_2->GetOffset(), attrAssemble_2->GetToOffset());
     EXPECT_EQ(mat_a_partial_3->GetRawMagic(), mat_a_L1->GetRawMagic());
     EXPECT_EQ(mat_a_partial_3->GetOffset(), attrAssemble_3->GetToOffset());
+}
+
+// HUB-ASSEMBLE-OUTCAST 链上 ASSEMBLE 缺少属性时告警跳过，且不改写 HUB 输入（issue #3893）
+TEST_F(InplaceProcessTest, HubAssembleChainNullAssembleAttrSkipsReuse)
+{
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "HubAssembleNullAttr",
+                                                      "HubAssembleNullAttr", nullptr);
+    EXPECT_TRUE(currFunctionPtr != nullptr);
+
+    std::vector<int64_t> shape = {8, 8};
+
+    auto hubInput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto hubOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto assembleOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto hubInputRaw = hubInput->GetRawTensor();
+    ASSERT_NE(hubInputRaw, nullptr);
+    hubInput->SetMemoryTypeOriginal(MEM_DEVICE_DDR, true);
+    hubOutput->SetMemoryTypeOriginal(MEM_DEVICE_DDR, true);
+    assembleOutput->SetMemoryTypeOriginal(MEM_DEVICE_DDR, true);
+
+    auto& hubOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_HUB, {hubInput}, {hubOutput});
+    // ASSEMBLE 不设置 AssembleOpAttribute
+    auto& assembleOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_ASSEMBLE, {hubOutput},
+                                                      {assembleOutput});
+    currFunctionPtr->outCasts_.push_back(assembleOutput);
+
+    InplaceProcess inplaceProcess;
+    inplaceProcess.ProcessHubAssembleChain(*currFunctionPtr, hubOp, assembleOp, hubInput, hubOutput);
+
+    // 属性缺失：告警跳过内存复用，hubInput 的 raw tensor 不得被改写
+    EXPECT_EQ(hubInput->GetRawTensor(), hubInputRaw);
+    EXPECT_TRUE(inplaceProcess.hubRelatedAssembleOpMagics.empty());
+}
+
+// ASSEMBLE 操作数队列为空/元素为空时入口告警跳过，不得下标越界或空指针解引用
+TEST_F(InplaceProcessTest, HubAssembleChainEmptyAssembleOperandsSkipsReuse)
+{
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "HubAssembleEmptyOperands",
+                                                      "HubAssembleEmptyOperands", nullptr);
+    EXPECT_TRUE(currFunctionPtr != nullptr);
+
+    std::vector<int64_t> shape = {8, 8};
+
+    auto hubInput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto hubOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto hubInputRaw = hubInput->GetRawTensor();
+    ASSERT_NE(hubInputRaw, nullptr);
+    hubInput->SetMemoryTypeOriginal(MEM_DEVICE_DDR, true);
+    hubOutput->SetMemoryTypeOriginal(MEM_DEVICE_DDR, true);
+
+    auto& hubOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_HUB, {hubInput}, {hubOutput});
+    // 模拟异常 IR: ASSEMBLE 操作数队列丢失
+    auto& emptyAssembleOp = IRBuilder().CreateTensorOpStmt(*currFunctionPtr, Opcode::OP_ASSEMBLE, LogicalTensors{},
+                                                           LogicalTensors{});
+
+    InplaceProcess inplaceProcess;
+    inplaceProcess.ProcessHubAssembleChain(*currFunctionPtr, hubOp, emptyAssembleOp, hubInput, hubOutput);
+
+    // 入口判空直接返回，hubInput 的 raw tensor 不得被改写
+    EXPECT_EQ(hubInput->GetRawTensor(), hubInputRaw);
+    EXPECT_TRUE(inplaceProcess.hubRelatedAssembleOpMagics.empty());
 }
 
 inline void InplaceAssembleAddOp(ComputationalGraphBuilder& G)
