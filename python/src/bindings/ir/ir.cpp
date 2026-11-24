@@ -809,6 +809,10 @@ Members:
         .value("INT", ir::SaturationFlagMode::INT)
         .value("CAST", ir::SaturationFlagMode::CAST);
 
+    py::enum_<ir::HF32RoundMode>(ir, "HF32RoundMode", "FP32-to-HF32 rounding mode for matrix multiplication")
+        .value("NEAREST_AWAY", ir::HF32RoundMode::NEAREST_AWAY)
+        .value("NEAREST_EVEN", ir::HF32RoundMode::NEAREST_EVEN);
+
     py::enum_<ir::BinType>(ir, "BinType", R"pbdoc(
 Histogram bin range for vf.histograms.
 

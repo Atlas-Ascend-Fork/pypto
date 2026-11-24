@@ -1,0 +1,5 @@
+if (mode == 0) {
+    set_ctrl(sbitset1(get_ctrl(), 47));
+} else {
+    set_ctrl(sbitset0(get_ctrl(), 47));
+}

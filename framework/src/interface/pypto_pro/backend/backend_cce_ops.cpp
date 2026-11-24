@@ -2494,5 +2494,50 @@ REGISTER_BACKEND_OP(BackendCCE, "system.set_mm_layout_transform")
         return "";
     });
 
+REGISTER_BACKEND_OP(BackendCCE, "system.enable_hf32")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([]([[maybe_unused]] const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
+        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
+            << "system.enable_hf32 is only supported on DAV_3510 (Ascend 950)";
+        codegen.Emit("set_ctrl(sbitset1(get_ctrl(), 46));");
+        return "";
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "system.disable_hf32")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([]([[maybe_unused]] const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
+        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
+            << "system.disable_hf32 is only supported on DAV_3510 (Ascend 950)";
+        codegen.Emit("set_ctrl(sbitset0(get_ctrl(), 46));");
+        return "";
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "system.set_hf32_round_mode")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
+        auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+        PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, codegen.GetArch() == npu::tile_fwk::NPUArch::DAV_3510)
+            << "system.set_hf32_round_mode is only supported on DAV_3510 (Ascend 950)";
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
+            << "system.set_hf32_round_mode requires one argument";
+        if (auto mode = ir::As<ir::ConstInt>(op->args_[0])) {
+            PRO_CODEGEN_CHECK(ExternalError::INVALID_VAL, mode->value_ == 0 || mode->value_ == 1)
+                << "system.set_hf32_round_mode: mode must be NEAREST_AWAY (0) or NEAREST_EVEN (1)";
+            // Enum values and CTRL[47] have opposite polarity.
+            codegen.Emit(mode->value_ == 0 ? "set_ctrl(sbitset1(get_ctrl(), 47));" :
+                                             "set_ctrl(sbitset0(get_ctrl(), 47));");
+        } else {
+            auto modeCode = cce::GetOperandAsCode(codegen, op->args_[0]);
+            codegen.Emit("if (" + modeCode + " == 0) {");
+            codegen.Emit("    set_ctrl(sbitset1(get_ctrl(), 47));");
+            codegen.Emit("} else {");
+            codegen.Emit("    set_ctrl(sbitset0(get_ctrl(), 47));");
+            codegen.Emit("}");
+        }
+        return "";
+    });
+
 } // namespace backend
 } // namespace pypto

@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from typing import Optional, Sequence, Union
 
-from pypto.ir import CacheLine, CrossCoreSyncMode, DcciDst, MemDsb, PipeType, SyncCoreType
+from pypto.ir import CacheLine, CrossCoreSyncMode, DcciDst, HF32RoundMode, MemDsb, PipeType, SyncCoreType
 
 from ._api import Tensor, Tile, _api_decl
 
@@ -282,4 +282,37 @@ class System:
 
         Args:
             enabled: True to enable N-direction drain, False to restore M-direction
+        """
+
+    @staticmethod
+    @_api_decl
+    def enable_hf32() -> None:
+        """Enable HF32 for FP32 matrix inputs on the Ascend 950 Cube core.
+
+        The mode persists until ``disable_hf32`` is called. The previous rounding
+        mode is retained; its initial value is ``HF32RoundMode.NEAREST_EVEN``.
+        """
+
+    @staticmethod
+    @_api_decl
+    def disable_hf32() -> None:
+        """Disable HF32 on the Ascend 950 Cube core without changing rounding.
+
+        Wait for preceding matrix instructions with ``bar_m`` before switching
+        modes. Subsequent FP32 matrix instructions use full FP32 inputs.
+        """
+
+    @staticmethod
+    @_api_decl
+    def set_hf32_round_mode(mode: Union[HF32RoundMode, int]) -> None:
+        """Select FP32-to-HF32 rounding on the Ascend 950 Cube core.
+
+        Args:
+            mode: ``HF32RoundMode.NEAREST_AWAY`` (0) or ``NEAREST_EVEN`` (1),
+                as an enum, integer constant or runtime integer scalar. Runtime
+                values must be 0 or 1.
+
+        Enable HF32 before configuring rounding. The selection persists across
+        disable/enable calls. Wait with ``bar_m`` before changing the mode while
+        preceding matrix instructions are still running.
         """

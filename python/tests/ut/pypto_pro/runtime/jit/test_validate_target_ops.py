@@ -100,6 +100,35 @@ def test_common_cube_barriers_with_only_cube_target(tmp_path):
     assert cube is not None and vector is None
 
 
+@pytest.mark.parametrize("which", [0, 1, 2], ids=["enable_hf32", "disable_hf32", "set_hf32_round_mode"])
+def test_hf32_configuration_rejected_on_vector(which, tmp_path):
+    @pl.jit(auto_mutex=False)
+    def kernel(n: pl.DT_INT32):
+        with pl.section_vector():
+            if which == 0:
+                pl.system.enable_hf32()
+            elif which == 1:
+                pl.system.disable_hf32()
+            else:
+                pl.system.set_hf32_round_mode(pl.HF32RoundMode.NEAREST_EVEN)
+
+    with pytest.raises(InvalidOperation, match=_placement_error("Vector", "Cube")):
+        _codegen(kernel, tmp_path)
+
+
+def test_hf32_configuration_allowed_on_cube():
+    @pl.jit(auto_mutex=False)
+    def kernel(mode: pl.DT_INT32):
+        with pl.section_cube():
+            pl.system.enable_hf32()
+            pl.system.set_hf32_round_mode(pl.HF32RoundMode.NEAREST_AWAY)
+            pl.system.set_hf32_round_mode(mode)
+            pl.system.disable_hf32()
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
+    ir.Pass.validate_target_ops(ir.SectionKind.Cube)(program)
+
+
 def test_common_init_output_with_only_vector_target(tmp_path):
     @pl.jit(auto_mutex=False)
     def kernel(out: pl.Tensor[[1, 64], pl.DT_FP32]):

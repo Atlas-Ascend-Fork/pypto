@@ -873,6 +873,13 @@ class TStoreL2Hint(enum.IntEnum):
     NotAllocClean = ...
 
 
+class HF32RoundMode(enum.IntEnum):
+    """FP32-to-HF32 rounding mode for matrix multiplication."""
+
+    NEAREST_AWAY = 0
+    NEAREST_EVEN = 1
+
+
 class AtomicRMWMode(enum.IntEnum):
     """Scalar read-modify-write kind for block.atomic_rmw."""
 

@@ -690,6 +690,64 @@ def test_layout_transform_extracts_boolean_instead_of_testing_ir_object_truthine
     assert runtime.Parser(f"pl.example(enabled={enabled})").run("example") is enabled
 
 
+@pytest.fixture
+def hf32_helpers(runtime):
+    mode_type = enum.IntEnum("HF32RoundMode", {"NEAREST_AWAY": 0, "NEAREST_EVEN": 1})
+    runtime.ir.create_op_call = lambda name, args, attrs, span: (name, args, attrs, span)
+    return runtime.load_functions(
+        "ir/op/system_ops.py",
+        ("enable_hf32", "disable_hf32", "set_hf32_round_mode",
+         "_build_system_enable_hf32", "_build_system_disable_hf32", "_build_system_set_hf32_round_mode"),
+        HF32RoundMode=mode_type,
+        _get_span_or_capture=lambda span: span or _Span.unknown(),
+    ), mode_type
+
+
+@pytest.mark.parametrize("operation", ["enable_hf32", "disable_hf32"])
+def test_hf32_switch_dispatch_keeps_call_and_span(runtime, hf32_helpers, operation):
+    helpers, _ = hf32_helpers
+    name = f"system.{operation}"
+    runtime.registry.op_impl(name)(getattr(helpers, f"_build_system_{operation}"))
+    op, args, attrs, span = runtime.Parser(f"pl.system.{operation}()").run(name)
+    assert (op, args, attrs) == (name, [], {})
+    assert span.begin_line == 1 and span.begin_column == 1
+
+
+@pytest.mark.parametrize("value", [0, 1])
+def test_hf32_rounding_normalizes_enum_and_literal(hf32_helpers, value):
+    helpers, mode_type = hf32_helpers
+    for mode in (value, mode_type(value), _ConstInt(value)):
+        name, args, attrs, _ = helpers.set_hf32_round_mode(mode)
+        assert name == "system.set_hf32_round_mode" and attrs == {}
+        assert len(args) == 1 and isinstance(args[0], _ConstInt)
+        assert args[0].value == value
+
+
+def test_hf32_rounding_preserves_runtime_operand(runtime, hf32_helpers):
+    helpers, _ = hf32_helpers
+    name = "system.set_hf32_round_mode"
+    runtime.registry.op_impl(name)(helpers._build_system_set_hf32_round_mode)
+    mode = _Expr(_ScalarType(_DType.INT32))
+    op, args, attrs, _ = runtime.Parser("pl.system.set_hf32_round_mode(mode)", {"mode": mode}).run(name)
+    assert (op, args, attrs) == (name, [mode], {})
+
+
+@pytest.mark.parametrize("mode", [-1, 2])
+def test_hf32_rounding_rejects_invalid_constant(runtime, hf32_helpers, mode):
+    helpers, _ = hf32_helpers
+    with pytest.raises(runtime.errors.InvalidVal, match="mode must be"):
+        helpers.set_hf32_round_mode(mode)
+
+
+@pytest.mark.parametrize("mode", [True, 0.5, _ConstBool(False), _Expr(_ScalarType(_DType.FP32)),
+                                  enum.Enum("OtherMode", {"VALUE": 0}).VALUE,
+                                  enum.IntEnum("OtherIntMode", {"VALUE": 0}).VALUE])
+def test_hf32_rounding_rejects_noninteger_operand(runtime, hf32_helpers, mode):
+    helpers, _ = hf32_helpers
+    with pytest.raises(runtime.errors.InvalidType, match="mode must be an integer scalar"):
+        helpers.set_hf32_round_mode(mode)
+
+
 @pytest.mark.parametrize("scale", [0, 1, 0.5])
 def test_literal_scale_keeps_float_bit_encoding_and_runtime_bits_stay_ir(runtime, scale):
     helpers = runtime.load_functions(

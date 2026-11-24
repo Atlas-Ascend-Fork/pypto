@@ -382,5 +382,41 @@ REGISTER_OP("system.set_mm_layout_transform")
     .set_attr<int>("enabled")
     .f_deduce_type(DeduceUnknownType);
 
+REGISTER_OP("system.enable_hf32")
+    .set_description("Enable HF32 input rounding for FP32 matrix multiplication")
+    .set_op_category("SyncOp")
+    .no_argument()
+    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.empty() && kwargs.empty())
+            << "system.enable_hf32 takes no arguments";
+        return GetNoneType();
+    });
+
+REGISTER_OP("system.disable_hf32")
+    .set_description("Disable HF32 input rounding without changing the rounding mode")
+    .set_op_category("SyncOp")
+    .no_argument()
+    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.empty() && kwargs.empty())
+            << "system.disable_hf32 takes no arguments";
+        return GetNoneType();
+    });
+
+REGISTER_OP("system.set_hf32_round_mode")
+    .set_description("Set FP32-to-HF32 rounding mode for matrix multiplication")
+    .set_op_category("SyncOp")
+    .add_argument("mode", "Integer scalar: NEAREST_AWAY (0) or NEAREST_EVEN (1)")
+    .f_deduce_type([](const std::vector<ExprPtr>& args, const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 1 && kwargs.empty())
+            << "system.set_hf32_round_mode requires one mode argument and no attributes";
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[0]))
+            << "system.set_hf32_round_mode: mode must be an integer scalar";
+        if (auto mode = As<ConstInt>(args[0])) {
+            PRO_IR_CHECK(ExternalError::INVALID_VAL, mode->value_ == 0 || mode->value_ == 1)
+                << "system.set_hf32_round_mode: mode must be NEAREST_AWAY (0) or NEAREST_EVEN (1)";
+        }
+        return GetNoneType();
+    });
+
 } // namespace ir
 } // namespace pypto

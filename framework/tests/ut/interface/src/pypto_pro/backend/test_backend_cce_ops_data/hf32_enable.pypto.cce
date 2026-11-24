@@ -1,0 +1,1 @@
+set_ctrl(sbitset1(get_ctrl(), 46));

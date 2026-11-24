@@ -24,6 +24,7 @@ from pypto.pypto_impl.ir import (
     CrossCoreSyncMode,
     DcciDst,
     Expr,
+    HF32RoundMode,
     MemDsb,
     PipeType,
     Span,
@@ -592,6 +593,28 @@ def set_mm_layout_transform(*, enabled: bool, span: Span | None = None) -> Call:
     return _ir_core.create_op_call("system.set_mm_layout_transform", [], kwargs, actual_span)
 
 
+def enable_hf32(*, span: Span | None = None) -> Call:
+    """Enable FP32-to-HF32 input rounding for subsequent Cube matrix operations."""
+    actual_span = _get_span_or_capture(span)
+    return _ir_core.create_op_call("system.enable_hf32", [], {}, actual_span)
+
+
+def disable_hf32(*, span: Span | None = None) -> Call:
+    """Disable HF32 without changing the retained rounding mode."""
+    actual_span = _get_span_or_capture(span)
+    return _ir_core.create_op_call("system.disable_hf32", [], {}, actual_span)
+
+
+def set_hf32_round_mode(mode: HF32RoundMode | int | Expr, *, span: Span | None = None) -> Call:
+    """Set HF32 rounding using an enum, integer constant or runtime integer operand."""
+    actual_span = _get_span_or_capture(span)
+    if isinstance(mode, HF32RoundMode):
+        mode = int(mode)
+    operand = _normalize_expr(mode, actual_span) if type(mode) is int else mode
+    require_int(operand, subject="mode", lower_bound=0, upper_bound=1)
+    return _ir_core.create_op_call("system.set_hf32_round_mode", [operand], {}, actual_span)
+
+
 # ---------------------------------------------------------------------------
 # Value-facing implementations
 # ---------------------------------------------------------------------------
@@ -651,6 +674,21 @@ def _build_system_set_next_task_start(self, *, force: Expr | None = None, span: 
 def _build_system_set_mm_layout_transform(self, *, enabled, span: Span):
     enabled = require_const_bool(enabled, subject="enabled")
     return set_mm_layout_transform(enabled=enabled, span=span)
+
+
+@op_impl("system.enable_hf32")
+def _build_system_enable_hf32(self, *, span: Span):
+    return enable_hf32(span=span)
+
+
+@op_impl("system.disable_hf32")
+def _build_system_disable_hf32(self, *, span: Span):
+    return disable_hf32(span=span)
+
+
+@op_impl("system.set_hf32_round_mode")
+def _build_system_set_hf32_round_mode(self, mode, *, span: Span):
+    return set_hf32_round_mode(mode, span=span)
 
 
 @op_impl("get_block_idx")

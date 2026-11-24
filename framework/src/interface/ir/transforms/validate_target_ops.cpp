@@ -178,6 +178,9 @@ std::optional<CoreMask> OpSpecificCores(const CallPtr& call)
         {"system.set_mask_count", CoreMask::Vector},
         {"system.set_mask_norm", CoreMask::Vector},
         {"system.set_mm_layout_transform", CoreMask::Cube},
+        {"system.enable_hf32", CoreMask::Cube},
+        {"system.disable_hf32", CoreMask::Cube},
+        {"system.set_hf32_round_mode", CoreMask::Cube},
         {"system.set_vec_mask", CoreMask::Vector},
     };
     const auto& name = call->name_;

@@ -30,6 +30,7 @@
 #include "ir/op_registry.h"
 #include "ir/scalar_expr.h"
 #include "ir/type.h"
+#include "ir/transforms/core_placement.h"
 #include "test_op_helpers.h"
 #include "tilefwk/error.h"
 
@@ -114,6 +115,64 @@ TEST(SyncOpsMutexTest, DynamicMutexRejectsMisalignedCandidateGroups)
 // ============================================================================
 // system.dcci
 // ============================================================================
+
+TEST(SyncOpsHF32Test, SwitchesReturnNoneAndRejectArguments)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto mode = MakeScalarVar("mode", DataType::INT64);
+    std::vector<std::pair<std::string, std::any>> kwargs = {{"mode", 0}};
+    for (const char* name : {"system.enable_hf32", "system.disable_hf32"}) {
+        auto call = reg.Create(name, {}, Sp());
+        EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
+        EXPECT_THROW((void)reg.Create(name, {mode}, Sp()), npu::tile_fwk::Error);
+        EXPECT_THROW((void)reg.Create(name, {}, kwargs, Sp()), npu::tile_fwk::Error);
+    }
+}
+
+TEST(SyncOpsHF32Test, RoundingAcceptsBothConstantsAndRuntimeInteger)
+{
+    auto& reg = OpRegistry::GetInstance();
+    for (int64_t value : {0, 1}) {
+        auto mode = std::make_shared<const ConstInt>(value, DataType::INT64, Sp());
+        auto call = reg.Create("system.set_hf32_round_mode", {mode}, Sp());
+        EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
+    }
+    auto mode = MakeScalarVar("mode", DataType::INT32);
+    auto call = reg.Create("system.set_hf32_round_mode", {mode}, Sp());
+    EXPECT_EQ(call->args_[0], mode);
+}
+
+TEST(SyncOpsHF32Test, RoundingRejectsInvalidCountsTypesAndEncodings)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto mode = MakeScalarVar("mode", DataType::INT64);
+    EXPECT_THROW((void)reg.Create("system.set_hf32_round_mode", {}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)reg.Create("system.set_hf32_round_mode", {mode, mode}, Sp()), npu::tile_fwk::Error);
+    std::vector<std::pair<std::string, std::any>> kwargs = {{"mode", 0}};
+    EXPECT_THROW((void)reg.Create("system.set_hf32_round_mode", {mode}, kwargs, Sp()), npu::tile_fwk::Error);
+    for (auto dtype : {DataType::FP32, DataType::BOOL}) {
+        auto invalid = MakeScalarVar("invalid", dtype);
+        EXPECT_THROW((void)reg.Create("system.set_hf32_round_mode", {invalid}, Sp()), npu::tile_fwk::Error);
+    }
+    for (int64_t value : {-1, 2}) {
+        auto invalid = std::make_shared<const ConstInt>(value, DataType::INT64, Sp());
+        EXPECT_THROW((void)reg.Create("system.set_hf32_round_mode", {invalid}, Sp()), npu::tile_fwk::Error);
+    }
+}
+
+TEST(SyncOpsHF32Test, ConfigurationIsCubeOnly)
+{
+    auto& reg = OpRegistry::GetInstance();
+    for (const char* name : {"system.enable_hf32", "system.disable_hf32", "system.set_hf32_round_mode"}) {
+        std::vector<ExprPtr> args;
+        if (std::string(name) == "system.set_hf32_round_mode") {
+            args.push_back(MakeScalarVar("mode", DataType::INT32));
+        }
+        auto call = reg.Create(name, args, Sp());
+        EXPECT_EQ(GetAllowedCores(call), CoreMask::Cube);
+        EXPECT_NO_THROW(ValidateCorePlacement(call, GetAllowedCores(call), CoreMask::Cube));
+    }
+}
 
 class SyncOpsDcciTest : public testing::Test {};
 

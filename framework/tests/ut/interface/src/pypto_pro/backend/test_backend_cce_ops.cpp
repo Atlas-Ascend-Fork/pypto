@@ -68,6 +68,7 @@ public:
         currentFunctionType_ = value ? ir::FunctionType::SIMD_VF : ir::FunctionType::OPAQUE;
     }
     void RegisterVarName(const ir::VarPtr& var, const std::string& name) { context_.RegisterVar(var, name); }
+    void SetArchForTest(npu::tile_fwk::NPUArch arch) { arch_ = arch; }
 };
 
 void ExpectScalarAccessCode(const std::string& generated, const std::string& name)
@@ -816,6 +817,80 @@ TEST(BackendCceOpsTest, SetMmLayoutTransformDisabled)
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
     EXPECT_NE(generated.find("set_ctrl(sbitset0(get_ctrl(), 51));"), std::string::npos);
+}
+
+// ============================================================================
+// HF32 configuration
+// ============================================================================
+
+TEST(BackendCceOpsTest, HF32SwitchesOnlyModifyEnableBit)
+{
+    for (const auto& [name, filename] : std::vector<std::pair<std::string, std::string>>{
+             {"system.enable_hf32", "hf32_enable.pypto.cce"}, {"system.disable_hf32", "hf32_disable.pypto.cce"}}) {
+        SCOPED_TRACE(name);
+        auto call = std::make_shared<const ir::Call>(name, std::vector<ir::ExprPtr>{}, Kwargs{}, ir::Span::Unknown());
+        TestableCCECodegen codegen(ir::SectionKind::Cube);
+        codegen.SetArchForTest(npu::tile_fwk::NPUArch::DAV_3510);
+        EXPECT_EQ(RunCodegen(name, call, codegen), ReadBackendCodegenGolden("test_backend_cce_ops_data/" + filename));
+        const auto* info = BackendCCE::Instance().GetOpInfo(name);
+        ASSERT_NE(info, nullptr);
+        ASSERT_TRUE(info->pipe.has_value());
+        EXPECT_EQ(*info->pipe, ir::PipeType::S);
+    }
+}
+
+TEST(BackendCceOpsTest, HF32RoundingMapsEnumToOppositeBitValue)
+{
+    for (int64_t value : {0, 1}) {
+        SCOPED_TRACE(value);
+        const std::string name = "system.set_hf32_round_mode";
+        auto call = std::make_shared<const ir::Call>(name, std::vector<ir::ExprPtr>{MakeConstInt(value)}, Kwargs{},
+                                                     ir::Span::Unknown());
+        TestableCCECodegen codegen(ir::SectionKind::Cube);
+        codegen.SetArchForTest(npu::tile_fwk::NPUArch::DAV_3510);
+        const std::string filename = value == 0 ? "hf32_nearest_away.pypto.cce" : "hf32_nearest_even.pypto.cce";
+        EXPECT_EQ(RunCodegen(name, call, codegen), ReadBackendCodegenGolden("test_backend_cce_ops_data/" + filename));
+    }
+}
+
+TEST(BackendCceOpsTest, HF32RuntimeRoundingEmitsBothBranches)
+{
+    const std::string name = "system.set_hf32_round_mode";
+    auto mode = MakeVar("mode", std::make_shared<const ir::ScalarType>(ir::DataType::INT32));
+    auto call = std::make_shared<const ir::Call>(name, std::vector<ir::ExprPtr>{mode}, Kwargs{}, ir::Span::Unknown());
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    codegen.SetArchForTest(npu::tile_fwk::NPUArch::DAV_3510);
+    codegen.RegisterVarName(mode, "mode");
+    EXPECT_EQ(RunCodegen(name, call, codegen),
+              ReadBackendCodegenGolden("test_backend_cce_ops_data/hf32_runtime.pypto.cce"));
+}
+
+TEST(BackendCceOpsTest, HF32RejectsUnsupportedArch)
+{
+    for (const char* name : {"system.enable_hf32", "system.disable_hf32", "system.set_hf32_round_mode"}) {
+        SCOPED_TRACE(name);
+        std::vector<ir::ExprPtr> args;
+        if (std::string(name) == "system.set_hf32_round_mode") {
+            args.push_back(MakeConstInt(0));
+        }
+        auto call = std::make_shared<const ir::Call>(name, args, Kwargs{}, ir::Span::Unknown());
+        TestableCCECodegen codegen(ir::SectionKind::Cube);
+        codegen.SetArchForTest(npu::tile_fwk::NPUArch::DAV_9201);
+        EXPECT_THROW((void)RunCodegen(name, call, codegen), npu::tile_fwk::Error);
+    }
+}
+
+TEST(BackendCceOpsTest, HF32RoundingRejectsInvalidOperands)
+{
+    const std::string name = "system.set_hf32_round_mode";
+    const std::vector<std::vector<ir::ExprPtr>> invalidArgs{
+        {}, {MakeConstInt(0), MakeConstInt(1)}, {MakeConstInt(-1)}, {MakeConstInt(2)}};
+    for (const auto& args : invalidArgs) {
+        auto call = std::make_shared<const ir::Call>(name, args, Kwargs{}, ir::Span::Unknown());
+        TestableCCECodegen codegen(ir::SectionKind::Cube);
+        codegen.SetArchForTest(npu::tile_fwk::NPUArch::DAV_3510);
+        EXPECT_THROW((void)RunCodegen(name, call, codegen), npu::tile_fwk::Error);
+    }
 }
 
 // ============================================================================
