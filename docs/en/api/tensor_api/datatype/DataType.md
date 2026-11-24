@@ -43,7 +43,8 @@ class DataType(enum.Enum):
  DT_BF16 = ...     # 16-bit brain floating-point number, occupying 2 bytes of memory
  DT_HF4 = ...      # 4-bit half-precision floating-point number, occupying 0.5 bytes of memory
  DT_HF8 = ...      # 8-bit half-precision floating-point number, occupying 1 byte of memory
- DT_FP4E2M1 = ...  # 4-bit floating-point number, 2-bit exponent and 1-bit mantissa, and two elements occupying 1 byte of memory
+ DT_FP4_E2M1 = ...  # 4-bit floating-point number, 2-bit exponent and 1-bit mantissa, and two elements occupying 1 byte of memory
+ DT_FP4_E1M2 = ...  # 4-bit floating-point number, 1-bit exponent and 2-bit mantissa, and two elements occupying 1 byte of memory
  DT_FP8E4M3 = ...  # 8-bit floating-point number, 4-bit exponent and 3-bit mantissa, and occupying 1 byte of memory
  DT_FP8E5M2 = ...  # 8-bit floating-point number, 5-bit exponent and 2-bit mantissa, and occupying 1 byte of memory
  DT_FP8E8M0 = ...  # 8-bit floating-point number, 8-bit exponent and 0-bit mantissa, and occupying 1 byte of memory
@@ -70,11 +71,11 @@ The supported data types vary depending on the product models.
 - Atlas A2 products: DT_FP8E4M3, DT_FP8E5M2, and DT_FP8E8M0 are not supported.
 <!-- end id5 -->
 <!-- npu="9030" id9 -->
-- Kirin 9030 processors: DT_INT4, DT_INT64, DT_FP8, DT_BF16, DT_HF4, DT_HF8, DT_FP4E2M1, DT_FP8E4M3, DT_FP8E5M2, DT_FP8E8M0, DT_FP4_E2M1X2, DT_FP4_E1M2X2, DT_UINT16, DT_UINT32, DT_UINT64, and DT_DOUBLE are not supported.
+- Kirin 9030 processors: DT_INT4, DT_INT64, DT_FP8, DT_BF16, DT_HF4, DT_HF8, DT_FP4_E2M1, DT_FP8E4M3, DT_FP8E5M2, DT_FP8E8M0, DT_FP4_E2M1X2, DT_FP4_E1M2X2, DT_UINT16, DT_UINT32, DT_UINT64, and DT_DOUBLE are not supported.
 <!-- end id9 -->
 <!-- npu="x90" id10 -->
-- Kirin X90 processors: DT_INT4, DT_INT64, DT_FP8, DT_BF16, DT_HF4, DT_HF8, DT_FP4E2M1, DT_FP8E4M3, DT_FP8E5M2, DT_FP8E8M0, DT_FP4_E2M1X2, DT_FP4_E1M2X2, DT_UINT16, DT_UINT32, DT_UINT64, and DT_DOUBLE are not supported.
+- Kirin X90 processors: DT_INT4, DT_INT64, DT_FP8, DT_BF16, DT_HF4, DT_HF8, DT_FP4_E2M1, DT_FP8E4M3, DT_FP8E5M2, DT_FP8E8M0, DT_FP4_E2M1X2, DT_FP4_E1M2X2, DT_UINT16, DT_UINT32, DT_UINT64, and DT_DOUBLE are not supported.
 <!-- end id10 -->
 <!-- npu="9050" id12 -->
-- Kirin 9050 processors: DT_INT4, DT_INT64, DT_FP8, DT_BF16, DT_HF4, DT_HF8, DT_FP4E2M1, DT_FP8E4M3, DT_FP8E5M2, DT_FP8E8M0, DT_FP4_E2M1X2, DT_FP4_E1M2X2, DT_UINT16, DT_UINT32, DT_UINT64, and DT_DOUBLE are not supported.
+- Kirin 9050 processors: DT_INT4, DT_INT64, DT_FP8, DT_BF16, DT_HF4, DT_HF8, DT_FP4_E2M1, DT_FP8E4M3, DT_FP8E5M2, DT_FP8E8M0, DT_FP4_E2M1X2, DT_FP4_E1M2X2, DT_UINT16, DT_UINT32, DT_UINT64, and DT_DOUBLE are not supported.
 <!-- end id12 -->
