@@ -467,7 +467,7 @@ _do_uninstall() {
     _unchattr_files
     chmod_start
     comm_log "INFO" "uninstall ${ARG_INSTALL_PATH} ${ARG_MODE}"
-    if bash "${PKG_SHARE_INFO_INSTALL_PATH}/script/run_pypto_uninstall.sh"; then
+    if bash "${PKG_SHARE_INFO_INSTALL_PATH}/script/run_pypto_uninstall.sh" "${ARG_INSTALL_PATH}" "${PKG_VERSION_DIR_NAME}"; then
         if [[ "$remove_info_files" = "y" ]]; then
             [[ -f "${PKG_INSTALL_INFO_FILE}" ]] && rm -f "${PKG_INSTALL_INFO_FILE}"
         fi
