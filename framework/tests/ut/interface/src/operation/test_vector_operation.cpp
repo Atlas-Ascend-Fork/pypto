@@ -2140,3 +2140,32 @@ TEST_F(VectorOperationTest, NanScalarModesAndConstants)
         }
     }
 }
+
+// issue #3481: 双 Tensor 位移在广播场景(输入维度不同)下用原始操作数推导结果有效形状, 越界访问 DynValidShape
+TEST_F(VectorOperationTest, test_BitwiseRightShift_BroadcastDimMismatch)
+{
+    TileShape::Current().SetVecTile(4, 4);
+    Tensor self(DT_INT16, {4}, "self");
+    Tensor other(DT_INT16, {2, 4}, "other");
+    Tensor result;
+    FUNCTION("TestBitwiseRightShiftBroadcast") { result = BitwiseRightShift(self, other); }
+    EXPECT_EQ(result.GetShape(), (Shape{2, 4}));
+    const auto& validShape = result.GetStorage()->GetDynValidShape();
+    ASSERT_EQ(validShape.size(), result.GetShape().size());
+    EXPECT_EQ(validShape[0].Concrete(), 2);
+    EXPECT_EQ(validShape[1].Concrete(), 4);
+}
+
+TEST_F(VectorOperationTest, test_BitwiseLeftShift_BroadcastDimMismatch)
+{
+    TileShape::Current().SetVecTile(4, 4);
+    Tensor self(DT_INT16, {4}, "self");
+    Tensor other(DT_INT16, {2, 4}, "other");
+    Tensor result;
+    FUNCTION("TestBitwiseLeftShiftBroadcast") { result = BitwiseLeftShift(self, other); }
+    EXPECT_EQ(result.GetShape(), (Shape{2, 4}));
+    const auto& validShape = result.GetStorage()->GetDynValidShape();
+    ASSERT_EQ(validShape.size(), result.GetShape().size());
+    EXPECT_EQ(validShape[0].Concrete(), 2);
+    EXPECT_EQ(validShape[1].Concrete(), 4);
+}

@@ -190,12 +190,14 @@ LogicalTensorPtr TensorBitwiseShiftOperation(Function& function, const Tensor& s
 
     std::vector<SymbolicScalar> resultValidShape;
     std::vector<int64_t> resultShape = BinaryOperationResultShape(operand1, operand2);
+    // 使用补齐后的 operand1/operand2 推导有效形状: 原始 self/other 的维度可能少于广播后的结果维度,
+    // 直接按下标 resultShape.size() 遍历会越界访问原始操作数的 DynValidShape。
     if ((!operand1->GetDynValidShape().empty()) && (!operand2->GetDynValidShape().empty())) {
         for (size_t i = 0; i < resultShape.size(); ++i) {
             if (resultShape[i] == operand1->shape[i]) {
-                resultValidShape.push_back(self.GetStorage()->GetDynValidShape()[i]);
+                resultValidShape.push_back(operand1->GetDynValidShape()[i]);
             } else {
-                resultValidShape.push_back(other.GetStorage()->GetDynValidShape()[i]);
+                resultValidShape.push_back(operand2->GetDynValidShape()[i]);
             }
         }
     }

@@ -932,6 +932,8 @@ Tensor Reduce(const std::vector<Tensor>& aggregation, const ReduceMode reduceMod
     if (reduceMode != ReduceMode::ATOMIC_ADD) {
         return Tensor();
     }
+    ASSERT(VectorErrorCode::ERR_PARAM_INVALID, !aggregation.empty())
+        << "the aggregation list of Reduce should not be empty";
     std::vector<LogicalTensorPtr> iOperand;
     std::vector<LogicalTensorPtr> oOperand;
     iOperand.reserve(aggregation.size());
