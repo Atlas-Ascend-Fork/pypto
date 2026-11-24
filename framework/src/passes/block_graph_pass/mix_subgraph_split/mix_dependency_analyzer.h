@@ -111,6 +111,18 @@ private:
     void PropagateOutcastDependencies(int targetComp, int sourceComp);
     // inplace视图算子上的outcast重归属：回溯到首个非inplace生产者，挂到其所在组件（多生产者分别记录）
     Status ReattributeInplaceOutcasts(Function* originalMixFunc, const std::vector<InternalComponentInfo>& components);
+    // 单组件outcast重归属：非inplace锚点与纯透传保留，其余按生产者组件转移到pending
+    Status ReattributeComponentOutcasts(Function* originalMixFunc, int compId,
+                                        const std::vector<InternalComponentInfo>& components,
+                                        const std::unordered_map<Operation*, int>& opToCompIdx,
+                                        const std::unordered_map<int, Operation*>& opMagicDict,
+                                        std::map<int, std::vector<SimpleTensorParam>>& pending);
+    // 依据生产者组件归属单条outcast：无生产者保留；本组件生产仅补挂其余组件；否则移除并全部转移
+    void TransferOutcastByProducers(const SimpleTensorParam& param, int compId, const std::set<int>& producerComps,
+                                    std::vector<SimpleTensorParam>& kept,
+                                    std::map<int, std::vector<SimpleTensorParam>>& pending);
+    // 将pending中的转移条目按组件下标有序写回allOutcasts（按tensor去重）
+    void WriteBackPendingOutcasts(const std::map<int, std::vector<SimpleTensorParam>>& pending);
     // 从anchor沿生产者方向DFS收集非inplace生产者所在组件下标；onPath检测环，memo处理菱形
     Status CollectProducerComponents(Operation* op, Function* mixFunc,
                                      const std::unordered_map<Operation*, int>& opToCompIdx, std::set<int>& comps,

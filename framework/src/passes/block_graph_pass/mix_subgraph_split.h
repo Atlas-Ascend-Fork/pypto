@@ -153,6 +153,15 @@ private:
     Status ProcessLeafFunction(Function& rootFunc, const MixSubgraphInfo& mixInfo,
                                const std::vector<uint64_t>& newProgramIDs,
                                std::vector<MixSubgraphSplitResult>& splitResults);
+    // 本地Mix函数拆分：依赖分析、生成新leaf、应用外部依赖并记录全局拆分结果
+    Status SplitLocalMixFunction(Function& rootFunc, const MixSubgraphInfo& mixInfo,
+                                 const std::vector<uint64_t>& newProgramIDs, std::vector<Function*>& newFunctions,
+                                 SubgraphToFunction& subgraphToFunction,
+                                 std::shared_ptr<AnalyzerOutput>& analyzerOutput);
+    // 非本地Mix函数：从全局拆分记录恢复新leaf函数与分析结果
+    Status LoadNonLocalSplitRecord(const MixSubgraphInfo& mixInfo, std::vector<Function*>& newFunctions,
+                                   std::shared_ptr<AnalyzerOutput>& analyzerOutput,
+                                   SubgraphToFunction& subgraphToFunction);
     // 记录拆分结果到全局
     void RecordSplitResult(Function* leafFunc, const std::vector<Function*>& newFunctions,
                            const std::vector<uint64_t>& newProgramIDs,

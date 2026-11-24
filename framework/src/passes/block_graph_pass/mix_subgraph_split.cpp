@@ -376,94 +376,108 @@ Status MixSubgraphSplit::GenNewFunctions(Function& rootFunc, Function* originalM
     return SUCCESS;
 }
 
+// 本地Mix函数的拆分流程：依赖分析、生成新leaf、应用外部依赖并记录全局拆分结果
+Status MixSubgraphSplit::SplitLocalMixFunction(Function& rootFunc, const MixSubgraphInfo& mixInfo,
+                                               const std::vector<uint64_t>& newProgramIDs,
+                                               std::vector<Function*>& newFunctions,
+                                               SubgraphToFunction& subgraphToFunction,
+                                               std::shared_ptr<AnalyzerOutput>& analyzerOutput)
+{
+    auto* originalMixFunc = mixInfo.function;
+    AnalyzerInput analyzerInput(mixInfo.components, originalMixFunc);
+    analyzerOutput = std::make_shared<AnalyzerOutput>(SubgraphToFunction{}, std::vector<InternalDependencyInfo>(),
+                                                      std::unordered_map<int, std::vector<SimpleTensorParam>>(),
+                                                      std::unordered_map<int, std::vector<SimpleTensorParam>>());
+    if (dependencyAnalyzer_.ProcessDependencyAnalyzer(analyzerInput, *analyzerOutput) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Function, "Dependency analyzer failed for function %s",
+                          originalMixFunc->GetRawName().c_str());
+        return FAILED;
+    }
+    uint64_t mixId = globalNextMixId_++;
+    APASS_LOG_DEBUG_F(Elements::Function, "Assigning mixId=%lu for original mix function programID=%lu", mixId,
+                      mixInfo.programID);
+    MixResourceType resourceType = GetMixResourceType(*originalMixFunc);
+    APASS_LOG_DEBUG_F(Elements::Function, "Mix resource type: %d for programID=%lu", static_cast<int>(resourceType),
+                      mixInfo.programID);
+    // 为每个scope创建leaf function
+    if (GenNewFunctions(rootFunc, originalMixFunc, mixInfo.components, newProgramIDs,
+                        analyzerOutput->subgraphToFunction, newFunctions, mixId, resourceType) != SUCCESS) {
+        return FAILED;
+    }
+    APASS_LOG_INFO_F(Elements::Function, "Applying final dependencies to leaf functions...");
+    ApplyFinalDependencies(newFunctions, analyzerOutput->allIncasts, analyzerOutput->allOutcasts);
+    // op迁移到新leaf后，重映射GetTensorData符号的(ioType, ioTypeIndex)到新leaf自己的incast下标
+    if (RemapGetTensorDataIO(originalMixFunc, newFunctions) != SUCCESS) {
+        return FAILED;
+    }
+    // 记录到全局（仅本地function）
+    RecordSplitResult(originalMixFunc, newFunctions, newProgramIDs, mixInfo.components, mixId, analyzerOutput);
+    subgraphToFunction = analyzerOutput->subgraphToFunction;
+    return SUCCESS;
+}
+
+// 非本地function：从全局拆分记录恢复新leaf函数与分析结果
+Status MixSubgraphSplit::LoadNonLocalSplitRecord(const MixSubgraphInfo& mixInfo, std::vector<Function*>& newFunctions,
+                                                 std::shared_ptr<AnalyzerOutput>& analyzerOutput,
+                                                 SubgraphToFunction& subgraphToFunction)
+{
+    auto it = globalSplitRecords_.find(mixInfo.hashValue);
+    if (it == globalSplitRecords_.end()) {
+        APASS_LOG_ERROR_F(Elements::Function, "No global split record found for non-local function %s",
+                          mixInfo.function->GetRawName().c_str());
+        return FAILED;
+    }
+    const auto& splitRecord = it->second;
+    newFunctions = splitRecord.splitFunctions;
+    analyzerOutput = splitRecord.analyzerOutput;
+    if (analyzerOutput != nullptr) {
+        subgraphToFunction = analyzerOutput->subgraphToFunction;
+    }
+    return SUCCESS;
+}
+
 // 每个mixLeafFunction的处理
 Status MixSubgraphSplit::ProcessLeafFunction(Function& rootFunc, const MixSubgraphInfo& mixInfo,
                                              const std::vector<uint64_t>& newProgramIDs,
                                              std::vector<MixSubgraphSplitResult>& splitResults)
 {
     auto* originalMixFunc = mixInfo.function;
-    const auto& components = mixInfo.components;
-    const auto& originalCallOps = mixInfo.originalCallOps;
-    bool isLocalFunction = mixInfo.isLocalFunction;
-    uint64_t programID = mixInfo.programID;
     APASS_LOG_INFO_F(Elements::Function, "Processing %s function %s (programID=%lu, components=%zu)",
-                     isLocalFunction ? "local" : "non-local", originalMixFunc->GetRawName().c_str(), programID,
-                     components.size());
+                     mixInfo.isLocalFunction ? "local" : "non-local", originalMixFunc->GetRawName().c_str(),
+                     mixInfo.programID, mixInfo.components.size());
     APASS_LOG_DEBUG_F(Elements::Function, "=== Component Details ===");
-    DisplayComponents(components);
-    // 1. 准备分析器输出和子leafFunction列表
+    DisplayComponents(mixInfo.components);
+    // 1. 本地function走拆分流程，非本地function复用全局拆分记录
     std::shared_ptr<AnalyzerOutput> analyzerOutput = nullptr;
     std::vector<Function*> newFunctions;
     SubgraphToFunction subgraphToFunction;
-    if (isLocalFunction) {
-        AnalyzerInput analyzerInput(components, originalMixFunc);
-        analyzerOutput = std::make_shared<AnalyzerOutput>(SubgraphToFunction{}, std::vector<InternalDependencyInfo>(),
-                                                          std::unordered_map<int, std::vector<SimpleTensorParam>>(),
-                                                          std::unordered_map<int, std::vector<SimpleTensorParam>>());
-        Status depStatus = dependencyAnalyzer_.ProcessDependencyAnalyzer(analyzerInput, *analyzerOutput);
-        if (depStatus != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "Dependency analyzer failed for function %s",
-                              originalMixFunc->GetRawName().c_str());
+    if (mixInfo.isLocalFunction) {
+        if (SplitLocalMixFunction(rootFunc, mixInfo, newProgramIDs, newFunctions, subgraphToFunction, analyzerOutput) !=
+            SUCCESS) {
             return FAILED;
         }
-        uint64_t mixId = globalNextMixId_++;
-        APASS_LOG_DEBUG_F(Elements::Function, "Assigning mixId=%lu for original mix function programID=%lu", mixId,
-                          programID);
-        MixResourceType resourceType = GetMixResourceType(*originalMixFunc);
-        APASS_LOG_DEBUG_F(Elements::Function, "Mix resource type: %d for programID=%lu", static_cast<int>(resourceType),
-                          programID);
-        // 为每个scope创建leaf function
-        if (GenNewFunctions(rootFunc, originalMixFunc, components, newProgramIDs, analyzerOutput->subgraphToFunction,
-                            newFunctions, mixId, resourceType) != SUCCESS) {
-            return FAILED;
-        }
-
-        // 应用最终的依赖到leaf functions（外部依赖）
-        APASS_LOG_INFO_F(Elements::Function, "Applying final dependencies to leaf functions...");
-        ApplyFinalDependencies(newFunctions, analyzerOutput->allIncasts, analyzerOutput->allOutcasts);
-        // op迁移到新leaf后，重映射GetTensorData符号的(ioType, ioTypeIndex)到新leaf自己的incast下标
-        if (RemapGetTensorDataIO(originalMixFunc, newFunctions) != SUCCESS) {
-            return FAILED;
-        }
-        // 记录到全局（仅本地function）
-        RecordSplitResult(originalMixFunc, newFunctions, newProgramIDs, components, mixId, analyzerOutput);
-        subgraphToFunction = analyzerOutput->subgraphToFunction;
-    } else {
-        // 非本地function：从全局记录获取
-        // 2.1 从全局记录获取
-        auto it = globalSplitRecords_.find(mixInfo.hashValue);
-        if (it == globalSplitRecords_.end()) {
-            APASS_LOG_ERROR_F(Elements::Function, "No global split record found for non-local function %s",
-                              originalMixFunc->GetRawName().c_str());
-            return FAILED;
-        }
-        const auto& splitRecord = it->second;
-        newFunctions = splitRecord.splitFunctions;
-        analyzerOutput = splitRecord.analyzerOutput;
-        if (analyzerOutput) {
-            subgraphToFunction = analyzerOutput->subgraphToFunction;
-        }
+    } else if (LoadNonLocalSplitRecord(mixInfo, newFunctions, analyzerOutput, subgraphToFunction) != SUCCESS) {
+        return FAILED;
     }
-    // 为每个原始CallOp创建一组新的callOp, 每个原始callOp使用不同的wrapId（包含dummyTensor依赖）
-    APASS_LOG_DEBUG_F(Elements::Operation, "Creating call operations for %zu components", components.size());
-    if (callOpBuilder_.CreateCallOps(rootFunc, originalCallOps, originalMixFunc, components, newProgramIDs,
-                                     subgraphToFunction, newFunctions) != SUCCESS) {
+    // 2. 为每个原始CallOp创建一组新的callOp, 每个原始callOp使用不同的wrapId（包含dummyTensor依赖）
+    APASS_LOG_DEBUG_F(Elements::Operation, "Creating call operations for %zu components", mixInfo.components.size());
+    if (callOpBuilder_.CreateCallOps(rootFunc, mixInfo.originalCallOps, originalMixFunc, mixInfo.components,
+                                     newProgramIDs, subgraphToFunction, newFunctions) != SUCCESS) {
         APASS_LOG_ERROR_F(Elements::Function, "Failed to create call ops for function %s",
                           originalMixFunc->GetRawName().c_str());
         return FAILED;
     }
-    // 4. 保存结果
+    // 3. 保存结果
     MixSubgraphSplitResult result;
-    result.originalProgramID = isLocalFunction ? programID : INVALID_PROGRAM_ID;
+    result.originalProgramID = mixInfo.isLocalFunction ? mixInfo.programID : INVALID_PROGRAM_ID;
     result.originalFunction = originalMixFunc;
     result.newProgramIDs = newProgramIDs;
     result.newFunctions = newFunctions;
-    result.components = components;
-    result.originalCallOps = originalCallOps;
+    result.components = mixInfo.components;
+    result.originalCallOps = mixInfo.originalCallOps;
     splitResults.push_back(result);
-
     APASS_LOG_INFO_F(Elements::Function, "Successfully processed %s function %s: %zu sub-functions",
-                     isLocalFunction ? "local" : "non-local", originalMixFunc->GetRawName().c_str(),
+                     mixInfo.isLocalFunction ? "local" : "non-local", originalMixFunc->GetRawName().c_str(),
                      newFunctions.size());
     return SUCCESS;
 }
@@ -747,6 +761,80 @@ bool TensorDvsCarriesAnyIndex(const std::shared_ptr<LogicalTensor>& tensor, cons
     }
     return false;
 }
+
+// 校验单个新leaf收集到的GetTensorData调用并构建重映射表；未锚定/OUTCAST跳过，解析失败返回FAILED
+Status BuildLeafIoDescDict(Function* originalMixFunc, Function* newFunc,
+                           const std::map<int, GetTensorDataCallInfo>& callInfos, GetTensorDataIODescDict& iodescDict)
+{
+    const auto& originalIncasts = originalMixFunc->GetIncast();
+    for (const auto& [tensorDataIndex, callInfo] : callInfos) {
+        // 锚定校验：address为COA参数地址调用⟺符号经Pass_30 depend链锚定到本函数IO空间，immediate占位符跳过
+        if (callInfo.address.IsImmediate()) {
+            APASS_LOG_WARN_F(Elements::Tensor,
+                             "GetTensorData index %d of function %s is not anchored to function IO space, skip remap",
+                             tensorDataIndex, originalMixFunc->GetRawName().c_str());
+            continue;
+        }
+        // Pass_30锚定构造上只写INCAST绑定，OUTCAST属未锚定残留，跳过
+        if (callInfo.ioType != GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST) {
+            APASS_LOG_WARN_F(Elements::Tensor,
+                             "GetTensorData index %d of function %s has unexpected ioType %d, skip remap",
+                             tensorDataIndex, originalMixFunc->GetRawName().c_str(), callInfo.ioType);
+            continue;
+        }
+        if (callInfo.ioTypeIndex < 0 || static_cast<size_t>(callInfo.ioTypeIndex) >= originalIncasts.size()) {
+            APASS_LOG_ERROR_F(Elements::Tensor, "GetTensorData index %d has invalid incast index %d of function %s",
+                              tensorDataIndex, callInfo.ioTypeIndex, originalMixFunc->GetRawName().c_str());
+            return FAILED;
+        }
+        auto tensor = originalIncasts[callInfo.ioTypeIndex];
+        if (tensor == nullptr) {
+            APASS_LOG_WARN_F(Elements::Tensor,
+                             "GetTensorData index %d of function %s resolves to null incast tensor, skip remap",
+                             tensorDataIndex, originalMixFunc->GetRawName().c_str());
+            continue;
+        }
+        int newIncastIndex = newFunc->GetIncastIndex(tensor);
+        if (newIncastIndex == INVALID_IOINDEX) {
+            // 已锚定符号的源张量不在新leaf，旧下标语义未知，编译期报错
+            APASS_LOG_ERROR_F(
+                Elements::Tensor, "GetTensorData incast tensor %d of function %s not found in new leaf %s",
+                tensor->GetRawMagic(), originalMixFunc->GetRawName().c_str(), newFunc->GetRawName().c_str());
+            return FAILED;
+        }
+        if (newIncastIndex != callInfo.ioTypeIndex) {
+            iodescDict[tensorDataIndex] = GetTensorDataIODesc(callInfo.ioType, newIncastIndex, callInfo.address);
+        }
+    }
+    return SUCCESS;
+}
+
+// 将重映射表应用到新leaf：RefreshIO改写常规载体，DynParamTable不在其改写范围须单独按下标重写
+void RefreshLeafTensorDataIO(Function* newFunc, const GetTensorDataIODescDict& iodescDict)
+{
+    newFunc->GetTensorDataRefreshIO(iodescDict);
+    for (const auto& [name, info] : newFunc->GetDynParamTable()) {
+        if (info.dim.IsValid()) {
+            newFunc->GetMutableDynParam(name).dim = GetTensorDataFillIO(iodescDict, info.dim);
+        }
+    }
+}
+
+// leaf间共享的tensor其dvs/dynOffset改写后对其它leaf可能不成立，打印告警
+void WarnSharedTensorDvsRemap(Function* newFunc, const std::vector<Function*>& newFunctions, size_t leafIdx,
+                              const GetTensorDataIODescDict& iodescDict)
+{
+    for (auto& tensor : newFunc->GetIncast()) {
+        if (tensor == nullptr || !TensorDvsCarriesAnyIndex(tensor, iodescDict) ||
+            !IsTensorHeldByOtherLeaf(tensor, newFunctions, leafIdx)) {
+            continue;
+        }
+        APASS_LOG_WARN_F(Elements::Tensor,
+                         "Tensor %d is shared by multiple split leaves, its dvs/dynOffset remapped for leaf %s "
+                         "may not hold for other leaves",
+                         tensor->GetRawMagic(), newFunc->GetRawName().c_str());
+    }
+}
 } // namespace
 
 // op迁入新leaf后，其GetTensorData符号的(ioType, ioTypeIndex)仍指向原Mix函数下标，verify解释器
@@ -757,9 +845,7 @@ Status MixSubgraphSplit::RemapGetTensorDataIO(Function* originalMixFunc,
     if (originalMixFunc == nullptr) {
         return SUCCESS;
     }
-    const auto& originalIncasts = originalMixFunc->GetIncast();
-    // 两阶段：先对全部新leaf完成收集再逐leaf改写——leaf间共享LogicalTensor且RefreshIO就地改写，
-    // 边收集边改写会使后处理的leaf把已改写下标误当原Mix函数下标解析
+    // 两阶段：先全部收集再逐leaf改写，leaf间共享LogicalTensor且RefreshIO就地改写，边收集边改写会解析错下标
     std::vector<std::map<int, GetTensorDataCallInfo>> leafCallInfos(newFunctions.size());
     for (size_t i = 0; i < newFunctions.size(); i++) {
         if (newFunctions[i] != nullptr) {
@@ -772,71 +858,16 @@ Status MixSubgraphSplit::RemapGetTensorDataIO(Function* originalMixFunc,
             continue;
         }
         GetTensorDataIODescDict iodescDict;
-        for (const auto& [tensorDataIndex, callInfo] : leafCallInfos[i]) {
-            // 锚定校验：address为COA参数地址调用⟺符号经Pass_30 depend链锚定到本函数IO空间；
-            // immediate占位符=未锚定，其下标不在原Mix函数下标空间，跳过不改写
-            if (callInfo.address.IsImmediate()) {
-                APASS_LOG_WARN_F(
-                    Elements::Tensor,
-                    "GetTensorData index %d of function %s is not anchored to function IO space, skip remap",
-                    tensorDataIndex, originalMixFunc->GetRawName().c_str());
-                continue;
-            }
-            // Pass_30锚定构造上只写INCAST绑定，OUTCAST属未锚定残留，跳过
-            if (callInfo.ioType != GET_TENSOR_DATA_OPERAND_IOTYPE_INCAST) {
-                APASS_LOG_WARN_F(Elements::Tensor,
-                                 "GetTensorData index %d of function %s has unexpected ioType %d, skip remap",
-                                 tensorDataIndex, originalMixFunc->GetRawName().c_str(), callInfo.ioType);
-                continue;
-            }
-            if (callInfo.ioTypeIndex < 0 || static_cast<size_t>(callInfo.ioTypeIndex) >= originalIncasts.size()) {
-                APASS_LOG_ERROR_F(Elements::Tensor, "GetTensorData index %d has invalid incast index %d of function %s",
-                                  tensorDataIndex, callInfo.ioTypeIndex, originalMixFunc->GetRawName().c_str());
-                return FAILED;
-            }
-            auto tensor = originalIncasts[callInfo.ioTypeIndex];
-            if (tensor == nullptr) {
-                APASS_LOG_WARN_F(Elements::Tensor,
-                                 "GetTensorData index %d of function %s resolves to null incast tensor, skip remap",
-                                 tensorDataIndex, originalMixFunc->GetRawName().c_str());
-                continue;
-            }
-            int newIncastIndex = newFunc->GetIncastIndex(tensor);
-            if (newIncastIndex == INVALID_IOINDEX) {
-                // 已锚定符号的源张量不在新leaf，旧下标语义未知，编译期报错
-                APASS_LOG_ERROR_F(
-                    Elements::Tensor, "GetTensorData incast tensor %d of function %s not found in new leaf %s",
-                    tensor->GetRawMagic(), originalMixFunc->GetRawName().c_str(), newFunc->GetRawName().c_str());
-                return FAILED;
-            }
-            if (newIncastIndex == callInfo.ioTypeIndex) {
-                continue;
-            }
-            iodescDict[tensorDataIndex] = GetTensorDataIODesc(callInfo.ioType, newIncastIndex, callInfo.address);
+        if (BuildLeafIoDescDict(originalMixFunc, newFunc, leafCallInfos[i], iodescDict) != SUCCESS) {
+            return FAILED;
         }
         if (iodescDict.empty()) {
             continue;
         }
-        newFunc->GetTensorDataRefreshIO(iodescDict);
-        // DynParamTable随拆分整表克隆进新leaf且经EvaluateDynParam求值，但RefreshIO的改写
-        // 范围不含此载体，须在此单独按下标重写
-        for (const auto& [name, info] : newFunc->GetDynParamTable()) {
-            if (info.dim.IsValid()) {
-                newFunc->GetMutableDynParam(name).dim = GetTensorDataFillIO(iodescDict, info.dim);
-            }
-        }
+        RefreshLeafTensorDataIO(newFunc, iodescDict);
         APASS_LOG_INFO_F(Elements::Tensor, "Remapped %zu GetTensorData symbol(s) to function %s", iodescDict.size(),
                          newFunc->GetRawName().c_str());
-        for (auto& tensor : newFunc->GetIncast()) {
-            if (tensor == nullptr || !TensorDvsCarriesAnyIndex(tensor, iodescDict) ||
-                !IsTensorHeldByOtherLeaf(tensor, newFunctions, i)) {
-                continue;
-            }
-            APASS_LOG_WARN_F(Elements::Tensor,
-                             "Tensor %d is shared by multiple split leaves, its dvs/dynOffset remapped for leaf %s "
-                             "may not hold for other leaves",
-                             tensor->GetRawMagic(), newFunc->GetRawName().c_str());
-        }
+        WarnSharedTensorDvsRemap(newFunc, newFunctions, i, iodescDict);
     }
     return SUCCESS;
 }
