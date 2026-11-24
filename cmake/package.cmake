@@ -67,3 +67,5 @@ if (NOT ENABLE_UNIFIED_BUILD)
             DESTINATION ${ARCH_LINUX_PATH}/lib64
             COMPONENT ${PyPTO_PkgName})
 endif ()
+
+install(SCRIPT "${CMAKE_CURRENT_SOURCE_DIR}/cmake/extract_pypto_aicpu.cmake" COMPONENT ${PyPTO_PkgName})

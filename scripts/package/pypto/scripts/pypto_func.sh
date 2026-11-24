@@ -482,6 +482,60 @@ _do_uninstall() {
     fi
 }
 
+_PYPTO_AICPU_TAR_SUBPATH="opp/built-in/op_impl/aicpu/kernel/pypto_aicpu.tar.gz"
+_PYPTO_AICPU_BACKUP_SRC=""
+_PYPTO_AICPU_BACKUP_BAK=""
+_PYPTO_AICPU_BACKUP_MOD=""
+
+_aicpu_pkg_has_tar() {
+    [ -f "${TMP_PKG_SCRIPTS_PATH}/filelist.csv" ] && grep -q "pypto_aicpu.tar.gz" "${TMP_PKG_SCRIPTS_PATH}/filelist.csv"
+}
+
+# 考虑在环境已经安装密签pypto_aicpu.tar.gz的基础上通过
+_backup_aicpu_tar() {
+    _PYPTO_AICPU_BACKUP_SRC=""
+    _PYPTO_AICPU_BACKUP_BAK=""
+    _PYPTO_AICPU_BACKUP_MOD=""
+    if _aicpu_pkg_has_tar; then
+        return 0
+    fi
+
+    local _src="${PKG_INSTALL_PATH}/${_PYPTO_AICPU_TAR_SUBPATH}"
+    local _bak="${_src}.pypto_bak"
+    local _dir
+    _dir="$(dirname "${_src}")"
+    [ -f "${_src}" ] || return 0
+    _PYPTO_AICPU_BACKUP_MOD="$(stat -c %a "${_dir}" 2> /dev/null || true)"
+    if [ -n "${_PYPTO_AICPU_BACKUP_MOD}" ]; then
+        chmod u+w "${_dir}" 2> /dev/null || true
+    fi
+    if mv "${_src}" "${_bak}"; then
+        _PYPTO_AICPU_BACKUP_SRC="${_src}"
+        _PYPTO_AICPU_BACKUP_BAK="${_bak}"
+        trap '_restore_aicpu_tar' EXIT
+    else
+        comm_log "WARNING" "backup pypto_aicpu.tar.gz failed: ${_src} -> ${_bak}, it may be removed by uninstall."
+    fi
+}
+
+_restore_aicpu_tar() {
+    [ -n "${_PYPTO_AICPU_BACKUP_BAK}" ] || return 0
+
+    trap - EXIT
+    local _dir
+    _dir="$(dirname "${_PYPTO_AICPU_BACKUP_SRC}")"
+    mkdir -p "${_dir}" || true
+    if ! mv "${_PYPTO_AICPU_BACKUP_BAK}" "${_PYPTO_AICPU_BACKUP_SRC}"; then
+        comm_log "WARNING" "restore pypto_aicpu.tar.gz to ${_PYPTO_AICPU_BACKUP_SRC} failed."
+    fi
+    if [ -n "${_PYPTO_AICPU_BACKUP_MOD}" ]; then
+        chmod "${_PYPTO_AICPU_BACKUP_MOD}" "${_dir}" 2> /dev/null || true
+    fi
+    _PYPTO_AICPU_BACKUP_SRC=""
+    _PYPTO_AICPU_BACKUP_BAK=""
+    _PYPTO_AICPU_BACKUP_MOD=""
+}
+
 ########################################################################################################################
 # 辅助工具
 ########################################################################################################################

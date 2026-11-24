@@ -11,8 +11,8 @@
 # PyPTO 独立卸载入口脚本
 #
 # 安装后放在 cann/share/info/pypto/script/uninstall.sh, 供用户在已安装目录下直接 bash uninstall.sh 卸载.
-# 本脚本从 ascend_install.info / version.info 获取安装信息, export 与 install.sh 同名的变量,
-# 然后调用 run_pypto_uninstall.sh (run_pypto_uninstall.sh 会优先从已安装包文件读取变量).
+# 本脚本按自身真实路径推导安装顶层目录和版本目录, 并显式传给 run_pypto_uninstall.sh,
+# 避免 version.info 里的 version_dir 是软链名时卸载到软链目标.
 
 ########################################################################################################################
 # 全局变量
@@ -150,6 +150,17 @@ else
     PKG_INSTALL_PATH="${ARG_INSTALL_PATH}"
 fi
 
+# 多版本场景下 version_dir 可能是软链名，优先使用当前脚本所在版本目录
+if [ "${PKG_IS_MULTI_VERSION}" = "true" ]; then
+    _installed_version_root="$(readlink -f "${PKG_SHARE_INFO_INSTALL_PATH}/../../.." 2> /dev/null)"
+    if [ -n "${_installed_version_root}" ] && [ -d "${_installed_version_root}" ]; then
+        PKG_INSTALL_PATH="${_installed_version_root}"
+        ARG_INSTALL_PATH="$(dirname "${_installed_version_root}")"
+        PKG_VERSION_DIR_NAME="$(basename "${_installed_version_root}")"
+    fi
+    unset _installed_version_root
+fi
+
 # 导出参数 (与 install.sh 同名, 让 run_pypto_uninstall.sh 的 fallback 机制生效)
 export ARG_QUIET
 export ARG_INSTALL_PATH
@@ -168,8 +179,13 @@ chmod_start
 
 start_log
 
+if is_dir_empty "${PKG_SHARE_INFO_INSTALL_PATH}"; then
+    comm_log "ERROR" "ERR_NO:0x0080;ERR_DES:PyPTO is not installed in ${PKG_SHARE_INFO_INSTALL_PATH}."
+    exit_log 1
+fi
+
 comm_log "INFO" "uninstall ${ARG_INSTALL_PATH} ${ARG_MODE}"
-if bash "${UNINSTALL_SHELL}"; then
+if bash "${UNINSTALL_SHELL}" "${ARG_INSTALL_PATH}" "${PKG_VERSION_DIR_NAME}"; then
     chmod_start
     rm -f "${ASCEND_INSTALL_INFO_FILE}" "${INSTALLED_VERSION_FILE}"
     if [ -f "${ASCEND_INSTALL_INFO_OLD_FILE}" ] && [ -w "${ASCEND_INSTALL_INFO_OLD_FILE}" ] && [ "${num}" != "0" ]; then
@@ -180,6 +196,7 @@ if bash "${UNINSTALL_SHELL}"; then
         rm -f "${_tmp_file}" "${_tmp_file}.2"
     fi
     _remove_dir_recursive "${ARG_INSTALL_PATH}" "${PKG_SHARE_INFO_INSTALL_PATH}"
+    _save_user_files_to_log "${PKG_SHARE_INFO_INSTALL_PATH}"
     comm_log "INFO" "PyPTO package uninstalled successfully! Uninstallation takes effect immediately."
 else
     comm_log "ERROR" "Uninstall failed"

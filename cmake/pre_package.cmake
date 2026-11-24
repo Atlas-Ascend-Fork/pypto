@@ -26,6 +26,11 @@ if(NOT ret EQUAL 0)
     message(FATAL_ERROR "build pypto wheel failed! error messages is ${error}")
 endif()
 
+include("${_PYPTO_DIR}/cmake/pypto_aicpu_tar.cmake")
+
+set(_pypto_whl_dir "${CPACK_CMAKE_BINARY_DIR}/_CPack_Packages/makeself_staging/${CMAKE_SYSTEM_PROCESSOR}-linux/lib64")
+pypto_extract_aicpu_tar("${PYPTO_STAGING_DIR}" "${_pypto_whl_dir}/pypto-*.whl")
+
 # 文件删除放在这里，支持重复调用whl打包
 file(REMOVE_RECURSE "${PYPTO_STAGING_DIR}/lib")
 file(REMOVE_RECURSE "${PYPTO_STAGING_DIR}/pypto")

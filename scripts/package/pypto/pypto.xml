@@ -65,5 +65,13 @@
         <path value="share/info" install_mod="750"/>
         <path value="share/info/pypto" install_mod="750"/>
         <path value="share/info/pypto/script" install_mod="550"/>
+        <path value="opp"/>
+        <path value="opp/built-in"/>
+        <path value="opp/built-in/op_impl"/>
+        <path value="opp/built-in/op_impl/aicpu"/>
+        <path value="opp/built-in/op_impl/aicpu/kernel"/>
     </dir_info>
+    <file_info copy_type="source" src_path="" dst_path="opp/built-in/op_impl/aicpu/kernel" install_path="opp/built-in/op_impl/aicpu/kernel" install_type="all">
+        <file value="pypto_aicpu.tar.gz" install_mod="440" entity="true" optional="true"/>
+    </file_info>
 </config>

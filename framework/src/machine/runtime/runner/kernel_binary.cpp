@@ -72,10 +72,7 @@ std::once_flag g_initOnce;
 namespace detail {
 bool IsPyptoAicpuKernelConfigured()
 {
-    std::string aicpuPath = GetEnvVar("ASCEND_AICPU_PATH");
-    if (aicpuPath.empty()) {
-        aicpuPath = GetEnvVar("ASCEND_HOME_PATH");
-    }
+    std::string aicpuPath = GetEnvVar("ASCEND_HOME_PATH");
     if (aicpuPath.empty()) {
         return false;
     }

@@ -107,23 +107,10 @@ whl_uninstall_package() {
 }
 
 pypto_uninstall_aicpu_kernel() {
-    local _aicpu_root=""
+    local _aicpu_root="${PKG_INSTALL_PATH}"
     local _kernel_dir=""
     local _dst_file=""
     local _dir=""
-
-    if [ -n "${INSTALLED_AICPU_PATH}" ]; then
-        _aicpu_root="${INSTALLED_AICPU_PATH}"
-        if [ -n "${ARG_DOCKER_ROOT}" ]; then
-            _aicpu_root=$(concat_docker_install_path "${ARG_DOCKER_ROOT}" "${INSTALLED_AICPU_PATH}")
-        fi
-    else
-        _aicpu_root="${PKG_INSTALL_PATH}"
-    fi
-    if [ -z "${_aicpu_root}" ]; then
-        comm_log "WARNING" "skip remove pypto_aicpu.tar.gz, install path is unknown."
-        return 0
-    fi
 
     _kernel_dir="${_aicpu_root}/opp/built-in/op_impl/aicpu/kernel"
     _dst_file="${_kernel_dir}/pypto_aicpu.tar.gz"

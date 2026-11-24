@@ -297,8 +297,10 @@ _process() {
             exit_log 0
             ;;
         upgrade)
+            _backup_aicpu_tar
             _unchattr_files
             _do_uninstall "n" "n"
+            _restore_aicpu_tar
             _save_user_files_to_log "${PKG_SHARE_INFO_INSTALL_PATH}"
             _do_install
             exit_log 0
@@ -307,8 +309,10 @@ _process() {
             if [ "${ARG_QUIET}" = "n" ]; then
                 _confirm_action "PyPTO package has been installed in ${PKG_SHARE_INFO_INSTALL_PATH}, version is ${installed_version}. Do you want to continue?"
             fi
+            _backup_aicpu_tar
             _unchattr_files
             _do_uninstall "n" "n"
+            _restore_aicpu_tar
             _do_install
             exit_log 0
             ;;
