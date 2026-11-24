@@ -300,7 +300,8 @@ def runtime(monkeypatch):
     ))
     helper_module = ast.Module(body=[
         ast.ImportFrom(module="__future__", names=[ast.alias(name="annotations")], level=0),
-        next(node for node in call_tree.body if isinstance(node, ast.FunctionDef) and node.name == "_is_const_arg"),
+        *(node for node in call_tree.body if isinstance(node, ast.FunctionDef)
+          and node.name == "_is_const_arg"),
         helper_class,
     ], type_ignores=[])
     namespace = {
@@ -900,7 +901,7 @@ def test_vf_template_calls_use_shared_validation_without_error_span_arguments(ru
         parser._instantiate_simt_function = lambda name, fn, args: callee
         parser._make_call_with_return_type = lambda op, args, returns, span: (op, args)
         _, args = parser._parse_simt_template_call("helper", helper, parser.call)
-        assert args[0].value == 1 and args[1] is value
+        assert args == [value]
         expected_kind = "SIMT function"
     else:
         parser._instantiate_simd_function = lambda name, fn, args, func_type: callee

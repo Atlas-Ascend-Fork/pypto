@@ -133,11 +133,11 @@ def test_custom_name_cannot_shadow_host_launcher():
 def test_kernel_name_conflicting_with_vf_is_reported(name):
     @pl.vector_function(mode="simt")
     def helper(value: pl.DT_INT32) -> pl.DT_INT32:
-        return value + 1
+        return value
 
     @pl.jit(arch="3510", mode="simt", max_threads=32, name=name)
-    def original_kernel(out: pl.Tensor[[32], pl.DT_INT32]):
-        out[0] = helper(1)
+    def original_kernel(out: pl.Tensor[[32], pl.DT_INT32], value: pl.DT_INT32):
+        out[0] = helper(value)
 
     definition = original_kernel.to_kernel_def()
     if name == "helper":

@@ -23,7 +23,7 @@ THREADS = 128
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
 def publish_with_threadfence_block(
-    out: pl.Tensor[[1, 1], pl.DT_INT32],
+    out,
     values,
     completed,
 ):

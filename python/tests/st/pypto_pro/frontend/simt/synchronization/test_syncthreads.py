@@ -22,7 +22,7 @@ THREADS = 128
 
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
-def exchange_after_syncthreads(out: pl.Tensor[[1, THREADS], pl.DT_UINT32], shared):
+def exchange_after_syncthreads(out, shared):
     tid = pl.simt.linear_thread_idx()
     shared[0, tid] = tid
     pl.simt.syncthreads()

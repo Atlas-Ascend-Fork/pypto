@@ -59,7 +59,7 @@ WARP_SIZE = 32
 
 
 @pl.vector_function(mode="simt", max_threads=WARP_SIZE)
-def warp_ballot_example(output: pl.Tensor[[2, WARP_SIZE], pl.DT_UINT32]):
+def warp_ballot_example(output):
     tid = pl.simt.linear_thread_idx()
     lane = pl.simt.lane_id()
     output[0, tid] = pl.simt.warp_ballot((lane % 2) == 0)

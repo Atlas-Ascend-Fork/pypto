@@ -86,8 +86,8 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def cast_floor_fp32_to_int32(
-    source: pl.Tensor[[1, 256], pl.DT_FP32],
-    output: pl.Tensor[[1, 256], pl.DT_INT32],
+    source,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.cast(

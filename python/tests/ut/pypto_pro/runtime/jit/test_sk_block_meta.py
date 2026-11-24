@@ -25,12 +25,7 @@ from pypto_pro.runtime.platform import NpuArch
 
 
 @pl.vector_function(mode="simt", max_threads=128)
-def _simt_copy(
-    x: pl.Tensor[[1, 1024], pl.DT_FP32],
-    y: pl.Tensor[[1, 1024], pl.DT_FP32],
-    grid_x: pl.DT_INT64,
-    core_id: pl.DT_INT64,
-):
+def _simt_copy(x, y, grid_x, core_id):
     tid = pl.simt.linear_thread_idx()
     for i in pl.range(core_id * 128 + tid, 1024, grid_x * 128):
         y[0, i] = x[0, i]

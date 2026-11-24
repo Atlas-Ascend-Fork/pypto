@@ -53,9 +53,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def binary_log(
-    source: pl.Tensor[[1, 256], pl.DT_FP32],
-    output: pl.Tensor[[1, 256], pl.DT_FP32],
-    epsilon: pl.DT_FP32,
+    source,
+    output,
+    epsilon,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.log2(pl.simt.max(source[0, tid], epsilon))

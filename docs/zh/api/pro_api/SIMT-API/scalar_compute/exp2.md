@@ -47,8 +47,8 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def binary_scale(
-    exponent: pl.Tensor[[1, 256], pl.DT_FP32],
-    output: pl.Tensor[[1, 256], pl.DT_FP32],
+    exponent,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.exp2(exponent[0, tid])

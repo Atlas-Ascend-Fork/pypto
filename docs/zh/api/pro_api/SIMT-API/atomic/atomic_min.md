@@ -54,8 +54,8 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def reduce_min(
-    latency: pl.Tensor[[1, 256], pl.DT_UINT32],
-    min_latency: pl.Tensor[[1, 1], pl.DT_UINT32],
+    latency,
+    min_latency,
 ):
     tid = pl.simt.linear_thread_idx()
     pl.simt.atomic_min(min_latency, [0, 0], latency[0, tid])

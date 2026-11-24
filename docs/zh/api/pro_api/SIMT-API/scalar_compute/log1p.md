@@ -57,8 +57,8 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=64)
 def log1p_fp32(
-    source: pl.Tensor[[1, 64], pl.DT_FP32],
-    output: pl.Tensor[[1, 64], pl.DT_FP32],
+    source,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.log1p(source[0, tid])

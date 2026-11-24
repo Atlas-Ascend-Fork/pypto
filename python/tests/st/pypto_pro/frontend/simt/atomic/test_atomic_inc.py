@@ -51,8 +51,8 @@ def test_atomic_inc_ub_uint32():
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
 def atomic_inc_gm_all_dtypes(
-    uint32_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT32],
-    uint64_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT64],
+    uint32_state,
+    uint64_state,
 ):
     pl.simt.atomic_inc(uint32_state, [0, 0], 255)
     pl.simt.atomic_inc(uint64_state, [0, 0], 255)
@@ -81,8 +81,8 @@ def test_atomic_inc_gm_all_supported_dtypes():
 
 @pl.vector_function(mode="simt", max_threads=1)
 def atomic_inc_return_value_gm(
-    state: pl.Tensor[[1, 1], pl.DT_UINT32],
-    old_values: pl.Tensor[[1, 1], pl.DT_UINT32],
+    state,
+    old_values,
 ):
     old_values[0, 0] = pl.simt.atomic_inc(state, [0, 0], 5)
 

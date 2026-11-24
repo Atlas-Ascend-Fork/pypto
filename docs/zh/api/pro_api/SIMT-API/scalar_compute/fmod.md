@@ -64,9 +64,9 @@ THREADS = 128
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
 def calculate_remainder(
-    lhs: pl.Tensor[[1, THREADS], pl.DT_FP32],
-    rhs: pl.Tensor[[1, THREADS], pl.DT_FP32],
-    output: pl.Tensor[[1, THREADS], pl.DT_FP32],
+    lhs,
+    rhs,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.fmod(lhs[0, tid], rhs[0, tid])

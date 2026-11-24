@@ -54,9 +54,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def vector_length(
-    x: pl.Tensor[[1, 256], pl.DT_FP32],
-    y: pl.Tensor[[1, 256], pl.DT_FP32],
-    output: pl.Tensor[[1, 256], pl.DT_FP32],
+    x,
+    y,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     squared = x[0, tid] * x[0, tid] + y[0, tid] * y[0, tid]

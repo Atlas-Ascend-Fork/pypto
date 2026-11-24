@@ -49,7 +49,7 @@ WARP_SIZE = 32
 
 
 @pl.vector_function(mode="simt", max_threads=WARP_SIZE)
-def lanemask_le_example(output: pl.Tensor[[1, WARP_SIZE], pl.DT_INT32]):
+def lanemask_le_example(output):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.lanemask_le()
 

@@ -73,8 +73,8 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=8)
 def copy_by_index(
-    source: pl.Tensor[[1, 24], pl.DT_FP32],
-    output: pl.Tensor[[1, 24], pl.DT_FP32],
+    source,
+    output,
 ):
     block_size = pl.simt.block_dim()
     block_pos = pl.simt.block_idx()

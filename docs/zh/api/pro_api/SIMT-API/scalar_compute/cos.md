@@ -47,9 +47,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def cosine_wave(
-    phase: pl.Tensor[[1, 256], pl.DT_FP32],
-    output: pl.Tensor[[1, 256], pl.DT_FP32],
-    offset: pl.DT_FP32,
+    phase,
+    output,
+    offset,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.cos(phase[0, tid] + offset)

@@ -53,7 +53,7 @@ WARP_SIZE = 32
 
 
 @pl.vector_function(mode="simt", max_threads=WARP_SIZE)
-def warp_active_mask_example(output: pl.Tensor[[2, WARP_SIZE], pl.DT_UINT32]):
+def warp_active_mask_example(output):
     tid = pl.simt.linear_thread_idx()
     lane = pl.simt.lane_id()
     if lane < pl.simt.warp_size() // 2:

@@ -60,9 +60,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def nearest_away_from_zero(
-    source: pl.Tensor[[1, 256], pl.DT_FP32],
-    output_fp32: pl.Tensor[[1, 256], pl.DT_FP32],
-    output_int64: pl.Tensor[[1, 256], pl.DT_INT64],
+    source,
+    output_fp32,
+    output_int64,
 ):
     tid = pl.simt.linear_thread_idx()
     output_fp32[0, tid] = pl.simt.round(source[0, tid])

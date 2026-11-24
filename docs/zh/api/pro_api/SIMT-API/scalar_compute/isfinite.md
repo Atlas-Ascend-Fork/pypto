@@ -48,8 +48,8 @@ THREADS = 128
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
 def classify(
-    source: pl.Tensor[[1, THREADS], pl.DT_FP32],
-    output: pl.Tensor[[1, THREADS], pl.DT_BOOL],
+    source,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.isfinite(source[0, tid])

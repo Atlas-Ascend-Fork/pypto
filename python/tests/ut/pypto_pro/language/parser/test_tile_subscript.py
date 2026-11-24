@@ -44,7 +44,7 @@ def test_tile_subscript_rejects_negative_constant_index():
 
 def test_tensor_subscript_rejects_constant_index_at_dimension_size():
     @pl.vector_function(mode="simt", max_threads=32)
-    def out_of_bounds(dst: pl.Tensor[[8, 64], pl.DT_FP32]):
+    def out_of_bounds(dst):
         dst[8, 0] = 0
 
     @pl.jit

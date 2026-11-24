@@ -49,9 +49,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def consume_quota(
-    remaining: pl.Tensor[[1, 1], pl.DT_UINT32],
-    requests: pl.Tensor[[1, 256], pl.DT_UINT32],
-    old_remaining: pl.Tensor[[1, 256], pl.DT_UINT32],
+    remaining,
+    requests,
+    old_remaining,
 ):
     tid = pl.simt.linear_thread_idx()
     old_remaining[0, tid] = pl.simt.atomic_sub(remaining, [0, 0], requests[0, tid])

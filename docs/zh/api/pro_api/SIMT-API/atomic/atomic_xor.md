@@ -49,8 +49,8 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def compute_hit_parity(
-    hit: pl.Tensor[[1, 256], pl.DT_UINT32],
-    parity: pl.Tensor[[1, 1], pl.DT_UINT32],
+    hit,
+    parity,
 ):
     tid = pl.simt.linear_thread_idx()
     if hit[0, tid] != 0:

@@ -54,8 +54,8 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=64)
 def ilogb_example(
-    value: pl.Tensor[[1, 64], pl.DT_FP32],
-    output: pl.Tensor[[1, 64], pl.DT_INT32],
+    value,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.ilogb(value[0, tid])

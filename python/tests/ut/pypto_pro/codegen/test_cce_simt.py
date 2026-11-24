@@ -99,8 +99,8 @@ def _assert_axis_records_before_accesses(function, access_count):
 def _tile_add(
     dst,
     src,
-    n: pl.DT_UINT32,
-    delta: pl.DT_FP32,
+    n,
+    delta,
 ):
     tid = pl.simt.linear_thread_idx()
     if tid < n:
@@ -109,10 +109,10 @@ def _tile_add(
 
 @pl.vector_function(mode="simt", max_threads=256)
 def _gm_add(
-    dst: pl.Tensor[[1, 256], pl.DT_FP32],
-    src: pl.Tensor[[1, 256], pl.DT_FP32],
-    n: pl.DT_UINT32,
-    delta: pl.DT_FP32,
+    dst,
+    src,
+    n,
+    delta,
 ):
     tid = pl.simt.linear_thread_idx()
     if tid < n:
@@ -120,20 +120,20 @@ def _gm_add(
 
 
 @pl.vector_function(mode="simt")
-def _callee_add(value: pl.DT_INT32, delta: pl.DT_INT32) -> pl.DT_INT32:
+def _callee_add(value, delta):
     return value + delta
 
 
 @pl.vector_function(mode="simt")
-def _callee_load(src: pl.Tensor[[1, 32], pl.DT_INT32], index: pl.DT_UINT32) -> pl.DT_INT32:
+def _callee_load(src, index):
     return src[0, index]
 
 
 @pl.vector_function(mode="simt")
 def _callee_store(
     dst,
-    index: pl.DT_UINT32,
-    value: pl.DT_INT32,
+    index,
+    value,
 ):
     dst[0, index] = value
 
@@ -141,9 +141,9 @@ def _callee_store(
 @pl.vector_function(mode="simt")
 def _callee_apply(
     dst,
-    src: pl.Tensor[[1, 32], pl.DT_INT32],
-    index: pl.DT_UINT32,
-    delta: pl.DT_INT32,
+    src,
+    index,
+    delta,
 ):
     value = _callee_add(_callee_load(src, index), delta)
     _callee_store(dst, index, value)
@@ -152,8 +152,8 @@ def _callee_apply(
 @pl.vector_function(mode="simt", max_threads=32)
 def _callee_entry(
     dst,
-    src: pl.Tensor[[1, 32], pl.DT_INT32],
-    delta: pl.DT_INT32,
+    src,
+    delta,
 ):
     tid = pl.simt.linear_thread_idx()
     _callee_apply(dst, src, tid, delta)
@@ -185,7 +185,7 @@ def _context_probe(dst):
 
 
 @pl.vector_function(mode="simt", max_threads=32)
-def _warp_codegen_probe(value: pl.DT_FP32, int_output, uint_output, float_output):
+def _warp_codegen_probe(value, int_output, uint_output, float_output):
     lane = pl.simt.lane_id()
     int_output[0, lane] = lane
     predicate = lane < 16
@@ -294,7 +294,7 @@ def _simt_valid_shape_codegen_kernel(valid_rows: pl.DT_UINT32, valid_cols: pl.DT
 def _atomic_add_ub(
     dst,
     old_values,
-    value: pl.DT_INT32,
+    value,
 ):
     tid = pl.simt.linear_thread_idx()
     old_values[0, tid] = pl.simt.atomic_add(dst, [0, 0], value)
@@ -302,23 +302,23 @@ def _atomic_add_ub(
 
 @pl.vector_function(mode="simt", max_threads=32)
 def _atomic_add_gm(
-    dst: pl.Tensor[[1, 32], pl.DT_INT64],
-    old_values: pl.Tensor[[1, 32], pl.DT_INT64],
-    value: pl.DT_INT64,
+    dst,
+    old_values,
+    value,
 ):
     tid = pl.simt.linear_thread_idx()
     old_values[0, tid] = pl.simt.atomic_add(dst, [0, 0], value)
 
 
 @pl.vector_function(mode="simt", max_threads=1)
-def _atomic_add_discard(dst, value: pl.DT_INT32):
+def _atomic_add_discard(dst, value):
     pl.simt.atomic_add(dst, [0, 0], value)
 
 
 @pl.vector_function(mode="simt", max_threads=1)
 def _atomic_half_discard(
     ub,
-    gm: pl.Tensor[[1, 3], pl.DT_BF16],
+    gm,
 ):
     pl.simt.atomic_add(ub, [0, 0], 1.0)
     pl.simt.atomic_max(ub, [0, 1], 2.0)
@@ -367,6 +367,41 @@ def _simt_function_source(cpp: str, name: str) -> str:
     start = cpp.index(f"inline void {name}(")
     end = cpp.index("\n}\n", start)
     return cpp[start:end]
+
+
+def test_simt_constant_specialization_matches_helper_and_launch_signatures():
+    @pl.vector_function(mode="simt")
+    def store(dst, value, index):
+        dst[index] = value
+
+    @pl.vector_function(mode="simt", max_threads=32)
+    def entry(dst, value, index):
+        store(dst, value, index)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(dst: pl.Tensor[[32], pl.DT_INT64], runtime: pl.DT_INT64):
+        with pl.section_vector():
+            entry[32](dst, 1, 0)
+            entry[32](dst, 2, 1)
+            entry[32](dst, runtime, 2)
+
+    cpp = _compile_to_cce(kernel)
+    for name, parameter_count in (
+        ("entry", 1),
+        ("entry_version_1", 1),
+        ("entry_version_2", 2),
+        ("store", 1),
+        ("store_version_1", 1),
+        ("store_version_2", 2),
+    ):
+        source = _simt_function_source(cpp, name)
+        signature = source.splitlines()[0]
+        parameters = signature.split(f"{name}(", 1)[1].rsplit(")", 1)[0]
+        assert len(parameters.split(",")) == parameter_count
+    for name in ("entry", "entry_version_1", "entry_version_2"):
+        assert f"cce::async_invoke<{name}>" in cpp
+    assert "+ 0) = 1;" in _simt_function_source(cpp, "store")
+    assert "+ 1) = 2;" in _simt_function_source(cpp, "store_version_1")
 
 
 def test_simt_tile_codegen_emits_direct_cce_function_launch_and_ub_accesses():
@@ -934,7 +969,7 @@ def test_integer_load_can_feed_warp_reduce(through_helper):
 
 
 @pl.vector_function(mode="simt", max_threads=256)
-def _simt_inplace_add(data, delta: pl.DT_FP32):
+def _simt_inplace_add(data, delta):
     tid = pl.simt.linear_thread_idx()
     data[0, tid] = data[0, tid] + delta
 
@@ -1025,8 +1060,8 @@ def _scalar_cast_intrinsics(
     integer_out,
     float_out,
     plain_out,
-    value: pl.DT_FP32,
-    integer: pl.DT_INT64,
+    value,
+    integer,
 ):
     half_out[0, 0] = pl.simt.cast(value, pl.DT_FP16, mode=pl.RoundMode.CAST_RINT)
     bfloat_out[0, 0] = pl.simt.cast(value, pl.DT_BF16, mode=pl.RoundMode.CAST_ROUND)
@@ -1073,7 +1108,7 @@ def test_scalar_cast_codegen_maps_round_modes_and_cce_builtins():
 def _fp32_math_intrinsics(
     out,
     flags,
-    value: pl.DT_FP32,
+    value,
 ):
     out[0, 0] = pl.simt.abs(value)
     out[0, 1] = pl.simt.min(value, value)
@@ -1251,7 +1286,7 @@ def test_int64_scalar_math_codegen_maps_abs_min_max_and_header():
 
 
 @pl.vector_function(mode="simt", max_threads=1)
-def _fp32_transcendental_intrinsics(out, value: pl.DT_FP32):
+def _fp32_transcendental_intrinsics(out, value):
     out[0, 0] = pl.simt.exp10(value)
     out[0, 1] = pl.simt.log10(value)
     out[0, 2] = pl.simt.tan(value)
@@ -1330,7 +1365,7 @@ def _nan_intrinsics_codegen_kernel(_jit_entry: pl.DT_INT64):
 
 
 @pl.vector_function(mode="simt", max_threads=1)
-def _pi_hyperbolic_math_intrinsics(out_fp32, value: pl.DT_FP32):
+def _pi_hyperbolic_math_intrinsics(out_fp32, value):
     out_fp32[0, 0] = pl.simt.tanpi(value)
     out_fp32[0, 1] = pl.simt.atanh(value)
     out_fp32[0, 2] = pl.simt.cospi(value)
@@ -1404,7 +1439,7 @@ def test_pi_hyperbolic_math_codegen_is_self_contained():
 
 
 @pl.vector_function(mode="simt", max_threads=1)
-def _bessel_rounding_and_saturate_intrinsics(out_fp32, out_i64, value: pl.DT_FP32, order: pl.DT_INT32):
+def _bessel_rounding_and_saturate_intrinsics(out_fp32, out_i64, value, order):
     out_fp32[0, 0] = pl.simt.jn(order, value)
     out_fp32[0, 1] = pl.simt.yn(order, value)
     out_fp32[0, 2] = pl.simt.cyl_bessel_i0(value)
@@ -1574,7 +1609,7 @@ def _bf16_fma_comparison_codegen_kernel(_jit_entry: pl.DT_INT64):
 
 
 @pl.vector_function(mode="simt", max_threads=1)
-def _fp32_binary_math_intrinsics(out, lhs: pl.DT_FP32, rhs: pl.DT_FP32):
+def _fp32_binary_math_intrinsics(out, lhs, rhs):
     out[0, 0] = pl.simt.hypot(lhs, rhs)
     out[0, 1] = pl.simt.rhypot(lhs, rhs)
     out[0, 2] = pl.simt.fdim(lhs, rhs)
@@ -1595,9 +1630,9 @@ def _fp32_binary_math_codegen_kernel(lhs: pl.DT_FP32, rhs: pl.DT_FP32):
 @pl.vector_function(mode="simt", max_threads=1)
 def _recognized_special_math_intrinsics(
     out_fp32,
-    value: pl.DT_FP32,
-    order: pl.DT_INT32,
-    long_exponent: pl.DT_INT64,
+    value,
+    order,
+    long_exponent,
 ):
     out_fp32[0, 0] = pl.simt.ldexp(value, order)
     out_fp32[0, 1] = pl.simt.scalbn(value, order)

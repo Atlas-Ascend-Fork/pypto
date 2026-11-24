@@ -54,9 +54,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=64)
 def copysign_example(
-    magnitude: pl.Tensor[[1, 64], pl.DT_FP32],
-    sign: pl.Tensor[[1, 64], pl.DT_FP32],
-    output: pl.Tensor[[1, 64], pl.DT_FP32],
+    magnitude,
+    sign,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.copysign(magnitude[0, tid], sign[0, tid])

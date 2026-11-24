@@ -56,7 +56,7 @@ WARP_SIZE = 32
 
 
 @pl.vector_function(mode="simt", max_threads=WARP_SIZE)
-def warp_any_example(output: pl.Tensor[[2, WARP_SIZE], pl.DT_INT32]):
+def warp_any_example(output):
     tid = pl.simt.linear_thread_idx()
     lane = pl.simt.lane_id()
     warp_size = pl.simt.warp_size()

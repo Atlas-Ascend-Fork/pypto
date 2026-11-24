@@ -47,9 +47,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def block_count(
-    lengths: pl.Tensor[[1, 256], pl.DT_FP32],
-    output: pl.Tensor[[1, 256], pl.DT_FP32],
-    block_size: pl.DT_FP32,
+    lengths,
+    output,
+    block_size,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.ceil(lengths[0, tid] / block_size)

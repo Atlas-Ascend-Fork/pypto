@@ -53,8 +53,8 @@ THREADS = 128
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
 def count_bits(
-    source: pl.Tensor[[1, THREADS], pl.DT_UINT64],
-    output: pl.Tensor[[1, THREADS], pl.DT_INT32],
+    source,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.popcount(source[0, tid])

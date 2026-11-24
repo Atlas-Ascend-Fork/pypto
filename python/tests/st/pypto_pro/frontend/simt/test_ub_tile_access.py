@@ -33,7 +33,7 @@ MIXED_TILE_HIGH_WATER = 24 * 1024
 def ub_tile_add(
     dst,
     src,
-    delta: pl.DT_FP32,
+    delta,
 ):
     tid = pl.simt.linear_thread_idx()
     rows = src.valid_shape[0]

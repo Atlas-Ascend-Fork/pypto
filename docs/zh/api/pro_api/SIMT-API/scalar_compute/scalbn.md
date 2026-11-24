@@ -52,9 +52,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=64)
 def scalbn_example(
-    value: pl.Tensor[[1, 64], pl.DT_FP32],
-    exponent: pl.Tensor[[1, 64], pl.DT_INT64],
-    output: pl.Tensor[[1, 64], pl.DT_FP32],
+    value,
+    exponent,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.scalbn(value[0, tid], exponent[0, tid])

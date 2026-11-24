@@ -49,9 +49,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def publish_fault(
-    fault_flags: pl.Tensor[[1, 256], pl.DT_UINT32],
-    status: pl.Tensor[[1, 1], pl.DT_UINT32],
-    old_status: pl.Tensor[[1, 256], pl.DT_UINT32],
+    fault_flags,
+    status,
+    old_status,
 ):
     tid = pl.simt.linear_thread_idx()
     if fault_flags[0, tid] != 0:

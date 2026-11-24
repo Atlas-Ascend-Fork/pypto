@@ -809,7 +809,7 @@ def test_each_gated_namespace_is_checked_against_its_own_declarations():
         pl.system.sync_src(set_pipe=pl.PipeType.MTE2, wait_pipe=pl.PipeType.V, evnt_id=0)
 
     @pl.vector_function(mode="simt", max_threads=1)
-    def simt_helper(value: pl.DT_FP32):
+    def simt_helper(value):
         _test_result = pl.simt.cast(value)
 
     @pl.jit(auto_mutex=False)

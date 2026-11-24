@@ -46,7 +46,7 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def write_block_dim_x(
-    output: pl.Tensor[[1, 256], pl.DT_UINT32],
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     dimensions = pl.simt.block_dim()

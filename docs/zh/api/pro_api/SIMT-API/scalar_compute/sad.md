@@ -61,10 +61,10 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=64)
 def sad_example(
-    lhs: pl.Tensor[[1, 64], pl.DT_INT32],
-    rhs: pl.Tensor[[1, 64], pl.DT_INT32],
-    addend: pl.Tensor[[1, 64], pl.DT_UINT32],
-    output: pl.Tensor[[1, 64], pl.DT_UINT32],
+    lhs,
+    rhs,
+    addend,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.sad(lhs[0, tid], rhs[0, tid], addend[0, tid])

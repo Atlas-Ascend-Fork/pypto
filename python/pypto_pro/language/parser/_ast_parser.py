@@ -21,6 +21,7 @@ from typing import Any
 
 from pypto.pypto_impl import ir
 from pypto_pro.ir import IRBuilder
+from pypto_pro.ir._utils import require_scalar_with_dtype
 
 from ..._errors import (
     CommonInner,
@@ -444,7 +445,7 @@ class ASTParser(
                 a SIMT or SIMD VF function at its call site.
 
             const_param_values: Compile-time constant call-site arguments keyed
-                by parameter name, supplied while instantiating a SIMD VF
+                by parameter name, supplied while instantiating a SIMT/SIMD VF
                 function. The parameter name resolves to the constant inside the
                 body (folding ``if`` conditions on it), and the parameter is
                 specialized out of the emitted signature.
@@ -536,6 +537,8 @@ class ASTParser(
             for parameter_index, arg in enumerate(args_to_process):
                 const_value = const_param_values.get(arg.arg) if const_param_values is not None else None
                 if const_value is not None:
+                    if arg.annotation is not None:
+                        self._validate_vf_constant_annotation(arg, parameter_index, const_value)
                     self.scope_manager.define_var(
                         arg.arg, const_value, allow_redef=True, span=self.span_tracker.get_span(arg)
                     )
@@ -863,6 +866,23 @@ class ASTParser(
         if any(not isinstance(dim, ir.ConstInt) for dim in param_type.shape):
             raise InvalidType(f"{subject} requires a static shape", span=param_span)
 
+    def _validate_vf_constant_annotation(self, arg: ast.arg, parameter_index: int, value: Any) -> None:
+        annotated_type = self.type_resolver.resolve_param_type(
+            arg.annotation, parameter_name=arg.arg, parameter_index=parameter_index
+        )
+        value_span = value.span if isinstance(value, ir.Expr) else self.span_tracker.get_span(arg)
+        if isinstance(annotated_type, ir.ScalarType):
+            dtype = annotated_type.dtype
+            with current_span(value_span):
+                require_scalar_with_dtype(value, dtype, subject=f"VF parameter '{arg.arg}'")
+            return
+        actual_type = value.type if isinstance(value, ir.Expr) else type(value).__name__
+        raise InvalidVal(
+            f"VF parameter '{arg.arg}' annotated as {annotated_type} but called with {actual_type}",
+            span=value_span,
+            hint="Use a scalar constant compatible with the annotation.",
+        )
+
     def _parse_function_param(
         self,
         arg: ast.arg,
@@ -902,14 +922,14 @@ class ASTParser(
             self.scope_manager.define_var(param_name, window_var, allow_redef=True)
             return
 
-        # 2) A call-site type is available for delayed SIMT function parsing.
+        # 2) A call-site type is available for delayed VF parsing.
         if callsite_type is not None:
             if arg.annotation is not None:
                 annotated_type = self.type_resolver.resolve_param_type(
                     arg.annotation, parameter_name=param_name, parameter_index=parameter_index
                 )
                 with current_span(param_span):
-                    _check_type_compatible(annotated_type, callsite_type, what="SIMT parameter", name=param_name)
+                    _check_type_compatible(annotated_type, callsite_type, what="VF parameter", name=param_name)
             param_type = self._attach_ptr_to_tensor_type(param_name, callsite_type, param_span)
             param_var = f.param(param_name, param_type, param_span)
             self.scope_manager.define_var(param_name, param_var, allow_redef=True)

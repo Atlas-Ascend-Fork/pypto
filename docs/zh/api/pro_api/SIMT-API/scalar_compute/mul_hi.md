@@ -68,9 +68,9 @@ THREADS = 128
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
 def multiply_high(
-    lhs: pl.Tensor[[1, THREADS], pl.DT_UINT32],
-    rhs: pl.Tensor[[1, THREADS], pl.DT_UINT32],
-    output: pl.Tensor[[1, THREADS], pl.DT_UINT32],
+    lhs,
+    rhs,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     lhs_value = pl.simt.cast(lhs[0, tid], pl.DT_UINT32)

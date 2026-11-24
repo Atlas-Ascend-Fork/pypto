@@ -83,11 +83,11 @@ def test_atomic_cas_ub_all_supported_dtypes():
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
 def atomic_cas_gm_all_dtypes(
-    int32_state: pl.Tensor[[1, ELEMENTS], pl.DT_INT32],
-    uint32_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT32],
-    fp32_state: pl.Tensor[[1, ELEMENTS], pl.DT_FP32],
-    int64_state: pl.Tensor[[1, ELEMENTS], pl.DT_INT64],
-    uint64_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT64],
+    int32_state,
+    uint32_state,
+    fp32_state,
+    int64_state,
+    uint64_state,
 ):
     pl.simt.atomic_cas(int32_state, [0, 0], 0, 7)
     pl.simt.atomic_cas(uint32_state, [0, 0], 0, 7)
@@ -122,8 +122,8 @@ def test_atomic_cas_gm_all_supported_dtypes():
 
 @pl.vector_function(mode="simt", max_threads=32)
 def atomic_cas_winner_gm(
-    state: pl.Tensor[[1, 1], pl.DT_INT32],
-    old_values: pl.Tensor[[1, 32], pl.DT_INT32],
+    state,
+    old_values,
 ):
     tid = pl.simt.linear_thread_idx()
     old_values[0, tid] = pl.simt.atomic_cas(state, [0, 0], 0, 1)

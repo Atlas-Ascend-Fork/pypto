@@ -59,9 +59,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=64)
 def atan2_example(
-    y: pl.Tensor[[1, 64], pl.DT_FP32],
-    x: pl.Tensor[[1, 64], pl.DT_FP32],
-    output: pl.Tensor[[1, 64], pl.DT_FP32],
+    y,
+    x,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.atan2(y[0, tid], x[0, tid])

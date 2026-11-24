@@ -63,8 +63,8 @@ WARP_SIZE = 32
 
 @pl.vector_function(mode="simt", max_threads=WARP_SIZE)
 def warp_shfl_up_example(
-    values: pl.Tensor[[1, WARP_SIZE], pl.DT_FP32],
-    output: pl.Tensor[[1, WARP_SIZE], pl.DT_FP32],
+    values,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     warp_width = pl.simt.warp_size()

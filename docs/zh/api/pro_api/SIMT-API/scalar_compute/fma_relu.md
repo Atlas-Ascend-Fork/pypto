@@ -60,10 +60,10 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=64)
 def fma_relu_example(
-    lhs: pl.Tensor[[1, 64], pl.DT_FP16],
-    rhs: pl.Tensor[[1, 64], pl.DT_FP16],
-    addend: pl.Tensor[[1, 64], pl.DT_FP16],
-    output: pl.Tensor[[1, 64], pl.DT_FP16],
+    lhs,
+    rhs,
+    addend,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.fma_relu(lhs[0, tid], rhs[0, tid], addend[0, tid])

@@ -54,9 +54,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def normalize_scale(
-    sum_of_squares: pl.Tensor[[1, 256], pl.DT_FP32],
-    output: pl.Tensor[[1, 256], pl.DT_FP32],
-    epsilon: pl.DT_FP32,
+    sum_of_squares,
+    output,
+    epsilon,
 ):
     tid = pl.simt.linear_thread_idx()
     safe_value = pl.simt.max(sum_of_squares[0, tid], epsilon)

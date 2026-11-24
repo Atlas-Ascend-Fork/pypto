@@ -22,15 +22,15 @@ THREADS = 256
 
 
 @pl.vector_function(mode="simt")
-def affine(value: pl.DT_FP32, scale: pl.DT_FP32, delta: pl.DT_FP32) -> pl.DT_FP32:
+def affine(value, scale, delta):
     return value * scale + delta
 
 
 @pl.vector_function(mode="simt")
 def store_value(
     dst,
-    index: pl.DT_UINT32,
-    value: pl.DT_FP32,
+    index,
+    value,
 ):
     dst[0, index] = value
 
@@ -39,9 +39,9 @@ def store_value(
 def transform_one(
     dst,
     src,
-    index: pl.DT_UINT32,
-    scale: pl.DT_FP32,
-    delta: pl.DT_FP32,
+    index,
+    scale,
+    delta,
 ):
     value = affine(src[0, index], scale, delta)
     store_value(dst, index, value)
@@ -51,15 +51,15 @@ def transform_one(
 def transform_tile(
     dst,
     src,
-    scale: pl.DT_FP32,
-    delta: pl.DT_FP32,
+    scale,
+    delta,
 ):
     tid = pl.simt.linear_thread_idx()
     transform_one(dst, src, tid, scale, delta)
 
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
-def mul_inplace(data, scale: pl.DT_FP32):
+def mul_inplace(data, scale):
     tid = pl.simt.linear_thread_idx()
     data[0, tid] = data[0, tid] * scale
 

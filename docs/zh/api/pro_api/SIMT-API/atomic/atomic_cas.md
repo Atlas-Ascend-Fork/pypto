@@ -51,8 +51,8 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=32)
 def atomic_cas_winner_gm(
-    state: pl.Tensor[[1, 1], pl.DT_INT32],
-    old_values: pl.Tensor[[1, 32], pl.DT_INT32],
+    state,
+    old_values,
 ):
     tid = pl.simt.linear_thread_idx()
     old_values[0, tid] = pl.simt.atomic_cas(state, [0, 0], 0, 1)

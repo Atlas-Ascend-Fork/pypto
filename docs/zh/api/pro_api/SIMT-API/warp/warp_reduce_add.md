@@ -51,8 +51,8 @@ WARP_SIZE = 32
 
 @pl.vector_function(mode="simt", max_threads=WARP_SIZE)
 def warp_reduce_add_example(
-    values: pl.Tensor[[1, WARP_SIZE], pl.DT_FP32],
-    output: pl.Tensor[[1, WARP_SIZE], pl.DT_FP32],
+    values,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.warp_reduce_add(values[0, tid])

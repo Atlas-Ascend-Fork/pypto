@@ -49,8 +49,8 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def allocate_ring_slot(
-    ticket: pl.Tensor[[1, 1], pl.DT_UINT32],
-    slots: pl.Tensor[[1, 256], pl.DT_UINT32],
+    ticket,
+    slots,
 ):
     tid = pl.simt.linear_thread_idx()
     slots[0, tid] = pl.simt.atomic_inc(ticket, [0, 0], 255)

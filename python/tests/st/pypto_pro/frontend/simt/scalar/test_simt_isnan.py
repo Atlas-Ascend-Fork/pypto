@@ -27,9 +27,9 @@ def isnan_all_dtypes(
     src_fp16,
     src_bf16,
     src_fp32,
-    out_fp16: pl.Tensor[[1, ELEMENTS], pl.DT_BOOL],
-    out_bf16: pl.Tensor[[1, ELEMENTS], pl.DT_BOOL],
-    out_fp32: pl.Tensor[[1, ELEMENTS], pl.DT_BOOL],
+    out_fp16,
+    out_bf16,
+    out_fp32,
 ):
     tid = pl.simt.linear_thread_idx()
     out_fp16[0, tid] = pl.simt.isnan(src_fp16[0, tid])

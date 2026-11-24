@@ -45,9 +45,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def exp_or_fallback(
-    source: pl.Tensor[[1, 256], pl.DT_FP32],
-    output: pl.Tensor[[1, 256], pl.DT_FP32],
-    fallback: pl.DT_FP32,
+    source,
+    output,
+    fallback,
 ):
     tid = pl.simt.linear_thread_idx()
     result = pl.simt.exp(source[0, tid])

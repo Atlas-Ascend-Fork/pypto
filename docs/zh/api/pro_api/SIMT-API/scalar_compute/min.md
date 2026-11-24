@@ -52,9 +52,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def clamp_upper(
-    source: pl.Tensor[[1, 256], pl.DT_FP32],
-    output: pl.Tensor[[1, 256], pl.DT_FP32],
-    upper: pl.DT_FP32,
+    source,
+    output,
+    upper,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.min(source[0, tid], upper)

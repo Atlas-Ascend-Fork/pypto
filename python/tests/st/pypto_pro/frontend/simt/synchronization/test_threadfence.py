@@ -23,9 +23,9 @@ GRID_BLOCKS = 4
 
 @pl.vector_function(mode="simt", max_threads=1)
 def publish_with_threadfence(
-    out: pl.Tensor[[1, 1], pl.DT_INT32],
-    values: pl.Tensor[[1, GRID_BLOCKS], pl.DT_INT32],
-    completed: pl.Tensor[[1, 1], pl.DT_INT32],
+    out,
+    values,
+    completed,
 ):
     block_id = pl.simt.block_idx().x
     values[0, block_id] = 1

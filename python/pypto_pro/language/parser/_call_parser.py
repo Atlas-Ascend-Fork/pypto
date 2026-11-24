@@ -346,50 +346,29 @@ _BUILTIN_TO_OP: dict[str, str] = {
 }
 
 
-def _dtypes_compatible(a: ir.DataType, b: ir.DataType) -> bool:
-    """Lenient dtype compatibility: same dtype, or both integer-like / both float-like.
-
-    Different numeric dtypes of the same family (e.g. INT32 and INT64, FP16 and FP32)
-    are interconvertible and treated as compatible.
-    """
-    return a == b or (a.is_int() and b.is_int()) or (a.is_float() and b.is_float())
-
-
 def _is_const_arg(arg: Any) -> bool:
-    """True for call-site arguments that SIMD VF instantiation folds into the body.
+    """True for call-site arguments that SIMD/SIMT VF instantiation folds into the body.
 
     Parsed runtime values are ``ir.Expr``; anything else in the bound argument
     list is a compile-time value (DataType or enum), which belongs in the cache
     key and the specialized body rather than the emitted signature.
     """
-    return not isinstance(arg, ir.Expr) or isinstance(arg, (ir.ConstBool, ir.ConstInt))
+    return not isinstance(arg, ir.Expr) or isinstance(arg, (ir.ConstBool, ir.ConstInt, ir.ConstFloat))
 
 
 def _types_compatible(annotated: ir.Type, actual: ir.Type) -> bool:
-    """Lenient type compatibility: same kind + compatible dtype.
+    """Check the type kind and require matching dtypes where applicable.
 
     Ignores shape/memref/layout details. ``UnknownType`` is compatible with anything.
-    Used to validate a function annotation against the type derived from the actual
-    argument/return-value expression.
     """
+
     if isinstance(annotated, ir.UnknownType) or isinstance(actual, ir.UnknownType):
         return True
-    if isinstance(annotated, ir.ScalarType) and isinstance(actual, ir.ScalarType):
-        return _dtypes_compatible(annotated.dtype, actual.dtype)
-    if isinstance(annotated, ir.PtrType) and isinstance(actual, ir.PtrType):
-        return _dtypes_compatible(annotated.dtype, actual.dtype)
-    if isinstance(annotated, ir.RegType) and isinstance(actual, ir.RegType):
-        if annotated.regtype != actual.regtype:
-            return False
-        # MaskReg is a fixed C++ type and its dtype is a non-semantic
-        # placeholder; other register kinds carry the element type that
-        # selects the generated intrinsic.
-        if annotated.regtype == ir.RegKind.PredReg:
-            return True
-        return annotated.dtype == actual.dtype
+    if isinstance(annotated, (ir.ScalarType, ir.PtrType, ir.RegType)):
+        return ir.structural_equal(annotated, actual)
     # TensorType / TileType both derive from ShapedType; compare dtype, ignore shape/memref.
     if isinstance(annotated, ir.ShapedType) and isinstance(actual, ir.ShapedType):
-        return type(annotated) is type(actual) and _dtypes_compatible(annotated.dtype, actual.dtype)
+        return type(annotated) is type(actual) and annotated.dtype == actual.dtype
     if isinstance(annotated, ir.TupleType) and isinstance(actual, ir.TupleType):
         if len(annotated.types) != len(actual.types):
             return False
@@ -398,12 +377,11 @@ def _types_compatible(annotated: ir.Type, actual: ir.Type) -> bool:
 
 
 def _check_type_compatible(annotated: ir.Type, actual: ir.Type, *, what: str, name: str) -> None:
-    """Raise InvalidType if ``annotated`` is not compatible with ``actual``."""
+    """Raise InvalidVal if ``annotated`` is not compatible with ``actual``."""
     if not _types_compatible(annotated, actual):
         raise InvalidVal(
             f"{what} '{name}' annotated as {annotated} but called/returned with {actual}",
             hint="Make the annotation match the actual argument/return type, or remove it.",
-            parser_retry=True,
         )
 
 
@@ -928,7 +906,7 @@ class CallParserMixin:
         fn: Callable,
         args: list[Any],
     ) -> ir.Function:
-        """Parse a marked SIMT callable once its actual argument types are known."""
+        """Instantiate a SIMT callable for its argument types and scalar constants."""
         from .decorator import get_simt_max_threads
 
         if any(not isinstance(arg, ir.Expr) for arg in args):
@@ -945,7 +923,8 @@ class CallParserMixin:
             check_in_range(max_threads, 1, _MAX_SIMT_THREADS, subject="max_threads", error=ValueError)
 
         func_type = ir.FunctionType.SimtVF if launchable else ir.FunctionType.SimtCallee
-        cache_key = self._vf_specialization_key(fn, func_type, (), [arg.type for arg in args])
+        const_spec = tuple(arg.value if _is_const_arg(arg) else None for arg in args)
+        cache_key = self._vf_specialization_key(fn, func_type, const_spec, [arg.type for arg in args])
         cached = self.vf_func_cache.get(cache_key)
         if cached is not None:
             self._register_vf_external(cached)
@@ -1024,11 +1003,9 @@ class CallParserMixin:
                 parser_retry=True,
             )
 
-        const_param_values = None
-        if _is_simd_func_type(func_type):
-            const_param_values = {
-                param.arg: arg for param, arg in zip(params, args) if _is_const_arg(arg)
-            } or None
+        const_param_values = {
+            param.arg: arg for param, arg in zip(params, args) if _is_const_arg(arg)
+        } or None
         # A parse recording accesses for the automatic pipeline collects the ops of the whole
         # kernel in one place, and a vector function is called as one op: the ops of its body
         # belong to the statement holding the call, so they are parsed into the caller's facts
@@ -1146,8 +1123,8 @@ class CallParserMixin:
 
         if func_type in (ir.FunctionType.SimtVF, ir.FunctionType.SimtCallee):
             callee = self._instantiate_simt_function(local_name, fn, args)
-            return callee, args
-        callee = self._instantiate_simd_function(local_name, fn, args, func_type)
+        else:
+            callee = self._instantiate_simd_function(local_name, fn, args, func_type)
         return callee, [arg for arg in args if not _is_const_arg(arg)]
 
     def _parse_simd_template_call(

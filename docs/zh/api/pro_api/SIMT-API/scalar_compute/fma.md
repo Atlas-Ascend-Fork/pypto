@@ -51,10 +51,10 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def linear(
-    source: pl.Tensor[[1, 256], pl.DT_FP32],
-    output: pl.Tensor[[1, 256], pl.DT_FP32],
-    scale: pl.DT_FP32,
-    bias: pl.DT_FP32,
+    source,
+    output,
+    scale,
+    bias,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.fma(source[0, tid], scale, bias)

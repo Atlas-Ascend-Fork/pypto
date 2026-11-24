@@ -52,10 +52,10 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=64)
 def norm3d_example(
-    x: pl.Tensor[[1, 64], pl.DT_FP32],
-    y: pl.Tensor[[1, 64], pl.DT_FP32],
-    z: pl.Tensor[[1, 64], pl.DT_FP32],
-    output: pl.Tensor[[1, 64], pl.DT_FP32],
+    x,
+    y,
+    z,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.norm3d(x[0, tid], y[0, tid], z[0, tid])

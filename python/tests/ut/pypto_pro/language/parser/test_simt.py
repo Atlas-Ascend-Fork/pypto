@@ -36,8 +36,8 @@ from pypto.pypto_impl import ir
 def _tile_add(
     dst,
     src,
-    n: pl.DT_UINT32,
-    delta: pl.DT_FP32,
+    n,
+    delta,
 ):
     tid = pl.simt.linear_thread_idx()
     if tid < n:
@@ -46,10 +46,10 @@ def _tile_add(
 
 @pl.vector_function(mode="simt", max_threads=256)
 def _gm_add(
-    dst: pl.Tensor[[1, 256], pl.DT_FP32],
-    src: pl.Tensor[[1, 256], pl.DT_FP32],
-    n: pl.DT_UINT32,
-    delta: pl.DT_FP32,
+    dst,
+    src,
+    n,
+    delta,
 ):
     tid = pl.simt.linear_thread_idx()
     if tid < n:
@@ -57,15 +57,15 @@ def _gm_add(
 
 
 @pl.vector_function(mode="simt")
-def _callee_add(value: pl.DT_INT32, delta: pl.DT_INT32) -> pl.DT_INT32:
+def _callee_add(value, delta):
     return value + delta
 
 
 @pl.vector_function(mode="simt")
 def _callee_store(
     dst,
-    index: pl.DT_UINT32,
-    value: pl.DT_INT32,
+    index,
+    value,
 ):
     dst[0, index] = value
 
@@ -74,8 +74,8 @@ def _callee_store(
 def _callee_apply(
     dst,
     src,
-    index: pl.DT_UINT32,
-    delta: pl.DT_INT32,
+    index,
+    delta,
 ):
     value = _callee_add(src[0, index], delta)
     _callee_store(dst, index, value)
@@ -85,7 +85,7 @@ def _callee_apply(
 def _callee_entry(
     dst,
     src,
-    delta: pl.DT_INT32,
+    delta,
 ):
     tid = pl.simt.linear_thread_idx()
     _callee_apply(dst, src, tid, delta)
@@ -260,7 +260,7 @@ def test_simt_kernel_parser_rejects_unsupported_parameters(annotation, error_typ
 
 def test_simt_indexed_invocation_accepts_keyword_arguments():
     @pl.vector_function(mode="simt", max_threads=32)
-    def entry(value: pl.DT_INT32):
+    def entry(value):
         return
 
     @pl.jit
@@ -677,59 +677,294 @@ def test_simt_function_infers_parameter_and_callee_return_types_at_call_site():
     assert entry.params[1].type.dtype == pl.DT_INT32
 
 
-def test_simt_function_annotations_do_not_override_callsite_types():
-    @pl.vector_function(mode="simt")
-    def annotated_callee(value: pl.DT_INT32) -> pl.DT_INT32:
-        return value
+@pytest.mark.parametrize(
+    "max_threads, kernel_mode",
+    [(None, "simd"), (None, "simt"), (32, "simd")],
+    ids=["mixed_helper", "kernel_helper", "vf"],
+)
+def test_simt_functions_accept_optional_annotations(max_threads, kernel_mode):
+    def annotated(value: pl.DT_INT32):
+        return
 
-    @pl.vector_function(mode="simt", max_threads=32)
-    def annotated_entry(value: pl.DT_INT32):
-        annotated_callee(value)
+    annotated = pl.vector_function(mode="simt", max_threads=max_threads)(annotated)
+    if max_threads is None:
+        @pl.vector_function(mode="simt", max_threads=32)
+        def entry(value):
+            annotated(value)
+    else:
+        entry = annotated
 
-    @pl.jit
-    def kernel(value: pl.DT_INT64):
-        with pl.section_vector():
-            annotated_entry[32](value)
+    if kernel_mode == "simt":
+        @pl.jit(mode="simt", max_threads=32)
+        def kernel(value: pl.DT_INT32):
+            annotated(value)
+    else:
+        @pl.jit
+        def kernel(value: pl.DT_INT32):
+            with pl.section_vector():
+                entry[32](value)
 
     program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    callee = program.get_function("annotated_callee")
-    entry = program.get_function("annotated_entry")
-
-    assert entry.params[0].type.dtype == pl.DT_INT64
-    assert callee.params[0].type.dtype == pl.DT_INT64
-    assert callee.return_types[0].dtype == pl.DT_INT64
+    function = program.get_function("annotated")
+    assert function.params[0].type.dtype == pl.DT_INT32
+    assert not function.return_types
 
 
-def test_simt_callee_rejects_return_incompatible_with_annotation():
+@pytest.mark.parametrize("constant_dtype", [pl.DT_INT32, pl.DT_INT64])
+def test_simt_helper_return_annotation_validates_inferred_type(constant_dtype):
     @pl.vector_function(mode="simt")
-    def bad_return(value: pl.DT_FP32) -> pl.DT_INT32:
+    def identity(value: pl.DT_INT32) -> pl.DT_INT32:
+        return value
+
+    constant = ir.ConstInt(1, constant_dtype, ir.Span.unknown())
+
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel(value: pl.DT_INT32):
+        identity(value)
+        identity(constant)
+
+    if constant_dtype == pl.DT_INT64:
+        with pytest.raises(InvalidVal, match="Return 'identity' annotated as"):
+            kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+        return
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert program.get_function("identity").return_types[0].dtype == pl.DT_INT32
+    call = _discarded_calls(program.get_function("kernel"))[1]
+    specialized = program.get_function(call.name)
+    assert not call.args and not specialized.params
+    returned = specialized.body.stmts[-1].value[0]
+    assert isinstance(returned, ir.ConstInt)
+    assert returned.type.dtype == pl.DT_INT32
+    assert returned.value == 1
+
+
+def _discarded_calls(function):
+    return [
+        stmt.value for stmt in function.body.stmts
+        if isinstance(stmt, ir.AssignStmt) and not stmt.targets and isinstance(stmt.value, ir.Call)
+    ]
+
+
+@pytest.mark.parametrize("mode", ["simd", "simt"])
+@pytest.mark.parametrize("first, second, dtype, constant_type", [
+    (1, 2, pl.DT_INT64, ir.ConstInt),
+    (-1, 0, pl.DT_INT64, ir.ConstInt),
+    (True, False, pl.DT_BOOL, ir.ConstBool),
+    (1.5, 2.5, pl.DT_FP32, ir.ConstFloat),
+])
+def test_simt_constants_propagate_through_nested_helpers(mode, first, second, dtype, constant_type):
+    @pl.vector_function(mode="simt")
+    def identity(value):
+        return value
+
+    @pl.vector_function(mode="simt")
+    def forward(value):
+        return identity(value)
+
+    @pl.vector_function(mode="simt", max_threads=32)
+    def entry(value):
+        forward(value)
+
+    if mode == "simt":
+        @pl.jit(mode="simt", max_threads=32)
+        def kernel(runtime: pl.DT_INT64):
+            forward(first)
+            forward(second)
+            forward(first)
+            forward(runtime)
+    else:
+        @pl.jit(auto_mutex=False)
+        def kernel(runtime: pl.DT_INT64):
+            with pl.section_vector():
+                entry[32](first)
+                entry[32](second)
+                entry[32](first)
+                entry[32](runtime)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    root = program.get_function("kernel")
+    calls = _discarded_calls(root)
+    assert len(calls) == 4
+    if mode == "simt":
+        names = [call.name for call in calls]
+        arguments = [list(call.args) for call in calls]
+    else:
+        assert all(call.name == "simt.launch" for call in calls)
+        assert all([dim.value for dim in call.args[:3]] == [32, 1, 1] for call in calls)
+        names = [call.kwargs["callee"] for call in calls]
+        arguments = [list(call.args[3:]) for call in calls]
+        assert all(program.get_function(name).get_attr("max_threads") == 32 for name in names)
+    assert names[0] == names[2]
+    assert len(set(names)) == 3
+    assert [len(args) for args in arguments] == [0, 0, 0, 1]
+    assert [len(program.get_function(name).params) for name in names] == [0, 0, 0, 1]
+
+    identity_functions = [
+        program.get_function(name) for name in program.functions
+        if name == "identity" or name.startswith("identity_version_")
+    ]
+    constants = []
+    for function in identity_functions:
+        if function.params:
+            continue
+        assert len(function.params) == 0
+        returned = next(stmt for stmt in function.body.stmts if isinstance(stmt, ir.ReturnStmt)).value[0]
+        assert isinstance(returned, constant_type)
+        assert returned.type.dtype == dtype
+        constants.append(repr(returned.value))
+    assert sorted(constants) == sorted([repr(first), repr(second)])
+    runtime_identity = next(function for function in identity_functions if function.params)
+    assert len(runtime_identity.params) == 1
+    assert runtime_identity.params[0].type.dtype == pl.DT_INT64
+
+
+@pytest.mark.parametrize("constant_type, first_dtype, second_dtype, value", [
+    (ir.ConstInt, pl.DT_INT32, pl.DT_INT64, 1),
+    (ir.ConstFloat, pl.DT_FP16, pl.DT_FP32, 1.5),
+])
+def test_simt_constant_specializations_preserve_dtype(constant_type, first_dtype, second_dtype, value):
+    first = constant_type(value, first_dtype, ir.Span.unknown())
+    second = constant_type(value, second_dtype, ir.Span.unknown())
+
+    @pl.vector_function(mode="simt")
+    def identity(value):
+        return value
+
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel():
+        identity(first)
+        identity(second)
+        identity(first)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    calls = _discarded_calls(program.get_function("kernel"))
+    assert len(calls) == 3
+    assert calls[0].name == calls[2].name
+    assert calls[0].name != calls[1].name
+    for call, dtype in zip(calls, [first_dtype, second_dtype, first_dtype]):
+        callee = program.get_function(call.name)
+        assert len(call.args) == len(callee.params) == 0
+        assert callee.return_types[0].dtype == dtype
+
+
+def test_simt_float_specialization_names():
+    @pl.vector_function(mode="simt")
+    def identity(x):
+        return x
+
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel():
+        identity(1.5)
+        identity(-2.5)
+        identity(0.0)
+        identity(1e20)
+        identity(1e-20)
+        identity(1.5)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    calls = [call.name for call in _discarded_calls(program.get_function("kernel"))]
+    assert calls == ["identity", *[f"identity_version_{index}" for index in range(1, 5)], "identity"]
+
+
+def test_simt_specialized_float_folds_like_literal_expression():
+    @pl.vector_function(mode="simt")
+    def delta(x):
+        return (x + 1.0) - x
+
+    @pl.vector_function(mode="simt")
+    def literal_delta():
+        return (16777216.0 + 1.0) - 16777216.0
+
+    @pl.jit(mode="simt", max_threads=32)
+    def kernel():
+        delta(16777216.0)
+        literal_delta()
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    specialized, direct = [
+        program.get_function(call.name) for call in _discarded_calls(program.get_function("kernel"))
+    ]
+    assert len(specialized.params) == 0
+    folded = specialized.body.stmts[-1].value[0]
+    reference = direct.body.stmts[-1].value[0]
+    assert isinstance(folded, ir.ConstFloat)
+    assert isinstance(reference, ir.ConstFloat)
+    assert folded.type.dtype == reference.type.dtype == pl.DT_FP32
+    assert folded.value == reference.value
+
+
+def test_simt_constant_controls_keep_api_adaptation_through_helper():
+    @pl.vector_function(mode="simt")
+    def shifted(value, offset, width):
+        return pl.simt.warp_shfl_up(value, offset, width)
+
+    @pl.vector_function(mode="simt", max_threads=32)
+    def entry(dst, value, offset, width):
+        dst[pl.simt.linear_thread_idx()] = shifted(value, offset, width)
+
+    @pl.jit(auto_mutex=False)
+    def kernel(dst: pl.Tensor[[32], pl.DT_FP32], value: pl.DT_FP32):
+        offset = 0
+        with pl.section_vector():
+            entry[32](dst, value, offset + 1, 32)
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    launch = next(call for call in _discarded_calls(program.get_function("kernel")) if call.name == "simt.launch")
+    entry_function = program.get_function(launch.kwargs["callee"])
+    assert len(entry_function.params) == 2
+    assert len(launch.args) == 5  # Three launch dimensions, Tensor and runtime Scalar.
+    helper = program.get_function("shifted")
+    assert len(helper.params) == 1
+    assert helper.params[0].type.dtype == pl.DT_FP32
+    shuffle = next(
+        stmt.value for stmt in helper.body.stmts
+        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "simt.warp_shfl_up"
+    )
+    assert shuffle.name == "simt.warp_shfl_up"
+    assert isinstance(shuffle.args[1], ir.ConstInt)
+    assert shuffle.args[1].value == 1
+    assert shuffle.args[1].type.dtype == pl.DT_UINT32
+    assert isinstance(shuffle.args[2], ir.ConstInt)
+    assert shuffle.args[2].value == 32
+    assert shuffle.args[2].type.dtype == pl.DT_INT32
+
+
+def test_simt_thread_dependent_helper_argument_stays_runtime():
+    @pl.vector_function(mode="simt")
+    def identity(value):
         return value
 
     @pl.vector_function(mode="simt", max_threads=32)
-    def entry(value: pl.DT_FP32):
-        bad_return(value)
+    def entry():
+        identity(pl.simt.lane_id() % 2)
 
-    @pl.jit
-    def kernel(value: pl.DT_FP32):
+    @pl.jit(auto_mutex=False)
+    def kernel():
         with pl.section_vector():
-            entry[32](value)
+            entry[32]()
 
-    with pytest.raises(InvalidVal, match="Return 'bad_return' annotated as") as exc_info:
-        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-    assert exc_info.value.span is not None
-    assert exc_info.value.span["filename"] == __file__
-    assert "def bad_return" in str(exc_info.value)
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    helper = program.get_function("identity")
+    assert len(helper.params) == 1
+    function = program.get_function("entry")
+    call = next(call for call in _discarded_calls(function) if call.name == "identity")
+    assert call.name == "identity"
+    assert len(call.args) == 1
+    assert isinstance(call.args[0], ir.Var)
+    assert call.args[0].type.dtype == helper.params[0].type.dtype
 
 
 def test_simt_callee_rejects_inconsistent_return_types_across_paths():
     @pl.vector_function(mode="simt")
-    def inconsistent_return(condition: pl.DT_BOOL, integer: pl.DT_INT32, floating: pl.DT_FP32):
+    def inconsistent_return(condition, integer, floating):
         if condition:
             return integer
         return floating
 
     @pl.vector_function(mode="simt", max_threads=32)
-    def entry(condition: pl.DT_BOOL, integer: pl.DT_INT32, floating: pl.DT_FP32):
+    def entry(condition, integer, floating):
         inconsistent_return(condition, integer, floating)
 
     @pl.jit
@@ -741,20 +976,6 @@ def test_simt_callee_rejects_inconsistent_return_types_across_paths():
         InvalidType,
         match="Function 'inconsistent_return' has inconsistent return types across return paths",
     ):
-        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
-
-
-def test_simt_function_rejects_argument_incompatible_with_annotation():
-    @pl.vector_function(mode="simt", max_threads=32)
-    def entry(value: pl.DT_INT32):
-        return
-
-    @pl.jit
-    def kernel(value: pl.DT_FP32):
-        with pl.section_vector():
-            entry[32](value)
-
-    with pytest.raises(InvalidVal, match="SIMT parameter 'value' annotated as"):
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
 
@@ -779,7 +1000,7 @@ def test_simt_function_specializes_unannotated_argument_types():
 
 def test_simt_entry_rejects_value_return():
     @pl.vector_function(mode="simt", max_threads=32)
-    def entry(value: pl.DT_INT32):
+    def entry(value):
         return value
 
     @pl.jit
@@ -793,13 +1014,13 @@ def test_simt_entry_rejects_value_return():
 
 def test_scalar_simt_callee_accepts_early_return_when_all_paths_return():
     @pl.vector_function(mode="simt")
-    def absolute(value: pl.DT_INT32) -> pl.DT_INT32:
+    def absolute(value):
         if value < 0:
             return -value
         return value
 
     @pl.vector_function(mode="simt", max_threads=32)
-    def entry(value: pl.DT_INT32):
+    def entry(value):
         absolute(value)
 
     @pl.jit
@@ -825,11 +1046,11 @@ def test_simt_callee_cannot_be_launched_directly():
 
 def test_recursive_simt_callee_is_rejected_during_instantiation():
     @pl.vector_function(mode="simt")
-    def recursive(value: pl.DT_INT32) -> pl.DT_INT32:
+    def recursive(value):
         return recursive(value)
 
     @pl.vector_function(mode="simt", max_threads=32)
-    def entry(value: pl.DT_INT32):
+    def entry(value):
         recursive(value)
 
     @pl.jit
@@ -929,7 +1150,7 @@ def test_simt_kernel_helper_rejects_tensor_return():
 
 def test_simt_launch_auto_mutex_inserts_pipe_v_lock_unlock():
     @pl.vector_function(mode="simt", max_threads=256)
-    def inplace_add(data, delta: pl.DT_FP32):
+    def inplace_add(data, delta):
         tid = pl.simt.linear_thread_idx()
         data[0, tid] = data[0, tid] + delta
 
@@ -963,7 +1184,7 @@ def test_simt_launch_auto_mutex_inserts_pipe_v_lock_unlock():
 
 
 @pl.vector_function(mode="simt", max_threads=32)
-def _warp_ops(value: pl.DT_FP32, predicate_value: pl.DT_INT32):
+def _warp_ops(value, predicate_value):
     lane = pl.simt.lane_id()
     pl.simt.lanemask_eq()
     pl.simt.lanemask_le()
@@ -1085,10 +1306,10 @@ def test_simt_nop_rejects_an_oversized_count():
 def test_shuffle_accepts_runtime_controls_with_asc_dtypes():
     @pl.vector_function(mode="simt", max_threads=32)
     def runtime_shuffle(
-        value: pl.DT_FP16,
-        src_lane: pl.DT_INT32,
-        delta: pl.DT_UINT32,
-        width: pl.DT_INT32,
+        value,
+        src_lane,
+        delta,
+        width,
     ):
         pl.simt.warp_shfl(value, src_lane, width)
         pl.simt.warp_shfl_up(value, delta, width)
@@ -1114,11 +1335,11 @@ def test_shuffle_accepts_runtime_controls_with_asc_dtypes():
 def test_warp_controls_follow_expression_range_checks(use_shuffle):
     if use_shuffle:
         @pl.vector_function(mode="simt", max_threads=32)
-        def wide_controls(value: pl.DT_FP32):
+        def wide_controls(value):
             pl.simt.warp_shfl_xor(value, 1, width=(1 << 70) - (1 << 70) + 32)
     else:
         @pl.vector_function(mode="simt", max_threads=32)
-        def wide_controls(value: pl.DT_FP32):
+        def wide_controls(value):
             pl.simt.warp_all(18446744073709551616 - 18446744073709551615)
 
     @pl.jit(auto_mutex=False)
@@ -1144,7 +1365,7 @@ def test_warp_operation_rejected_outside_simt_function():
 def _atomic_add_tile(
     dst,
     old_values,
-    value: pl.DT_INT32,
+    value,
 ):
     tid = pl.simt.linear_thread_idx()
     old_values[0, tid] = pl.simt.atomic_add(dst, [0, 0], value)
@@ -1152,9 +1373,9 @@ def _atomic_add_tile(
 
 @pl.vector_function(mode="simt", max_threads=32)
 def _atomic_add_tensor(
-    dst: pl.Tensor[[1, 32], pl.DT_INT64],
-    old_values: pl.Tensor[[1, 32], pl.DT_INT64],
-    value: pl.DT_INT64,
+    dst,
+    old_values,
+    value,
 ):
     tid = pl.simt.linear_thread_idx()
     old_values[0, tid] = pl.simt.atomic_add(dst, [0, 0], value)
@@ -1165,8 +1386,8 @@ def _atomic_rmw_ops(
     numeric,
     bitwise,
     counter,
-    int_value: pl.DT_INT32,
-    uint_value: pl.DT_UINT32,
+    int_value,
+    uint_value,
 ):
     pl.simt.atomic_sub(numeric, [0, 0], int_value)
     pl.simt.atomic_exch(numeric, [0, 0], int_value)
@@ -1394,7 +1615,7 @@ def test_atomic_add_contextually_types_numeric_literals():
 
 def test_atomic_add_rejects_old_subscript_signature():
     @pl.vector_function(mode="simt")
-    def old_signature(dst, value: pl.DT_INT32):
+    def old_signature(dst, value):
         pl.simt.atomic_add(dst[0, 0], value)
 
     with pytest.raises(InvalidArgument, match="value"):
@@ -1403,7 +1624,7 @@ def test_atomic_add_rejects_old_subscript_signature():
 
 def test_atomic_add_rejects_scalar_target():
     @pl.vector_function(mode="simt")
-    def scalar_target(dst, value: pl.DT_INT32):
+    def scalar_target(dst, value):
         pl.simt.atomic_add(value, [0, 0], value)
 
     with pytest.raises(InvalidType, match="target"):
@@ -1461,7 +1682,7 @@ def test_atomic_coordinates_use_subscript_linearization():
 @pytest.mark.parametrize("dtype", [pl.DT_FP16, pl.DT_BF16])
 def test_half_precision_atomic_result_cannot_be_returned(dtype):
     @pl.vector_function(mode="simt")
-    def add_result(dst) -> None:
+    def add_result(dst):
         return pl.simt.atomic_add(dst, [0, 0], 1.0)
 
     with pytest.raises(InvalidVal, match="must return None or one scalar value"):
@@ -1508,7 +1729,7 @@ def test_atomic_cas_contextually_types_compare_and_value_literals():
 
 def test_atomic_counter_supports_gm_uint64():
     @pl.vector_function(mode="simt", max_threads=1)
-    def uint64_counter(dst: pl.Tensor[[1], pl.DT_UINT64], limit: pl.DT_UINT64):
+    def uint64_counter(dst, limit):
         pl.simt.atomic_dec(dst, [0], limit)
 
     @pl.jit(auto_mutex=False)
@@ -1524,7 +1745,7 @@ def test_atomic_counter_supports_gm_uint64():
 
 def test_atomic_uint64_literal_preserves_unsigned_value():
     @pl.vector_function(mode="simt", max_threads=1)
-    def uint64_literal(dst: pl.Tensor[[1], pl.DT_UINT64]):
+    def uint64_literal(dst):
         pl.simt.atomic_exch(dst, [0], 18446744073709551615)
 
     @pl.jit(auto_mutex=False)
@@ -1557,11 +1778,11 @@ def test_simt_cast_rejects_ordinary_function():
 
 def test_simt_cast_is_available_inside_simt_helper():
     @pl.vector_function(mode="simt")
-    def cast_value(value: pl.DT_FP32):
+    def cast_value(value):
         _test_result = pl.simt.cast(value, pl.DT_FP16, mode=pl.RoundMode.CAST_RINT)
 
     @pl.vector_function(mode="simt", max_threads=1)
-    def entry(value: pl.DT_FP32):
+    def entry(value):
         cast_value(value)
 
     @pl.jit(auto_mutex=False)
@@ -1580,7 +1801,7 @@ def test_simt_cast_rejects_plain_integer_round_mode():
     with pytest.raises(InvalidType, match="mode expects"):
 
         @pl.vector_function(mode="simt", max_threads=1)
-        def integer_mode(value: pl.DT_FP32):
+        def integer_mode(value):
             _test_result = pl.simt.cast(value, pl.DT_FP16, mode=1)
 
         @pl.jit(auto_mutex=False)
@@ -1595,7 +1816,7 @@ def test_simt_cast_rejects_wrong_positional_arity():
     with pytest.raises(InvalidArgument, match="missing a required argument: 'dtype'"):
 
         @pl.vector_function(mode="simt", max_threads=1)
-        def missing_dtype(value: pl.DT_FP32):
+        def missing_dtype(value):
             _test_result = pl.simt.cast(value)
 
         @pl.jit(auto_mutex=False)
@@ -1610,7 +1831,7 @@ def test_simt_cast_rejects_non_dtype_target():
     with pytest.raises(InvalidType, match="dtype expects"):
 
         @pl.vector_function(mode="simt", max_threads=1)
-        def invalid_dtype(value: pl.DT_FP32):
+        def invalid_dtype(value):
             _test_result = pl.simt.cast(value, 1)
 
         @pl.jit(auto_mutex=False)
@@ -1625,7 +1846,7 @@ def test_simt_cast_rejects_unexpected_keyword():
     with pytest.raises(InvalidArgument, match="unexpected keyword argument 'saturate'"):
 
         @pl.vector_function(mode="simt", max_threads=1)
-        def unexpected_keyword(value: pl.DT_FP32):
+        def unexpected_keyword(value):
             _test_result = pl.simt.cast(value, pl.DT_FP16, saturate=True)
 
         @pl.jit(auto_mutex=False)
@@ -1638,7 +1859,7 @@ def test_simt_cast_rejects_unexpected_keyword():
 
 def test_scalar_math_is_available_in_simt_functions():
     @pl.vector_function(mode="simt", max_threads=1)
-    def scalar_math(value: pl.DT_FP32, rhs: pl.DT_FP32, addend: pl.DT_FP32):
+    def scalar_math(value, rhs, addend):
         transformed = pl.simt.min(value, pl.simt.abs(rhs))
         _test_result = pl.simt.fma(pl.simt.sqrt(transformed), rhs, addend)
 
@@ -1669,7 +1890,7 @@ def test_scalar_math_rejects_wrong_arity_and_accepts_keywords():
     with pytest.raises(InvalidArgument, match="missing a required argument: 'addend'"):
 
         @pl.vector_function(mode="simt", max_threads=1)
-        def missing_addend(value: pl.DT_FP32):
+        def missing_addend(value):
             _test_result = pl.simt.fma(value, value)
 
         @pl.jit(auto_mutex=False)
@@ -1680,7 +1901,7 @@ def test_scalar_math_rejects_wrong_arity_and_accepts_keywords():
         kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
 
     @pl.vector_function(mode="simt", max_threads=1)
-    def keyword_argument(value: pl.DT_FP32):
+    def keyword_argument(value):
         _test_result = pl.simt.exp(value=value)
 
     @pl.jit(auto_mutex=False)
@@ -1694,11 +1915,11 @@ def test_scalar_math_rejects_wrong_arity_and_accepts_keywords():
 
 def test_simt_operations_reject_argument_unpacking_at_common_entry():
     @pl.vector_function(mode="simt", max_threads=1)
-    def positional_unpacking(value: pl.DT_FP32):
+    def positional_unpacking(value):
         _test_result = pl.simt.exp(*(value,))
 
     @pl.vector_function(mode="simt", max_threads=1)
-    def keyword_unpacking(value: pl.DT_FP32):
+    def keyword_unpacking(value):
         _test_result = pl.simt.exp(**{"value": value})
 
     for function in (positional_unpacking, keyword_unpacking):

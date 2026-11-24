@@ -86,7 +86,7 @@ import pypto_pro.language as pl
 
 
 @pl.vector_function(mode="simt", max_threads=256)
-def simt_vf(data: pl.Tensor[[1, 1024], pl.DT_FP32]):
+def simt_vf(data):
     ...
 
 
@@ -114,7 +114,7 @@ import pypto_pro.language as pl
 
 
 @pl.vector_function(mode="simt")
-def add_one(value: pl.DT_FP32) -> pl.DT_FP32:
+def add_one(value):
     return value + 1.0
 
 
@@ -171,7 +171,7 @@ SIMT函数均通过完整标量下标访问Tile或Tensor元素。以二维对象
 import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
-def add_valid(data, delta: pl.DT_FP32):
+def add_valid(data, delta):
     row = pl.simt.thread_idx().y
     col = pl.simt.thread_idx().x
     if row < data.valid_shape[0] and col < data.valid_shape[1]:
@@ -229,8 +229,8 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def copy_3d(
-    source: pl.Tensor[[1, 1024], pl.DT_FP32],
-    output: pl.Tensor[[1, 1024], pl.DT_FP32],
+    source,
+    output,
 ):
     dims = pl.simt.block_dim()
     threads_per_block = dims.x * dims.y * dims.z
@@ -331,7 +331,7 @@ THREADS = 256
 
 
 @pl.vector_function(mode="simt")
-def affine_simt(value: pl.DT_FP32, scale: pl.DT_FP32, bias: pl.DT_FP32) -> pl.DT_FP32:
+def affine_simt(value, scale, bias):
     return value * scale + bias
 
 
@@ -384,10 +384,10 @@ BLOCKS = (OUTPUT_ROWS + THREADS - 1) // THREADS
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
 def gather_rows(
-    output: pl.Tensor[[OUTPUT_ROWS, WIDTH], pl.DT_FP32],
-    input_tensor: pl.Tensor[[INPUT_ROWS, WIDTH], pl.DT_FP32],
-    indices: pl.Tensor[[1, OUTPUT_ROWS], pl.DT_INT32],
-    row_count: pl.DT_UINT32,
+    output,
+    input_tensor,
+    indices,
+    row_count,
 ):
     first_row = pl.simt.block_idx().x * pl.simt.block_dim().x + pl.simt.thread_idx().x
     row_stride = pl.simt.grid_dim().x * pl.simt.block_dim().x

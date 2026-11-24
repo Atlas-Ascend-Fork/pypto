@@ -41,7 +41,7 @@ import pypto_pro.language as pl
 
 
 @pl.vector_function(mode="simt", max_threads=1)
-def write_warp_size(output: pl.Tensor[[1, 1], pl.DT_INT32]):
+def write_warp_size(output):
     output[0, 0] = pl.simt.warp_size()
 
 

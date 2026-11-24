@@ -25,8 +25,8 @@ ST_DEVICE = f"npu:{ST_DEVICE_ID}"
 def classify(
     src_fp16,
     src_fp32,
-    finite_fp16: pl.Tensor[[1, ELEMENTS], pl.DT_BOOL],
-    finite_fp32: pl.Tensor[[1, ELEMENTS], pl.DT_BOOL],
+    finite_fp16,
+    finite_fp32,
 ):
     tid = pl.simt.linear_thread_idx()
     finite_fp16[0, tid] = pl.simt.isfinite(src_fp16[0, tid])

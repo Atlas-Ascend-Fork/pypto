@@ -108,13 +108,13 @@ def test_atomic_add_ub_all_supported_dtypes():
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
 def atomic_add_gm_all_dtypes(
-    int32_state: pl.Tensor[[1, ELEMENTS], pl.DT_INT32],
-    uint32_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT32],
-    fp16_state: pl.Tensor[[1, ELEMENTS], pl.DT_FP16],
-    bf16_state: pl.Tensor[[1, ELEMENTS], pl.DT_BF16],
-    fp32_state: pl.Tensor[[1, ELEMENTS], pl.DT_FP32],
-    int64_state: pl.Tensor[[1, ELEMENTS], pl.DT_INT64],
-    uint64_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT64],
+    int32_state,
+    uint32_state,
+    fp16_state,
+    bf16_state,
+    fp32_state,
+    int64_state,
+    uint64_state,
 ):
     pl.simt.atomic_add(int32_state, [0, 0], 1)
     pl.simt.atomic_add(uint32_state, [0, 0], 1)
@@ -157,8 +157,8 @@ def test_atomic_add_gm_all_supported_dtypes():
 
 @pl.vector_function(mode="simt", max_threads=1)
 def atomic_add_return_value_gm(
-    state: pl.Tensor[[1, 1], pl.DT_INT32],
-    old_values: pl.Tensor[[1, 1], pl.DT_INT32],
+    state,
+    old_values,
 ):
     old_values[0, 0] = pl.simt.atomic_add(state, [0, 0], 5)
 

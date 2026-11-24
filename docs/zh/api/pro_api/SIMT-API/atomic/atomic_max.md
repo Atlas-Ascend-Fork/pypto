@@ -54,8 +54,8 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def reduce_max(
-    scores: pl.Tensor[[1, 256], pl.DT_INT32],
-    max_score: pl.Tensor[[1, 1], pl.DT_INT32],
+    scores,
+    max_score,
 ):
     tid = pl.simt.linear_thread_idx()
     pl.simt.atomic_max(max_score, [0, 0], scores[0, tid])

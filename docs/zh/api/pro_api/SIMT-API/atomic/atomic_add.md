@@ -50,7 +50,7 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def atomic_add_histogram_gm(
-    histogram: pl.Tensor[[1, 16], pl.DT_INT32],
+    histogram,
 ):
     tid = pl.simt.linear_thread_idx()
     pl.simt.atomic_add(histogram, [0, tid % 16], 1)

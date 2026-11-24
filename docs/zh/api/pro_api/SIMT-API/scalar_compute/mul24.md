@@ -58,9 +58,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=64)
 def mul24_example(
-    lhs: pl.Tensor[[1, 64], pl.DT_INT32],
-    rhs: pl.Tensor[[1, 64], pl.DT_INT32],
-    output: pl.Tensor[[1, 64], pl.DT_INT32],
+    lhs,
+    rhs,
+    output,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.mul24(lhs[0, tid], rhs[0, tid])

@@ -47,9 +47,9 @@ import pypto_pro.language as pl
 
 @pl.vector_function(mode="simt", max_threads=256)
 def shifted_exp(
-    source: pl.Tensor[[1, 256], pl.DT_FP32],
-    output: pl.Tensor[[1, 256], pl.DT_FP32],
-    maximum: pl.DT_FP32,
+    source,
+    output,
+    maximum,
 ):
     tid = pl.simt.linear_thread_idx()
     output[0, tid] = pl.simt.exp(source[0, tid] - maximum)

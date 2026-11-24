@@ -71,10 +71,10 @@ def test_atomic_or_ub_all_supported_dtypes():
 
 @pl.vector_function(mode="simt", max_threads=THREADS)
 def atomic_or_gm_all_dtypes(
-    int32_state: pl.Tensor[[1, ELEMENTS], pl.DT_INT32],
-    uint32_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT32],
-    int64_state: pl.Tensor[[1, ELEMENTS], pl.DT_INT64],
-    uint64_state: pl.Tensor[[1, ELEMENTS], pl.DT_UINT64],
+    int32_state,
+    uint32_state,
+    int64_state,
+    uint64_state,
 ):
     pl.simt.atomic_or(int32_state, [0, 0], 0xF)
     pl.simt.atomic_or(uint32_state, [0, 0], 0xF)
@@ -107,8 +107,8 @@ def test_atomic_or_gm_all_supported_dtypes():
 
 @pl.vector_function(mode="simt", max_threads=1)
 def atomic_or_return_value_gm(
-    state: pl.Tensor[[1, 1], pl.DT_INT32],
-    old_values: pl.Tensor[[1, 1], pl.DT_INT32],
+    state,
+    old_values,
 ):
     old_values[0, 0] = pl.simt.atomic_or(state, [0, 0], 0x0F)
 
