@@ -50,6 +50,18 @@ HcommResult HcommRankGraphGetTopoTypeByLayer(HcommHandle comm, uint32_t netLayer
 HcommResult HcommChannelAcquire(HcommHandle comm, CommEngine engine, const HcclChannelDesc* channelDescs,
                                 uint32_t channelNum, ChannelHandle* channels);
 
+// HCCL-owned shared-queue channel acquisition: the comm owns the channels (no per-channel release).
+HcommResult HcclChannelConfigCreate(HcclChannelConfig* config);
+
+HcommResult HcclChannelConfigDestroy(HcclChannelConfig config);
+
+HcommResult HcclChannelConfigSetInt(HcclChannelConfig config, HcclChannelConfigType type, uint32_t value);
+
+HcommResult HcclChannelConfigSetStr(HcclChannelConfig config, HcclChannelConfigType type, const char* value);
+
+HcommResult HcclChannelAcquireWithConfig(HcommHandle comm, CommEngine engine, const HcclChannelDesc* channelDescs,
+                                         uint32_t channelNum, HcclChannelConfig config, ChannelHandle* channels);
+
 HcommResult HcommChannelGetRemoteMems(HcommHandle comm, ChannelHandle channel, uint32_t* memNum, CommMem** remoteMems,
                                       char*** memTags);
 

@@ -36,6 +36,11 @@ enum class HcclFunc {
     ChannelAcquire,
     ChannelGetRemoteMems,
     AllGather,
+    ChannelConfigCreate,
+    ChannelConfigDestroy,
+    ChannelConfigSetInt,
+    ChannelConfigSetStr,
+    ChannelAcquireWithConfig,
     Bottom
 };
 
@@ -56,5 +61,10 @@ const std::map<HcclFunc, std::string> kHcclFuncStrMap{
     {HcclFunc::RankGraphGetTopoTypeByLayer, "HcclRankGraphGetTopoTypeByLayer"},
     {HcclFunc::ChannelAcquire, "HcclChannelAcquire"},
     {HcclFunc::ChannelGetRemoteMems, "HcclChannelGetRemoteMems"},
-    {HcclFunc::AllGather, "HcclAllGather"}};
+    {HcclFunc::AllGather, "HcclAllGather"},
+    {HcclFunc::ChannelConfigCreate, "HcclChannelConfigCreate"},
+    {HcclFunc::ChannelConfigDestroy, "HcclChannelConfigDestroy"},
+    {HcclFunc::ChannelConfigSetInt, "HcclChannelConfigSetInt"},
+    {HcclFunc::ChannelConfigSetStr, "HcclChannelConfigSetStr"},
+    {HcclFunc::ChannelAcquireWithConfig, "HcclChannelAcquireWithConfig"}};
 } // namespace npu::tile_fwk

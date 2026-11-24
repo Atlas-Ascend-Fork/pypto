@@ -22,13 +22,17 @@ import torch.distributed as dist
 _WS_BYTES = 1 << 20  # payload region registered for the remote-transfer tests
 _PROTOCOL = pld.Protocol.UB_MEM | pld.Protocol.URMA  # the workspace is used by both tiers
 _ST_MAX_RANKS = 4  # world size of the distributed ST launches; sizes static readback buffers
+_SUB_GROUP_RANKS = [1, 3]  # sub-group of the sub-group tests: global ranks 1/3 are window ranks 0/1
 
 
-def init_dist(rank, nrank):
+def init_dist(rank, nrank, group_ranks=None):
     ip = os.getenv('MASTER_ADDR', '127.0.0.1')
     port = int(os.getenv('MASTER_PORT', '8361'))
     dist.init_process_group(backend='hccl', init_method=f'tcp://{ip}:{port}', world_size=nrank, rank=rank)
-    return dist.distributed_c10d._get_default_group()
+    if group_ranks is None:
+        return dist.distributed_c10d._get_default_group()
+    # Every rank must call new_group in the same order; ranks outside get GroupMember.NON_GROUP_MEMBER.
+    return dist.new_group(backend='hccl', ranks=group_ranks)
 
 
 def worker(rank, nrank):
@@ -236,10 +240,24 @@ def _signal_tensor(win):
     return sig
 
 
-def _shift_setup(rank, nrank, *, with_signal=False):
+def _shift_setup(rank, nrank, *, with_signal=False, group_ranks=None):
     torch.npu.set_device(rank)
-    group = init_dist(rank, nrank)
+    group = init_dist(rank, nrank, group_ranks)
+    if group is dist.GroupMember.NON_GROUP_MEMBER:
+        # Outside the sub-group: only took part in new_group. Rank 0 hosts the rendezvous store,
+        # so stay alive on the world barrier until the members reach their closing barrier.
+        dist.barrier()
+        dist.destroy_process_group()
+        return None
     win = pld.create_window(group)
+    if group_ranks is not None:
+        # The window must run on group ranks: global 1/3 -> window rank 0/1.
+        assert dist.get_global_rank(group, win.rank()) == rank, (
+            f"[rank {rank}] window rank {win.rank()} does not map back to this global rank"
+        )
+        assert win.nrank() == len(group_ranks), (
+            f"[rank {rank}] window nrank {win.nrank()} != {len(group_ranks)}"
+        )
     ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
     pld.register_memory(win, ws, "ws", _PROTOCOL)
     sig = _signal_tensor(win) if with_signal else None
@@ -459,6 +477,68 @@ def test_shift_load_right_urma(world_size: int = 4):
 def test_shift_load_left_urma(world_size: int = 4):
     nprocs = min(world_size, torch.npu.device_count())
     torch.multiprocessing.spawn(shift_left_urma_worker, args=(nprocs,), nprocs=nprocs)
+
+
+def subgroup_ubmem_worker(rank, nrank):
+    """Basic UB_MEM transfer on the [1, 3] sub-group of the world: global 1/3 -> window 0/1."""
+    setup = _shift_setup(rank, nrank, group_ranks=_SUB_GROUP_RANKS)
+    if setup is None:
+        return
+    win, ws, src, out = setup
+    shift_load_right(win, ws, src, out)
+    torch.npu.synchronize()
+    me, nr = win.rank(), win.nrank()
+    sender = _SUB_GROUP_RANKS[(me - 1) % nr]  # global rank of the peer that pushed into this window
+    expected = torch.full((1, _SHIFT_N), float(sender), dtype=torch.bfloat16)
+    assert torch.equal(out.cpu(), expected), (
+        f"[rank {rank}] sub-group ubmem got {out.cpu()[0, :3].tolist()}..., "
+        f"expected global rank {sender}'s data (window rank {me}/{nr})"
+    )
+    print(f"[rank {rank}] sub-group ubmem ok (window rank {me}/{nr}, read global rank {sender})", flush=True)
+    win.close()
+    dist.barrier()  # release the ranks outside the sub-group
+    dist.destroy_process_group()
+
+
+def subgroup_urma_worker(rank, nrank):
+    """Basic URMA transfer on the [1, 3] sub-group of the world: global 1/3 -> window 0/1."""
+    setup = _shift_setup(rank, nrank, group_ranks=_SUB_GROUP_RANKS)
+    if setup is None:
+        return
+    win, ws, src, out = setup
+    shift_load_right_urma[None, 1](win, ws, src, out)
+    torch.npu.synchronize()
+    me, nr = win.rank(), win.nrank()
+    sender = _SUB_GROUP_RANKS[(me - 1) % nr]
+    expected = torch.full((1, _SHIFT_N), float(sender), dtype=torch.bfloat16)
+    assert torch.equal(out.cpu(), expected), (
+        f"[rank {rank}] sub-group urma got {out.cpu()[0, :3].tolist()}..., "
+        f"expected global rank {sender}'s data (window rank {me}/{nr})"
+    )
+    print(f"[rank {rank}] sub-group urma ok (window rank {me}/{nr}, read global rank {sender})", flush=True)
+    win.close()
+    dist.barrier()  # release the ranks outside the sub-group
+    dist.destroy_process_group()
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_subgroup_ubmem(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    if nprocs <= max(_SUB_GROUP_RANKS):
+        print(f"[sub-group] ubmem skipped: needs {max(_SUB_GROUP_RANKS) + 1} ranks, {nprocs} visible", flush=True)
+        return
+    torch.multiprocessing.spawn(subgroup_ubmem_worker, args=(nprocs,), nprocs=nprocs)
+
+
+@pytest.mark.skip(reason="distributed python case")
+@pytest.mark.world_size(4)
+def test_subgroup_urma(world_size: int = 4):
+    nprocs = min(world_size, torch.npu.device_count())
+    if nprocs <= max(_SUB_GROUP_RANKS):
+        print(f"[sub-group] urma skipped: needs {max(_SUB_GROUP_RANKS) + 1} ranks, {nprocs} visible", flush=True)
+        return
+    torch.multiprocessing.spawn(subgroup_urma_worker, args=(nprocs,), nprocs=nprocs)
 
 
 @pytest.mark.skip(reason="distributed python case")
@@ -1432,10 +1512,10 @@ def test_write_reduce_sum_max_min(world_size: int = 4):
 @pl.jit(auto_mutex=True)
 def atomic_race_kernel(win: pld.Window, tgt: pl.Tensor[[8], pl.DT_INT64],
                        fetch: pl.Tensor[[1], pl.DT_INT64]):
-    """Three issuers race one target word; a probe CAS reveals the winner.
+    """Every rank after 0 races one target word; a probe CAS reveals the winner.
 
-    Ranks 1..3 open channels to peer 0, so their FAA and CAS genuinely meet on
-    rank 0's words (rank 0 rides peer 1's channel and always wins its own
+    Ranks 1..nrank-1 open channels to peer 0, so their FAA and CAS genuinely meet
+    on rank 0's words (rank 0 rides peer 1's channel and always wins its own
     single-racer CAS on rank 1's words). Word 1 starts at 99: exactly one racer
     swaps its ``me + 100`` in. The trailing probe CAS succeeds only on the word
     that still holds the racer's own value — i.e. only for the winner — and the
@@ -1484,9 +1564,9 @@ def atomic_race_worker(rank, nrank):
             f"[rank {me}] atomic_cas race winners {winners} (probes {probes}) — exactly one expected"
         )
         assert probes[0] == 100, f"[rank {me}] rank 0 must win its CAS, probe {probes[0]}"
-    # Word 0: three adds on rank 0 (ranks 1..3), one on rank 1 (rank 0), zero elsewhere.
-    # Word 1: reset to 0 by the winner's probe on ranks 0 and 1; ranks 2..3 stay at 99.
-    expected_faa = 3 if me == 0 else (1 if me == 1 else 0)
+    # Word 0: one add per other rank on rank 0, one on rank 1 (rank 0), zero elsewhere.
+    # Word 1: reset to 0 by the winner's probe on ranks 0 and 1; ranks 2..n stay at 99.
+    expected_faa = nrank - 1 if me == 0 else (1 if me == 1 else 0)
     assert tgt.cpu()[0].item() == expected_faa, (
         f"[rank {me}] word 0 got {tgt.cpu()[0].item()}, expected {expected_faa}"
     )
@@ -1550,29 +1630,29 @@ def test_atomic_faa_loop(world_size: int = 4):
 
 
 @pl.jit(auto_mutex=True)
-def channel_exclusive_per_peer_kernel(win: pld.Window, out: pl.Tensor[[1], pl.DT_INT64]):
-    """Per-peer spelling: the channel rides the bound peer's jetty (is_exclusive() == 0)."""
+def channel_shared_per_peer_kernel(win: pld.Window, out: pl.Tensor[[1], pl.DT_INT64]):
+    """Per-peer spelling on a per-endpoint window: rides the bound peer's jetty (is_shared() == 0)."""
     with pl.section_vector():
         me, nr = win.rank(), win.nrank()
         ch = pld.channel(win, _CH_UB_ADDR, peer=(me + 1) % nr)
-        if ch.is_exclusive():
+        if ch.is_shared():
             out[0] = 1
         else:
             out[0] = 0
 
 
 @pl.jit(auto_mutex=True)
-def channel_exclusive_multi_issuer_kernel(win: pld.Window, out: pl.Tensor[[1], pl.DT_INT64]):
-    """Multi-issuer spelling: no peer, the channel rides this AIV's own jetty (is_exclusive() == 1)."""
+def channel_shared_per_aiv_kernel(win: pld.Window, out: pl.Tensor[[1], pl.DT_INT64]):
+    """Shared spelling: no peer, the channel rides this AIV's own jetty (is_shared() == 1)."""
     with pl.section_vector():
         ch = pld.channel(win, _CH_UB_ADDR)
-        if ch.is_exclusive():
+        if ch.is_shared():
             out[0] = 1
         else:
             out[0] = 0
 
 
-def channel_exclusive_worker(rank, nrank):
+def channel_shared_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
     win = pld.create_window(group)
@@ -1584,26 +1664,26 @@ def channel_exclusive_worker(rank, nrank):
     out = torch.full((1,), -1, dtype=torch.int64).npu()
 
     # Pick the spelling the topology supports; the device answer must match the host query.
-    kernel = channel_exclusive_multi_issuer_kernel if win.support_multi_issuer() \
-        else channel_exclusive_per_peer_kernel
+    shared = win.is_shared()
+    kernel = channel_shared_per_aiv_kernel if shared else channel_shared_per_peer_kernel
     kernel[None, 1](win, out)
     torch.npu.synchronize()
     got = out.cpu().tolist()[0]
-    expect = 1 if win.support_multi_issuer() else 0
-    assert got == expect, f"[rank {rank}] is_exclusive got {got}, expected {expect}"
-    print(f"[rank {rank}] channel_exclusive ok ({got})", flush=True)
+    expect = 1 if shared else 0
+    assert got == expect, f"[rank {rank}] is_shared got {got}, expected {expect}"
+    print(f"[rank {rank}] channel_shared ok ({got})", flush=True)
     win.close()
     dist.destroy_process_group()
 
 
 @pytest.mark.skip(reason="distributed python case")
 @pytest.mark.world_size(4)
-def test_channel_exclusive(world_size: int = 4):
+def test_channel_shared(world_size: int = 4):
     nprocs = min(world_size, torch.npu.device_count())
-    torch.multiprocessing.spawn(channel_exclusive_worker, args=(nprocs,), nprocs=nprocs)
+    torch.multiprocessing.spawn(channel_shared_worker, args=(nprocs,), nprocs=nprocs)
 
 
-_AG_SHARD = 1024    # per-rank shard (4096 elements over 4 ranks; offsets stay runtime)
+_AG_SHARD = 1024    # per-rank shard (one shard per rank; offsets stay runtime)
 
 
 @pl.jit(auto_mutex=True)
@@ -1921,6 +2001,8 @@ def atomic_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
         minmax = pl.make_tensor(pl.addptr(peer_base, _AT_MINMAX), [4], dtype=pl.DT_INT64)
         pl.atomic_min(minmax, 0, -5)    # 0 -> -5
         pl.atomic_max(minmax, 1, 9)     # 0 -> 9
+        # Remote atomics may be reordered against each other; fence the dependent pair.
+        pl.system.dsb(scope=pl.MemDsb.DDR)
         pl.atomic_min(minmax, 1, 4)     # 9 -> 4
         pl.atomic_max(minmax, 2, 3)     # 0 -> 3
         pl.atomic_min(minmax, 3, 8)     # 0 -> 0 (unchanged)
@@ -1939,6 +2021,7 @@ def atomic_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
 
         minmax_f32 = pl.make_tensor(pl.addptr(peer_base, _AT_MINMAX_F32), [2], dtype=pl.DT_FP32)
         pl.atomic_max(minmax_f32, 0, 2.5)  # 0 -> 2.5
+        pl.system.dsb(scope=pl.MemDsb.DDR)  # order max before the dependent min
         pl.atomic_min(minmax_f32, 0, 1.5)  # 2.5 -> 1.5
         pl.atomic_min(minmax_f32, 1, 2.5)  # 0 -> 0
 
@@ -2337,6 +2420,8 @@ if __name__ == '__main__':
     test_shift_load_left()
     test_shift_load_right_urma()
     test_shift_load_left_urma()
+    test_subgroup_ubmem()
+    test_subgroup_urma()
     test_write_submit()
     test_write_indexed()
     test_write_indexed_repeat()
@@ -2352,7 +2437,7 @@ if __name__ == '__main__':
     test_write_reduce_sum_max_min()
     test_atomic_add_cas_race()
     test_atomic_faa_loop()
-    test_channel_exclusive()
+    test_channel_shared()
     test_all_gather_signals()
     test_all_reduce()
     test_remote_ptr()

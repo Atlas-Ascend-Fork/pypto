@@ -169,9 +169,9 @@ void BindDistributed(py::module_& m)
         .def("rank", &WindowContext::Rank, "This rank's index in the group.")
         .def("nrank", &WindowContext::NRank, "Group size.")
         .def("data_ptr", &WindowContext::DataPtr, "Device address of the device-side Window descriptor (host handle).")
-        .def("support_multi_issuer", &WindowContext::SupportsMultiIssuer,
-             "True when every peer shares one local UBC_CTP endpoint, so any AIV may issue engine "
-             "writes to any peer; False when each peer needs a single issuer AIV.")
+        .def("is_shared", &WindowContext::IsShared,
+             "True when all peers share one local UBC_CTP endpoint and each AIV owns a private shared-window "
+             "jetty; False when the window is per-endpoint (one jetty per peer).")
         .def("connected", &WindowContext::Connected, "True once connect() has completed.")
         .def(
             "register_memory",

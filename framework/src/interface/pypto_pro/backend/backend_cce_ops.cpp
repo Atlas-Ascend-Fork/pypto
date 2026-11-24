@@ -2299,14 +2299,14 @@ static std::string MakeDistChannelUnlockCodegenCCE(const ir::CallPtr& op, codege
     return "";
 }
 
-static std::string MakeDistChannelIsExclusiveCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+static std::string MakeDistChannelIsSharedCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 1)
-        << "channel.is_exclusive requires 1 argument, but got " << op->args_.size();
+        << "channel.is_shared requires 1 argument, but got " << op->args_.size();
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
-        << "channel.is_exclusive requires the Vector target";
-    return codegen.GetExprAsCode(op->args_[0]) + ".IsExclusive()";
+        << "channel.is_shared requires the Vector target";
+    return codegen.GetExprAsCode(op->args_[0]) + ".IsShared()";
 }
 
 REGISTER_BACKEND_OP(BackendCCE, "dist.channel")
@@ -2441,10 +2441,10 @@ REGISTER_BACKEND_OP(BackendCCE, "channel.unlock")
         return MakeDistChannelUnlockCodegenCCE(op, codegen);
     });
 
-REGISTER_BACKEND_OP(BackendCCE, "channel.is_exclusive")
+REGISTER_BACKEND_OP(BackendCCE, "channel.is_shared")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeDistChannelIsExclusiveCodegenCCE(op, codegen);
+        return MakeDistChannelIsSharedCodegenCCE(op, codegen);
     });
 
 // Typed pointer to a registered region of a peer's window. Returns the pointer

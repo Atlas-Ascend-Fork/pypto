@@ -213,6 +213,75 @@ HcommResult HcommChannelAcquire(HcommHandle comm, CommEngine engine, const HcclC
     return StubChannelAcquire(comm, engine, channelDescs, channelNum, channels);
 }
 
+HcommResult HcclChannelConfigCreate(HcclChannelConfig* config)
+{
+#if defined(BUILD_WITH_CANN)
+    void* func = AdapterManager::Instance().GetHcclAdapter().GetFunction(HcclFunc::ChannelConfigCreate);
+    if (func != nullptr) {
+        HcclResult (*hcclFunc)(::HcclChannelConfig*) = reinterpret_cast<HcclResult (*)(::HcclChannelConfig*)>(func);
+        return static_cast<HcommResult>(hcclFunc(config));
+    }
+#endif
+    return StubHcclChannelConfigCreate(config);
+}
+
+HcommResult HcclChannelConfigDestroy(HcclChannelConfig config)
+{
+#if defined(BUILD_WITH_CANN)
+    void* func = AdapterManager::Instance().GetHcclAdapter().GetFunction(HcclFunc::ChannelConfigDestroy);
+    if (func != nullptr) {
+        HcclResult (*hcclFunc)(::HcclChannelConfig) = reinterpret_cast<HcclResult (*)(::HcclChannelConfig)>(func);
+        return static_cast<HcommResult>(hcclFunc(config));
+    }
+#endif
+    return StubHcclChannelConfigDestroy(config);
+}
+
+HcommResult HcclChannelConfigSetInt(HcclChannelConfig config, HcclChannelConfigType type, uint32_t value)
+{
+#if defined(BUILD_WITH_CANN)
+    void* func = AdapterManager::Instance().GetHcclAdapter().GetFunction(HcclFunc::ChannelConfigSetInt);
+    if (func != nullptr) {
+        HcclResult (*hcclFunc)(
+            ::HcclChannelConfig, ::HcclChannelConfigType,
+            uint32_t) = reinterpret_cast<HcclResult (*)(::HcclChannelConfig, ::HcclChannelConfigType, uint32_t)>(func);
+        return static_cast<HcommResult>(hcclFunc(config, static_cast<::HcclChannelConfigType>(type), value));
+    }
+#endif
+    return StubHcclChannelConfigSetInt(config, type, value);
+}
+
+HcommResult HcclChannelConfigSetStr(HcclChannelConfig config, HcclChannelConfigType type, const char* value)
+{
+#if defined(BUILD_WITH_CANN)
+    void* func = AdapterManager::Instance().GetHcclAdapter().GetFunction(HcclFunc::ChannelConfigSetStr);
+    if (func != nullptr) {
+        HcclResult (*hcclFunc)(::HcclChannelConfig, ::HcclChannelConfigType, const char*) = reinterpret_cast<
+            HcclResult (*)(::HcclChannelConfig, ::HcclChannelConfigType, const char*)>(func);
+        return static_cast<HcommResult>(hcclFunc(config, static_cast<::HcclChannelConfigType>(type), value));
+    }
+#endif
+    return StubHcclChannelConfigSetStr(config, type, value);
+}
+
+HcommResult HcclChannelAcquireWithConfig(HcommHandle comm, CommEngine engine, const HcclChannelDesc* channelDescs,
+                                         uint32_t channelNum, HcclChannelConfig config, ChannelHandle* channels)
+{
+#if defined(BUILD_WITH_CANN)
+    void* func = AdapterManager::Instance().GetHcclAdapter().GetFunction(HcclFunc::ChannelAcquireWithConfig);
+    if (func != nullptr) {
+        HcclResult (*hcclFunc)(
+            HcclComm, ::CommEngine, const ::HcclChannelDesc*, uint32_t, ::HcclChannelConfig,
+            ::ChannelHandle*) = reinterpret_cast<HcclResult (*)(HcclComm, ::CommEngine, const ::HcclChannelDesc*,
+                                                                uint32_t, ::HcclChannelConfig, ::ChannelHandle*)>(func);
+        return static_cast<HcommResult>(hcclFunc(comm, static_cast<::CommEngine>(engine),
+                                                 reinterpret_cast<const ::HcclChannelDesc*>(channelDescs), channelNum,
+                                                 config, channels));
+    }
+#endif
+    return StubHcclChannelAcquireWithConfig(comm, engine, channelDescs, channelNum, config, channels);
+}
+
 HcommResult HcommChannelGetRemoteMems(HcommHandle comm, ChannelHandle channel, uint32_t* memNum, CommMem** remoteMems,
                                       char*** memTags)
 {

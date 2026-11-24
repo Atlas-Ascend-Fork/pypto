@@ -466,8 +466,6 @@ struct Channel {
           jetty_(info_, stage_, reinterpret_cast<GM_ADDR>(w->jetty_ptrs), jettyIdx_),
           peer_(JettyPeerInfo(ubuf), reinterpret_cast<GM_ADDR>(win_->jetty_ptrs), jettyIdx_)
     {
-        pypto_assert(peer != -1 || win_->multi_issuer != 0,
-                     "dist.channel: window has no per-AIV jetty (multi_issuer == 0); pass peer=\n");
         if (info_->numWqebbBytes != kDistWqebbBytes || info_->numCqeBytes == 0U || info_->sqDepth == 0U ||
             (info_->sqDepth & (info_->sqDepth - 1U)) != 0U || info_->cqDepth <= kDistNearFullThreshold) {
             pypto_panic("dist.channel: unsupported jetty (wqebb %u, cqe %u, sqDepth %u, cqDepth %u)\n",
@@ -726,14 +724,15 @@ public:
         PollCqUntil<kTimeoutCycles>(static_cast<uint32_t>(info_->packedHead >> 32U));
     }
 
-    // Cross-AIV exclusion over the channel's shared queue state. A multi-issuer channel
-    // rides the calling AIV's own jetty, so there is nothing to exclude and both calls are
-    // free. Otherwise the GM counters are authoritative while info_->packedHead is only a
-    // per-AIV cache: Lock refreshes it after acquiring, Unlock publishes it before
-    // releasing (the vendor ChannelEntity Lock/Unlock protocol).
+    // Cross-AIV exclusion over the channel's shared queue state. On a shared window the
+    // channel rides the calling AIV's own jetty, so there is nothing to exclude and both
+    // calls are free. Otherwise the per-peer jetty is shared by the AIVs: the GM counters
+    // are authoritative while info_->packedHead is only a per-AIV cache: Lock refreshes it
+    // after acquiring, Unlock publishes it before releasing (the vendor ChannelEntity
+    // Lock/Unlock protocol).
     __aicore__ inline void Lock()
     {
-        if (IsExclusive()) {
+        if (IsShared()) {
             return;
         }
         __gm__ uint32_t* lock = LockWord();
@@ -746,7 +745,7 @@ public:
 
     __aicore__ inline void Unlock()
     {
-        if (IsExclusive()) {
+        if (IsShared()) {
             return;
         }
         // Hand the cached producer state (head + expected CQEs) over before the next AIV
@@ -756,7 +755,7 @@ public:
         (void)atomicCAS(LockWord(), kDistLockHeld, kDistLockFree);
     }
 
-    __aicore__ inline bool IsExclusive() const { return win_->multi_issuer != 0; }
+    __aicore__ inline bool IsShared() const { return win_->is_shared != 0; }
 
     // Narrow view for BufferChannel, which composes on this channel: it needs the head,
     // the SQ depth, the peer metadata and the head advance, not the transport objects.
@@ -904,11 +903,13 @@ private:
     __aicore__ inline static uint32_t JettyOf(__gm__ Window* win, int32_t peer)
     {
         uint32_t idx = 0;
-        if (peer >= 0) {
-            pypto_assert(peer < win->nrank, "dist.channel: peer %d out of range [0, %d)\n", peer, win->nrank);
-            idx = static_cast<uint32_t>(peer < win->rank ? peer : peer - 1);
-        } else {
+        if (win->is_shared != 0) {
             idx = static_cast<uint32_t>(get_block_idx() * get_subblockdim() + get_subblockid());
+        } else {
+            if (peer < 0) {
+                pypto_panic("dist.channel: invalid peeer %d\n", peer);
+            }
+            idx = static_cast<uint32_t>(peer < win->rank ? peer : peer - 1);
         }
         pypto_assert(idx < static_cast<uint32_t>(win->num_jetties), "dist.channel: jetty %u out of range [0, %d)\n",
                      idx, win->num_jetties);

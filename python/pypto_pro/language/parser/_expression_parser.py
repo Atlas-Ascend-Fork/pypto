@@ -1614,7 +1614,7 @@ class ExpressionParserMixin:
 
     _CHANNEL_METHODS = frozenset(
         {"remote_ptr", "write", "read", "write_reduce", "atomic_fetch_add", "atomic_cas", "write_indexed",
-         "write_notify", "submit", "drain", "lock", "unlock", "is_exclusive"}
+         "write_notify", "submit", "drain", "lock", "unlock", "is_shared"}
     )
 
     def _route_channel_method(self, node: ast.Call):

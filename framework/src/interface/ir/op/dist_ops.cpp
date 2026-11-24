@@ -159,7 +159,8 @@ TypePtr DeduceDistChannelType(const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<WindowType>(args[0]->GetType()))
         << "dist.channel requires window to be WindowType, but got " << args[0]->GetType()->TypeName();
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[1]))
-        << "dist.channel peer must be an integer scalar (-1 selects the calling AIV's jetty), but got "
+        << "dist.channel peer must be an integer scalar (-1 selects the calling AIV's jetty on a shared "
+           "window), but got "
         << args[1]->GetType()->TypeName();
 
     bool hasUbAddr = false;
@@ -697,14 +698,13 @@ TypePtr DeduceDistChannelUnlockType(const std::vector<ExprPtr>& args,
     return GetNoneType();
 }
 
-TypePtr DeduceDistChannelIsExclusiveType(const std::vector<ExprPtr>& args,
-                                         const std::vector<std::pair<std::string, std::any>>& kwargs)
+TypePtr DeduceDistChannelIsSharedType(const std::vector<ExprPtr>& args,
+                                      const std::vector<std::pair<std::string, std::any>>& kwargs)
 {
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x1)
-        << "channel.is_exclusive requires 1 argument (the channel), but got " << args.size();
-    CheckChannelOperand(args, "channel.is_exclusive");
-    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty())
-        << "channel.is_exclusive accepts no keyword arguments";
+        << "channel.is_shared requires 1 argument (the channel), but got " << args.size();
+    CheckChannelOperand(args, "channel.is_shared");
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << "channel.is_shared accepts no keyword arguments";
     return std::make_shared<ScalarType>(DataType::BOOL);
 }
 
@@ -736,11 +736,12 @@ TypePtr DeduceDistChannelRemotePtrType(const std::vector<ExprPtr>& args,
 
 REGISTER_OP("dist.channel")
     .set_op_category("DistOp")
-    .set_description("Open the caller's write-engine channel (peer = -1: the calling AIV's jetty in "
-                     "multi-issuer mode; a rank: that peer's jetty); body is a stack object, this op is "
-                     "the opaque token that binds it")
+    .set_description("Open the caller's write-engine channel: omit peer (peer = -1) on a shared window to "
+                     "ride the calling AIV's own jetty; on a per-endpoint window peer is the destination "
+                     "rank whose jetty the channel rides, and omitting it traps; body is a stack object, "
+                     "this op is the opaque token that binds it")
     .add_argument("window", "Window handle (WindowType)")
-    .add_argument("peer", "Destination peer rank, or -1 for the per-AIV jetty (integer scalar)")
+    .add_argument("peer", "Destination peer rank; -1 (omit it) selects the calling AIV's jetty on a shared window")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceDistChannelType(args, kwargs);
@@ -919,7 +920,7 @@ REGISTER_OP("channel.drain")
 REGISTER_OP("channel.lock")
     .set_op_category("DistOp")
     .set_description("Take the channel's cross-AIV lock: no-op when the channel rides the calling "
-                     "AIV's own jetty (multi-issuer), otherwise spin on the channel lock word and "
+                     "AIV's own jetty (shared window), otherwise spin on the channel lock word and "
                      "reload the cached producer head from the shared counter")
     .add_argument("channel", "Channel handle (opaque integer token)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
@@ -930,21 +931,21 @@ REGISTER_OP("channel.lock")
 REGISTER_OP("channel.unlock")
     .set_op_category("DistOp")
     .set_description("Release the channel's cross-AIV lock, publishing the cached producer state "
-                     "first; no-op for a multi-issuer channel")
+                     "first; no-op on a shared window")
     .add_argument("channel", "Channel handle (opaque integer token)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
         return DeduceDistChannelUnlockType(args, kwargs);
     });
 
-REGISTER_OP("channel.is_exclusive")
+REGISTER_OP("channel.is_shared")
     .set_op_category("DistOp")
-    .set_description("True when the channel rides the calling AIV's private queue (multi-issuer "
-                     "topology); false for a per-peer jetty")
+    .set_description("True when the window is shared by the peers, so the channel rides the "
+                     "calling AIV's private queue; false for a per-peer jetty")
     .add_argument("channel", "Channel handle (opaque integer token)")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        return DeduceDistChannelIsExclusiveType(args, kwargs);
+        return DeduceDistChannelIsSharedType(args, kwargs);
     });
 
 REGISTER_OP("dist.remote_ptr")

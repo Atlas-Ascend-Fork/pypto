@@ -28,8 +28,8 @@ public:
     int64_t DataPtr() const;
     // True when all peers share one local UBC_CTP endpoint, so every AIV owns a private
     // jetty and may issue engine writes to any peer. False on multi-endpoint topologies,
-    // where each peer has one jetty and a single issuer AIV.
-    bool SupportsMultiIssuer() const;
+    // where each peer has one jetty shared by the AIVs.
+    bool IsShared() const;
     // True once Connect() has completed. Kernels must not launch before that.
     bool Connected() const;
 

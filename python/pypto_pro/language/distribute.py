@@ -270,7 +270,7 @@ class Channel(NamedTuple):
 
     @_api_decl
     def submit(self) -> None:
-        """Publish the staged WQEs (doorbell). Scope follows :meth:`is_exclusive`.
+        """Publish the staged WQEs (doorbell). Scope follows :meth:`is_shared`.
 
         ``submit=False`` defers publication only while the SQ and CQ have room: a post
         that would overflow either ring first publishes the WQEs staged so far.
@@ -290,24 +290,24 @@ class Channel(NamedTuple):
     def lock(self) -> None:
         """Take the channel's cross-AIV lock (device-only).
 
-        A multi-issuer channel rides the calling AIV's own jetty, so this returns
-        immediately. Otherwise it spins on the channel's lock word and then reloads
-        the producer head from the shared counter — the per-AIV mirror would otherwise
-        be stale. Wrap a whole post/submit/drain sequence, and the staged appends that
-        publish with it, in one lock/unlock pair.
+        On a shared window the channel rides the calling AIV's own jetty, so this returns
+        immediately. Otherwise the per-peer jetty is shared by the AIVs and it spins on the
+        channel's lock word and then reloads the producer head from the shared counter —
+        the per-AIV mirror would otherwise be stale. Wrap a whole post/submit/drain
+        sequence, and the staged appends that publish with it, in one lock/unlock pair.
         """
 
     @_api_decl
     def unlock(self) -> None:
         """Release the channel's cross-AIV lock (device-only).
 
-        Publishes the cached producer state before handing the channel over. No-op for
-        a multi-issuer channel.
+        Publishes the cached producer state before handing the channel over. No-op on a
+        shared window.
         """
 
     @_api_decl
-    def is_exclusive(self) -> bool:
-        """True if the channel rides the calling AIV's own jetty (multi-issuer)."""
+    def is_shared(self) -> bool:
+        """True if the channel's window is shared by the peers, so it rides this AIV's jetty."""
 
 
 class BufferChannel(NamedTuple):
@@ -484,10 +484,11 @@ def channel(win: Window, buffer: int, /, *, peer: int | None = None) -> Channel:
     in the enclosing scope. The window must have at least one URMA-registered region:
     the jetty is built from them, and constructing a channel on a window without any
     URMA region traps. The channel binds its destination when it is opened: with
-    ``peer=k`` it rides peer ``k``'s jetty (per-peer); without ``peer`` it rides this
-    AIV's own jetty (multi-issuer). :meth:`write` and :meth:`write_notify` take no
-    peer. A write is not ordered against a separate signal write — use ``drain`` first, or
-    ``write_notify``.
+    ``peer=k`` it rides peer ``k``'s jetty (per-endpoint); without ``peer`` it rides this
+    AIV's own jetty (shared window). Passing ``peer`` on a shared window traps at
+    runtime, and so does omitting it on a per-endpoint window. :meth:`write` and
+    :meth:`write_notify` take no peer. A write is not ordered against a separate signal
+    write — use ``drain`` first, or ``write_notify``.
 
     Args:
         win: the owning window.
@@ -496,7 +497,8 @@ def channel(win: Window, buffer: int, /, *, peer: int | None = None) -> Channel:
             128 bytes hold the peer/jetty headers; :meth:`write_indexed` keeps its SQE
             header above them. Compile-time.
         peer: destination rank for the per-peer form (compile-time or in-kernel integer).
-            ``peer == win.rank()`` is rejected at runtime. Omit for multi-issuer.
+            ``peer == win.rank()`` is rejected at runtime. Must be omitted when
+            ``win.is_shared()`` is true (per-AIV jetty); passing it there traps.
     """
 
 

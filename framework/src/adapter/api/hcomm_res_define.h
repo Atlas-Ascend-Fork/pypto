@@ -23,6 +23,7 @@ typedef void* EndpointHandle;
 typedef void* HcommMemHandle;
 typedef void* HcclMemHandle;
 typedef void* HcommChannelConfig;
+typedef void* HcclChannelConfig;
 typedef uint64_t ChannelHandle;
 
 struct EndpointDesc;     // layout in hcomm_res_defs.h
@@ -44,5 +45,11 @@ enum CommEngine {
 enum HcommChannelConfigType {
     HCOMM_CHANNEL_CONFIG_TYPE_INVALID = -1,       ///< 无效值
     HCOMM_CHANNEL_CONFIG_TYPE_IS_SHARED_QUEUE = 0 ///< 多channel共享一个Jetty(仅UB语义协议)
+};
+
+enum HcclChannelConfigType {
+    HCCL_CHANNEL_CONFIG_TYPE_INVALID = -1,        ///< 无效值
+    HCCL_CHANNEL_CONFIG_TYPE_IS_SHARED_QUEUE = 0, ///< 多channel共享一个Jetty(仅UB语义协议)
+    HCCL_CHANNEL_CONFIG_TYPE_SHARED_QUEUE_TAG = 1 ///< 共享队列 tag（channel 复用标识）
 };
 #endif

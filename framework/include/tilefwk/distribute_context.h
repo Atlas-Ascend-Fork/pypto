@@ -28,8 +28,8 @@ struct RegionEntry {
 struct Window {
     int32_t rank;
     int32_t nrank;
-    int32_t num_jetties;  // local jetties: multi-issuer = AIV count; per-peer = nrank - 1
-    int32_t multi_issuer; // 0: one jetty per peer 1: one jetty per AIV
+    int32_t num_jetties;  // local jetties: shared = AIV count; per-endpoint = nrank - 1
+    int32_t is_shared;    // 1: all peers share one local endpoint 0: one jetty per peer
     int32_t num_regions;  // control region included; == 1 + user regions
     int32_t reserved;     // keep the descriptor 8-byte aligned
     int64_t region_table; // GM address of RegionEntry[num_regions]

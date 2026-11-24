@@ -472,7 +472,7 @@ def test_channel_write_notify_rejects_a_local_tensor_signal():
 def test_channel_requires_assignment():
     """A channel must be the RHS of a simple assignment — the let-bound variable name is
     part of its lowering. The peer= spelling here keeps the negative example separate from
-    the multi-issuer form: ``pld.channel(win, buffer)`` without ``peer`` is itself legal
+    the shared form: ``pld.channel(win, buffer)`` without ``peer`` is itself legal
     (clos meshes), only the missing assignment is rejected."""
 
     @pl.jit(arch="3510", auto_mutex=False)
@@ -484,15 +484,15 @@ def test_channel_requires_assignment():
         _parse(kernel)
     assert "must be assigned to a variable" in str(caught.value)
 
-def test_dist_channel_multi_issuer():
-    """Omitting ``peer`` is the multi-issuer spelling (peer == -1, AIV jetty)."""
+def test_dist_channel_per_aiv():
+    """Omitting ``peer`` is the shared spelling (peer == -1, the calling AIV's jetty)."""
 
     @pl.jit(arch="3510", auto_mutex=False)
     def kernel(win: pld.Window):
         with pl.section_vector():
             ch = pld.channel(win, 64)
-            ch.is_exclusive()
-    _assert_ir(kernel, "test_dist_channel_multi_issuer")
+            ch.is_shared()
+    _assert_ir(kernel, "test_dist_channel_per_aiv")
 
 def test_channel_buffer_alignment_is_checked():
     @pl.jit(arch="3510", auto_mutex=False)
@@ -728,7 +728,7 @@ def test_buffer_channel_rejects_write_indexed():
     assert "no method 'write_indexed'" in str(caught.value)
 
 
-def test_buffer_channel_rejects_remote_ptr_and_is_exclusive():
+def test_buffer_channel_rejects_remote_ptr_and_is_shared():
     @pl.jit(arch="3510", auto_mutex=False)
     def kernel(win: pld.Window, dst: pl.Tensor[[1, 8], pl.DT_INT32]):
         with pl.section_vector():

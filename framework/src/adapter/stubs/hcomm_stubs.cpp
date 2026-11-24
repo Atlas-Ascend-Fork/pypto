@@ -147,6 +147,53 @@ HcommResult StubChannelAcquire(HcommHandle comm, CommEngine engine, const HcclCh
     return HCOMM_SUCCESS;
 }
 
+HcommResult StubHcclChannelConfigCreate(HcclChannelConfig* config)
+{
+    ADAPTER_LOGD("Enter stub function of HcclChannelConfigCreate.");
+    if (config != nullptr) {
+        *config = nullptr;
+    }
+    return HCOMM_SUCCESS;
+}
+
+HcommResult StubHcclChannelConfigDestroy(HcclChannelConfig config)
+{
+    ADAPTER_LOGD("Enter stub function of HcclChannelConfigDestroy.");
+    (void)config;
+    return HCOMM_SUCCESS;
+}
+
+HcommResult StubHcclChannelConfigSetInt(HcclChannelConfig config, HcclChannelConfigType type, uint32_t value)
+{
+    ADAPTER_LOGD("Enter stub function of HcclChannelConfigSetInt.");
+    (void)config;
+    (void)type;
+    (void)value;
+    return HCOMM_SUCCESS;
+}
+
+HcommResult StubHcclChannelConfigSetStr(HcclChannelConfig config, HcclChannelConfigType type, const char* value)
+{
+    ADAPTER_LOGD("Enter stub function of HcclChannelConfigSetStr.");
+    (void)config;
+    (void)type;
+    (void)value;
+    return HCOMM_SUCCESS;
+}
+
+HcommResult StubHcclChannelAcquireWithConfig(HcommHandle comm, CommEngine engine, const HcclChannelDesc* channelDescs,
+                                             uint32_t channelNum, HcclChannelConfig config, ChannelHandle* channels)
+{
+    ADAPTER_LOGD("Enter stub function of HcclChannelAcquireWithConfig.");
+    (void)comm;
+    (void)engine;
+    (void)channelDescs;
+    (void)channelNum;
+    (void)config;
+    (void)channels;
+    return HCOMM_SUCCESS;
+}
+
 HcommResult StubChannelGetRemoteMems(HcommHandle comm, ChannelHandle channel, uint32_t* memNum, CommMem** remoteMems,
                                      char*** memTags)
 {

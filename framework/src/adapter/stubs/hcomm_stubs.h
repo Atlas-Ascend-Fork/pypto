@@ -49,6 +49,17 @@ HcommResult StubRankGraphGetTopoTypeByLayer(HcommHandle comm, uint32_t netLayer,
 HcommResult StubChannelAcquire(HcommHandle comm, CommEngine engine, const HcclChannelDesc* channelDescs,
                                uint32_t channelNum, ChannelHandle* channels);
 
+HcommResult StubHcclChannelConfigCreate(HcclChannelConfig* config);
+
+HcommResult StubHcclChannelConfigDestroy(HcclChannelConfig config);
+
+HcommResult StubHcclChannelConfigSetInt(HcclChannelConfig config, HcclChannelConfigType type, uint32_t value);
+
+HcommResult StubHcclChannelConfigSetStr(HcclChannelConfig config, HcclChannelConfigType type, const char* value);
+
+HcommResult StubHcclChannelAcquireWithConfig(HcommHandle comm, CommEngine engine, const HcclChannelDesc* channelDescs,
+                                             uint32_t channelNum, HcclChannelConfig config, ChannelHandle* channels);
+
 HcommResult StubChannelGetRemoteMems(HcommHandle comm, ChannelHandle channel, uint32_t* memNum, CommMem** remoteMems,
                                      char*** memTags);
 

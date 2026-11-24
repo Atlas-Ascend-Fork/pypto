@@ -13,19 +13,15 @@
 
 #include <algorithm>
 #include <arpa/inet.h>
-#include <chrono>
 #include <cstdio>
 #include <cstring>
 #include <iomanip>
-#include <limits>
 #include <sstream>
-#include <thread>
 #include <unordered_map>
 #include <utility>
 
 #include "adapter/api/acl_api.h"
 #include "adapter/api/hcomm_api.h"
-#include "adapter/api/hcomm_res_api.h"
 #include "tilefwk/distribute_context.h"
 #include "tilefwk/pypto_fwk_log.h"
 
@@ -34,11 +30,8 @@
 namespace npu::tile_fwk::Distributed {
 namespace {
 constexpr uint32_t kNotifyNum = 3;                // notify slots per channel, same as DeepEP/HCCL
-constexpr int32_t kCpuTimeoutSecs = 300;          // channel-connect deadline
 constexpr int32_t kAclDevAttrVectorCoreNum = 201; // aclrtDevAttr::ACL_DEV_ATTR_VECTOR_CORE_NUM
-constexpr int32_t kChannelReady = 0;
-constexpr int32_t kChannelConnecting = 1;
-constexpr int64_t kMinRegionBytes = 32; // engine write granularity; region sizes must be a multiple
+constexpr int64_t kMinRegionBytes = 32;           // engine write granularity; region sizes must be a multiple
 
 bool IsSameEndpoint(const EndpointDesc& lhs, const EndpointDesc& rhs)
 {
@@ -128,7 +121,8 @@ std::vector<int32_t> ExtraChannelPartners(int32_t rank, int32_t nrank)
     }
 }
 
-// Per-peer mode: one channel per peer, and channel i owns jetty i. The vector order is
+// Per-endpoint mode: one channel per peer, and channel i owns jetty i. Every AIV of this
+// rank issues through the same per-peer channel, sharing its queue. The vector order is
 // also the device table order.
 std::vector<ChannelPlan> PlanPerPeerChannels(int32_t rank, int32_t nrank)
 {
@@ -145,14 +139,14 @@ std::vector<ChannelPlan> PlanPerPeerChannels(int32_t rank, int32_t nrank)
     return plans;
 }
 
-// Multi-issuer mode table layout, where E = max(0, numJetties - numPeers) jetties have no
+// Shared-window table layout, where E = max(0, numJetties - numPeers) jetties have no
 // dedicated peer:
 //   [0, numPeers)    one channel per peer (channel i instantiates jetty i % numJetties)
 //   [numPeers, +E)   primary extra channel per extra jetty (device-indexed)
 //   [numPeers+E, +E) secondary extras of a triangle rank (setup only, not indexed)
 // Extra channel k rides jetty numPeers + k - 1. The vector order is also the device table
 // order.
-std::vector<ChannelPlan> PlanMultiIssuerChannels(int32_t rank, int32_t nrank, int32_t numJetties)
+std::vector<ChannelPlan> PlanSharedWindowChannels(int32_t rank, int32_t nrank, int32_t numJetties)
 {
     const int32_t numPeers = nrank - 1;
     const int32_t numExtraJetties = std::max(int32_t{0}, numJetties - numPeers);
@@ -178,33 +172,6 @@ std::vector<ChannelPlan> PlanMultiIssuerChannels(int32_t rank, int32_t nrank, in
     }
 
     return plans;
-}
-
-std::vector<uint8_t> AllGatherLocal(const void* local, uint64_t count, size_t elemBytes, HcommDataType type,
-                                    int32_t nrank, void* comm, void* stream)
-{
-    auto numBytes = elemBytes * static_cast<size_t>(count);
-    auto totalBytes = numBytes * static_cast<size_t>(nrank) + numBytes;
-    void* devBuf = nullptr;
-    DIST_CHECK(AclRtMalloc(&devBuf, totalBytes, AclRtMemMallocPolicy::NORMAL_ONLY) == 0)
-        << "alloc allgather buffer of " << totalBytes << " bytes failed";
-    auto* sendSlot = static_cast<uint8_t*>(devBuf) + numBytes * static_cast<size_t>(nrank);
-    DIST_CHECK(AclRtMemcpy(sendSlot, numBytes, local, numBytes, AclRtMemcpyKind::HOST_TO_DEVICE) == 0)
-        << "copy allgather payload failed";
-    auto ret = HcommAllGather(sendSlot, devBuf, count, type, comm, stream);
-    DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclAllGather failed, ret " << ret;
-    DIST_CHECK(AclRtSynchronizeStream(stream) == 0) << "sync ranks failed";
-    std::vector<uint8_t> out(numBytes * static_cast<size_t>(nrank));
-    DIST_CHECK(AclRtMemcpy(out.data(), out.size(), devBuf, out.size(), AclRtMemcpyKind::DEVICE_TO_HOST) == 0)
-        << "gather allgather result failed";
-    AclRtFree(devBuf);
-    return out;
-}
-
-void SynchronizeRanks(int32_t nrank, void* comm, void* stream)
-{
-    uint8_t local = 1;
-    (void)AllGatherLocal(&local, 1, sizeof(local), HCOMM_DATA_TYPE_INT8, nrank, comm, stream);
 }
 
 std::vector<uint32_t> GetNetLayers(void* comm)
@@ -319,33 +286,6 @@ std::string FormatLocDevice(const EndpointLoc& loc)
     return "?";
 }
 
-void WaitChannelsReady(const std::vector<ChannelHandle>& channels)
-{
-    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(kCpuTimeoutSecs);
-    std::vector<int32_t> statuses(channels.size(), kChannelConnecting);
-    while (true) {
-        const auto ret = tile_fwk::HcommChannelGetStatus(channels.data(), static_cast<uint32_t>(channels.size()),
-                                                         statuses.data());
-        if (ret != static_cast<HcommResult>(HCOMM_E_AGAIN)) {
-            DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclChannelGetStatus failed, ret " << ret;
-        }
-        if (ret == HCOMM_SUCCESS) {
-            bool allReady = true;
-            for (const auto status : statuses) {
-                DIST_CHECK(status == kChannelReady || status == kChannelConnecting)
-                    << "channel connect failed, status " << status;
-                if (status != kChannelReady) {
-                    allReady = false;
-                }
-            }
-            if (allReady) {
-                break;
-            }
-        }
-        DIST_CHECK(std::chrono::steady_clock::now() < deadline) << "channel connect timeout";
-        std::this_thread::sleep_for(std::chrono::milliseconds(2));
-    }
-}
 } // namespace
 
 struct WindowContext::Impl {
@@ -355,7 +295,6 @@ struct WindowContext::Impl {
         int64_t size{};     // bytes; identical on every rank per name (validated at connect)
         int32_t protocol{}; // kPolicyUbMem | kPolicyUrma bitmask
         HcclMemHandle commHandle{nullptr};
-        std::vector<HcommMemHandle> endpointHandles; // per jetty endpoint, filled at connect
     };
 
     enum class State { Created, Connected, Closed };
@@ -367,10 +306,11 @@ struct WindowContext::Impl {
     void RegisterMemory(int64_t tensorPtr, int64_t size, const std::string& regionName, int32_t protocol);
     void Connect();
     void AcquireUlbmemChannels(); // resolve every peer's UB_MEM region bases (regionBases_)
-    void AcquireJettyChannels();  // multi-issuer: per-AIV jetties; else one jetty per peer
+    void AcquireJettyChannels();  // shared: private jetties; else one jetty per peer
     void WriteDeviceWindow();     // fill region table + pypto::dist::Window and copy them to device
     void Close();                 // all-rank collective teardown; best-effort, never throws
 
+    size_t NumJetties() const; // as written to Window::num_jetties
     std::string ToString() const;
 
     int32_t rank_;
@@ -381,16 +321,12 @@ struct WindowContext::Impl {
     State state_{State::Created};
 
     std::vector<MemoryRegion> regions_;             // regions_[0] = control; index == region id
-    std::vector<MemoryRegion> urmaRegions_;         // URMA-plane subset in registration (channel buffer) order
     std::vector<std::vector<int64_t>> regionBases_; // [region][rank]; [r][rank_] = local base
 
     void* comm_{nullptr};
-    std::vector<ChannelHandle> ubmemChannels_; // UBMEM channel per peer, for teardown in Close()
-    int32_t numJetties_{0};                    // one private jetty per AIV in multi-issuer mode
-    bool multiIssuer_{false};                  // one local endpoint covers every peer
-    std::vector<EndpointHandle> jettyEndpoints_;
+    int32_t numJetties_{0}; // one private jetty per AIV in shared mode
+    bool isShared_{false};  // all peers share one local endpoint
     std::vector<ChannelHandle> channelHandles_;
-    std::vector<std::string> channelNames_;               // HCOMM shallow-copies the pointer; keep alive
     std::vector<pypto::dist::RegionEntry> regionEntries_; // host copy of the region table
     void* windowDevPtr_{nullptr};                         // device copy of the pypto::dist::Window descriptor
     void* regionTableDevPtr_{nullptr};                    // device copy of RegionEntry[num_regions]
@@ -436,10 +372,6 @@ void WindowContext::Impl::RegisterMemory(int64_t tensorPtr, int64_t size, const 
     reg.ptr = tensorPtr;
     reg.size = size;
     reg.protocol = protocol;
-    if ((protocol & pypto::dist::kPolicyUrma) != 0) {
-        // urmaRegions_ order defines the channel's remote-buffer order.
-        urmaRegions_.push_back(reg);
-    }
     regions_.push_back(reg);
 }
 
@@ -527,6 +459,11 @@ std::string GetGroupTopology(const std::string& hcclGroupName, int32_t rank, int
     return out.str();
 }
 
+size_t WindowContext::Impl::NumJetties() const
+{
+    return isShared_ ? static_cast<size_t>(numJetties_) : channelHandles_.size();
+}
+
 void WindowContext::Impl::Connect()
 {
     DIST_CHECK(state_ == State::Created) << "connect() called on an already-connected or closed window";
@@ -544,29 +481,26 @@ void WindowContext::Impl::Connect()
         regionBases_[id][rank_] = regions_[id].ptr;
     }
 
+    // Register every region on the comm: UB_MEM channels exchange the UB_MEM subset, and the
+    // jetty channels exchange the URMA subset. The comm owns these registrations.
     for (auto& reg : regions_) {
-        if ((reg.protocol & pypto::dist::kPolicyUbMem) == 0) {
-            continue;
-        }
         CommMem mem{};
         mem.type = COMM_MEM_TYPE_DEVICE;
         mem.addr = reinterpret_cast<void*>(reg.ptr);
         mem.size = static_cast<uint64_t>(reg.size);
         ret = HcommCommMemReg(comm_, reg.name.c_str(), &mem, &reg.commHandle);
-        DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclCommMemReg(" << reg.name << ") failed, ret " << ret;
+        DIST_CHECK(ret == HCOMM_SUCCESS) << "HcommCommMemReg(" << reg.name << ") failed, ret " << ret;
     }
 
-    SynchronizeRanks(nrank_, comm_, stream_);
     AcquireUlbmemChannels();
     AcquireJettyChannels();
-    WaitChannelsReady(channelHandles_);
     WriteDeviceWindow();
     state_ = State::Connected;
     DISTRIBUTED_LOGI("Window %s connected on rank %d/%d, regions %zu, control %lldB, topology %s, jetties %zu, "
                      "channels %zu",
                      name_.empty() ? hcclGroupName_.c_str() : name_.c_str(), rank_, nrank_, regions_.size(),
-                     static_cast<long long>(regions_.front().size), multiIssuer_ ? "multi-issuer" : "per-endpoint",
-                     jettyEndpoints_.size(), channelHandles_.size());
+                     static_cast<long long>(regions_.front().size), isShared_ ? "shared" : "per-endpoint", NumJetties(),
+                     channelHandles_.size());
 }
 
 void WindowContext::Impl::AcquireUlbmemChannels()
@@ -583,13 +517,13 @@ void WindowContext::Impl::AcquireUlbmemChannels()
                                    channels.data());
     DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclChannelAcquire(UB_MEM) failed, ret " << ret;
 
-    ubmemChannels_ = std::move(channels); // retained for teardown in Close()
-    for (size_t i = 0; i < ubmemChannels_.size(); ++i) {
+    // HCCL owns these channels; they are released with the comm.
+    for (size_t i = 0; i < channels.size(); ++i) {
         const auto peer = static_cast<int32_t>(descs[i].remoteRank);
         uint32_t numMems = 0;
         CommMem* remoteMems = nullptr;
         char** memTags = nullptr;
-        auto memRet = HcommChannelGetRemoteMems(comm_, ubmemChannels_[i], &numMems, &remoteMems, &memTags);
+        auto memRet = HcommChannelGetRemoteMems(comm_, channels[i], &numMems, &remoteMems, &memTags);
         DIST_CHECK(memRet == HCOMM_SUCCESS) << "HcclChannelGetRemoteMems(peer " << peer << ") failed, ret " << memRet;
 
         // Region names are the engine memTags: match each local UB_MEM region by name.
@@ -626,94 +560,45 @@ void WindowContext::Impl::AcquireJettyChannels()
         << "query vector core count of device " << deviceId << " failed";
     numJetties_ = static_cast<int32_t>(aivNum); // one jetty per AIV (DeepEP: num_jetties = num_vec_cores)
 
+    // URMA-plane subset in registration order; this defines the channel's buffer order.
     std::vector<HcclMemHandle> commHandles;
     for (const auto& reg : regions_) {
-        if ((reg.protocol & pypto::dist::kPolicyUbMem) != 0) {
+        if ((reg.protocol & pypto::dist::kPolicyUrma) != 0) {
             commHandles.push_back(reg.commHandle);
         }
     }
 
     auto ubcDescs = BuildPeerDescs(comm_, netLayer_, rank_, nrank_, COMM_PROTOCOL_UBC_CTP, commHandles);
-    multiIssuer_ = AllPeersShareEndpoint(ubcDescs);
+    isShared_ = AllPeersShareEndpoint(ubcDescs);
 
-    // Multi-issuer: one private jetty per AIV, all on the common local endpoint.
-    // Per-peer: one jetty per peer on that peer's link endpoint; only its issuer AIV posts.
-    const auto numEndpoints = multiIssuer_ ? static_cast<size_t>(numJetties_) : ubcDescs.size();
-    jettyEndpoints_.resize(numEndpoints);
-    for (auto& reg : urmaRegions_) {
-        reg.endpointHandles.assign(numEndpoints, nullptr);
-    }
-    for (size_t j = 0; j < numEndpoints; ++j) {
-        const auto& endpointDesc = multiIssuer_ ? ubcDescs.front().localEndpoint : ubcDescs[j].localEndpoint;
-        auto ret = tile_fwk::HcommEndpointCreate(&endpointDesc, &jettyEndpoints_[j]);
-        DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclEndpointCreate(jetty " << j << ") failed, ret " << ret;
-        // Every URMA-plane region is registered on every jetty endpoint.
-        for (auto& reg : urmaRegions_) {
-            CommMem jettyMem{};
-            jettyMem.type = COMM_MEM_TYPE_DEVICE;
-            jettyMem.addr = reinterpret_cast<void*>(reg.ptr);
-            jettyMem.size = static_cast<uint64_t>(reg.size);
-            ret = tile_fwk::HcommMemReg(jettyEndpoints_[j], reg.name.c_str(), &jettyMem, &reg.endpointHandles[j]);
-            DIST_CHECK(ret == HCOMM_SUCCESS) << "HcommMemReg(jetty " << j << ", region " << reg.name << ") failed, "
-                                             << "ret " << ret;
-        }
-    }
-
-    // Exchange listen ports once per window: AllGather one uint16 per rank over the comm.
-    uint32_t listenPort = 0;
-    auto ret = tile_fwk::HcommEndpointGetListenPort(jettyEndpoints_.front(), &listenPort);
-    DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclEndpointGetListenPort failed, ret " << ret;
-    DIST_CHECK(listenPort > 0 && listenPort <= std::numeric_limits<uint16_t>::max()) << "invalid listen port";
-    const auto localPort = static_cast<uint16_t>(listenPort);
-    const auto ports = AllGatherLocal(&localPort, 1, sizeof(localPort), HCOMM_DATA_TYPE_UINT16, nrank_, comm_, stream_);
-    const auto* portList = reinterpret_cast<const uint16_t*>(ports.data());
-    const std::vector<uint16_t> listenPorts(portList, portList + nrank_);
-    for (const auto port : listenPorts) {
-        DIST_CHECK(port != 0) << "peer reported an invalid listen port";
-    }
-
-    const auto plans = multiIssuer_ ? PlanMultiIssuerChannels(rank_, nrank_, numJetties_) :
-                                      PlanPerPeerChannels(rank_, nrank_);
+    const auto plans = isShared_ ? PlanSharedWindowChannels(rank_, nrank_, numJetties_) :
+                                   PlanPerPeerChannels(rank_, nrank_);
     const auto numChannels = static_cast<int32_t>(plans.size());
 
-    HcommChannelConfig config = nullptr;
-    ret = tile_fwk::HcommChannelConfigCreate(&config);
-    DIST_CHECK(ret == HCOMM_SUCCESS) << "HcommChannelConfigCreate failed, ret " << ret;
-    ret = tile_fwk::HcommChannelConfigSetInt(config, HCOMM_CHANNEL_CONFIG_TYPE_IS_SHARED_QUEUE, 1);
-    DIST_CHECK(ret == HCOMM_SUCCESS) << "HcommChannelConfigSetInt(IS_SHARED_QUEUE) failed, ret " << ret;
+    const auto windowName = name_.empty() ? hcclGroupName_ : name_;
+    HcclChannelConfig config = nullptr;
+    auto ret = tile_fwk::HcclChannelConfigCreate(&config);
+    DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclChannelConfigCreate failed, ret " << ret;
+    ret = tile_fwk::HcclChannelConfigSetInt(config, HCCL_CHANNEL_CONFIG_TYPE_IS_SHARED_QUEUE, 1);
+    DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclChannelConfigSetInt(IS_SHARED_QUEUE) failed, ret " << ret;
 
     channelHandles_.assign(static_cast<size_t>(numChannels), 0);
-    channelNames_.resize(static_cast<size_t>(numChannels));
     for (int32_t channelIdx = 0; channelIdx < numChannels; ++channelIdx) {
         const auto& plan = plans[channelIdx];
-        const auto peerRank = plan.remoteRank;
-        auto& name = channelNames_[channelIdx];
-        name = (name_.empty() ? hcclGroupName_ : name_) + "/" + std::to_string(std::min(rank_, peerRank)) + "-" +
-               std::to_string(std::max(rank_, peerRank)) + "/" + std::to_string(plan.pairIdx);
-        DIST_CHECK(name.size() <= HCOMM_CHANNEL_NAME_MAX_LEN) << "channel name exceeds HCOMM_CHANNEL_NAME_MAX_LEN";
-        // Attach the URMA-plane regions of this jetty's endpoint in registration order; the
-        // device matches a local region base to the channel's local/remote buffer lists.
-        HcommChannelDesc desc;
-        HcommChannelDescInit(&desc, 1);
-        desc.remoteEndpoint = ubcDescs[peerRank < rank_ ? peerRank : peerRank - 1].remoteEndpoint;
+        const auto peerIdx = plan.remoteRank < rank_ ? plan.remoteRank : plan.remoteRank - 1;
+        // HcclChannelConfigSetStr copies the tag into the config; a loop-local string is enough.
+        const auto tag = windowName + "/" + std::to_string(plan.jettyIdx);
+        ret = tile_fwk::HcclChannelConfigSetStr(config, HCCL_CHANNEL_CONFIG_TYPE_SHARED_QUEUE_TAG, tag.c_str());
+        DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclChannelConfigSetStr(" << tag << ") failed, ret " << ret;
+
+        HcclChannelDesc desc = ubcDescs[peerIdx];
         desc.notifyNum = kNotifyNum;
-        std::vector<HcommMemHandle> endpointRegionHandles;
-        endpointRegionHandles.reserve(urmaRegions_.size());
-        for (const auto& reg : urmaRegions_) {
-            endpointRegionHandles.push_back(reg.endpointHandles[plan.jettyIdx]);
-        }
-        desc.memHandles = endpointRegionHandles.data();
-        desc.memHandleNum = static_cast<uint32_t>(endpointRegionHandles.size());
-        // The lower rank listens; the higher rank connects.
-        desc.role = rank_ < peerRank ? HCOMM_SOCKET_ROLE_SERVER : HCOMM_SOCKET_ROLE_CLIENT;
-        desc.port = listenPorts[std::min(rank_, peerRank)];
-        desc.channelName = name.c_str();
-        ret = tile_fwk::HcommChannelCreateWithConfig(jettyEndpoints_[plan.jettyIdx], COMM_ENGINE_AIV, &desc, 1, config,
+        ret = tile_fwk::HcclChannelAcquireWithConfig(comm_, COMM_ENGINE_AIV, &desc, 1, config,
                                                      &channelHandles_[channelIdx]);
-        DIST_CHECK(ret == HCOMM_SUCCESS) << "HcommChannelCreateWithConfig(" << name << ") failed, ret " << ret;
+        DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclChannelAcquireWithConfig(" << tag << ") failed, ret " << ret;
     }
-    ret = tile_fwk::HcommChannelConfigDestroy(config);
-    DIST_CHECK(ret == HCOMM_SUCCESS) << "HcommChannelConfigDestroy failed, ret " << ret;
+    ret = tile_fwk::HcclChannelConfigDestroy(config);
+    DIST_CHECK(ret == HCOMM_SUCCESS) << "HcclChannelConfigDestroy failed, ret " << ret;
 }
 
 void WindowContext::Impl::WriteDeviceWindow()
@@ -721,8 +606,8 @@ void WindowContext::Impl::WriteDeviceWindow()
     pypto::dist::Window window{};
     window.rank = rank_;
     window.nrank = nrank_;
-    window.num_jetties = multiIssuer_ ? numJetties_ : static_cast<int32_t>(jettyEndpoints_.size());
-    window.multi_issuer = multiIssuer_ ? 1 : 0;
+    window.num_jetties = static_cast<int32_t>(NumJetties());
+    window.is_shared = isShared_ ? 1 : 0;
     window.num_regions = static_cast<int32_t>(regions_.size());
 
     DIST_CHECK(regionBases_.size() == regions_.size()) << "region bases incomplete";
@@ -784,41 +669,7 @@ void WindowContext::Impl::Close()
         (void)AclRtFree(jettyTableDevPtr_);
         jettyTableDevPtr_ = nullptr;
     }
-    if (!channelHandles_.empty()) {
-        auto ret = tile_fwk::HcommChannelDestroy(channelHandles_.data(), static_cast<uint32_t>(channelHandles_.size()));
-        if (ret != HCOMM_SUCCESS) {
-            DISTRIBUTED_LOGW("Window %s: HcommChannelDestroy failed, ret %d", windowName.c_str(), ret);
-        }
-        channelHandles_.clear();
-    }
-    if (!ubmemChannels_.empty()) {
-        auto ret = tile_fwk::HcommChannelDestroy(ubmemChannels_.data(), static_cast<uint32_t>(ubmemChannels_.size()));
-        if (ret != HCOMM_SUCCESS) {
-            DISTRIBUTED_LOGW("Window %s: HcommChannelDestroy(UB_MEM) failed, ret %d", windowName.c_str(), ret);
-        }
-        ubmemChannels_.clear();
-    }
-    // The comm-level HcclCommMemReg handles have no unreg wrapper in the vendor API; they
-    // are released with the comm itself (DeepEP carries the same TODO).
-    for (size_t j = 0; j < jettyEndpoints_.size(); ++j) {
-        for (auto& reg : urmaRegions_) {
-            if (reg.endpointHandles.size() != jettyEndpoints_.size() || reg.endpointHandles[j] == nullptr) {
-                continue;
-            }
-            auto unregRet = tile_fwk::HcommMemUnreg(jettyEndpoints_[j], reg.endpointHandles[j]);
-            if (unregRet != HCOMM_SUCCESS) {
-                DISTRIBUTED_LOGW("Window %s: HcommMemUnreg(jetty %zu, region %s) failed, ret %d", windowName.c_str(), j,
-                                 reg.name.c_str(), unregRet);
-            }
-            reg.endpointHandles[j] = nullptr;
-        }
-        auto destroyRet = tile_fwk::HcommEndpointDestroy(jettyEndpoints_[j]);
-        if (destroyRet != HCOMM_SUCCESS) {
-            DISTRIBUTED_LOGW("Window %s: HcommEndpointDestroy(jetty %zu) failed, ret %d", windowName.c_str(), j,
-                             destroyRet);
-        }
-    }
-    jettyEndpoints_.clear();
+    channelHandles_.clear();
     if (barrierBuf_ != nullptr) {
         (void)AclRtFree(barrierBuf_);
         barrierBuf_ = nullptr;
@@ -833,9 +684,9 @@ std::string WindowContext::Impl::ToString() const
     info << "Window(name=" << (name_.empty() ? hcclGroupName_ : name_) << ")\n";
     info << "  rank " << rank_ << "/" << nrank_ << ", regions " << regions_.size() << ", state "
          << (state_ == State::Created ? "created" : (state_ == State::Connected ? "connected" : "closed"));
-    info << "\n  connect: layer " << netLayer_ << ", topology " << (multiIssuer_ ? "multi-issuer" : "per-endpoint")
-         << ", jetties " << jettyEndpoints_.size() << ", channels " << channelHandles_.size() << ", window 0x"
-         << std::hex << reinterpret_cast<uintptr_t>(windowDevPtr_);
+    info << "\n  connect: layer " << netLayer_ << ", topology " << (isShared_ ? "shared" : "per-endpoint")
+         << ", jetties " << NumJetties() << ", channels " << channelHandles_.size() << ", window 0x" << std::hex
+         << reinterpret_cast<uintptr_t>(windowDevPtr_);
     // Dump the region table exactly as it was shipped to the device.
     for (size_t id = 0; id < regions_.size(); ++id) {
         const auto& reg = regions_[id];
@@ -864,7 +715,7 @@ WindowContext::~WindowContext() = default;
 int32_t WindowContext::Rank() const { return impl_->rank_; }
 int32_t WindowContext::NRank() const { return impl_->nrank_; }
 int64_t WindowContext::DataPtr() const { return reinterpret_cast<int64_t>(impl_->windowDevPtr_); }
-bool WindowContext::SupportsMultiIssuer() const { return impl_->multiIssuer_; }
+bool WindowContext::IsShared() const { return impl_->isShared_; }
 bool WindowContext::Connected() const { return impl_->state_ == Impl::State::Connected; }
 
 void WindowContext::RegisterMemory(int64_t tensorPtr, int64_t size, const std::string& name, int32_t protocol)

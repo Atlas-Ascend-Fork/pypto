@@ -1846,5 +1846,29 @@ TEST(BackendCceOpsTest, ResetCtrlSpr_InvalidBitRange_Throws)
     EXPECT_THROW((void)RunCodegen("reset_ctrl_spr", call), npu::tile_fwk::Error);
 }
 
+TEST(BackendCceOpsTest, DistChannelIsSharedEmitsIsSharedQuery)
+{
+    auto channel = MakeVar("ch", std::make_shared<const ir::ScalarType>(ir::DataType::INT64));
+    auto call = std::make_shared<const ir::Call>("channel.is_shared", std::vector<ir::ExprPtr>{channel},
+                                                 std::make_shared<const ir::ScalarType>(ir::DataType::BOOL),
+                                                 ir::Span::Unknown());
+    const auto* info = BackendCCE::Instance().GetOpInfo("channel.is_shared");
+    ASSERT_NE(info, nullptr);
+    TestableCCECodegen codegen(ir::SectionKind::Vector);
+    codegen.RegisterVarName(channel, "ch");
+    EXPECT_EQ(info->codegenFunc(call, codegen), "ch.IsShared()");
+}
+
+TEST(BackendCceOpsTest, DistChannelIsSharedRequiresVectorTarget)
+{
+    auto channel = MakeVar("ch", std::make_shared<const ir::ScalarType>(ir::DataType::INT64));
+    auto call = std::make_shared<const ir::Call>("channel.is_shared", std::vector<ir::ExprPtr>{channel},
+                                                 std::make_shared<const ir::ScalarType>(ir::DataType::BOOL),
+                                                 ir::Span::Unknown());
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    codegen.RegisterVarName(channel, "ch");
+    EXPECT_THROW((void)RunCodegen("channel.is_shared", call, codegen), npu::tile_fwk::Error);
+}
+
 } // namespace backend
 } // namespace pypto

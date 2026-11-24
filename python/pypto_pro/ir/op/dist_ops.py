@@ -365,7 +365,8 @@ def _urma_append_option(value, api):
 def _parse_channel(parser, call):
     """``ch = pld.channel(win, buffer[, peer])`` -> assignment-time handle.
 
-    Without ``peer`` the device constructor receives ``-1`` (multi-issuer)."""
+    Without ``peer`` the device constructor receives ``-1`` (the calling AIV's own jetty,
+    legal only on a shared window)."""
     from ...language.distribute import CHANNEL_UB_BYTES
 
     span = parser.span_tracker.get_span(call)
@@ -388,7 +389,7 @@ def _parse_channel(parser, call):
         if isinstance(peer, _ir_core.ConstInt) and peer.value < 0:
             raise InvalidVal(
                 f"pld.channel peer must be a destination rank, got {peer.value}; "
-                "omit 'peer' for the multi-issuer (per-AIV jetty) form",
+                "omit 'peer' for the shared (per-AIV jetty) form",
             )
 
     # ubbuf may be use by simt code, update the max_vec_tile_end
@@ -1089,12 +1090,12 @@ def _build_channel_drain(parser, call, channel):
     )
 
 
-def _build_channel_is_exclusive(parser, call, channel):
-    """``ch.is_exclusive()`` -> channel.is_exclusive (runtime bool)."""
+def _build_channel_is_shared(parser, call, channel):
+    """``ch.is_shared()`` -> channel.is_shared (runtime bool)."""
     span = parser.span_tracker.get_span(call)
     if call.args or call.keywords:
-        raise InvalidArgument("ch.is_exclusive takes no arguments")
-    return _ir_core.create_op_call("channel.is_exclusive", [channel.token], {}, span)
+        raise InvalidArgument("ch.is_shared takes no arguments")
+    return _ir_core.create_op_call("channel.is_shared", [channel.token], {}, span)
 
 
 def parse_channel_method(parser, channel, method, call):
@@ -1123,8 +1124,8 @@ def parse_channel_method(parser, channel, method, call):
         return _build_channel_lock(parser, call, channel)
     if method == "unlock":
         return _build_channel_unlock(parser, call, channel)
-    if method == "is_exclusive":
-        return _build_channel_is_exclusive(parser, call, channel)
+    if method == "is_shared":
+        return _build_channel_is_shared(parser, call, channel)
     raise InvalidOperation(
         f"pld.Channel has no method '{method}'"
     )
