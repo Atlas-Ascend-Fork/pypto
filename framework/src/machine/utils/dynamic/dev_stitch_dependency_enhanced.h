@@ -16,7 +16,7 @@
  * - Read and Atomic-Write: same type is non-mutex and keeps multiple ops (unchanged).
  * - NORMAL_WRITE has two layouts (see CellMatchIsNormalWriteSlowPath):
  *   Fast: one writer per cell; mutex overwrite; no stored ranges.
- *   Slow: up to 2^N (static) or CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT (dynamic) writers;
+ *   Slow: up to CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT writers;
  *   store cell-local ranges; cover with exact A\\B split into disjoint AABBs
  *   (same opId may occupy multiple slots).
  *   Encode picks Fast when divides, or (!WAW && min_read > max_write) on every dim; else Slow.

@@ -64,7 +64,7 @@ enum CellMatchOpType : uint32_t {
  */
 #define CELL_MATCH_METADATA_OP_COUNT_MAX 255
 #define CELL_MATCH_MAX_NORMAL_WRITE_COUNT 1
-// Slow capacity when partial-update has a dynamic axis (static Slow still uses 2^N).
+// Slow-path NORMAL_WRITE capacity (Fast stays CELL_MATCH_MAX_NORMAL_WRITE_COUNT).
 #define CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT 128
 #define CELL_MATCH_MAX_ATOMIC_WRITE_COUNT 254
 #define CELL_MATCH_MAX_READ_COUNT 128

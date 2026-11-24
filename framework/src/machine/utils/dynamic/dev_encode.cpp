@@ -3067,9 +3067,26 @@ struct FastSlowStitchCheckShapeGate {
     int64_t allWriteOpShapeGcd[DEV_SHAPE_DIM_MAX]{};
     int64_t allWriteOpShapeMax[DEV_SHAPE_DIM_MAX]{};
     int64_t readOpShapeMin[DEV_SHAPE_DIM_MAX]{};
+    // WRITE validShape Expression (e.g. pypto.min tail) — not encode-time tensor stride.
+    bool hasExpressionShape{false};
 };
 
+// COA from offsetAttrIdx: offset | shape | rawShape | validShape.
+// Only validShape decides Expression→128 (Loop_S tail min(...) lands here; shape stays tile_s).
+static bool FastSlowStitchCheckWriteHasExpressionValid(const DevAscendFunction& func,
+                                                       const DevAscendFunctionCallOperandUse& use, int dim)
+{
+    const SymInt* validShape = func.GetSymoffset(use.offsetAttrIdx + 3 * dim);
+    for (int d = 0; d < dim && d < DEV_SHAPE_DIM_MAX; ++d) {
+        if (validShape[d].IsExpression()) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // Caller guarantees 0 <= d < dim && d < DEV_SHAPE_DIM_MAX.
+// Immediate tile shape only (shape slot); Expression valid is tracked separately.
 static bool FastSlowStitchCheckTryGetUseShapeDim(const DevAscendFunction& func,
                                                  const DevAscendFunctionCallOperandUse& use, int dim, int d,
                                                  int64_t* value)
@@ -3091,6 +3108,9 @@ static void FastSlowStitchCheckAccumulateAllWriteOpShape(const DevAscendFunction
                                                          const DevAscendFunctionCallOperandUse& use, int dim,
                                                          FastSlowStitchCheckShapeGate* gate)
 {
+    if (FastSlowStitchCheckWriteHasExpressionValid(func, use, dim)) {
+        gate->hasExpressionShape = true;
+    }
     for (int d = 0; d < dim && d < DEV_SHAPE_DIM_MAX; ++d) {
         int64_t v = 0;
         if (!FastSlowStitchCheckTryGetUseShapeDim(func, use, dim, d, &v)) {
@@ -3106,6 +3126,7 @@ static void FastSlowStitchCheckAccumulateReadOpShape(const DevAscendFunction& fu
                                                      const DevAscendFunctionCallOperandUse& use, int dim,
                                                      FastSlowStitchCheckShapeGate* gate)
 {
+    // Expression → 128 only for WRITE capacity; reads stay out of that gate.
     for (int d = 0; d < dim && d < DEV_SHAPE_DIM_MAX; ++d) {
         int64_t v = 0;
         if (!FastSlowStitchCheckTryGetUseShapeDim(func, use, dim, d, &v)) {
@@ -3169,8 +3190,14 @@ static uint32_t FastSlowStitchCheckInitPartialUpdate(const std::vector<const Dev
     partialUpdateCellMatchTableDesc->SetCellShape(cellShape);
     // Per-dim factor: 1 if cell<=1, divides, or (!hasWaw && minReadOp > maxAllWriteOp);
     // else 2. Cover→Fast must match WAW stitch gate: WAW slots keep Slow for write-write overlap.
-    // NORMAL_WRITE capacity = product (2^N) for static shapes; dynamic-axis Slow uses fixed cap.
+    // NORMAL_WRITE capacity = product (2^N) for fully-static shapes; dynamic Slow uses fixed cap when
+    // tensor stride is unknown (HasDynamicShape) OR any WRITE use carries Expression valid/shape
+    // (e.g. validshape case 061 Loop_S tail: cur_valid_s = min(...)).
     uint32_t normalWriteCount = 1;
+    bool hasExpressionValid = false;
+    for (const FastSlowStitchCheckShapeGate& allWriteOpGate : allWriteOpGates) {
+        hasExpressionValid = hasExpressionValid || allWriteOpGate.hasExpressionShape;
+    }
     int dims = static_cast<int>(cellShape.size());
     for (int d = 0; d < dims && d < DEV_SHAPE_DIM_MAX; ++d) {
         int cell = cellShape[static_cast<size_t>(d)];
@@ -3215,8 +3242,8 @@ static uint32_t FastSlowStitchCheckInitPartialUpdate(const std::vector<const Dev
         strideShape.push_back(cellShape[i] != 0 ? tensorShape[i] / cellShape[i] : 0);
     }
     partialUpdateCellMatchTableDesc->SetStrideShape(strideShape);
-    // Dynamic axis (stride<=0): Slow path reserves fixed CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT.
-    if (normalWriteCount > 1 && HasDynamicShape(*partialUpdateCellMatchTableDesc)) {
+    // Dynamic axis (stride<=0) or Expression valid/shape: Slow reserves fixed SLOW_COUNT, not 2^N.
+    if (normalWriteCount > 1 && (HasDynamicShape(*partialUpdateCellMatchTableDesc) || hasExpressionValid)) {
         return static_cast<uint32_t>(CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT);
     }
     return normalWriteCount;

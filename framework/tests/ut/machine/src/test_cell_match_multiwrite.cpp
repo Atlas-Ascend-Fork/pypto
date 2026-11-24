@@ -22,6 +22,7 @@
 #include "machine/utils/dynamic/dev_encode_program.h"
 #include "machine/utils/dynamic/dev_stitch_dependency_enhanced.h"
 #include "tilefwk/data_type.h"
+#include "tilefwk/symbolic_scalar.h"
 #include "tilefwk/tilefwk_op.h"
 
 using namespace npu::tile_fwk;
@@ -604,6 +605,42 @@ TEST(CellMatchMultiWrite, DynamicAxisSlowUsesFixedCap)
     ASSERT_TRUE(FindEncoded(48, CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT, 0u, &slot));
     const DevCellMatchTableDesc& desc = slot.update->cellMatchTableDesc;
     EXPECT_LE(desc.GetStrideShape(0), 0);
+    EXPECT_EQ(desc.GetCacheOpMaxCount(CELL_MATCH_OP_TYPE_NORMAL_WRITE),
+              static_cast<uint32_t>(CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT));
+    EXPECT_NE(desc.normalWriteOpRangeBase, 0u);
+    ExpectReaderMask(*slot.update);
+}
+
+// Expression valid on a WRITE (static-extent tensor, stride>0) lifts Slow from 2^N to fixed 128.
+TEST(CellMatchMultiWrite, ExpressionValidSlowUsesFixedCap)
+{
+    PrepareTailKernel(64, kHidden);
+    Tensor in(DT_FP32, {112, kHidden}, "in_expr");
+    Tensor out(DT_FP32, {112, kHidden}, "out_expr");
+    Tensor result(DT_FP32, {112, kHidden}, "result_expr");
+    Tensor narrow(DT_FP32, {16, kHidden}, "narrow_expr");
+    FUNCTION("expr_valid_slow_cap", {in}, {out, result, narrow})
+    {
+        LOOP("EV_W", FunctionType::DYNAMIC_LOOP, i, LoopRange(1))
+        {
+            Assemble(Add(View(in, {64, kHidden}, {0, 0}), View(in, {64, kHidden}, {0, 0})), {0, 0}, out);
+            // Expression valid on the WRITE into out (same Slow geometry as MidNarrowRead).
+            auto dynValid = i.Min(SymbolicScalar(48));
+            auto tail = View(in, {48, kHidden}, {dynValid, SymbolicScalar(kHidden)}, {64, 0});
+            Assemble(Add(tail, tail), {64, 0}, out);
+        }
+        LOOP("EV_R", FunctionType::DYNAMIC_LOOP, j, LoopRange(1))
+        {
+            (void)j;
+            Assemble(View(out, {64, kHidden}, {0, 0}), {0, 0}, result);
+            Assemble(View(out, {16, kHidden}, {48, 0}), {0, 0}, narrow);
+        }
+    }
+
+    EncodedOutcast slot;
+    ASSERT_TRUE(FindEncoded(48, CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT, 0u, &slot));
+    const DevCellMatchTableDesc& desc = slot.update->cellMatchTableDesc;
+    EXPECT_GT(desc.GetStrideShape(0), 0);
     EXPECT_EQ(desc.GetCacheOpMaxCount(CELL_MATCH_OP_TYPE_NORMAL_WRITE),
               static_cast<uint32_t>(CELL_MATCH_MAX_NORMAL_WRITE_SLOW_COUNT));
     EXPECT_NE(desc.normalWriteOpRangeBase, 0u);
