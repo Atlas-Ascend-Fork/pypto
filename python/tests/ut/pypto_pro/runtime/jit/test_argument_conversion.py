@@ -21,9 +21,10 @@ import logging
 from pathlib import Path
 import runpy
 import sys
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
-from pypto_pro._errors import InvalidShape
+from pypto_pro._errors import InvalidArgument, InvalidShape
 import pypto_pro.language as pl
 from pypto_pro.language import STATIC, Tensor
 from pypto_pro.runtime.platform import NpuArch
@@ -244,6 +245,43 @@ def test_simt_kernel_uses_shared_launch_entry(monkeypatch):
     assert fn.argtypes[:7] == [ctypes.c_uint32] * 6 + [ctypes.c_void_p]
     assert fn.argtypes[7:] == [ctypes.c_void_p, ctypes.c_uint32]
     assert fn.calls[-1] == (*grid, *thread_block, 0, 0, 1000)
+
+
+@pytest.mark.parametrize("explicit_stream", [False, True])
+@pytest.mark.parametrize(
+    ("same_device", "contiguous"),
+    [(True, False), (False, True), (True, True)],
+)
+def test_aicpu_launch_validates_tensor_arguments(monkeypatch, explicit_stream, same_device, contiguous):
+    device0, device1 = torch.device("npu:0"), torch.device("npu:1")
+    default_stream = SimpleNamespace(device=device0, npu_stream=101)
+    monkeypatch.setattr(_torch_mock.npu, "current_stream", MagicMock(return_value=default_stream))
+    stream_device, other_device = (device1, device0) if explicit_stream else (device0, device1)
+    stream = SimpleNamespace(device=stream_device, npu_stream=102) if explicit_stream else None
+    tensor = _MockTensor([4], torch.int32)
+    held_index = stream_device.index if same_device else other_device.index
+    tensor.device = torch.device(f"npu:{held_index}")
+    tensor.is_contiguous = lambda: contiguous
+
+    run = MagicMock(return_value=0)
+    monkeypatch.setattr(_jit, "ctypes", _CtypesProxy(SimpleNamespace(copyRun=run)))
+    compiled = CompiledKernel(
+        lib_path="<fake>",
+        param_specs=[_tensor_spec("src", DataType.INT32, [4])],
+        kernel_name="copy",
+        aicpu=True,
+    )
+
+    if same_device and contiguous:
+        _jit._launch(compiled, (tensor,), 1, stream)
+        run.assert_called_once()
+        expected_stream = stream.npu_stream if stream is not None else default_stream.npu_stream
+        assert run.call_args.args[-1] == expected_stream
+    else:
+        message = "requires contiguous tensors" if not contiguous else "requires tensors on stream device"
+        with pytest.raises(InvalidArgument, match=message):
+            _jit._launch(compiled, (tensor,), 1, stream)
+        run.assert_not_called()
 
 
 # ---------------------------------------------------------------------------

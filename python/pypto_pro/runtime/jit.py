@@ -748,24 +748,32 @@ def _build_launch_entry(compiled: "CompiledKernel"):
         run.restype = ctypes.c_uint32
 
         def aicpu_entry(args: tuple, launch_config, stream):
-            # <<<1, nullptr, stm>>> dispatch: the AICPU reads device memory,
-            # so tensors must live on the NPU, and the kernel runs
-            # asynchronously on the stream until the caller synchronizes.
+            # <<<1, nullptr, stm>>> dispatch: AICPU reads device memory and runs async on the stream.
             abi_args = _pack_launch_args(plan, args)
+            if stream is None:
+                stream = torch.npu.current_stream()
+            stream_device = stream.device
             for slot in plan.slots:
                 if not slot[0]:
                     continue
-                tensor = args[slot[1]]
-                if tensor is not None and tensor.device.type != "npu":
+                index, name = slot[1], slot[2]
+                tensor = args[index]
+                if tensor is None:
+                    continue
+                device = tensor.device
+                if device.type != "npu":
                     raise InvalidType(
-                        f"arg[{slot[1]}] '{slot[2]}': AICPU launch requires NPU "
-                        f"tensors, got a tensor on '{tensor.device}'"
+                        f"arg[{index}] '{name}': AICPU launch requires NPU tensors, got a tensor on '{device}'"
                     )
-            if stream is not None:
-                raw_stream = stream.npu_stream
-            else:
-                raw_stream = torch.npu.current_stream().npu_stream
-            status = run(*abi_args, raw_stream)
+                if device != stream_device:
+                    raise InvalidArgument(
+                        f"arg[{index}] '{name}': AICPU launch requires tensors on stream device "
+                        f"'{stream_device}', got '{device}'"
+                    )
+                # Tensor assumes contiguous storage and Ptr leaves layout interpretation to the kernel.
+                if compiled.param_specs[index].kind == ParamKind.TENSOR and not tensor.is_contiguous():
+                    raise InvalidArgument(f"arg[{index}] '{name}': AICPU launch requires contiguous tensors")
+            status = run(*abi_args, stream.npu_stream)
             if status != 0:
                 raise RuntimeFailure(f"AICPU kernel '{compiled.kernel_name}' returned status {status}")
 
