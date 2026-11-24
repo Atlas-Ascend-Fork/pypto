@@ -594,6 +594,38 @@ public:
 using TupleTypePtr = std::shared_ptr<const TupleType>;
 
 /**
+ * \brief Fixed-length array type representation
+ *
+ * Represents a mutable, kernel-local array with a compile-time element type
+ * and length. The element type and length are part of the type.
+ */
+class ArrayType : public Type {
+public:
+    TypePtr type_;   ///< Element type, not limited to a scalar dtype
+    int64_t length_; ///< Number of elements; must be positive
+
+    /**
+     * \brief Create a fixed-length array type
+     *
+     * \param type Element type
+     * \param length Number of elements
+     */
+    ArrayType(TypePtr type, int64_t length) : type_(std::move(type)), length_(length) {}
+
+    [[nodiscard]] ObjectKind GetKind() const override { return ObjectKind::ArrayType; }
+    [[nodiscard]] std::string TypeName() const override { return "ArrayType"; }
+
+    static constexpr auto GetFieldDescriptors()
+    {
+        return std::tuple_cat(Type::GetFieldDescriptors(),
+                              std::make_tuple(reflection::UsualField(&ArrayType::type_, "type"),
+                                              reflection::UsualField(&ArrayType::length_, "length")));
+    }
+};
+
+using ArrayTypePtr = std::shared_ptr<const ArrayType>;
+
+/**
  * \brief Memory reference type representation
  *
  * Represents a memory reference type for shaped data (tensors and tiles).

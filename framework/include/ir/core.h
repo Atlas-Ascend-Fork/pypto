@@ -114,6 +114,7 @@ enum class ObjectKind {
     TokenType,
     NoneType,
     TupleType,
+    ArrayType,
     LogicalTensorType,
     WindowType,
     RegType,

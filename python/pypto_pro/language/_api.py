@@ -62,6 +62,7 @@ DType = Any
 Offset = Sequence[int]
 Shape = Sequence[int]
 Struct = Any  # a variable built by pl.struct(...)
+Array = Any  # a fixed-length kernel-local array built by pl.array(...)
 
 # ---------------------------------------------------------------------------
 # API declaration decorator
@@ -2022,6 +2023,30 @@ def reset_ctrl_spr(start_bit: int, end_bit: int, /) -> None:
         start_bit: Start bit index (0-63), compile-time constant.
         end_bit: End bit index (0-63), compile-time constant.
             Writable bits on 3510: 6-10, 45, 48, 50, 53, 59, 60.
+    """
+
+
+@_api_decl
+def array(size: int, /, *, dtype: DType) -> Array:
+    """Declare a fixed-length, mutable kernel-local array of scalars.
+
+    The storage is uninitialized: write every element before reading it. The
+    element dtype and length are part of the IR type, so they are fixed at
+    compile time. Each call creates independent storage; assigning the array to
+    another name aliases the same storage.
+
+    Args:
+        size: Positive compile-time element count
+        dtype: Explicit supported scalar element dtype, e.g. ``pl.DT_INT32``
+
+    Example::
+
+        datas = pl.array(8, dtype=pl.DT_INT32)
+        datas[0] = 7
+        a = datas[0]          # captures the int32 value 7
+        alias = datas         # same storage
+        alias[0] = 9
+        datas[1] = a          # datas[0] is 9, datas[1] is 7
     """
 
 

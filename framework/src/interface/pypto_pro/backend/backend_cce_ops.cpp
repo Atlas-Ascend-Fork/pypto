@@ -1654,6 +1654,53 @@ static std::string MakeSetValCodegenCCE(const ir::CallPtr& op, codegen::CodegenB
     return "";
 }
 
+static std::string MakeArrayCreateCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    auto arrayType = ir::As<ir::ArrayType>(op->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, arrayType)
+        << "array.create requires an ArrayType result";
+    auto elementType = ir::As<ir::ScalarType>(arrayType->type_);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, elementType)
+        << "array.create requires an array of scalars";
+    std::string target = codegen.GetCurrentResultTarget();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, !target.empty())
+        << "array.create must be the RHS of an AssignStmt bound to a Var; got no target";
+    codegen.Emit(elementType->dtype_.ToCTypeString() + " " + target + "[" + std::to_string(arrayType->length_) + "];");
+    return "";
+}
+
+static std::string MakeArrayLoadCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 2)
+        << "array.load requires (array, index), but got " << op->args_.size() << " arguments";
+    std::string base = codegen.GetExprAsCode(op->args_[0]);
+    std::string index = codegen.GetExprAsCode(op->args_[1]);
+    return base + "[" + index + "]";
+}
+
+static std::string MakeArrayStoreCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
+{
+    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
+        << "array.store requires (array, index, value), but got " << op->args_.size() << " arguments";
+    auto arrayType = ir::As<ir::ArrayType>(op->args_[0]->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, arrayType)
+        << "array.store requires an ArrayType base";
+    auto valueType = ir::As<ir::ScalarType>(op->args_[2]->GetType());
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, valueType)
+        << "array.store value must be a ScalarType";
+    auto elementType = ir::As<ir::ScalarType>(arrayType->type_);
+    PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, elementType)
+        << "array.store requires an array of scalars";
+    std::string base = codegen.GetExprAsCode(op->args_[0]);
+    std::string index = codegen.GetExprAsCode(op->args_[1]);
+    std::string value = codegen.ScalarCast(codegen.GetExprAsCode(op->args_[2]), valueType->dtype_, elementType->dtype_);
+    codegen.Emit(base + "[" + index + "] = " + value + ";");
+    return "";
+}
+
 static std::string MakeTileValidShapeCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
@@ -1685,6 +1732,25 @@ REGISTER_BACKEND_OP(BackendCCE, "block.getval")
 REGISTER_BACKEND_OP(BackendCCE, "block.setval")
     .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) { return MakeSetValCodegenCCE(op, codegen); });
+
+// Kernel-local scalar arrays: a declaration, a scalar read, and a scalar write.
+REGISTER_BACKEND_OP(BackendCCE, "array.create")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeArrayCreateCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "array.load")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeArrayLoadCodegenCCE(op, codegen);
+    });
+
+REGISTER_BACKEND_OP(BackendCCE, "array.store")
+    .set_pipe(ir::PipeType::S)
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
+        return MakeArrayStoreCodegenCCE(op, codegen);
+    });
 
 // Window metadata reads are scalar GM loads: PIPE_S, like getval.
 REGISTER_BACKEND_OP(BackendCCE, "dist.window_get")

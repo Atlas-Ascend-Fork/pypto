@@ -33,6 +33,7 @@
 #include "ir/span.h"
 #include "ir/stmt.h"
 #include "ir/transforms/io_text.h"
+#include "ir/transforms/structural_comparison.h"
 #include "interface/configs/config_manager_ng.h"
 #include "interface/tensor/logical_tensor.h"
 #include "ir/type.h"
@@ -66,6 +67,41 @@ TEST_F(IoTextDumpRoundTripTest, TileTypeDynamicValidShapeRoundTrip)
         ASSERT_EQ(loaded->tileView_->validShape.size(), 2);
         EXPECT_EQ(TextDumpType(loaded), expected);
     }
+}
+
+TEST_F(IoTextDumpRoundTripTest, ArrayTypeRoundTrip)
+{
+    auto type = std::make_shared<ArrayType>(std::make_shared<ScalarType>(DataType::INT32), 8);
+    EXPECT_EQ(TextDumpType(type), "array<int32_t, 8>");
+
+    std::string error;
+    auto loaded = TextLoadType("array<int32_t, 8>", error);
+    ASSERT_TRUE(error.empty()) << error;
+    auto loadedArray = As<ArrayType>(loaded);
+    ASSERT_NE(loadedArray, nullptr);
+    ASSERT_NE(As<ScalarType>(loadedArray->type_), nullptr);
+    EXPECT_EQ(As<ScalarType>(loadedArray->type_)->dtype_, DataType::INT32);
+    EXPECT_EQ(loadedArray->length_, 8);
+    EXPECT_TRUE(structural_equal(type, loaded));
+    EXPECT_EQ(structural_hash(type), structural_hash(loaded));
+
+    auto nested = std::make_shared<ArrayType>(
+        std::make_shared<TupleType>(std::vector<TypePtr>{std::make_shared<ScalarType>(DataType::INT32),
+                                                         std::make_shared<ScalarType>(DataType::FP32)}),
+        4);
+    EXPECT_EQ(TextDumpType(nested), "array<tuple<int32_t, float>, 4>");
+    std::string nestedError;
+    auto loadedNested = TextLoadType(TextDumpType(nested), nestedError);
+    ASSERT_TRUE(nestedError.empty()) << nestedError;
+    EXPECT_TRUE(structural_equal(nested, loadedNested));
+}
+
+TEST_F(IoTextDumpRoundTripTest, ArrayTypeRejectsNonPositiveLength)
+{
+    std::string error;
+    auto loaded = TextLoadType("array<int32_t, 0>", error);
+    EXPECT_EQ(loaded, nullptr);
+    EXPECT_FALSE(error.empty());
 }
 
 TEST_F(IoTextDumpRoundTripTest, RejectsRemovedTileViewFields)

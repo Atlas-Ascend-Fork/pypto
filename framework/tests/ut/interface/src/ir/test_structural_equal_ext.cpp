@@ -243,6 +243,21 @@ TEST_F(IRStructEqTypeTest, TestPtrTypeEqual)
     EXPECT_FALSE(structural_equal(f16, f32));
 }
 
+TEST_F(IRStructEqTypeTest, TestArrayTypeEqual)
+{
+    auto int32 = std::make_shared<ScalarType>(DataType::INT32);
+    auto int64 = std::make_shared<ScalarType>(DataType::INT64);
+    auto a = std::make_shared<ArrayType>(int32, 8);
+    auto b = std::make_shared<ArrayType>(int32, 8);
+    auto differentElement = std::make_shared<ArrayType>(int64, 8);
+    auto differentLength = std::make_shared<ArrayType>(int32, 9);
+
+    EXPECT_TRUE(structural_equal(a, b));
+    EXPECT_FALSE(structural_equal(a, differentElement));
+    EXPECT_FALSE(structural_equal(a, differentLength));
+    EXPECT_FALSE(structural_equal(differentElement, differentLength));
+}
+
 TEST_F(IRStructEqTypeTest, TestTileTypeMemoryReferencePresence)
 {
     auto dim = std::make_shared<ConstInt>(16, DataType::INT64, Sp());

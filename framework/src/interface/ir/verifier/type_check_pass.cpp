@@ -161,6 +161,18 @@ void TypeChecker::CheckTypeEquality(const TypePtr& type1, const TypePtr& type2, 
         return;
     }
 
+    if (auto array1 = As<ArrayType>(type1)) {
+        auto array2 = As<ArrayType>(type2);
+        CheckTypeEquality(array1->type_, array2->type_, context, desc1 + " element", desc2 + " element", span);
+        if (array1->length_ != array2->length_) {
+            std::ostringstream msg;
+            msg << "Array length mismatch in " << context << ": " << desc1 << " has " << array1->length_
+                << " elements, but " << desc2 << " has " << array2->length_ << " elements";
+            RecordError(typecheck::ErrorType::SHAPE_DIMENSION_MISMATCH, msg.str(), span);
+        }
+        return;
+    }
+
     // For dtype-only types (ScalarType, RegType), check dtype
     auto getDtype = [](const TypePtr& t) -> DataType {
         if (t->GetKind() == ObjectKind::ScalarType)

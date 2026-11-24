@@ -60,6 +60,7 @@
 #define IR_KW_BREAK "break"
 #define IR_KW_CONTINUE "continue"
 #define IR_KW_TUPLE "tuple"
+#define IR_KW_ARRAY "array"
 #define IR_KW_GETITEM "getitem"
 #define IR_KW_SCALAR_EXPR "scalar_expr"
 #define IR_KW_UNKNOWN "unknown"
@@ -189,6 +190,7 @@ enum class IRTextLexerTokenKind {
     KwBreak,
     KwContinue,
     KwTuple,
+    KwArray,
     KwGetItem,
     KwScalarExpr,
     KwUnknown,
@@ -345,6 +347,7 @@ static inline const npu::tile_fwk::BiMap<IRTextLexerTokenKind>& IRTextGetLexerTo
         {IRTextLexerTokenKind::KwBreak, IR_KW_BREAK},
         {IRTextLexerTokenKind::KwContinue, IR_KW_CONTINUE},
         {IRTextLexerTokenKind::KwTuple, IR_KW_TUPLE},
+        {IRTextLexerTokenKind::KwArray, IR_KW_ARRAY},
         {IRTextLexerTokenKind::KwGetItem, IR_KW_GETITEM},
         {IRTextLexerTokenKind::KwScalarExpr, IR_KW_SCALAR_EXPR},
         {IRTextLexerTokenKind::KwUnknown, IR_KW_UNKNOWN},
@@ -506,6 +509,7 @@ protected:
     void VisitType_(const TileTypePtr& op) override;
     void VisitType_(const MutexTileTypePtr& op) override;
     void VisitType_(const TupleTypePtr& op) override;
+    void VisitType_(const ArrayTypePtr& op) override;
     void VisitType_(const MemRefTypePtr& op) override;
     void VisitType_(const PtrTypePtr& op) override;
     void VisitType_(const TokenTypePtr& op) override;

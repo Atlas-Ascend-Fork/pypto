@@ -101,6 +101,7 @@ DEFINE_KIND_TRAIT(ScalarType, ObjectKind::ScalarType);
 DEFINE_KIND_TRAIT(TensorType, ObjectKind::TensorType);
 DEFINE_KIND_TRAIT(MutexTileType, ObjectKind::MutexTileType);
 DEFINE_KIND_TRAIT(TupleType, ObjectKind::TupleType);
+DEFINE_KIND_TRAIT(ArrayType, ObjectKind::ArrayType);
 DEFINE_KIND_TRAIT(MemRefType, ObjectKind::MemRefType);
 DEFINE_KIND_TRAIT(PtrType, ObjectKind::PtrType);
 DEFINE_KIND_TRAIT(TokenType, ObjectKind::TokenType);
@@ -209,10 +210,10 @@ struct KindTrait<UnaryExpr> {
 template <>
 struct KindTrait<Type> {
     static constexpr ObjectKind kinds[] = {
-        ObjectKind::UnknownType,       ObjectKind::ScalarType,    ObjectKind::ShapedType, ObjectKind::TensorType,
-        ObjectKind::TileType,          ObjectKind::MutexTileType, ObjectKind::TupleType,  ObjectKind::TokenType,
-        ObjectKind::LogicalTensorType, ObjectKind::PtrType,       ObjectKind::NoneType,   ObjectKind::WindowType,
-        ObjectKind::RegType,           ObjectKind::SimtGroupType};
+        ObjectKind::UnknownType, ObjectKind::ScalarType,        ObjectKind::ShapedType,   ObjectKind::TensorType,
+        ObjectKind::TileType,    ObjectKind::MutexTileType,     ObjectKind::TupleType,    ObjectKind::ArrayType,
+        ObjectKind::TokenType,   ObjectKind::LogicalTensorType, ObjectKind::PtrType,      ObjectKind::NoneType,
+        ObjectKind::WindowType,  ObjectKind::RegType,           ObjectKind::SimtGroupType};
     static constexpr size_t count = sizeof(kinds) / sizeof(ObjectKind);
 };
 

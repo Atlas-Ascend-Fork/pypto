@@ -1,0 +1,10 @@
+function kernel incast(int64_t %_jit_entry_0) outcast() #entry(false) #type(pro) {
+    array<int32_t, 8> %datas_0 = array.create(size=8, dtype=int32_t);
+    array.store(%datas_0, 0, 7);
+    int32_t %a_0 = array.load(%datas_0, 0);
+    array<int32_t, 8> %alias_0 = %datas_0;
+    array.store(%alias_0, 0, 9);
+    array.store(%datas_0, 1, %a_0);
+    int32_t %_test_result_0 = array.load(%datas_0, 0);
+    return;
+}

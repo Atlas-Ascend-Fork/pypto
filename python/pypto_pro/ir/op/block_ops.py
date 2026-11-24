@@ -2019,6 +2019,22 @@ def _ir_setval(container: Expr, offset: Expr, value: Expr, *, span: Span | None 
     return _ir_core.create_op_call(block_ir_op("setval"), [container, offset, value], {}, actual_span)
 
 
+@op_impl("array")
+def _build_array(self, size: Expr, *, dtype: DataType, span: Span) -> Expr:
+    """Declare ``pl.array(size, dtype=...)`` as an ``array.create`` IR call."""
+    element_count = require_const_int(size, subject="pl.array() size", lower_bound=1)
+    if not isinstance(dtype, DataType):
+        raise InvalidType(
+            f"pl.array() dtype must be a scalar dtype such as pl.DT_INT32, got {type(dtype).__name__}",
+            span=span,
+            parser_retry=True,
+        )
+    require_scalar_dtype(dtype, subject="pl.array() element")
+    return _ir_core.create_op_call(
+        "array.create", [], {"size": element_count, "dtype": dtype}, span,
+    )
+
+
 def _check_transpose_align(out: Expr, src: Expr, dt: DataType | None) -> None:
     """TTRANS (3510) statically asserts ``Cols * sizeof(T) % 32 == 0`` on both tiles.
 

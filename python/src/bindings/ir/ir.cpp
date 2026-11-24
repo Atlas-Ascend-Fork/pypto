@@ -496,6 +496,13 @@ void BindTypeClass(py::module_& ir)
                        "Create a tuple type from a list of types");
     BindFields<TupleType>(tupleTypeClass);
 
+    // ArrayType - const shared_ptr
+    auto arrayTypeClass = py::class_<ArrayType, Type, std::shared_ptr<ArrayType>>(
+        ir, "ArrayType", "Fixed-length mutable array type (element type and length)");
+    arrayTypeClass.def(py::init<TypePtr, int64_t>(), py::arg("type"), py::arg("length"),
+                       "Create a fixed-length array type");
+    BindFields<ArrayType>(arrayTypeClass);
+
     py::enum_<TokenKind>(ir, "TokenKind", "Token semantic kind")
         .value("NORMAL", TokenKind::NORMAL, "Ordinary dependency token")
         .value("READ", TokenKind::READ, "Tensor graph read token")

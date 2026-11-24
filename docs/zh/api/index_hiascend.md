@@ -596,6 +596,7 @@
       - [pypto_pro.language.make_tuple](pro_api/SIMD-API/utilities/make_tuple.md)
       - [pypto_pro.language.struct](pro_api/SIMD-API/utilities/struct.md)
       - [pypto_pro.language.struct_array](pro_api/SIMD-API/utilities/struct_array.md)
+      - [pypto_pro.language.array](pro_api/SIMD-API/utilities/array.md)
   - [SIMT API](pro_api/SIMT-API/index.md)
     - [执行模型](pro_api/SIMT-API/execution/index.md)
       - [pypto_pro.language.simt.thread_idx](pro_api/SIMT-API/execution/thread_idx.md)

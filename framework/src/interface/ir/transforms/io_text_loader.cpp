@@ -504,6 +504,21 @@ TypePtr IRTextParser::ParseTypeTuple()
     return std::make_shared<TupleType>(types);
 }
 
+TypePtr IRTextParser::ParseTypeArray()
+{
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwArray));
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunLt));
+    MUST_VALID(elementType, ParseType());
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunComma));
+    const auto length = Peek().intVal;
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::TokInt));
+    MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunGt));
+    if (length <= 0) {
+        return Error("ArrayType length must be positive");
+    }
+    return std::make_shared<ArrayType>(elementType, length);
+}
+
 TypePtr IRTextParser::ParseTypeTensor()
 {
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwTensor));
@@ -721,6 +736,7 @@ TypePtr IRTextParser::ParseType()
         {IRTextLexerTokenKind::KwPtr, &IRTextParser::ParseTypePtr},
         {IRTextLexerTokenKind::KwSimtGroup, &IRTextParser::ParseTypeSimtGroup},
         {IRTextLexerTokenKind::KwTuple, &IRTextParser::ParseTypeTuple},
+        {IRTextLexerTokenKind::KwArray, &IRTextParser::ParseTypeArray},
         {IRTextLexerTokenKind::KwTensor, &IRTextParser::ParseTypeTensor},
         {IRTextLexerTokenKind::KwTile, &IRTextParser::ParseTypeTile},
         {IRTextLexerTokenKind::KwMutexTile, &IRTextParser::ParseTypeMutexTile},
@@ -1276,20 +1292,35 @@ StmtPtr IRTextParser::ParseStmt()
     }
 
     static const std::unordered_set<IRTextLexerTokenKind> typeKeywords = {
-        IRTextLexerTokenKind::KwTensor,      IRTextLexerTokenKind::KwTile,
-        IRTextLexerTokenKind::KwTuple,       IRTextLexerTokenKind::KwPtr,
-        IRTextLexerTokenKind::KwToken,       IRTextLexerTokenKind::KwNone,
-        IRTextLexerTokenKind::KwMemrefType,  IRTextLexerTokenKind::KwV0LogicalTensor,
-        IRTextLexerTokenKind::KwTypeBool,    IRTextLexerTokenKind::KwTypeInt8,
-        IRTextLexerTokenKind::KwTypeInt16,   IRTextLexerTokenKind::KwTypeInt32,
-        IRTextLexerTokenKind::KwTypeInt64,   IRTextLexerTokenKind::KwTypeUint8,
-        IRTextLexerTokenKind::KwTypeUint16,  IRTextLexerTokenKind::KwTypeUint32,
-        IRTextLexerTokenKind::KwTypeUint64,  IRTextLexerTokenKind::KwTypeFp16,
-        IRTextLexerTokenKind::KwTypeFp32,    IRTextLexerTokenKind::KwTypeFp64,
-        IRTextLexerTokenKind::KwTypeBf16,    IRTextLexerTokenKind::KwTypeFp8e4m3fn,
-        IRTextLexerTokenKind::KwTypeFp8e5m2, IRTextLexerTokenKind::KwTypeHf4,
-        IRTextLexerTokenKind::KwTypeHf8,     IRTextLexerTokenKind::KwTypeUnknown,
-        IRTextLexerTokenKind::KwSimtGroup,   IRTextLexerTokenKind::KwMutexTile,
+        IRTextLexerTokenKind::KwTensor,
+        IRTextLexerTokenKind::KwTile,
+        IRTextLexerTokenKind::KwTuple,
+        IRTextLexerTokenKind::KwArray,
+        IRTextLexerTokenKind::KwPtr,
+        IRTextLexerTokenKind::KwToken,
+        IRTextLexerTokenKind::KwNone,
+        IRTextLexerTokenKind::KwMemrefType,
+        IRTextLexerTokenKind::KwV0LogicalTensor,
+        IRTextLexerTokenKind::KwTypeBool,
+        IRTextLexerTokenKind::KwTypeInt8,
+        IRTextLexerTokenKind::KwTypeInt16,
+        IRTextLexerTokenKind::KwTypeInt32,
+        IRTextLexerTokenKind::KwTypeInt64,
+        IRTextLexerTokenKind::KwTypeUint8,
+        IRTextLexerTokenKind::KwTypeUint16,
+        IRTextLexerTokenKind::KwTypeUint32,
+        IRTextLexerTokenKind::KwTypeUint64,
+        IRTextLexerTokenKind::KwTypeFp16,
+        IRTextLexerTokenKind::KwTypeFp32,
+        IRTextLexerTokenKind::KwTypeFp64,
+        IRTextLexerTokenKind::KwTypeBf16,
+        IRTextLexerTokenKind::KwTypeFp8e4m3fn,
+        IRTextLexerTokenKind::KwTypeFp8e5m2,
+        IRTextLexerTokenKind::KwTypeHf4,
+        IRTextLexerTokenKind::KwTypeHf8,
+        IRTextLexerTokenKind::KwTypeUnknown,
+        IRTextLexerTokenKind::KwSimtGroup,
+        IRTextLexerTokenKind::KwMutexTile,
     };
     if (typeKeywords.count(tok.kind)) {
         return ParseStmtVarDef();

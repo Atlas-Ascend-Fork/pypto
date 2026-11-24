@@ -73,6 +73,10 @@ void IRVisitor::VisitType(const TypePtr& type)
         VisitType_(op);
         return;
     }
+    if (auto op = As<ArrayType>(type)) {
+        VisitType_(op);
+        return;
+    }
     if (auto op = As<PtrType>(type)) {
         VisitType_(op);
         return;
@@ -358,6 +362,7 @@ void IRVisitor::VisitType_(const TileTypePtr&) {}
 
 void IRVisitor::VisitType_(const MutexTileTypePtr& op) { VisitType_(std::static_pointer_cast<const TileType>(op)); }
 void IRVisitor::VisitType_(const TupleTypePtr&) {}
+void IRVisitor::VisitType_(const ArrayTypePtr&) {}
 void IRVisitor::VisitType_(const MemRefTypePtr&) {}
 void IRVisitor::VisitType_(const PtrTypePtr&) {}
 void IRVisitor::VisitType_(const TokenTypePtr&) {}

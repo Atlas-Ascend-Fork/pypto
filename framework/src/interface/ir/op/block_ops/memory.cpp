@@ -467,6 +467,98 @@ REGISTER_OP("block.make_mutex_tile")
         return DeduceBlockCreateMutexTileType(args, kwargs, "block.make_mutex_tile");
     });
 
+TypePtr DeduceArrayCreateType(const std::vector<ExprPtr>& args,
+                              const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.empty())
+        << "array.create takes no positional arguments, but got " << args.size();
+    const int64_t size = GetOpKwarg<int64_t>(kwargs, "size");
+    PRO_IR_CHECK(ExternalError::INVALID_SHAPE, size > 0)
+        << "array.create size must be a positive compile-time integer, got " << size;
+    const DataType dtype = GetOpKwarg<DataType>(kwargs, "dtype");
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, !dtype.IsStorageOnly() && dtype.ToCTypeString() != IR_KW_TYPE_UNKNOWN)
+        << "array.create dtype " << dtype.ToString() << " is not a supported scalar dtype";
+    return std::make_shared<ArrayType>(std::make_shared<ScalarType>(dtype), size);
+}
+
+void CheckArrayAccessOperands(const std::vector<ExprPtr>& args, const std::string& opName, ArrayTypePtr* arrayType)
+{
+    for (const auto& arg : args) {
+        PRO_IR_CHECK(npu::tile_fwk::InternalError::COMMON_INNER_ERROR, arg) << opName << ": null argument";
+    }
+    *arrayType = As<ArrayType>(args[0]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, *arrayType != nullptr)
+        << opName << " requires an ArrayType base, got " << args[0]->GetType()->TypeName();
+    const TypePtr& elementType = (*arrayType)->type_;
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, elementType != nullptr && As<ScalarType>(elementType) != nullptr)
+        << opName << " requires an array of scalars, got element type "
+        << (elementType != nullptr ? elementType->TypeName() : "null");
+    auto indexType = As<ScalarType>(args[1]->GetType());
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, indexType != nullptr && indexType->dtype_.IsInt())
+        << opName << " index must be an integer scalar, got " << args[1]->GetType()->TypeName();
+    if (auto index = As<ConstInt>(args[1])) {
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, index->value_ >= 0 && index->value_ < (*arrayType)->length_)
+            << opName << " constant index " << index->value_ << " is out of bounds for " << (*arrayType)->length_
+            << " elements";
+    }
+}
+
+TypePtr DeduceArrayLoadType(const std::vector<ExprPtr>& args,
+                            [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_2)
+        << "array.load requires (array, index), but got " << args.size() << " arguments";
+    ArrayTypePtr arrayType;
+    CheckArrayAccessOperands(args, "array.load", &arrayType);
+    return arrayType->type_;
+}
+
+TypePtr DeduceArrayStoreType(const std::vector<ExprPtr>& args,
+                             [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == NUM_VALUE_3)
+        << "array.store requires (array, index, value), but got " << args.size() << " arguments";
+    ArrayTypePtr arrayType;
+    CheckArrayAccessOperands(args, "array.store", &arrayType);
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<ScalarType>(args[2]->GetType()) != nullptr)
+        << "array.store value must be a scalar, got " << args[2]->GetType()->TypeName();
+    return GetNoneType();
+}
+
+REGISTER_OP("array.create")
+    .set_op_category("BlockOp")
+    .set_description("Declare an uninitialized fixed-length local array. Result type is "
+                     "ArrayType(ScalarType(dtype), size); must be let-bound to a Var by the producer.")
+    .no_argument()
+    .set_attr<DataType>("dtype")
+    .set_attr<int>("size")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceArrayCreateType(args, kwargs);
+    });
+
+REGISTER_OP("array.load")
+    .set_op_category("BlockOp")
+    .set_description("Read one element of an ArrayType as a scalar of its element type")
+    .add_argument("array", "Array value (ArrayType)")
+    .add_argument("index", "Integer element index")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceArrayLoadType(args, kwargs);
+    });
+
+REGISTER_OP("array.store")
+    .set_op_category("BlockOp")
+    .set_description("Write one element of an ArrayType. Returns NoneType and is emitted as an AssignStmt "
+                     "with no targets.")
+    .add_argument("array", "Array value (ArrayType)")
+    .add_argument("index", "Integer element index")
+    .add_argument("value", "Scalar value to write")
+    .f_deduce_type([](const std::vector<ExprPtr>& args,
+                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
+        return DeduceArrayStoreType(args, kwargs);
+    });
+
 REGISTER_OP("block.getval")
     .set_op_category("BlockOp")
     .set_description("Read a scalar value from a tile or tensor at offset")

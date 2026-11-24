@@ -422,6 +422,34 @@ TEST(IRTypeTest, TestTupleTypeWithTensorAndScalar)
 }
 
 // ============================================================================
+// ArrayType Tests
+// ============================================================================
+
+TEST(IRTypeTest, TestArrayTypeScalarElement)
+{
+    auto elementType = std::make_shared<ScalarType>(DataType::INT32);
+    auto arrayType = std::make_shared<ArrayType>(elementType, 8);
+
+    ASSERT_NE(arrayType, nullptr);
+    ASSERT_EQ(arrayType->TypeName(), "ArrayType");
+    ASSERT_EQ(arrayType->GetKind(), ObjectKind::ArrayType);
+    ASSERT_EQ(arrayType->type_, elementType);
+    ASSERT_EQ(arrayType->length_, 8);
+    ASSERT_EQ(arrayType->type_->TypeName(), "ScalarType");
+}
+
+TEST(IRTypeTest, TestArrayTypeElementTypeIsNotLimitedToScalar)
+{
+    auto elementType = std::make_shared<TupleType>(std::vector<TypePtr>{std::make_shared<ScalarType>(DataType::INT32),
+                                                                        std::make_shared<ScalarType>(DataType::FP32)});
+    auto arrayType = std::make_shared<ArrayType>(elementType, 4);
+
+    ASSERT_NE(arrayType, nullptr);
+    ASSERT_EQ(arrayType->type_, elementType);
+    ASSERT_EQ(arrayType->type_->TypeName(), "TupleType");
+}
+
+// ============================================================================
 // Type Polymorphism Tests
 // ============================================================================
 

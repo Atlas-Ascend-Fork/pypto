@@ -356,6 +356,10 @@ StructuralHasher::ResultType StructuralHasher::HashType(const TypePtr& type)
             INTERNAL_CHECK(t) << "structural_hash encountered null type in TupleType";
             h = HashCombine(h, HashType(t));
         }
+    } else if (auto arrayType = As<ArrayType>(type)) {
+        INTERNAL_CHECK(arrayType->type_) << "structural_hash encountered null ArrayType element type";
+        h = HashCombine(h, HashType(arrayType->type_));
+        h = HashCombine(h, static_cast<ResultType>(arrayType->length_));
     } else if (auto tokenType = As<TokenType>(type)) {
         h = HashCombine(h, static_cast<ResultType>(tokenType->kind_));
     } else if (auto groupType = As<SimtGroupType>(type)) {

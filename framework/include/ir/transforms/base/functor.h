@@ -260,6 +260,7 @@ protected:
         return VisitType_(std::static_pointer_cast<const TileType>(op), std::forward<Args>(args)...);
     }
     virtual R VisitType_(const TupleTypePtr& op, Args... args) = 0;
+    virtual R VisitType_(const ArrayTypePtr& op, Args... args) = 0;
     virtual R VisitType_(const MemRefTypePtr& op, Args... args) = 0;
     virtual R VisitType_(const PtrTypePtr& op, Args... args) = 0;
     virtual R VisitType_(const TokenTypePtr& op, Args... args) = 0;
@@ -282,6 +283,7 @@ R TypeFunctor<R, Args...>::VisitType(const TypePtr& type, Args... args)
     TYPE_FUNCTOR_DISPATCH(TileType);
     TYPE_FUNCTOR_DISPATCH(ScalarType);
     TYPE_FUNCTOR_DISPATCH(TupleType);
+    TYPE_FUNCTOR_DISPATCH(ArrayType);
     TYPE_FUNCTOR_DISPATCH(PtrType);
     TYPE_FUNCTOR_DISPATCH(TokenType);
     TYPE_FUNCTOR_DISPATCH(NoneType);

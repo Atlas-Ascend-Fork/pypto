@@ -2325,5 +2325,89 @@ TEST_F(BlockOpsCtrlSprTest, ResetCtrlSpr_WrongArgCount_Throws)
     EXPECT_THROW((void)reg.Create("reset_ctrl_spr", {}, Sp()), npu::tile_fwk::Error);
 }
 
+// ============================================================================
+// array.create / array.load / array.store
+// ============================================================================
+
+class BlockOpsArrayTest : public testing::Test {
+protected:
+    static std::vector<std::pair<std::string, std::any>> CreateKwargs(int64_t size, DataType dtype)
+    {
+        return {{"size", std::any(size)}, {"dtype", std::any(dtype)}};
+    }
+
+    static ArrayTypePtr MakeArray(DataType dtype = DataType::INT32, int64_t length = 8)
+    {
+        return std::make_shared<ArrayType>(std::make_shared<ScalarType>(dtype), length);
+    }
+};
+
+TEST_F(BlockOpsArrayTest, CreateDeducesArrayType)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto call = reg.Create("array.create", {}, CreateKwargs(8, DataType::INT32), Sp());
+    ASSERT_NE(call, nullptr);
+
+    auto arrayType = As<ArrayType>(call->GetType());
+    ASSERT_NE(arrayType, nullptr);
+    ASSERT_NE(As<ScalarType>(arrayType->type_), nullptr);
+    EXPECT_EQ(As<ScalarType>(arrayType->type_)->dtype_, DataType::INT32);
+    EXPECT_EQ(arrayType->length_, 8);
+}
+
+TEST_F(BlockOpsArrayTest, LoadReturnsElementType)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto array = std::make_shared<Var>("datas", MakeArray(DataType::FP16, 4), Sp());
+    auto index = std::make_shared<ConstInt>(2, DataType::INT64, Sp());
+
+    auto call = reg.Create("array.load", {array, index}, Sp());
+    ASSERT_NE(call, nullptr);
+    auto resultType = As<ScalarType>(call->GetType());
+    ASSERT_NE(resultType, nullptr);
+    EXPECT_EQ(resultType->dtype_, DataType::FP16);
+}
+
+TEST_F(BlockOpsArrayTest, StoreReturnsNoneType)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto array = std::make_shared<Var>("datas", MakeArray(), Sp());
+    auto index = std::make_shared<ConstInt>(0, DataType::INT64, Sp());
+    auto value = std::make_shared<ConstInt>(7, DataType::INT32, Sp());
+
+    auto call = reg.Create("array.store", {array, index, value}, Sp());
+    ASSERT_NE(call, nullptr);
+    EXPECT_NE(As<NoneType>(call->GetType()), nullptr);
+}
+
+TEST_F(BlockOpsArrayTest, CreateRejectsInvalidArguments)
+{
+    auto& reg = OpRegistry::GetInstance();
+    EXPECT_THROW((void)reg.Create("array.create", {}, CreateKwargs(0, DataType::INT32), Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)reg.Create("array.create", {}, CreateKwargs(8, DataType::INT4), Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW(
+        (void)reg.Create("array.create", {MakeScalarVar("x", DataType::INT32)}, CreateKwargs(8, DataType::INT32), Sp()),
+        npu::tile_fwk::Error);
+}
+
+TEST_F(BlockOpsArrayTest, AccessRejectsMalformedArguments)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto array = std::make_shared<Var>("datas", MakeArray(DataType::INT32, 8), Sp());
+    auto outOfBounds = std::make_shared<ConstInt>(8, DataType::INT64, Sp());
+    auto floatIndex = std::make_shared<ConstFloat>(1.0, DataType::FP32, Sp());
+    auto value = std::make_shared<ConstInt>(7, DataType::INT32, Sp());
+    auto notArray = MakeScalarVar("x", DataType::INT32);
+
+    EXPECT_THROW((void)reg.Create("array.load", {array, outOfBounds}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)reg.Create("array.load", {array, floatIndex}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)reg.Create("array.load", {notArray, value}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW((void)reg.Create("array.store", {array, floatIndex, value}, Sp()), npu::tile_fwk::Error);
+    EXPECT_THROW(
+        (void)reg.Create("array.store",
+                         {array, std::make_shared<ConstInt>(0, DataType::INT64, Sp()), MakeIntTuple({1, 2})}, Sp()),
+        npu::tile_fwk::Error);
+}
+
 } // namespace ir
 } // namespace pypto

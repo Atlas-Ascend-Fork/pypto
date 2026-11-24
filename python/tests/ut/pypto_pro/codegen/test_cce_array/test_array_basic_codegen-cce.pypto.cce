@@ -1,0 +1,29 @@
+#if defined(__DAV_VEC__)
+#ifndef PYPTO_SYNCED_TILE_DEFINED
+#define PYPTO_SYNCED_TILE_DEFINED
+#include <stdint.h>
+template<class Tile, uint32_t N> struct SyncedTile {
+    using PtoTile = Tile;
+    PtoTile tile;
+    int64_t mutex_ids[N];
+};
+#endif
+#include <pypto_dump.h>
+__aicore__ inline void _basic_kernel_impl_vector(__gm__ int32_t* out_0_ptr)
+{
+
+    int32_t datas_0[8];
+    datas_0[0] = 7;
+    auto _expr_tmp_0_0 = datas_0[0];
+    *((__gm__ int32_t*)out_0_ptr + 0) = _expr_tmp_0_0;
+    return;
+}
+#endif
+
+
+__aicore__ inline void _basic_kernel_impl(__gm__ int32_t* out_0)
+{
+#if defined(__DAV_VEC__)
+    ::_basic_kernel_impl_vector(out_0);
+#endif
+}

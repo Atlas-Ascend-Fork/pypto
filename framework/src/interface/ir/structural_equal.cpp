@@ -790,6 +790,18 @@ bool StructuralEqualImpl<AssertMode>::EqualType(const TypePtr& lhs, const TypePt
                 return false;
         }
         return true;
+    } else if (auto lhsArray = As<ArrayType>(lhs)) {
+        auto rhsArray = As<ArrayType>(rhs);
+        if (!rhsArray) {
+            return IRAssert({}, "Type cast failed for ArrayType");
+        }
+        if (!EqualType(lhsArray->type_, rhsArray->type_)) {
+            return false;
+        }
+        if (lhsArray->length_ != rhsArray->length_) {
+            return IRAssert({}, "ArrayType length mismatch (", lhsArray->length_, " != ", rhsArray->length_, ")");
+        }
+        return true;
     } else if (auto group = As<SimtGroupType>(lhs)) {
         auto other = As<SimtGroupType>(rhs);
         if (!other || group->kind_ != other->kind_) {

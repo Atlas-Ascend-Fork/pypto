@@ -579,6 +579,10 @@ std::string IRPrinter::Print(const TypePtr& type)
         return oss.str();
     }
 
+    if (auto arrayType = As<ArrayType>(type)) {
+        return prefix_ + ".Array[" + Print(arrayType->type_) + ", " + std::to_string(arrayType->length_) + "]";
+    }
+
     if (auto memrefType = As<MemRefType>(type)) {
         return prefix_ + ".MemRefType";
     }

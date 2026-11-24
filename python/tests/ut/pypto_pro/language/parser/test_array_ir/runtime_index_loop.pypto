@@ -1,0 +1,9 @@
+function kernel incast(int64_t %_jit_entry_0) outcast() #entry(false) #type(pro) {
+    array<int32_t, 8> %datas_0 = array.create(size=8, dtype=int32_t);
+    for %i__iterator_0 inrange 0, 8, 1 iter { } {
+        int64_t %i_0 = %i__iterator_0;
+        array.store(%datas_0, %i_0, %i_0);
+        continue;
+    }
+    return;
+}

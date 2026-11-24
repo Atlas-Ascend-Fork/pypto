@@ -24,6 +24,7 @@ from ..._errors import (
     InvalidVal,
     NotSupported,
     OutOfRange,
+    current_span,
 )
 from ._tuple_type_registry import TupleTypeKind
 
@@ -308,6 +309,35 @@ class AssignmentParserMixin:
 
         container_expr = self.parse_expression(target.value)
         container_type = container_expr.type
+
+        # Fixed-length array write: datas[i] = value lowers to array.store. The
+        # store is C-like: a literal is converted to the element dtype, and any
+        # other scalar is cast by codegen (the pl.setval contract).
+        if isinstance(container_type, ir.ArrayType):
+            element_type = container_type.type
+            if not isinstance(element_type, ir.ScalarType):
+                raise InvalidType(
+                    f"Array element store supports scalar elements, got {element_type}",
+                    span=span,
+                    parser_retry=True,
+                )
+            index_expr = self._parse_array_index(container_type, target.slice, span)
+            if not isinstance(value_expr.type, ir.ScalarType):
+                raise InvalidType(
+                    f"Array element store expects a scalar value, got {value_expr.type}",
+                    span=span,
+                    hint="Assign a scalar, e.g. datas[0] = 7",
+                    parser_retry=True,
+                )
+            if isinstance(value_expr, (ir.ConstInt, ir.ConstFloat, ir.ConstBool)):
+                literal = self._const_scalar_value(value_expr)
+                if literal is not None:
+                    with current_span(span):
+                        value_expr = self._make_scalar_constant(literal, element_type.dtype, span)
+            store_call = ir.create_op_call("array.store", [container_expr, index_expr, value_expr], {}, span)
+            self.builder.emit(ir.AssignStmt([], store_call, span))
+            return
+
         if not isinstance(container_type, (ir.TileType, ir.TensorType)):
             raise InvalidType(
                 f"Subscript assignment requires Tile or Tensor, got {type(container_type).__name__}",

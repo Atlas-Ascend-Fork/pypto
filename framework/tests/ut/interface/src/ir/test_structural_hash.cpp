@@ -74,6 +74,21 @@ TEST_F(IRStructHashTest, TestHashPtrType)
     EXPECT_NE(structural_hash(f16), structural_hash(f32));
 }
 
+TEST_F(IRStructHashTest, TestHashArrayType)
+{
+    auto int32 = std::make_shared<ScalarType>(DataType::INT32);
+    auto int64 = std::make_shared<ScalarType>(DataType::INT64);
+    auto a = std::make_shared<ArrayType>(int32, 8);
+    auto b = std::make_shared<ArrayType>(int32, 8);
+    auto differentElement = std::make_shared<ArrayType>(int64, 8);
+    auto differentLength = std::make_shared<ArrayType>(int32, 9);
+
+    EXPECT_EQ(structural_hash(a), structural_hash(b));
+    EXPECT_NE(structural_hash(a), structural_hash(differentElement));
+    EXPECT_NE(structural_hash(a), structural_hash(differentLength));
+    EXPECT_NE(structural_hash(differentElement), structural_hash(differentLength));
+}
+
 // ============================================================================
 // Expression node hashing
 // ============================================================================

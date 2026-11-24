@@ -115,6 +115,7 @@ protected:
     void VisitType_(const TileTypePtr& op) override;
     void VisitType_(const MutexTileTypePtr& op) override;
     void VisitType_(const TupleTypePtr& op) override;
+    void VisitType_(const ArrayTypePtr& op) override;
     void VisitType_(const MemRefTypePtr& op) override;
     void VisitType_(const PtrTypePtr& op) override;
     void VisitType_(const TokenTypePtr& op) override;

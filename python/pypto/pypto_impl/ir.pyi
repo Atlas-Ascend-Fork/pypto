@@ -1319,6 +1319,24 @@ class TupleType(Type):
         """
 
 
+class ArrayType(Type):
+    """Fixed-length mutable array type with a compile-time element type and length."""
+
+    type: Final[Type]
+    """Element type."""
+
+    length: Final[int]
+    """Number of elements."""
+
+    def __init__(self, type: Type, length: int) -> None:
+        """Create a fixed-length array type.
+
+        Args:
+            type: Element type
+            length: Number of elements; must be positive
+        """
+
+
 class TupleTypeKind(enum.IntEnum):
     """Semantic classification for a TupleType."""
 

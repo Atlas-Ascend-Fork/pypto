@@ -191,6 +191,13 @@ void IRTextDumper::VisitType_(const TupleTypePtr& op)
     stream_ << IR_PUN_GT;
 }
 
+void IRTextDumper::VisitType_(const ArrayTypePtr& op)
+{
+    stream_ << IR_KW_ARRAY << IR_PUN_LT;
+    VisitType(op->type_);
+    stream_ << IR_PUN_COMMA << " " << op->length_ << IR_PUN_GT;
+}
+
 void IRTextDumper::VisitType_(const MemRefTypePtr&) { stream_ << IR_KW_MEMREF_TYPE; }
 
 void IRTextDumper::VisitType_(const PtrTypePtr& op)

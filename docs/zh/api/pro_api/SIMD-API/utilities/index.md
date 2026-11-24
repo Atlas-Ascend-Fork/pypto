@@ -7,4 +7,5 @@
 make_tuple
 struct
 struct_array
+array
 ```

@@ -924,6 +924,10 @@ class ExpressionParserMixin:
             result = self._materialize_nested_expr(result, span)
             return result
 
+        if isinstance(value_type, ir.ArrayType):
+            index_expr = self._parse_array_index(value_type, subscript.slice, span)
+            return ir.create_op_call("array.load", [value_expr, index_expr], {}, span)
+
         if not isinstance(value_type, ir.TupleType):
             raise InvalidType(
                 f"Subscript requires tuple, tile, or tensor type, got {type(value_type).__name__}",
@@ -1269,6 +1273,34 @@ class ExpressionParserMixin:
                 parser_retry=True,
             )
         return value_int
+
+    def _parse_array_index(self, array_type: ir.ArrayType, index_node: ast.expr, span: ir.Span) -> ir.Expr:
+        """Validate a single integer index into a fixed-length array."""
+        if isinstance(index_node, ast.Tuple):
+            raise InvalidShape(
+                "Multi-dimensional subscript is not supported for arrays",
+                span=span,
+                hint="Use a scalar index like datas[0]",
+                parser_retry=True,
+            )
+        index = self.parse_expression(index_node)
+        index_type = getattr(index, "type", None)
+        if not (isinstance(index_type, ir.ScalarType) and index_type.dtype.is_int()):
+            raise InvalidType(
+                f"Array index must be an integer scalar, got {index_type}",
+                span=span,
+                hint="Use an integer index like datas[0] or datas[i]",
+                parser_retry=True,
+            )
+        value = _const_int_value(index)
+        if value is not None and not 0 <= value < array_type.length:
+            raise OutOfRange(
+                f"Array index {value} out of bounds for {array_type.length} elements",
+                span=span,
+                hint=f"Use an index in [0, {array_type.length})",
+                parser_retry=True,
+            )
+        return index
 
     def _parse_scalar_subscript_index(
         self,

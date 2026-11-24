@@ -193,6 +193,7 @@ public:
     TypePtr ParseTypePtr();
     TypePtr ParseTypeSimtGroup();
     TypePtr ParseTypeTuple();
+    TypePtr ParseTypeArray();
     TypePtr ParseTypeTensor();
     TypePtr ParseTypeTile();
     TypePtr ParseTypeMutexTile();

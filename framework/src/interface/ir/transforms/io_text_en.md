@@ -32,6 +32,7 @@ type                    ::= 'unknown' | dtype | 'memref_type' | 'token' | 'none'
                          |  'reg' '<' reg_kind ',' dtype '>'
                          |  'simt_group' '<' group_kind '>'
                          |  'tuple' '<' [ type_list ] '>'
+                         |  'array' '<' type ',' int '>'
                          |  'tensor' '<' shape ',' dtype ',' tensor_view '>'
                          |  'tile' '<' shape ',' dtype ',' tile_view ',' hw_info '>'
                          |  v0_logical_tensor;
