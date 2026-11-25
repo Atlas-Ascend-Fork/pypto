@@ -3,13 +3,21 @@
 ## 产品支持情况
 
 <!-- npu="950" id1 -->
+
 - Ascend 950PR&950DT系列产品：支持
+
 <!-- end id1 -->
+
 <!-- npu="A3" id2 -->
+
 - Atlas A3系列产品：不支持
+
 <!-- end id2 -->
+
 <!-- npu="910b" id3 -->
+
 - Atlas A2系列产品：不支持
+
 <!-- end id3 -->
 
 ## 功能说明
@@ -24,9 +32,9 @@ pypto_pro.language.numel(tensor: Tensor) -> Scalar
 
 ## 参数说明
 
-| 参数名 | 输入/输出 | 说明 |
-|---|---|---|
-| tensor | 输入 | GM Tensor，支持动态维度声明。传入Tile会被拒绝。 |
+| 参数名 | 输入/输出 | 说明                                            |
+| ------ | --------- | ----------------------------------------------- |
+| tensor | 输入      | GM Tensor，支持动态维度声明。传入Tile会被拒绝。 |
 
 ## 返回值说明
 
@@ -51,9 +59,12 @@ def batch_row_plan(
     n = pl.numel(seq_lens)
     if n <= 0:
         return 1  # KERNEL_STATUS_PARAM_INVALID
+    offset = 0
     for b in pl.range(0, n):
         rows = pl.getval(seq_lens, b)
+        pl.setval(plan, 2 * b, offset)
         pl.setval(plan, 2 * b + 1, rows)
+        offset = offset + rows
     return  # KERNEL_STATUS_OK
 ```
 
