@@ -578,18 +578,11 @@ def _align_up(value: int, alignment: int) -> int:
 
 
 def _infer_dynamic_ub_size(requires_simt: bool, tile_high_water: int) -> int:
-    """Infer 3510 launch dynamic UB from parser-collected mixed-kernel facts."""
+    """Infer 3510 launch dynamic UB, capped at the supported allocation limit."""
     if not requires_simt:
         return 0
     required = _align_up(max(0, tile_high_water - _3510_STATIC_UB_SIZE), _3510_UB_ALIGNMENT)
-    if _3510_STATIC_UB_SIZE + required > _3510_MAX_USER_UB_SIZE:
-        raise OutOfRange(
-            f"SIMT kernel Vec Tile high-water mark {tile_high_water} bytes requires "
-            f"static_ub_size={_3510_STATIC_UB_SIZE} and dynamic_ub_size={required}, but 3510 allows at most "
-            f"{_3510_MAX_USER_UB_SIZE} bytes of combined static and dynamic UB "
-            f"(dynamic UB limit {_3510_MAX_DYNAMIC_UB_SIZE} bytes)"
-        )
-    return required
+    return min(required, _3510_MAX_DYNAMIC_UB_SIZE)
 
 
 def _extract_param_specs(

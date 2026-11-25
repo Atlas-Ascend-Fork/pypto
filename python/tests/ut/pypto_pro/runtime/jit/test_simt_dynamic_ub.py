@@ -11,7 +11,6 @@
 import importlib
 from types import SimpleNamespace
 
-from pypto_pro._errors import OutOfRange
 import pypto_pro.language as pl
 from pypto_pro.runtime.platform import NpuArch
 import pytest
@@ -25,10 +24,13 @@ jit = importlib.import_module("pypto_pro.runtime.jit")
     ("requires_simt", "tile_high_water", "expected_dynamic_ub"),
     (
         (False, 216 * 1024 + 32, 0),
+        (False, 256 * 1024, 0),
         (True, 0, 0),
         (True, 8 * 1024, 0),
+        (True, 8 * 1024 + 1, 32),
         (True, 8 * 1024 + 32, 32),
         (True, 24 * 1024, 16 * 1024),
+        (True, 216 * 1024 - 1, 208 * 1024),
         (True, 216 * 1024, 208 * 1024),
     ),
 )
@@ -36,12 +38,12 @@ def test_dynamic_ub_inference(requires_simt, tile_high_water, expected_dynamic_u
     assert jit._infer_dynamic_ub_size(requires_simt, tile_high_water) == expected_dynamic_ub
 
 
-def test_dynamic_ub_inference_rejects_tile_beyond_3510_user_ub():
-    with pytest.raises(OutOfRange) as exc_info:
-        jit._infer_dynamic_ub_size(True, 216 * 1024 + 32)
-    message = str(exc_info.value)
-    assert "ErrCode: F00008! Enum: ExternalError::OUT_OF_RANGE." in message
-    assert "allows at most" in message
+@pytest.mark.parametrize(
+    "tile_high_water",
+    (216 * 1024 + 1, 216 * 1024 + 32, 240 * 1024, 256 * 1024),
+)
+def test_dynamic_ub_inference_caps_at_3510_limit(tile_high_water):
+    assert jit._infer_dynamic_ub_size(True, tile_high_water) == 208 * 1024
 
 
 def test_parser_collects_vec_high_water_from_tile_group():
@@ -85,7 +87,11 @@ def test_parser_marks_only_the_kernel_that_launches_simt():
     assert simd_def.max_vec_tile_end == 24 * 1024
 
 
-def test_cube_and_vector_facts_are_aggregated_for_one_kernel(monkeypatch):
+@pytest.mark.parametrize(
+    ("cube_high_water", "expected_dynamic_ub"),
+    ((216 * 1024, 208 * 1024), (256 * 1024, 208 * 1024)),
+)
+def test_cube_and_vector_facts_are_aggregated_for_one_kernel(monkeypatch, cube_high_water, expected_dynamic_ub):
     class FakeKernelDef:
         _auto_mutex = False
         func_type = ir.FunctionType.Opaque
@@ -98,7 +104,7 @@ def test_cube_and_vector_facts_are_aggregated_for_one_kernel(monkeypatch):
 
         def parse_target_program(self, target, bound_signature=None):
             if target == ir.SectionKind.Cube:
-                self.max_vec_tile_end = 216 * 1024
+                self.max_vec_tile_end = cube_high_water
                 self.requires_simt = False
             else:
                 self.max_vec_tile_end = 8 * 1024
@@ -123,6 +129,6 @@ def test_cube_and_vector_facts_are_aggregated_for_one_kernel(monkeypatch):
     jit._parse_and_codegen_targets(FakeKernelDef(), NpuArch.DAV_3510, "unused")
 
     assert recorded_dynamic_ub == {
-        ir.SectionKind.Cube: 208 * 1024,
-        ir.SectionKind.Vector: 208 * 1024,
+        ir.SectionKind.Cube: expected_dynamic_ub,
+        ir.SectionKind.Vector: expected_dynamic_ub,
     }

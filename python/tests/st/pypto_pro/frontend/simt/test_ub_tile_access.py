@@ -11,6 +11,7 @@
 """3510 end-to-end tests for SIMT UB Tile access, runtime Valid Shape, and dynamic UB inference."""
 
 import os
+from pathlib import Path
 
 import pypto_pro.language as pl
 import pytest
@@ -139,3 +140,32 @@ def test_mixed_kernel_infers_simd_tile_high_water_not_passed_to_simt():
 
     torch.testing.assert_close(simd_out.cpu(), src, rtol=0, atol=0)
     torch.testing.assert_close(simt_out.cpu(), src, rtol=0, atol=0)
+
+# -----------------------------------------------------------------------------------------------------------
+
+@pl.jit(auto_mutex=True)
+def mixed_large_tile(
+    src: pl.Tensor[[1, MIXED_ELEMENTS], pl.DT_FP32],
+    out: pl.Tensor[[1, MIXED_ELEMENTS], pl.DT_FP32],
+):
+    # Declare 240 KiB to exercise UB inference without accessing the high region.
+    tile_type = pl.TileType(shape=[240, 256], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    _large_tile = pl.make_tile(tile_type, addr=0)
+    with pl.section_vector():
+        copy_from_gm[MIXED_THREADS](src, out)
+
+@pytest.mark.soc("950")
+def test_mixed_kernel_caps_dynamic_ub_for_large_tile():
+    torch.npu.set_device(ST_DEVICE)
+
+    expected = torch.arange(MIXED_ELEMENTS, dtype=torch.float32).reshape(1, MIXED_ELEMENTS)
+    src = expected.to(ST_DEVICE)
+    out = torch.full_like(src, -1.0)
+
+    mixed_large_tile(src, out)
+    torch.npu.synchronize()
+
+    torch.testing.assert_close(out.cpu(), expected, rtol=0, atol=0)
+    compiled = mixed_large_tile._ensure_compiled((src, out))
+    caller = (Path(compiled.build_dir) / "call_kernel.cpp").read_text(encoding="utf-8")
+    assert f"<<<blockDim, {208 * 1024}, stream>>>" in caller
