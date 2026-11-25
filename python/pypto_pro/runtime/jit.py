@@ -1451,9 +1451,9 @@ def _resolve_sk_cap(sk_cap: SkCap | None) -> SkCap | None:
 
 # SK block adaptation; the generated impl signatures stay unchanged.
 # The CCE backend emits the pypto_block_meta.h accessors unconditionally. The
-# -D__PYPTO_SK_BLOCK__ flag selects the record implementation; SK entries always seed
-# both records. SIMT VF must receive the adapted block count/index from the outer
-# SIMD kernel instead of reading gridDim/blockIdx directly.
+# -D__PYPTO_SK_BLOCK__ flag selects the per-core block-local implementation; SK
+# entries always seed both scalars. SIMT VF must receive the adapted block
+# count/index from the outer SIMD kernel instead of reading gridDim/blockIdx.
 
 
 def _make_sk_bind_block(
@@ -1473,7 +1473,7 @@ def _make_sk_bind_block(
     The official ``basic_api/kernel_operator_sys_var_intf.h`` provides both
     ``sk::SkSystemArgs`` and ``SK_BIND``, so no local copy of the macro is emitted.
     The SK entry always supplies the sub-kernel's own count/index through the
-    pypto_block_meta.h records; no usage detection is needed.
+    pypto_block_meta.h block-local scalars; no usage detection is needed.
     """
     args_struct = f"{kernel_name}_SkArgs"
     fields = []
@@ -1494,8 +1494,8 @@ def _make_sk_bind_block(
             sk_decls.append(device_decode)
     fields_src = "\n".join(fields) or "    char _empty;"
     call_args = ", ".join(sk_decls)
-    # ``sysArgs`` is always available to an SK entry and is needed for the block
-    # records and early-start config.
+    # ``sysArgs`` is always available to an SK entry and is needed for the
+    # block-local scalars and early-start config.
     sk_sig = (
         f"__sk__ {target.entry_qualifier} AICORE void {kernel_name}_sk("
         f"const {args_struct}* args, const sk::SkSystemArgs* sysArgs)"
@@ -1513,9 +1513,9 @@ def _make_sk_bind_block(
     sk_body = f"    ::{kernel_name}_impl({call_args});\n"
     if sk_cap & EARLY_START_MASK:
         sk_body = "    g_super_kernel_early_start_config = sysArgs->skTaskSyncCfg;\n" + sk_body
-    # Tile accessors read pypto __gm__ records (see pypto_block_meta.h): the
-    # fused entry supplies the sub-kernel's own count/index; the seed helpers flush each
-    # written cache line with a single-line DCCI so the impl reads see the new value.
+    # Tile accessors read the per-core block-local scalars (see pypto_block_meta.h):
+    # the fused entry supplies the sub-kernel's own count/index; the non-fused
+    # __global__ entry seeds the same scalars from the raw builtins.
     # ``skBlockIdx`` is already the global worker index, not a logical block index:
     # on a MIX 1:2 AIV it spans [0, 2 * blockNum), the same domain as
     # ``__pypto_raw_block_idx()``, so it is seeded unchanged (unlike the count below).
@@ -1523,7 +1523,8 @@ def _make_sk_bind_block(
     # npugraph_ex super_kernel_optimize: plain and fused launches observed the same
     # AIV index set {0..31} and the same block num 16 at BLOCK_DIM=16 (SK log: node
     # bound with cap=4, taskRatio [1,2], numBlocks=16, vecNum=32).
-    # ``skNumBlocks`` is AIV-granular; GetTaskRatio() restores the logical block count.
+    # ``skNumBlocks`` is the per-launch worker count; GetTaskRatio() restores the
+    # logical block count for MIX 1:2 AIV launches.
     sk_body = (
         "    __pypto_seed_block_idx((uint32_t)sysArgs->skBlockIdx);\n"
         "    __pypto_seed_block_num((uint32_t)(sysArgs->skNumBlocks / AscendC::GetTaskRatio()));\n" + sk_body
@@ -1882,7 +1883,7 @@ def _compile_shared_library(
     and that hashed path is returned.
 
     The SK feature is analyzed here from ``generated.sk_cap`` and forwarded to the shared
-    builder (``_build_bisheng_flags``): a non-None mask selects the record-based
+    builder (``_build_bisheng_flags``): a non-None mask selects the block-local
     pypto_block_meta.h accessor implementation and the asc-devkit include roots, and a
     mask carrying bits 1/2 additionally selects
     ``-D__ASCENDC_SUPERKERNEL_EARLY_START_V3``. The AscendC
@@ -2008,8 +2009,8 @@ def _make_sk_caller_parts(
     - The shared impl reads its Tile block num/idx through the pypto_block_meta.h
       accessors. In a fused container the hardware grid is the container's, so the
       __sk__ entry supplies the sub-kernel's own values from sysArgs; the non-fused
-      __global__ entry has no sysArgs and seeds the same per-core records from the raw
-      builtins here. Both records are seeded unconditionally.
+      __global__ entry has no sysArgs and seeds the same per-core block-local scalars
+      from the raw builtins here. Both scalars are seeded unconditionally.
     - A plain (non-fused) launch must not inherit the block-local early-start config a
       previous superkernel task left on the same core: the V3 SetNextTaskStart /
       WaitPreTaskEnd implementations read it, and a stale non-zero value makes them emit
@@ -2046,6 +2047,12 @@ def _build_jit_so(
     """Write call_kernel.cpp next to the (already per-key) kernel.cpp in ``cg.build_dir`` and
     compile the .so. kernel.cpp, call_kernel.cpp and the resulting call_kernel_<digest>.so all
     share that one dir."""
+    if sk_cap is not None and cg.simt_kernel:
+        raise NotSupported(
+            "standalone SIMT kernel cannot emit SK_BIND or join SuperKernel fusion",
+            hint="Rewrite it as a SIMD kernel calling a SIMT VF.",
+        )
+
     paths = _make_jit_paths(cg.build_dir)
 
     # call_kernel.cpp owns the caller-side entries: the __global__ entry (always needed
@@ -2535,6 +2542,7 @@ def jit(
                 ("tiling_key", tiling_key),
                 ("datatype", datatype),
                 ("sanitizer", sanitizer if sanitizer else None),
+                ("sk_cap", sk_cap),
             )
             if value is not None
         ]

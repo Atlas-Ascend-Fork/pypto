@@ -15,11 +15,12 @@ means anything once the kernel is bound, so ``None`` means "no superkernel entry
 ``pl.SkCap`` member (conventionally ``CAP_4_DISABLE_DCCI_ALL``) both enables and
 configures it.
 """
-from pypto_pro._errors import InvalidArgument
+from pypto_pro._errors import InvalidArgument, NotSupported
 import pypto_pro.language as pl
 from pypto_pro.runtime.compile_config import get_jit_compile_config
 from pypto_pro.runtime.jit import (
     CodegenResult,
+    _build_jit_so,
     _effective_sk_cap,
     _make_global_entry,
     _make_sk_bind_block,
@@ -295,6 +296,29 @@ def test_jit_rejects_raw_caps(sk_cap):
         @pl.jit(auto_mutex=False, sk_cap=sk_cap)
         def kernel(x: pl.Tensor[[64], pl.DT_FP32]):
             pl.system.bar_all()
+
+
+@pytest.mark.parametrize("sk_cap", [pl.SkCap.CAP_0_SK_ONLY, pl.SkCap.CAP_4_DISABLE_DCCI_ALL])
+def test_jit_simt_rejects_sk_cap(sk_cap):
+    """A standalone SIMT kernel cannot emit an SK entry, including SK-only cap 0."""
+    with pytest.raises(NotSupported, match="does not support: sk_cap"):
+
+        @pl.jit(mode="simt", max_threads=32, sk_cap=sk_cap)
+        def kernel(x: pl.Tensor[[64], pl.DT_FP32]):
+            pl.simt.linear_thread_idx()
+
+
+def test_build_jit_so_rejects_simt_sk_cap():
+    """The build choke point also rejects a programmatic SIMT sk_cap path."""
+    with pytest.raises(NotSupported, match="standalone SIMT"):
+        _build_jit_so(
+            _cg(simt_kernel=True),
+            NpuArch.DAV_3510,
+            clean_up=False,
+            compile_timeout=1,
+            target=_target(),
+            sk_cap=pl.SkCap.CAP_4_DISABLE_DCCI_ALL,
+        )
 
 
 def test_jit_rejects_invalid_cap_values():
