@@ -23,6 +23,8 @@ from pypto.pil.compile_pipeline import (
 )
 import pypto.pypto_impl
 
+from .test_common import npuarch
+
 _DATA_DIR = Path(__file__).parent / "test_compile_pipeline_data"
 
 
@@ -97,3 +99,77 @@ def test_checkpoint_stage_is_limited_to_the_ir_pipeline():
         checkpoint(None, stage + 1)
     with pytest.raises(ValueError):
         resume("", stage + 1)
+
+
+_ARCH = "DAV_3510"
+_DYNAMIC_CALL = "v0call(RUNTIME_GetInputShapeDim"
+
+
+def _dynamic_kernel(a, out):
+    bs, seq = a.shape[:2]
+    tile = 8
+    for bi in pypto.loop((bs + tile - 1) // tile, name="Loop_B", idx_name="bi"):
+        for si in pypto.loop((seq + tile - 1) // tile, name="Loop_S", idx_name="si"):
+            pypto.set_vec_tile_shapes(tile, tile)
+            value = a[bi * tile:(bi + 1) * tile, si * tile:(si + 1) * tile]
+            out[bi * tile:(bi + 1) * tile, si * tile:(si + 1) * tile] = value + 1.0
+
+
+def _build_dynamic():
+    b = pypto.symbolic_scalar("b")
+    s = pypto.symbolic_scalar("s")
+    func = pil.compile(_dynamic_kernel, pypto.tensor([b, s], pypto.DT_FP32), pypto.tensor([b, s], pypto.DT_FP32))
+    return ir.IRBuilder().create_program([func], "main", ir.Span.unknown())
+
+
+def test_checkpoint_text_keeps_dynamic_raw_shape():
+    with npuarch(_ARCH):
+        pypto.pypto_impl.Reset()
+        text = checkpoint(_build_dynamic(), 0)
+
+    assert _DYNAMIC_CALL in text
+    assert "dynrawshape" in text
+
+
+def test_load_dump_roundtrip_is_idempotent():
+    with npuarch(_ARCH):
+        pypto.pypto_impl.Reset()
+        text = checkpoint(_build_dynamic(), 0)
+
+        pypto.pypto_impl.Reset()
+        assert str(pypto.pypto_impl.ir.text_load_program(text)) == text
+
+
+def test_resume_keeps_dynamic_call_count():
+    with npuarch(_ARCH):
+        pypto.pypto_impl.Reset()
+        direct = str(_run_pipeline(_build_dynamic(), _build_default_pipeline()))
+
+        pypto.pypto_impl.Reset()
+        text = checkpoint(_build_dynamic(), 0)
+        resumed = str(resume(text, 0))
+
+    assert direct.count(_DYNAMIC_CALL) > 0
+    assert resumed.count(_DYNAMIC_CALL) == direct.count(_DYNAMIC_CALL)
+
+
+def _tiled_matmul_kernel(a, b, out):
+    for _ in pypto.loop(2, name="Loop_L0"):
+        pypto.set_cube_tile_shapes([64, 64], [64, 64], [64, 64])
+        pypto.set_vec_tile_shapes(16, 16)
+        c = pypto.matmul(a, b, pypto.DT_FP32)
+        pypto.assemble(c, [0, 0], out)
+
+
+def test_dump_load_keeps_op_vec_tile():
+    """An op-level tile that differs from the ambient one must not absorb it on load."""
+    with npuarch(_ARCH):
+        tensors = [pypto.tensor([128, 128], pypto.DT_FP32) for _ in range(3)]
+        with pypto.options("jit_scope", vec_tile_shapes=[8, 8], cube_tile_shapes=[[64, 64], [64, 64], [64, 64]]):
+            func = pil.compile(_tiled_matmul_kernel, *tensors)
+            text = str(ir.IRBuilder().create_program([func], "main", ir.Span.unknown()))
+    assert "#vec_tile([8, 8])" in text
+    assert "#vec_tile([16, 16])" in text
+    reloaded = str(pypto.pypto_impl.ir.text_load_program(text))
+    assert "#vec_tile([8, 8, 16, 16])" not in reloaded
+    assert reloaded == text

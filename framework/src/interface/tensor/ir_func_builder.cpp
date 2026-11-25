@@ -221,6 +221,20 @@ void RootFunctionBuilder::RebuildProducerConsumerLinks(const ir::FunctionPtr& ir
     }
 }
 
+namespace {
+
+// Derived names can collide after a text load; probe for a free suffix instead of aborting.
+std::string UniqueMagicName(const npu::tile_fwk::Program& program, const std::string& rawName, int64_t suffix)
+{
+    std::string name = rawName + "_" + std::to_string(suffix);
+    while (program.GetFunctionMap().count(name) != 0) {
+        name = rawName + "_" + std::to_string(++suffix);
+    }
+    return name;
+}
+
+} // namespace
+
 std::shared_ptr<Function> RootFunctionBuilder::Build(const ir::FunctionPtr& irFunc)
 {
     RebuildProducerConsumerLinks(irFunc);
@@ -236,7 +250,7 @@ std::shared_ptr<Function> RootFunctionBuilder::Build(const ir::FunctionPtr& irFu
 
 void RootFunctionBuilder::InitDynFunc(const ir::FunctionPtr& irFunc)
 {
-    auto funcMagicName = irFunc->name_ + "_" + std::to_string(Function::NextMagicNameSuffix(FunctionType::DYNAMIC));
+    auto funcMagicName = UniqueMagicName(program_, irFunc->name_, Function::NextMagicNameSuffix(FunctionType::DYNAMIC));
     dynFunc_ = std::make_shared<Function>(program_, funcMagicName, irFunc->name_, parentFunc_);
     dynFunc_->attrs_ = irFunc->attrs_;
     dynFunc_->SetFunctionType(FunctionType::DYNAMIC);
@@ -505,7 +519,7 @@ std::shared_ptr<Function> RootFunctionBuilder::CreateHiddenFunc(const ir::SeqStm
     std::string pathSuffix = loopVarName.empty() ? "PATH" + std::to_string(pathFuncId) :
                                                    loopVarName + "_PATH" + std::to_string(pathFuncId);
     auto hiddenRawName = dynFunc_->GetRawName() + "_" + pathSuffix + "_hiddenfunc";
-    auto hiddenMagicName = hiddenRawName + "_" + std::to_string(IdGen<IdType::FUNCTION>::Inst().NewId());
+    auto hiddenMagicName = UniqueMagicName(program_, hiddenRawName, IdGen<IdType::FUNCTION>::Inst().NewId());
     auto hiddenFunc = std::make_shared<Function>(program_, hiddenMagicName, hiddenRawName, dynFunc_.get());
     hiddenFunc->SetSpan(seq->span_);
     hiddenFunc->SetFunctionType(FunctionType::DYNAMIC_LOOP_PATH);
@@ -769,7 +783,7 @@ ir::StmtPtr RootFunctionBuilder::FinalizePathFunc(const ir::StmtPtr& placeholder
 
     // 1. 创建 pathFunc（在 SetParent 之前）
     auto pathRawName = hiddenFunc->GetRawName().substr(0, hiddenFunc->GetRawName().find("_hiddenfunc"));
-    auto pathMagicName = pathRawName + "_" + std::to_string(IdGen<IdType::FUNCTION>::Inst().NewId());
+    auto pathMagicName = UniqueMagicName(program_, pathRawName, IdGen<IdType::FUNCTION>::Inst().NewId());
     auto pathFunc = std::make_shared<Function>(program_, pathMagicName, pathRawName, dynFunc_.get());
     pathFunc->SetFunctionType(FunctionType::DYNAMIC_LOOP_PATH);
     pathFunc->SetGraphType(GraphType::TENSOR_GRAPH);

@@ -287,6 +287,7 @@ protected:
         std::vector<int64_t> shape;
         std::vector<int64_t> offset;
         std::vector<npu::tile_fwk::SymbolicScalar> dynValidShape;
+        std::vector<npu::tile_fwk::SymbolicScalar> dynRawShape;
         std::vector<npu::tile_fwk::SymbolicScalar> dynOffset;
         int memId = -1;
     };

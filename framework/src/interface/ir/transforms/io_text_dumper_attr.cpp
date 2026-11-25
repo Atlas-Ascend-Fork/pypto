@@ -387,6 +387,9 @@ std::map<std::string, std::any> IRTextDumper::GetTensorAttrDict(const VarPtr& va
     if (!t->dynValidShape_.empty()) {
         attrs["dynvalidshape"] = t->dynValidShape_;
     }
+    if (t->tensor != nullptr && HasDynamicValue(t->tensor->GetDynRawShape())) {
+        attrs["dynrawshape"] = t->tensor->GetDynRawShape();
+    }
     if (!t->dynOffset_.empty()) {
         attrs["dynvalidoffset"] = t->dynOffset_;
     }
