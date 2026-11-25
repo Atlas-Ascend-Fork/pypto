@@ -478,6 +478,8 @@ bool IRTextParser::SetTensorAttrDict(const VarPtr& var, const std::map<std::stri
             SetValue(values.offset, value);
         } else if (key == "dynvalidshape") {
             SetValue(values.dynValidShape, value);
+        } else if (key == "dynrawshape") {
+            SetValue(values.dynRawShape, value);
         } else if (key == "dynvalidoffset") {
             SetValue(values.dynOffset, value);
         } else if (key == "memId") {
@@ -497,9 +499,13 @@ bool IRTextParser::SetTensorAttrDict(const VarPtr& var, const std::map<std::stri
     t->offset = values.offset.empty() ? npu::tile_fwk::Offset(values.shape.size(), 0) : values.offset;
     t->dynValidShape_ = values.dynValidShape;
     t->dynOffset_ = values.dynOffset;
-    // Loaded tensors start with an empty shape: rebuild the dyn shape from #shape (read later via GetDynRawShape).
-    if (t->tensor != nullptr && t->tensor->GetDynRawShape().empty() && !values.shape.empty()) {
-        t->tensor->UpdateDynRawShape(npu::tile_fwk::SymbolicScalar::FromConcrete(values.shape));
+    // Prefer the symbolic raw shape; fall back to the concrete #shape for legacy text.
+    if (t->tensor != nullptr) {
+        if (!values.dynRawShape.empty()) {
+            t->tensor->UpdateDynRawShape(values.dynRawShape);
+        } else if (t->tensor->GetDynRawShape().empty() && !values.shape.empty()) {
+            t->tensor->UpdateDynRawShape(npu::tile_fwk::SymbolicScalar::FromConcrete(values.shape));
+        }
     }
     return true;
 }
@@ -544,7 +550,10 @@ void IRTextParser::SetOpTileShape(npu::tile_fwk::Operation& op, const std::strin
 {
     auto& tileShape = op.GetTileShapeForSetting();
     if (key == "vec_tile") {
-        SetValue(tileShape.GetVecTile().tile, value);
+        // The text value is the op's effective tile; replace the ambient one instead of appending.
+        auto& vecTile = tileShape.GetVecTile().tile;
+        vecTile.clear();
+        SetValue(vecTile, value);
     } else if (key == "cube_tile") {
         std::vector<int64_t> cube;
         SetValue(cube, value);
@@ -631,6 +640,11 @@ bool IRTextParser::RestoreProgramTileShape(const std::map<std::string, std::any>
     for (const auto& [headerKey, value] : attrs) {
         const auto it = kProgramTileKeys.find(headerKey);
         if (it == kProgramTileKeys.end()) {
+            continue;
+        }
+        const auto* list = std::any_cast<std::vector<std::any>>(&value);
+        if (list != nullptr && list->empty()) {
+            // An empty header tile carries no override.
             continue;
         }
         const std::string& configKey = it->second;

@@ -730,9 +730,14 @@ void IRTextDumper::VisitProgram(const ProgramPtr& program)
     if (!dumpTileAttrs_.empty()) {
         auto ambientTileShape = npu::tile_fwk::ConfigManagerNg::CurrentScope()->GenerateTileShape();
         for (const auto& [headerKey, extract] : kTileAttrs) {
-            if (dumpTileAttrs_.count(headerKey) != 0) {
-                PrintAttr(headerKey, std::any(extract(ambientTileShape)));
+            if (dumpTileAttrs_.count(headerKey) == 0) {
+                continue;
             }
+            auto tile = extract(ambientTileShape);
+            if (tile.empty()) {
+                continue;
+            }
+            PrintAttr(headerKey, std::any(std::move(tile)));
         }
     }
     stream_ << " " << IR_PUN_LBRACE << "\n";
