@@ -3075,8 +3075,8 @@ INLINE void KernelEntryDrcoParallel(DrcoEntryState* state)
     if (isBlock0) {
         DrcoAtomicExchToU32(&state->deviceTaskReadyQueue->head, 0u);
         DrcoAtomicExchToU32(&state->deviceTaskReadyQueue->tail, 0u);
-        uint64_t finished = DrcoGmLoad(&state->runtimeDataRingBufferHeadData->indexFinished.value) + 1;
-        DrcoGmStore(&state->runtimeDataRingBufferHeadData->indexFinished.value, finished);
+        auto* finished = &state->runtimeDataRingBufferHeadData->indexFinished.value;
+        DrcoAtomicExchToU64(finished, DrcoAtomicLoadU64(finished) + 1);
     }
 }
 #endif
@@ -3218,8 +3218,8 @@ INLINE void KernelEntryDrco(int64_t ffts_addr, int64_t inputs, int64_t outputs, 
         // store 脏整行后回写抹掉 host 已推进的 tail（与 devTask 末尾推进 head 的方式一致）。
         state.deviceTaskReadyQueue->head = 0;
         state.deviceTaskReadyQueue->tail = 0;
-        uint64_t finished = DrcoGmLoad(&state.runtimeDataRingBufferHeadData->indexFinished.value) + 1;
-        DrcoGmStore(&state.runtimeDataRingBufferHeadData->indexFinished.value, finished);
+        auto* finished = &state.runtimeDataRingBufferHeadData->indexFinished.value;
+        DrcoAtomicExchToU64(finished, DrcoAtomicLoadU64(finished) + 1);
     }
 #endif
 
