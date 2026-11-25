@@ -51,9 +51,12 @@ def batch_row_plan(
     n = pl.numel(seq_lens)
     if n <= 0:
         return 1  # KERNEL_STATUS_PARAM_INVALID
+    offset = 0
     for b in pl.range(0, n):
         rows = pl.getval(seq_lens, b)
+        pl.setval(plan, 2 * b, offset)
         pl.setval(plan, 2 * b + 1, rows)
+        offset = offset + rows
     return  # KERNEL_STATUS_OK
 ```
 
