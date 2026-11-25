@@ -736,6 +736,7 @@ Status ReplaceTensor::ForwardAssemble(Operation* op, LogicalTensorPtr& rootTenso
     } else {
         forRoots.push(assembleOut);
         backRoots.push(assembleOut);
+        SyncSiblingAssembleOutput(function, assembleOut, assembleOut->tensor->rawmagic);
         return SUCCESS;
     }
 }
@@ -942,6 +943,7 @@ Status ReplaceTensor::BackwardInputIdx(Operation* op, LogicalTensorPtr& rootTens
 
 Status ReplaceTensor::ForwardProcess(Function& function)
 {
+    std::unordered_set<int> forwardedAssembles;
     while (!forRoots.empty()) {
         auto rootTensor = forRoots.front();
         forRoots.pop();
@@ -959,7 +961,9 @@ Status ReplaceTensor::ForwardProcess(Function& function)
                     return FAILED;
                 }
             } else if (consumerOp->GetOpcode() == Opcode::OP_ASSEMBLE) {
-                if (ForwardAssemble(consumerOp, rootTensor, function) == FAILED) {
+                // A same-raw sibling can requeue the input before BackwardAssemble marks this op processed.
+                if (forwardedAssembles.insert(consumerOp->GetOpMagic()).second &&
+                    ForwardAssemble(consumerOp, rootTensor, function) == FAILED) {
                     return FAILED;
                 }
             } else if (consumerOp->GetOpcode() == Opcode::OP_RESHAPE) {

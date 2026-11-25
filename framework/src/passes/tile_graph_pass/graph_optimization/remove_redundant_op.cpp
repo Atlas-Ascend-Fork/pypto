@@ -79,12 +79,49 @@ std::vector<Operation*> GetExternalProducers(Operation& op, const std::unordered
     return producers;
 }
 
+bool TokenConsumerReachesReader(const std::unordered_set<Operation*>& tokenConsumers,
+                                const std::vector<Operation*>& readers)
+{
+    const std::unordered_set<Operation*> readOps(readers.begin(), readers.end());
+    std::vector<Operation*> pending(tokenConsumers.begin(), tokenConsumers.end());
+    std::unordered_set<Operation*> visited;
+    while (!pending.empty()) {
+        auto* op = pending.back();
+        pending.pop_back();
+        if (op == nullptr || op->IsDeleted() || !visited.insert(op).second) {
+            continue;
+        }
+        if (readOps.count(op) != 0) {
+            return true;
+        }
+        auto dataConsumers = op->ConsumerOps();
+        auto nextTokenConsumers = op->ConsumerOpsByToken();
+        pending.insert(pending.end(), dataConsumers.begin(), dataConsumers.end());
+        pending.insert(pending.end(), nextTokenConsumers.begin(), nextTokenConsumers.end());
+    }
+    return false;
+}
+
 bool MoveTokenDependencyBeforeRemoveOp(Function& function, Operation& op)
 {
     std::vector<Operation*> removedOps = {&op};
     std::unordered_set<Operation*> removedSet(removedOps.begin(), removedOps.end());
     auto targetConsumers = GetExternalConsumers(op, removedSet);
     auto targetProducers = GetExternalProducers(op, removedSet);
+    if ((op.GetOpcode() == Opcode::OP_VIEW || op.GetOpcode() == Opcode::OP_SLICE) && !op.result_token_.empty()) {
+        const auto tokenConsumers = op.ConsumerOpsByToken();
+        const auto overwritesSnapshot = [&op](const Operation* consumer) {
+            return IsAssembleLikeOpcode(consumer->GetOpcode()) &&
+                   consumer->GetOOperands().front()->GetRawMagic() == op.GetIOperands().front()->GetRawMagic();
+        };
+        if (!targetConsumers.empty() && std::any_of(tokenConsumers.begin(), tokenConsumers.end(), overwritesSnapshot)) {
+            // Bypassing a snapshot moves the reads to the operations consuming its output.
+            if (TokenConsumerReachesReader(tokenConsumers, targetConsumers)) {
+                return false;
+            }
+            targetProducers = targetConsumers;
+        }
+    }
     if (!remove_redundant_op_internal::CanMigrateRemovedOpsTokenDependency(function, removedOps, targetConsumers,
                                                                            targetProducers)) {
         APASS_LOG_DEBUG_F(Elements::Operation, "Move token dependency before removing op[%d] would be invalid.",
