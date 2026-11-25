@@ -326,6 +326,9 @@ void DeviceWorkspaceAllocator::AssignIncastAddresses(DevAscendFunctionDupped dev
         DEV_ASSERT_MSG(WsErr::WORKSPACE_ITER_INVALID, slotList[slotIndex].rtOutcastIter != ITEM_POOL_INVALID_INDEX,
                        "Root[%s] incast %zu  slotIndex %d read from empty address.", devRootSrc->GetRawName(), i,
                        slotIndex);
+        // Consumer may stitch before any outcast Resolve; flag-gated TryAllocate matches parent
+        // "alloc table when incast first touches the slot" without moving the gate off the flag.
+        TryAllocateDynamicCellMatchForAssembleSlot(slotList[slotIndex]);
         auto& incastDesc = devRootDup.GetIncastAddress(i);
         incastDesc = AddressDescriptor::MakeFromRtOutcast(slotList[slotIndex].rtOutcastIter);
         RuntimeOutcastTensorRef(incastDesc.GetRtOutcastIter());
