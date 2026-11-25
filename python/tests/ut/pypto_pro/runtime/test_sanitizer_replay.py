@@ -77,7 +77,7 @@ def test_phase_mixing_reports_each_offending_location():
 
 @pytest.mark.parametrize("next_kind,expected_detail", [
     (1, "matmul appears mid-chain"),
-    (3, "matmul_bias appears mid-chain"),
+    (3, "matmul with bias appears mid-chain"),
     (4, "matmul appears mid-chain"),
     (2, None),
     (5, None),

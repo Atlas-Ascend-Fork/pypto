@@ -566,20 +566,20 @@ TEST(BackendCCEBlockOutOps, MatmulAcc)
 TEST(BackendCCEBlockOutOps, MatmulBias)
 {
     auto tile = MakeTileType();
-    auto call = MakeCall("block.matmul_bias",
+    auto call = MakeCall("block.matmul",
                          {MakeVar("dst", tile), MakeVar("left", tile), MakeVar("right", tile), MakeVar("bias", tile)});
-    EXPECT_CONTAINS(RunCodegen("block.matmul_bias", call), "TMATMUL_BIAS(dst.tile, left.tile, right.tile, bias.tile);");
+    EXPECT_CONTAINS(RunCodegen("block.matmul", call), "TMATMUL_BIAS(dst.tile, left.tile, right.tile, bias.tile);");
 
     auto callPartial = MakeCallWithKwargs(
-        "block.matmul_bias",
-        {MakeVar("dst", tile), MakeVar("left", tile), MakeVar("right", tile), MakeVar("bias", tile)}, {{"phase", 1}});
-    EXPECT_CONTAINS(RunCodegen("block.matmul_bias", callPartial),
+        "block.matmul", {MakeVar("dst", tile), MakeVar("left", tile), MakeVar("right", tile), MakeVar("bias", tile)},
+        {{"phase", 1}});
+    EXPECT_CONTAINS(RunCodegen("block.matmul", callPartial),
                     "TMATMUL_BIAS<AccPhase::Partial>(dst.tile, left.tile, right.tile, bias.tile);");
 
     auto callFinal = MakeCallWithKwargs(
-        "block.matmul_bias",
-        {MakeVar("dst", tile), MakeVar("left", tile), MakeVar("right", tile), MakeVar("bias", tile)}, {{"phase", 2}});
-    EXPECT_CONTAINS(RunCodegen("block.matmul_bias", callFinal),
+        "block.matmul", {MakeVar("dst", tile), MakeVar("left", tile), MakeVar("right", tile), MakeVar("bias", tile)},
+        {{"phase", 2}});
+    EXPECT_CONTAINS(RunCodegen("block.matmul", callFinal),
                     "TMATMUL_BIAS<AccPhase::Final>(dst.tile, left.tile, right.tile, bias.tile);");
 }
 

@@ -986,7 +986,7 @@ TEST_F(BlockOpsOutElemwiseTest, BlockDequant_4Args_ReturnsNone)
 }
 
 // ============================================================================
-// out_matmul.cpp: block.matmul, block.matmul_acc, block.matmul_bias, block.gemv, block.gemv_acc, block.gemv_bias
+// out_matmul.cpp: block.matmul, block.matmul_acc, block.gemv, block.gemv_acc, block.gemv_bias
 // ============================================================================
 
 // ----------------------------------------------------------------------------
@@ -1140,7 +1140,7 @@ TEST_F(BlockOpsOutMatmulTest, BlockGemv_ReturnsNone)
 TEST_F(BlockOpsOutMatmulTest, BlockMatmulBias_ReturnsNone)
 {
     auto& reg = OpRegistry::GetInstance();
-    auto call = reg.Create("block.matmul_bias",
+    auto call = reg.Create("block.matmul",
                            {MakeTileVar("o", {16, 16}, DataType::FP32), MakeTileVar("l", {16, 32}, DataType::FP16),
                             MakeTileVar("r", {32, 16}, DataType::FP16), MakeTileVar("bias", {1, 16}, DataType::FP32)},
                            Sp());
@@ -1216,7 +1216,7 @@ TEST_F(BlockOpsOutMatmulTest, BlockMatmul_LhsWrongMemspace_Throws)
 TEST_F(BlockOpsOutMatmulTest, BlockMatmulBias_BiasWrongMemspace_Throws)
 {
     auto& reg = OpRegistry::GetInstance();
-    EXPECT_THROW((void)reg.Create("block.matmul_bias",
+    EXPECT_THROW((void)reg.Create("block.matmul",
                                   {MakeTileVarWithMemRef("o", {16, 16}, DataType::FP32, MemorySpace::Acc, 0, 1024),
                                    MakeTileVarWithMemRef("l", {16, 32}, DataType::FP16, MemorySpace::Left, 0, 1024),
                                    MakeTileVarWithMemRef("r", {32, 16}, DataType::FP16, MemorySpace::Right, 0, 1024),

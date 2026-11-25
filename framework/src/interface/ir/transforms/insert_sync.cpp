@@ -68,9 +68,9 @@ std::optional<PipeType> Pipe(const CallPtr& call)
 
 bool SkipAcc(const CallPtr& call)
 {
-    static const std::set<std::string> phaseOps{"block.matmul",     "block.matmul_bias",   "block.matmul_acc",
-                                                "block.matmul_mx",  "block.matmul_mx_acc", "block.store",
-                                                "block.store_tile", "block.move",          "block.insert"};
+    static const std::set<std::string> phaseOps{"block.matmul",        "block.matmul_acc", "block.matmul_mx",
+                                                "block.matmul_mx_acc", "block.store",      "block.store_tile",
+                                                "block.move",          "block.insert"};
     if (!phaseOps.count(call->name_))
         return false;
     int phase = call->GetKwarg<int>("phase", 0);
