@@ -431,32 +431,27 @@ bool IRTextParser::SetAssembleOpAttrDict(npu::tile_fwk::Operation& op, const std
     std::vector<int64_t> toOffset;
     std::vector<npu::tile_fwk::SymbolicScalar> toDynOffset;
     std::vector<npu::tile_fwk::SymbolicScalar> fromDynValidShape;
-    bool hasAttr = false;
     for (const auto& [key, value] : attrDict) {
         if (key == "toOffset") {
             if (!FillOffsetAttr(key, value, toOffset, toDynOffset)) {
                 return false;
             }
-            hasAttr = true;
         } else if (key == "toDynOffset") {
             if (!FillSymbolicScalarListAttr(key, value, toDynOffset)) {
                 return false;
             }
-            hasAttr = true;
         } else if (key == "fromValidShape") {
             if (!FillSymbolicScalarListAttr(key, value, fromDynValidShape)) {
                 return false;
             }
-            hasAttr = true;
         }
     }
-    if (hasAttr) {
-        auto assembleAttr = std::make_shared<npu::tile_fwk::AssembleOpAttribute>(toOffset, toDynOffset);
-        if (!fromDynValidShape.empty()) {
-            assembleAttr->SetFromDynValidShape(fromDynValidShape);
-        }
-        op.SetOpAttribute(assembleAttr);
+    // Directly built assemble ops always carry the attribute (read without a null check later).
+    auto assembleAttr = std::make_shared<npu::tile_fwk::AssembleOpAttribute>(toOffset, toDynOffset);
+    if (!fromDynValidShape.empty()) {
+        assembleAttr->SetFromDynValidShape(fromDynValidShape);
     }
+    op.SetOpAttribute(assembleAttr);
     return true;
 }
 
@@ -510,6 +505,15 @@ bool IRTextParser::SetTensorAttrDict(const VarPtr& var, const std::map<std::stri
     return true;
 }
 
+namespace {
+// Ops that always carry an AssembleOpAttribute in a directly built IR (dumper checks the attribute).
+bool IsAssembleAttrOp(npu::tile_fwk::Opcode op)
+{
+    return npu::tile_fwk::IsAssembleLike(op) || op == npu::tile_fwk::Opcode::OP_ASSEMBLE_SSA ||
+           op == npu::tile_fwk::Opcode::OP_ATOMIC_RMW;
+}
+} // namespace
+
 bool IRTextParser::SetOperationAttrDict(const TensorOpStmtPtr& op, const std::map<std::string, std::any>& attrDict)
 {
     auto stmt = std::const_pointer_cast<TensorOpStmt>(op);
@@ -540,7 +544,7 @@ bool IRTextParser::SetOperationAttrDict(const TensorOpStmtPtr& op, const std::ma
     if (npu::tile_fwk::IsViewLike(operation->GetOpcode())) {
         return SetViewOpAttrDict(*operation, attrDict);
     }
-    if (npu::tile_fwk::IsAssembleLike(operation->GetOpcode())) {
+    if (IsAssembleAttrOp(operation->GetOpcode())) {
         return SetAssembleOpAttrDict(*operation, attrDict);
     }
     return true;
