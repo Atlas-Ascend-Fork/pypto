@@ -8,13 +8,14 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
-"""SK block adaptation: unconditional Tile record seeding + adapted SIMT VF.
+"""SK block adaptation: unconditional Tile block-local seeding + adapted SIMT VF.
 
 The Tile block num/idx accessors are emitted unconditionally by the CCE backend and
-implemented in ``pypto_pro/include/pypto_block_meta.h`` (SK per-core records vs
-raw-builtin wrappers selected by ``-D__PYPTO_SK_BLOCK__``). SK entries always seed both
-records. SIMT VF kernels may carry ``sk_cap`` when the VF receives the adapted block
-count/index from the outer SIMD kernel instead of reading ``gridDim``/``blockIdx``.
+implemented in ``pypto_pro/include/pypto_block_meta.h`` (SK per-core block-local
+scalars vs raw-builtin wrappers selected by ``-D__PYPTO_SK_BLOCK__``). SK entries
+always seed both scalars. SIMT VF kernels may carry ``sk_cap`` when the VF receives
+the adapted block count/index from the outer SIMD kernel instead of reading
+``gridDim``/``blockIdx``.
 """
 import pathlib
 
@@ -54,7 +55,7 @@ def _simd_sk_kernel(out: pl.Tensor[[64], pl.DT_INT64]):
 
 def test_block_meta_header_carries_both_implementations():
     """The ACLNN branch carries the static Tiling/PTO compatibility and native
-    accessors; the SK branch holds the DCCI-guarded __gm__ records; the else branch
+    accessors; the SK branch holds per-core block-local scalars; the else branch
     keeps the raw builtin wrappers."""
     assert "#include <pypto_block_meta.h>" in KERNEL_HEADER_SINGLE
     header = pathlib.Path(pypto_pro.__file__).parent / "include" / "pypto_block_meta.h"
@@ -62,7 +63,9 @@ def test_block_meta_header_carries_both_implementations():
     assert "#elif defined(__PYPTO_SK_BLOCK__)" in text
     aclnn_start = text.index("#if defined(__PYPTO_ACLNN__)")
     sk_start = text.index("#elif defined(__PYPTO_SK_BLOCK__)")
+    else_start = text.index("#else // __PYPTO_SK_BLOCK__")
     aclnn_branch = text[aclnn_start:sk_start]
+    sk_branch = text[sk_start:else_start]
     binary_branch = text[:sk_start]
     assert "return AscendC::GetBlockNum();" in aclnn_branch
     assert "return AscendC::GetBlockIdx();" in aclnn_branch
@@ -73,17 +76,20 @@ def test_block_meta_header_carries_both_implementations():
     assert "#define get_block_num() AscendC::GetBlockNum()" in aclnn_branch
     assert "#define get_block_idx()" in aclnn_branch
     assert "__gm__ uint32_t" not in binary_branch
-    assert "constexpr uint32_t PYPTO_SK_BLOCK_SLOTS = 72;" in text
-    assert "__gm__ uint32_t g_pypto_block_meta_vec[PYPTO_SK_BLOCK_SLOTS][128];" in text
-    assert "__gm__ uint32_t g_pypto_block_meta_cube[PYPTO_SK_BLOCK_SLOTS][128];" in text
-    assert "AscendC::Trap();" in text
-    # Whitespace-normalized: the header may wrap the long DCCI call across lines.
-    flattened = " ".join(text.split())
-    assert (
-        "dcci(reinterpret_cast<__gm__ void*>(&g_pypto_block_meta_vec[idx][0]), "
-        "SINGLE_CACHE_LINE, CACHELINE_OUT)" in flattened
-    )
-    assert "__BLOCK_LOCAL__ uint32_t" not in text
+    assert "__BLOCK_LOCAL__ __inline__ uint32_t g_pypto_block_num_v;" in sk_branch
+    assert "__BLOCK_LOCAL__ __inline__ uint32_t g_pypto_block_idx_v;" in sk_branch
+    assert "__BLOCK_LOCAL__ __inline__ uint32_t g_pypto_block_num_c;" in sk_branch
+    assert "__BLOCK_LOCAL__ __inline__ uint32_t g_pypto_block_idx_c;" in sk_branch
+    assert "return (int64_t)PYPTO_BLOCK_NUM;" in sk_branch
+    assert "return (int64_t)PYPTO_BLOCK_IDX;" in sk_branch
+    assert "PYPTO_BLOCK_NUM = v;" in sk_branch
+    assert "PYPTO_BLOCK_IDX = v;" in sk_branch
+    assert "g_pypto_block_meta" not in text
+    assert "PYPTO_SK_BLOCK_SLOTS" not in text
+    assert "dcci(" not in " ".join(text.split())
+    assert "AscendC::Trap();" not in text
+    non_sk_branch = text[else_start:]
+    assert "return get_block_num();" in non_sk_branch
 
 
 def test_simt_kernel_with_sk_cap_compiles(tmp_path):
