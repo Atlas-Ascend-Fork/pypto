@@ -173,3 +173,35 @@ def test_dump_load_keeps_op_vec_tile():
     reloaded = str(pypto.pypto_impl.ir.text_load_program(text))
     assert "#vec_tile([8, 8, 16, 16])" not in reloaded
     assert reloaded == text
+
+
+def _assemble_ssa_kernel(a, b, out):
+    tile = 16
+    pypto.set_vec_tile_shapes(tile, tile)
+    for bi in pypto.loop(0, pypto.ceildiv(a.shape[0], tile), 1, name="LOOP_M", idx_name="bi"):
+        valid = pypto.min(a.shape[0] - bi * tile, tile)
+        left = pypto.view(a, [tile, tile], [bi * tile, 0], valid_shape=[valid, tile])
+        right = pypto.view(b, [tile, tile], [bi * tile, 0], valid_shape=[valid, tile])
+        pypto.assemble([(left + right, [bi * tile, 0]), (left + right, [bi * tile, tile])], out, parallel=False)
+
+
+def test_resume_keeps_assemble_ssa_attribute():
+    dim = pypto.symbolic_scalar("b")
+    with npuarch(_ARCH):
+        tensors = [
+            pypto.tensor([dim, 16], pypto.DT_FP32),
+            pypto.tensor([dim, 16], pypto.DT_FP32),
+            pypto.tensor([dim, 32], pypto.DT_FP32),
+        ]
+        func = pil.compile(_assemble_ssa_kernel, *tensors)
+        program = ir.IRBuilder().create_program([func], "main", ir.Span.unknown())
+
+        pypto.pypto_impl.Reset()
+        text = checkpoint(program, 0)
+        assert "ASSEMBLE_SSA" in text
+
+        pypto.pypto_impl.Reset()
+        resumed = str(resume(text, 0))
+
+    assert "ASSEMBLE_SSA" in resumed
+    assert "#toOffset" in resumed
