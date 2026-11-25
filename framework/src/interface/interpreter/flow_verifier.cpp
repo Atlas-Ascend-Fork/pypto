@@ -74,13 +74,16 @@ float DecodeFp8E5M2(uint8_t x)
     return std::numeric_limits<float>::quiet_NaN();
 }
 
+// e8m0: unsigned 8-bit exponent, value = 2^(x-127); 0 means zero-scale in MX practice; 0xFF is NaN.
 float DecodeFp8E8M0(uint8_t x)
 {
-    const int xi = static_cast<int>(x);
-    const float sign = (xi & 0x80) != 0 ? -1.0f : 1.0f;
-    const int expBits = xi & 0x7F;
-    const float expVal = static_cast<float>(expBits) - 63.0f;
-    return sign * std::pow(2.0f, expVal);
+    if (x == 0xFF) {
+        return std::numeric_limits<float>::quiet_NaN();
+    }
+    if (x == 0) {
+        return 0.0f;
+    }
+    return std::pow(2.0f, static_cast<float>(x) - 127.0f);
 }
 
 // e6m2: unsigned 8-bit (6-bit exponent, 2-bit mantissa), value = (1 + m/4) * 2^(e-48).
@@ -199,6 +202,39 @@ FlowVerifier::CompareResult FlowVerifier::CompareFp8TensorData(const std::shared
     return compareResult;
 }
 
+// Packed FP4 (DT_FP4_E2M1/DT_FP4_E1M2/DT_HF4): validShape counts logical values while storage packs two of them
+// per uint8, high nibble first (see Fp4PackedToFloat32). Offsets from the walk are logical, so halve them.
+FlowVerifier::CompareResult FlowVerifier::CompareFp4PackedTensorData(
+    const std::shared_ptr<LogicalTensorData>& goldenDataView, const std::shared_ptr<LogicalTensorData>& outputDataView,
+    DataType fp4Format, float rtol, float atol, int errorCountThreshold, int failNum)
+{
+    constexpr int64_t VALUES_PER_BYTE = 0x2;
+    constexpr int64_t NIBBLE_SHIFT = 0x4;
+    auto& validShape = goldenDataView->GetValidShape();
+    const auto size = std::accumulate(validShape.begin(), validShape.end(), 1, std::multiplies<>());
+    CompareResult compareResult(size, rtol, atol, errorCountThreshold, failNum, validShape);
+    CompareDataRecursiveWithLeaf(
+        compareResult, 0, goldenDataView->GetStorageOffset(), outputDataView->GetStorageOffset(), goldenDataView,
+        outputDataView, 0,
+        [&](CompareResult& cr, size_t lastCount, int64_t outOff, int64_t gOff, int64_t index,
+            const std::shared_ptr<LogicalTensorData>& gv, const std::shared_ptr<LogicalTensorData>& ov) {
+            // Get<T>() rejects sub-byte dtypes, so index the raw packed storage directly.
+            const uint8_t* gp = gv->GetData()->data();
+            const uint8_t* op = ov->GetData()->data();
+            for (size_t i = 0; i < lastCount; i++) {
+                const int64_t gLogical = gOff + static_cast<int64_t>(i);
+                const int64_t oLogical = outOff + static_cast<int64_t>(i);
+                const int64_t gShift = (gLogical % VALUES_PER_BYTE == 0) ? NIBBLE_SHIFT : 0;
+                const int64_t oShift = (oLogical % VALUES_PER_BYTE == 0) ? NIBBLE_SHIFT : 0;
+                CompareScalarPair(cr, index + static_cast<int64_t>(i),
+                                  DecodeFp4Nibble(gp[gLogical / VALUES_PER_BYTE] >> gShift, fp4Format),
+                                  DecodeFp4Nibble(op[oLogical / VALUES_PER_BYTE] >> oShift, fp4Format));
+            }
+        });
+    compareResult.UpdateErrorCountThreshold();
+    return compareResult;
+}
+
 FlowVerifier::CompareResult FlowVerifier::VerifyResult(const std::shared_ptr<LogicalTensorData>& goldenDataView,
                                                        const std::shared_ptr<LogicalTensorData>& outputDataView,
                                                        float rtol, float atol)
@@ -251,6 +287,11 @@ FlowVerifier::CompareResult FlowVerifier::VerifyResult(const std::shared_ptr<Log
         case DT_FP8E8M0:
         case DT_FP8E6M2:
             return CompareFp8TensorData(goldenDataView, outputDataView, goldenDataView->GetDataType(), rtol, atol);
+        case DT_FP4_E2M1:
+        case DT_FP4_E1M2:
+        case DT_HF4:
+            return CompareFp4PackedTensorData(goldenDataView, outputDataView, goldenDataView->GetDataType(), rtol,
+                                              atol);
         default:
             ASSERT(ExecuteOperationScene::INVALID_TENSOR_DTYPE, false);
             break;

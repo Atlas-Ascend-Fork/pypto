@@ -108,6 +108,85 @@ TEST_F(TorchAdaptorTest, MatMul)
     }
 }
 
+// MX scale小于1(如e8m0字节124=2^-3=0.125)在INT8输出下若calcType沿用整型, scale会被截断为0,
+// B侧乘0输出全0(golden全0问题). 修复后强制浮点计算域, 本用例锁定该行为:
+// 修复后 64*0.125*0.125=1.0 -> round=1; 若R1被回退, scale截断为0, 输出0 != golden, 用例必红.
+TEST_F(TorchAdaptorTest, MatMulMxScaleInt8OutputKeepsFloatDomain)
+{
+    // a: [1,64]值1.0, b: [64,1]值1.0, scale均为2^-3: 期望 64 * 0.125 * 0.125 = 1.0 -> round后1
+    auto self = makeTensorData(DT_FP32, {1, 64}, 1.0f);
+    auto other = makeTensorData(DT_FP32, {64, 1}, 1.0f);
+    auto scaleA = makeTensorData(DT_FP8E8M0, {1, 1, 2}, static_cast<uint8_t>(0x7C));
+    auto scaleB = makeTensorData(DT_FP8E8M0, {1, 1, 2}, static_cast<uint8_t>(0x7C));
+    auto out = makeTensorData(DT_INT8, {1, 1}, static_cast<int8_t>(0));
+    auto golden = makeTensorData(DT_INT8, {1, 1}, static_cast<int8_t>(1));
+
+    auto scaleAData = calc::Trans(scaleA);
+    auto scaleBData = calc::Trans(scaleB);
+    MatMulParam param{};
+    param.aScalePtr = &scaleAData;
+    param.bScalePtr = &scaleBData;
+    calc::MatMul(out, self, other, param);
+    ASSERT_ALLCLOSE(out, golden);
+}
+
+// 浮点域保真: MX scale=2^4放大时INT8输出按round取整而非截断(0.5 -> 1而不是0)
+TEST_F(TorchAdaptorTest, MatMulMxScaleInt8OutputRoundsHalf)
+{
+    // K=1, a=1.0, b=0.75, scale均为2^0(0x7F): 结果 0.75, round回写int8=1; 若R3被回退为截断则=0.
+    auto self = makeTensorData(DT_FP32, {1, 1}, 1.0f);
+    auto other = makeTensorData(DT_FP32, {1, 1}, 0.75f);
+    auto scaleA = makeTensorData(DT_FP8E8M0, {1, 1, 2}, static_cast<uint8_t>(0x7F));
+    auto scaleB = makeTensorData(DT_FP8E8M0, {1, 1, 2}, static_cast<uint8_t>(0x7F));
+    auto out = makeTensorData(DT_INT8, {1, 1}, static_cast<int8_t>(0));
+    auto golden = makeTensorData(DT_INT8, {1, 1}, static_cast<int8_t>(1)); // round(0.75)=1(trunc为0)
+
+    auto scaleAData = calc::Trans(scaleA);
+    auto scaleBData = calc::Trans(scaleB);
+    MatMulParam param{};
+    param.aScalePtr = &scaleAData;
+    param.bScalePtr = &scaleBData;
+    calc::MatMul(out, self, other, param);
+    ASSERT_ALLCLOSE(out, golden);
+}
+
+// kStep分块 + MX scale + 无bias(解释器根治后中间态不再误挂quant scale为bias):
+// K维按4分块逐块累加, 同时覆盖 MatmulMultiDataLoad 对未传bias(undefined tensor)的防御分支
+TEST_F(TorchAdaptorTest, MatMulMxKStepBlockAccumulateWithoutBias)
+{
+    auto self = makeTensorData(DT_FP32, {8, 16}, 1.0f);
+    auto other = makeTensorData(DT_FP32, {16, 8}, 1.0f);
+    auto scaleA = makeTensorData(DT_FP8E8M0, {8, 1, 2}, static_cast<uint8_t>(0x7F));
+    auto scaleB = makeTensorData(DT_FP8E8M0, {1, 8, 2}, static_cast<uint8_t>(0x7F));
+    auto out = makeTensorData(DT_FP32, {8, 8}, 0.0f);
+    auto golden = makeTensorData(DT_FP32, {8, 8}, 16.0f);
+
+    auto scaleAData = calc::Trans(scaleA);
+    auto scaleBData = calc::Trans(scaleB);
+    MatMulParam param{};
+    param.aScalePtr = &scaleAData;
+    param.bScalePtr = &scaleBData;
+    param.kStep = 4;
+    calc::MatMul(out, self, other, param);
+    ASSERT_ALLCLOSE(out, golden);
+}
+
+// 普通量化matmul(无MX scale)的INT32 bias必须参与累加, 不得被skipBias静默丢弃
+TEST_F(TorchAdaptorTest, MatMulInt32BiasWithoutMxScaleStillAccumulates)
+{
+    auto self = makeTensorData(DT_FP32, {1, 4}, 1.0f);
+    auto other = makeTensorData(DT_FP32, {4, 1}, 1.0f);
+    auto intBias = makeTensorData(DT_INT32, {1, 1}, 3);
+    auto out = makeTensorData(DT_INT8, {1, 1}, static_cast<int8_t>(0));
+    auto golden = makeTensorData(DT_INT8, {1, 1}, static_cast<int8_t>(7)); // 4*1 + 3
+
+    auto biasData = calc::Trans(intBias);
+    MatMulParam param{};
+    param.biasPtr = &biasData;
+    calc::MatMul(out, self, other, param);
+    ASSERT_ALLCLOSE(out, golden);
+}
+
 TEST_F(TorchAdaptorTest, MatMulMxScale2D)
 {
     auto self = makeTensorData(DT_FP32, {1, 64}, 1.0f);

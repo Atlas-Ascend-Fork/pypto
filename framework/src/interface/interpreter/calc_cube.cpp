@@ -34,22 +34,6 @@ constexpr size_t BIAS_WITH_SCALE_INDEX = 4;
 
 bool IsAccOp(Opcode opcode) { return opcode == Opcode::OP_A_MULACC_B || opcode == Opcode::OP_A_MULACC_BT; }
 
-bool IsMxScaleTensor(const LogicalTensorDataPtr& tensor)
-{
-    if (tensor == nullptr || tensor->GetDataType() != DataType::DT_FP8E8M0) {
-        return false;
-    }
-    const auto& shape = tensor->GetShape();
-    return shape.size() >= 0x3 && shape.size() <= 0x5 && shape.back() == 0x2;
-}
-
-bool HasMxScaleByInputs(const ExecuteOperationContext* ctx, bool isAccOp)
-{
-    return !isAccOp && ctx->ioperandDataViewList->size() >= BIAS_WITH_SCALE_INDEX &&
-           IsMxScaleTensor(ctx->ioperandDataViewList->at(SCALE_A_INDEX)) &&
-           IsMxScaleTensor(ctx->ioperandDataViewList->at(SCALE_B_INDEX));
-}
-
 bool GetBoolAttrOrDefault(const Operation* op, const std::string& attr, bool defaultValue = false)
 {
     return op->HasAttr(attr) ? op->GetBoolAttribute(attr) : defaultValue;
@@ -177,10 +161,10 @@ void ExecuteOpAMulB(ExecuteOperationContext* ctx)
         ret = OperationInterpreter::GetRawFirstDimView(ret);
         lhs = OperationInterpreter::GetRawFirstDimView(lhs);
     }
-    bool hasMXScaleByInputs = HasMxScaleByInputs(ctx, isAccOp);
     bool hasMXScale = HasMXScaleValue(ctx);
-    bool hasBias = GetBoolAttrOrDefault(ctx->op, Matrix::A_MUL_B_BIAS_ATTR) ||
-                   (!isAccOp && hasMXScaleByInputs && ctx->ioperandDataViewList->size() > BIAS_WITH_SCALE_INDEX);
+    // bias角色以建图层显式属性为准(建图时无条件设置); 第5位的量化scale由VECTOR_QUANT_FLAG标记,
+    // 其消费走COPY_OUT(fixpipe), 解释器在此不得凭输入个数猜测为bias
+    bool hasBias = GetBoolAttrOrDefault(ctx->op, Matrix::A_MUL_B_BIAS_ATTR);
     size_t biasIndex = BIAS_DEFAULT_INDEX;
     if (!isAccOp && hasMXScale) {
         // scaled_mm interface: [A, B, scale_a, scale_b, (optional) bias]

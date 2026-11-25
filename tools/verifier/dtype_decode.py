@@ -138,21 +138,108 @@ def _decode_bf16(raw):
     return (raw.astype(np.uint32) << 16).view(np.float32)
 
 
+def _decode_fp8e8m0_value(bits):
+    """Decode one FP8 E8M0 byte, aligned with calculator Fp8E8M0ToFloat32:
+    unsigned exponent, bias 127; 0 means zero-scale; 0xFF is NaN per MX spec."""
+    if bits == 0:
+        return 0.0
+    if bits == 0xFF:
+        return float("nan")
+    return 2.0 ** (bits - 127)
+
+
+def _build_fp8e8m0_lut():
+    lut = np.zeros(256, dtype=np.float32)
+    for i in range(256):
+        lut[i] = _decode_fp8e8m0_value(i)
+    return lut
+
+
+_FP8E8M0_LUT = _build_fp8e8m0_lut()
+
+
+def _decode_fp8e6m2_value(bits):
+    """Decode one unsigned FP8 E6M2 byte. Python port of C++ DecodeFp8E6M2 in flow_verifier.cpp."""
+    if bits == 0:
+        return 0.0
+    if bits == 0xFF:
+        return float("nan")
+    exp = (bits >> 2) & 0x3F
+    mant = bits & 0x3
+    return (1.0 + mant / 4.0) * 2.0 ** (exp - 48)
+
+
+def _build_fp8e6m2_lut():
+    lut = np.zeros(256, dtype=np.float32)
+    for i in range(256):
+        lut[i] = _decode_fp8e6m2_value(i)
+    return lut
+
+
+_FP8E6M2_LUT = _build_fp8e6m2_lut()
+
+
+def _decode_fp8e8m0(raw):
+    return _FP8E8M0_LUT[raw.astype(np.uint8)]
+
+
+def _decode_fp8e6m2(raw):
+    return _FP8E6M2_LUT[raw.astype(np.uint8)]
+
+
+# Nibble decode tables, Python port of dtype_utils.h (FP4_E2M1/FP4_E1M2/HF4_DECODE_TABLE).
+_FP4_E2M1_LUT = np.array(
+    [0.0, 0.5, 1.0, 1.5, 2.0, 3.0, 4.0, 6.0, -0.0, -0.5, -1.0, -1.5, -2.0, -3.0, -4.0, -6.0], dtype=np.float32
+)
+_FP4_E1M2_LUT = np.array(
+    [0.0, 0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, -0.0, -0.25, -0.5, -0.75, -1.0, -1.25, -1.5, -1.75],
+    dtype=np.float32,
+)
+_HF4_LUT = _FP4_E1M2_LUT
+
+
+def _make_fp4_unpacker(lut):
+    # One storage byte holds two values, high nibble first (see Fp4PackedToFloat32 in fp_convert.cpp).
+    def unpack(raw):
+        b = raw.astype(np.uint8)
+        out = np.empty(b.size * 2, dtype=np.float32)
+        out[0::2] = lut[(b >> 4) & 0xF]
+        out[1::2] = lut[b & 0xF]
+        return out
+
+    return unpack
+
+
 _dtype_decoders = {
     "INT4": _decode_int4,
     "FP8": _decode_fp8,
     "FP8E4M3": _decode_fp8,
     "FP8E5M2": _decode_fp8e5m2,
+    "FP8E8M0": _decode_fp8e8m0,
+    "FP8E6M2": _decode_fp8e6m2,
     "HF8": _decode_hf8,
     "BF16": _decode_bf16,
+    "FP4_E2M1": _make_fp4_unpacker(_FP4_E2M1_LUT),
+    "FP4_E1M2": _make_fp4_unpacker(_FP4_E1M2_LUT),
+    "HF4": _make_fp4_unpacker(_HF4_LUT),
 }
+
+# Packed 4-bit dtypes: the dump holds two values per byte, so decoding doubles the element count and the
+# result matches the logical shape recorded by the verifier.
+PACKED_NIBBLE_DTYPES = frozenset({"FP4_E2M1", "FP4_E1M2", "HF4"})
+
+
+def is_packed_nibble_dtype(dtype_name):
+    return dtype_name in PACKED_NIBBLE_DTYPES
 
 
 def decode_tensor_data(data, dtype_name):
     """Decode raw storage bytes (uint8/uint16) to numeric values for packed dtypes.
 
-    INT4/FP8/FP8E4M3/FP8E5M2/HF8/BF16 are read as raw bytes (uint8/uint16) from files; this decodes
-    them to int8/float32. Other dtypes are returned unchanged.
+    INT4/FP8*/HF8/BF16 are read as raw bytes from files and decoded one value per storage element.
+    FP4_E2M1/FP4_E1M2/HF4 pack two values per byte (high nibble first), so decoding doubles the element
+    count and the result can be reshaped directly to the recorded logical shape.
+    Other dtypes are returned unchanged.
     """
     decoder = _dtype_decoders.get(dtype_name)
     if decoder is None:

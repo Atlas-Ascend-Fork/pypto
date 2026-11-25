@@ -61,6 +61,8 @@ TEST_F(CalcCommonTest, ExecuteOpAMulBWith5DMxScaleAndBias)
     auto bias = std::make_shared<LogicalTensor>(*func, DT_FP32, biasShape);
     auto output = std::make_shared<LogicalTensor>(*func, DT_FP32, outputShape);
     auto& matmulOp = func->AddOperation(Opcode::OP_A_MUL_B, {matrixA, matrixB, scaleA, scaleB, bias}, {output});
+    // 手工建图需跟随解释器契约: bias 角色以显式属性为准(正式建图路径 SetTensorGraphAttr 无条件设置)
+    matmulOp.SetAttribute(Matrix::A_MUL_B_BIAS_ATTR, true);
     matmulOp.SetAttribute(Matrix::A_MUL_B_SCALE_A_COPY_IN_MODE, static_cast<int64_t>(Matrix::CopyInMode::DN2NZ));
     matmulOp.SetAttribute(Matrix::A_MUL_B_SCALE_B_COPY_IN_MODE, static_cast<int64_t>(Matrix::CopyInMode::DN2NZ));
     matmulOp.GetTileShapeForSetting().GetCubeTile().k = {0, 0, 0};

@@ -1838,7 +1838,7 @@ static void MatmulMultiDataLoad(torch::Tensor& out, const torch::Tensor& lhs, co
     int64_t kdimL = shapeL.size() - 1;
     int64_t kdimR = shapeR.size() - 0x2;
     int64_t k = shapeL[kdimL];
-    auto biasShape = bias.sizes().vec();
+    auto biasShape = bias.defined() ? bias.sizes().vec() : std::vector<int64_t>{};
     for (int64_t offset = 0; offset < k; offset += kstep) {
         shapeL[kdimL] = std::min(kstep, k - offset);
         shapeR[kdimR] = std::min(kstep, k - offset);
@@ -1971,6 +1971,11 @@ static void MatMul(const TensorData& out, const TensorData& self, const TensorDa
         calcType = torch::kFloat;
         tout.second = tout.second.to(calcType);
     }
+    // MX量化matmul必须用浮点计算域: 整数输出(如INT8量化)时MX scale小于1会被整型截断为0(如e8m0的2^-3), B侧乘0导致输出全0
+    if (!at::isFloatingType(calcType) && (param.aScalePtr != nullptr || param.bScalePtr != nullptr)) {
+        calcType = torch::kFloat;
+        tout.second = tout.second.to(calcType);
+    }
 
     auto tself = From(self);
     auto tother = From(other);
@@ -1998,6 +2003,7 @@ static void MatMul(const TensorData& out, const TensorData& self, const TensorDa
     if (param.aScalePtr != nullptr && param.bScalePtr != nullptr) {
         auto taScale = From(*param.aScalePtr).second.to(calcType);
         auto tbScale = From(*param.bScalePtr).second.to(calcType);
+
         const int64_t aDim = tself.second.dim();
         const int64_t bDim = tother.second.dim();
         ASSERT(CalculatorErrorScene::MATMUL_INPUT_SHAPE_MISMATCH, aDim >= 0x2 && aDim <= 0x4 && bDim == aDim)
@@ -2022,7 +2028,12 @@ static void MatMul(const TensorData& out, const TensorData& self, const TensorDa
         QuantExecute(tout.second, param.scalePtr, param.scale, param.relu);
     }
     if (calcType != dtype) {
-        tout.second = tout.second.to(dtype);
+        if (!c10::isFloatingType(dtype)) {
+            // 量化输出按最近邻取整, 与fixpipe量化语义对齐(直接截断会在量化边界产生±1偏差)
+            tout.second = torch::round(tout.second).to(dtype);
+        } else {
+            tout.second = tout.second.to(dtype);
+        }
     }
     ToOperand(tout.second, tout.first, out.dtype);
 }

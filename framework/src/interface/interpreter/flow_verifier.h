@@ -460,6 +460,11 @@ private:
                                               DataType fp8Format, float rtol, float atol, int errorCountThreshold = 0,
                                               int failNum = 0);
 
+    static CompareResult CompareFp4PackedTensorData(const std::shared_ptr<LogicalTensorData>& goldenDataView,
+                                                    const std::shared_ptr<LogicalTensorData>& outputDataView,
+                                                    DataType fp4Format, float rtol, float atol,
+                                                    int errorCountThreshold = 0, int failNum = 0);
+
     void UpdateInterpreterCache();
     void Initialize(Function* entry, const std::vector<std::shared_ptr<LogicalTensorData>>& inputDataViewList,
                     const std::vector<std::shared_ptr<LogicalTensorData>>& outputDataViewList,
