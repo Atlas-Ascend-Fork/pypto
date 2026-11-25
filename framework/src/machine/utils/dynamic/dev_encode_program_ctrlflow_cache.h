@@ -192,6 +192,8 @@ struct DeviceExecuteSlot {
     bool isOutputSlot{false};
     bool isAssembleSlot{false};
     bool isAssembleSlotNeedAlloc{false};
+    /* Dyn-CM table need-alloc; independent of isAssembleSlotNeedAlloc (tensor buffer). */
+    bool isDynamicCellMatchNeedAlloc{false};
     bool isPartialUpdateStitch{false};
     uint32_t stitchDupIdx{INVALID_STITCH_IDX};
     uint32_t stitchOutcastIdx;

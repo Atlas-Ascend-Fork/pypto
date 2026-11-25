@@ -264,6 +264,11 @@ static void MarkPartialUpdateSlots(DeviceExecuteSlot* slotList, size_t slotSize,
         if (update.isPartial) {
             slotList[slotIndex].isPartialUpdateStitch = true;
             slotList[slotIndex].partialUpdate = &update;
+            // Dyn table (Data outside / cleared): mark need-alloc independent of assemble NeedAlloc.
+            if (update.stitchCtrlBitMask != STITCH_CTRL_NONE &&
+                update.cellMatchRuntimePartialUpdateTable.Data() == nullptr) {
+                slotList[slotIndex].isDynamicCellMatchNeedAlloc = true;
+            }
             DEV_VERBOSE_DEBUG("Partial Update Slot %d mask=0x%x.\n", slotIndex,
                               static_cast<unsigned>(update.stitchCtrlBitMask));
         } else {

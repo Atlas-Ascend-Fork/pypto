@@ -834,7 +834,8 @@ void* DeviceExecuteContext::DeviceExecuteRuntimeCallRootStitch(void* ctx_, uint6
     PerfEnd(PERF_EVT_ROOT_FUNC);
     if (ctx->DuppedRootUpdateAndCachedAllSubmitted()) {
         DEV_TRACE_DEBUG(CtrlEvent(none(), ControlFlowCachePartRunControlContinue()));
-        // forcely break device task
+        // forcely break device task; dyn-CM: mark need-alloc for Device TryAllocate (same Data==null
+        // gate as Fill). TryAllocate overwrites CM.ptr; no bulk clear (Host/Device paths never clear).
         auto ctrlFlowCacheAnchor = ctx->devProg->ctrlFlowCacheAnchor;
         ctrlFlowCacheAnchor->RuntimeAddrRestore(ctx->slotContext.GetSlotList(),
                                                 ctx->workspace.GetRuntimeOutcastTensorPool(), ctx->devProg->slotSize,
@@ -844,6 +845,18 @@ void* DeviceExecuteContext::DeviceExecuteRuntimeCallRootStitch(void* ctx_, uint6
             0, ctx->args->contextWorkspaceAddr, ctx->args, ctx->slotContext.GetSlotList(),
             ctx->workspace.GetRuntimeOutcastTensorPoolBase(), ctx->devProg->GetParallelism(),
             ctx->workspace.GetTensorAllocator());
+        DeviceExecuteSlot* slotList = ctx->slotContext.GetSlotList();
+        const size_t slotSize = ctx->devProg->slotSize;
+        for (size_t i = 0; i < slotSize; ++i) {
+            auto& slot = slotList[i];
+            if (!slot.isPartialUpdateStitch || slot.partialUpdate->stitchCtrlBitMask == STITCH_CTRL_NONE) {
+                continue;
+            }
+            if (slot.partialUpdate->cellMatchRuntimePartialUpdateTable.Data() != nullptr) {
+                continue;
+            }
+            slot.isDynamicCellMatchNeedAlloc = true;
+        }
     }
     return result;
 }

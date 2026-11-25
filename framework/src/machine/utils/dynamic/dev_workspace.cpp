@@ -297,12 +297,12 @@ void DeviceWorkspaceAllocator::AllocateInnerWorkspaceForDup(DevAscendFunctionDup
 
 void DeviceWorkspaceAllocator::AllocateAssembleSlot(DeviceExecuteSlot& slot, const char* rootName)
 {
+    // Tensor buffer only; dyn-CM is TryAllocateDynamicCellMatchForAssembleSlot (callers).
     RuntimeOutcastTensorDerefSafe(slot.rtOutcastIter);
     slot.rtOutcastIter = MakeRuntimeOutcastTensor(AllocateInnerTemporalOutcastSlot(rootName),
                                                   RuntimeTensorMemProperty::BOUNDARY_OUTCAST);
     slot.isAssembleSlotNeedAlloc = false;
     if (slot.isPartialUpdateStitch && slot.partialUpdate->stitchCtrlBitMask != STITCH_CTRL_NONE) {
-        TryAllocateDynamicCellMatchForAssembleSlot(slot);
         slot.ChangeSlotAllocIterId(); // tensor memory changed → invalidate cell-match tagId
     }
 }
@@ -341,11 +341,7 @@ void DeviceWorkspaceAllocator::ResolveOutcastAddress(DevAscendFunctionDupped dev
 {
     auto rawTensor = devRootSrc->GetOutcastRawTensor(outcastIdx);
     if (outputSlotIndex != -1) {
-        /* Output tensor: allocate dynamic cell-match table when encode marked the slot */
-        if (slotList[outputSlotIndex].isPartialUpdateStitch &&
-            slotList[outputSlotIndex].partialUpdate->stitchCtrlBitMask != STITCH_CTRL_NONE) {
-            TryAllocateDynamicCellMatchForAssembleSlot(slotList[outputSlotIndex]);
-        }
+        TryAllocateDynamicCellMatchForAssembleSlot(slotList[outputSlotIndex]);
         outcastDesc = AddressDescriptor::MakeFromRtOutcast(slotList[outputSlotIndex].rtOutcastIter);
         RuntimeOutcastTensorRef(outcastDesc.GetRtOutcastIter());
     } else if (rawTensor->linkedIncastId != -1) {
@@ -356,8 +352,7 @@ void DeviceWorkspaceAllocator::ResolveOutcastAddress(DevAscendFunctionDupped dev
         outcastDesc = incastDesc;
         RuntimeOutcastTensorRef(outcastDesc.GetRtOutcastIter());
     } else if (assembleSlotIndex != -1) {
-        /* assemble outcast tensor: isAssembleSlotNeedAlloc = local buffer alloc only;
-         * cell-match uses stitchCtrlBitMask on partialUpdate (Partial slots only). */
+        /* Tensor buffer (NeedAlloc) and dyn-CM (isDynamicCellMatchNeedAlloc) are independent. */
         if (slotList[assembleSlotIndex].isAssembleSlotNeedAlloc) {
             AllocateAssembleSlot(slotList[assembleSlotIndex], devRootSrc->GetRawName());
         } else {
@@ -365,6 +360,7 @@ void DeviceWorkspaceAllocator::ResolveOutcastAddress(DevAscendFunctionDupped dev
                            slotList[assembleSlotIndex].rtOutcastIter != ITEM_POOL_INVALID_INDEX,
                            "Missing RUNTIME_SlotMarkNeedAlloc for assemble slot %d.", assembleSlotIndex);
         }
+        TryAllocateDynamicCellMatchForAssembleSlot(slotList[assembleSlotIndex]);
         outcastDesc = AddressDescriptor::MakeFromRtOutcast(slotList[assembleSlotIndex].rtOutcastIter);
         RuntimeOutcastTensorRef(outcastDesc.GetRtOutcastIter());
     } else if (devRootSrc->GetOutcast(outcastIdx).exprListIndex != -1) {
@@ -441,16 +437,12 @@ FunctionMemoryAllocFailure DeviceWorkspaceAllocator::CanAllocateFunctionMemory(D
 
 void DeviceWorkspaceAllocator::TryAllocateDynamicCellMatchForAssembleSlot(DeviceExecuteSlot& slot)
 {
-    // Caller: isPartialUpdateStitch (⇒ partialUpdate set) && mask != NONE.
+    // Gate only by isDynamicCellMatchNeedAlloc (same one-shot as isAssembleSlotNeedAlloc).
+    // Callers guarantee: flag true ⇒ Data empty and table desc valid.
+    if (!slot.isDynamicCellMatchNeedAlloc) {
+        return;
+    }
     auto* partialUpdate = slot.partialUpdate;
-    if (partialUpdate->cellMatchRuntimePartialUpdateTable.Data() != nullptr) {
-        return;
-    }
-    auto& desc = partialUpdate->cellMatchTableDesc;
-    int dim = desc.GetDimensionSize();
-    if (dim <= 0) {
-        return;
-    }
     auto dynamicCellMatchSlotBytes = DynamicCellMatchSlotByteSize();
     DEV_ASSERT_MSG(WsErr::WORKSPACE_INIT_PARAM_INVALID, dynamicCellMatchSlotBytes > 0,
                    "Dynamic cell match slot bytes invalid, slotBytes=%" PRIu64, dynamicCellMatchSlotBytes);
@@ -465,6 +457,7 @@ void DeviceWorkspaceAllocator::TryAllocateDynamicCellMatchForAssembleSlot(Device
         0, reinterpret_cast<uint64_t*>(dynamicCellMatchAlloc.ptr));
     auto& runtimeOutcastTensor = GetRuntimeOutcastTensor(slot.rtOutcastIter);
     runtimeOutcastTensor.dynamicCellMatchAllocation = dynamicCellMatchAlloc;
+    slot.isDynamicCellMatchNeedAlloc = false;
 }
 
 bool DeviceWorkspaceAllocator::IsValidSlotMemRequirement(uint64_t memReq) const
