@@ -503,9 +503,11 @@ private:
 public:
     TensorAllocator* GetTensorAllocator() { return tensorAllocators_; }
 
-    // stitch pool 对齐后基址（设备地址）：由 DrcoRootFuncList::stitchNodeBase 透传给 aicore 侧，
-    // 以 base + u32 偏移还原 stitch 节点地址（偏移 < 4GB 由池 u32 总大小保证）
-    uint64_t GetStitchPoolBase() const { return metadataAllocators_.stitchSlab.GetMemBase(); }
+    // stitch pool 基址（设备地址）：WAW stitch 节点实际所在池 = duppedStitchSlab
+    // （AllocateStitch → DUPPED_STITCH 回落区；stitchSlab 中是就绪队列等调度对象）。
+    // 由 DrcoRootFuncList::stitchNodeBase 透传，以 base + u32 偏移还原节点地址，
+    // 编码契约（偏移 < 2^31）见 aikernel_device_task.h slot 编码注释
+    uint64_t GetStitchPoolBase() const { return metadataAllocators_.duppedStitchSlab.GetMemBase(); }
 
     // 元数据区（general + stitchPool 连续段）基址（设备地址）：由 DrcoRootFuncList::metadataBase
     // 透传，DrcoRootFuncData 的

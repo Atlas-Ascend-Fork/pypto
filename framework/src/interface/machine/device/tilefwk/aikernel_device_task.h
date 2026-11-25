@@ -130,6 +130,8 @@ constexpr uint32_t DRCO_QUEUE_MAX = 3;
 // 实际 ≤ 65535，余量充足）。消费核 pop 后按 funcId 索引 funcDataList 取节点区基址 +
 // 下标还原节点（相对 funcInfoAndStaticDataOffset bit59-30）
 constexpr uint32_t DRCO_STITCH_SLOT_STATIC_SUCC_FLAG = 1u << 31;
+// WAW 链偏移编码上限（开区间界，契约见上注释：bit31 为静态后继标志，push 侧越界拒绝）
+constexpr uint64_t DRCO_STITCH_SLOT_OFFSET_LIMIT = 1ULL << 31;
 constexpr uint32_t DRCO_STITCH_SLOT_FUNCID_SHIFT = 21;
 constexpr uint32_t DRCO_STITCH_SLOT_FUNCID_MASK = 0x3FFu << DRCO_STITCH_SLOT_FUNCID_SHIFT;
 constexpr uint32_t DRCO_STITCH_SLOT_NODE_INDEX_MASK = 0x1FFFFFu;

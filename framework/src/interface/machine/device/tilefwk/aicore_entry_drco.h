@@ -1416,15 +1416,20 @@ INLINE static bool DrcoStitchNodeMatrixTryPushSlot(DrcoEntryState* state, __gm__
     return false;
 }
 
-// stitch 链节点 push：slot = 节点相对 stitchNodeBase 的 u32 偏移（bit31 = 0 → 非静态）
+// stitch 链节点 push：slot = 节点相对 stitchNodeBase 的 u32 偏移（bit31 = 0 → 非静态）。
+// 编码契约要求偏移 < 2^31（bit31 为静态后继标志，pop 侧按位区分），越界或为空闲哨兵 0
+// 均不入矩阵，返回 false 由调用方（DrcoStitchNodeTryPushChain）就地解整段子链兜底
 INLINE static bool DrcoStitchNodeMatrixTryPush(DrcoEntryState* state,
                                                __gm__ npu::tile_fwk::DrcoRootFuncList* rootFuncList,
                                                __gm__ DrcoGlobalStitchNodeMatrix* matrix,
                                                __gm__ npu::tile_fwk::DevAscendFunctionDuppedStitchNode* node,
                                                uint32_t& start)
 {
-    uint32_t nodeOffset = static_cast<uint32_t>(reinterpret_cast<uint64_t>(node) - rootFuncList->stitchNodeBase);
-    return DrcoStitchNodeMatrixTryPushSlot(state, matrix, nodeOffset, start);
+    uint64_t nodeOffset = reinterpret_cast<uint64_t>(node) - rootFuncList->stitchNodeBase;
+    if (nodeOffset == 0 || nodeOffset >= npu::tile_fwk::DRCO_STITCH_SLOT_OFFSET_LIMIT) {
+        return false;
+    }
+    return DrcoStitchNodeMatrixTryPushSlot(state, matrix, static_cast<uint32_t>(nodeOffset), start);
 }
 
 // 静态后继节点专用 push（与 stitch 节点 push 完全独立，stitch 侧行为零改动）：行域按节点
