@@ -160,7 +160,7 @@ Block 算子面向硬件优化的 block 级编程，作用于 tile，并遵循**
   `block.adds`、`block.subs`、`block.muls`、`block.divs`（tile-scalar）；
   `block.cmp`、`block.sel`、`block.gather`、`block.gatherb`、`block.gathermask`
 - **Matmul**（`block_ops/out_matmul.cpp`）：
-  `block.matmul`、`block.matmul_acc`、`block.matmul_bias`、`block.matmul_mx`、`block.gemv`
+  `block.matmul`、`block.matmul_acc`、`block.matmul_mx`、`block.gemv`
 - **归约与 expand**（`block_ops/out_reduction.cpp`）：
   `block.row_sum`、`block.row_max`、`block.row_min`、`block.col_sum`、`block.col_max`、
   `block.col_min`、`block.row_reduce`、`block.col_reduce`、`block.row_expand`、

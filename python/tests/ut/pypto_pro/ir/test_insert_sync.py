@@ -418,7 +418,9 @@ def test_matmul_with_bias_preserves_acc_phase_synchronization(phase):
                 pl.matmul(acc[0], lhs[0], rhs[0], bias[0])
 
     parsed = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Cube)[0]
-    assert len(list(calls(parsed, "block.matmul_bias"))) == 1
+    matmuls = list(calls(parsed, "block.matmul"))
+    assert len(matmuls) == 1
+    assert len(matmuls[0].args) == 4
     program = ir.Pass.insert_sync()(parsed)
     expected = [1, 2, 3] if phase in (pl.AccPhase.Partial, pl.AccPhase.Final) else [0, 1, 2, 3]
     assert [call.args[0].value for call in calls(program, "system.mutex_lock_dyn")] == expected

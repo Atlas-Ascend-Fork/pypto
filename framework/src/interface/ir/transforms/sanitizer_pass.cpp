@@ -166,9 +166,10 @@ public:
         // unit_flag phase records. The matmul family carries no other record
         // (bounds live on the load/move side); the read side composes with
         // the existing GM/tile-transfer records so one op emits both.
-        auto phaseMatmul = [this](const CallPtr& c) { return RecordPhase(c, PhaseOpKind::Matmul, 0); };
+        auto phaseMatmul = [this](const CallPtr& c) {
+            return RecordPhase(c, c->args_.size() == 4 ? PhaseOpKind::MatmulBias : PhaseOpKind::Matmul, 0);
+        };
         auto phaseMatmulAcc = [this](const CallPtr& c) { return RecordPhase(c, PhaseOpKind::MatmulAcc, 0, 1); };
-        auto phaseMatmulBias = [this](const CallPtr& c) { return RecordPhase(c, PhaseOpKind::MatmulBias, 0); };
         auto phaseMatmulMx = [this](const CallPtr& c) { return RecordPhase(c, PhaseOpKind::MatmulMx, 0); };
         auto phaseMatmulMxAcc = [this](const CallPtr& c) { return RecordPhase(c, PhaseOpKind::MatmulMxAcc, 0, 1); };
         // sync_src/sync_dst pairing: one record per call (the flag event is a
@@ -232,7 +233,6 @@ public:
             {"system.sync_dst_dyn", syncRecord},
             {"block.matmul", phaseMatmul},
             {"block.matmul_acc", phaseMatmulAcc},
-            {"block.matmul_bias", phaseMatmulBias},
             {"block.matmul_mx", phaseMatmulMx},
             {"block.matmul_mx_acc", phaseMatmulMxAcc},
         };

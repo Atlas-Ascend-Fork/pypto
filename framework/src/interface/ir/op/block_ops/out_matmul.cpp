@@ -13,9 +13,8 @@
  * \brief Block matrix multiplication operations with explicit output tiles.
  *
  * All operations receive a pre-allocated output tile as the first argument.
- *   block.matmul       (out, lhs, rhs)
+ *   block.matmul       (out, lhs, rhs[, bias])
  *   block.matmul_acc   (out, acc, lhs, rhs)
- *   block.matmul_bias  (out, lhs, rhs, bias)
  *   block.matmul_mx       (out, lhs, rhs, scale_a, scale_b[, bias])
  *   block.matmul_mx_acc   (out, acc, lhs, rhs, scale_a, scale_b)
  *   block.gemv         (out, lhs, rhs)
@@ -50,22 +49,26 @@ namespace ir {
 // Op registration
 // ---------------------------------------------------------------------------
 
-// block.matmul: (out, lhs, rhs) -> NoneType
+// block.matmul: (out, lhs, rhs[, bias]) -> NoneType
 REGISTER_OP("block.matmul")
     .set_op_category("BlockOp")
-    .set_description("Block explicit-output matrix multiplication: out = lhs @ rhs")
+    .set_description("Block explicit-output matrix multiplication with optional bias")
     .add_argument("out", "Pre-allocated output tile [M,N] (TileType)")
     .add_argument("lhs", "Left matrix tile [M,K] (TileType)")
     .add_argument("rhs", "Right matrix tile [K,N] (TileType)")
+    .add_argument("bias", "Optional bias tile [1,N] (TileType)")
     .set_attr<int>("phase")
     .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3)
-            << "The operator block.matmul requires 3 arguments (out, lhs, rhs)";
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x3 || args.size() == 0x4)
+            << "The operator block.matmul requires 3 or 4 arguments (out, lhs, rhs[, bias])";
         CheckTileArg(args, 0, "block.matmul", {MemorySpace::Acc});
         CheckTileArg(args, 1, "block.matmul", {MemorySpace::Left});
         CheckTileArg(args, 2, "block.matmul", {MemorySpace::Right});
-        return DeduceBlockOutType(args, kwargs, "block.matmul", 3);
+        if (args.size() == 0x4) {
+            CheckTileArg(args, 3, "block.matmul", {MemorySpace::Bias});
+        }
+        return DeduceBlockOutType(args, kwargs, "block.matmul", args.size());
     });
 
 // block.matmul_acc: (out, acc, lhs, rhs) -> NoneType
@@ -86,26 +89,6 @@ REGISTER_OP("block.matmul_acc")
         CheckTileArg(args, 2, "block.matmul_acc", {MemorySpace::Left});
         CheckTileArg(args, 3, "block.matmul_acc", {MemorySpace::Right});
         return DeduceBlockOutType(args, kwargs, "block.matmul_acc", 4);
-    });
-
-// block.matmul_bias: (out, lhs, rhs, bias) -> NoneType
-REGISTER_OP("block.matmul_bias")
-    .set_op_category("BlockOp")
-    .set_description("Block explicit-output matmul with bias: out = lhs @ rhs + bias")
-    .add_argument("out", "Pre-allocated output tile [M,N] (TileType)")
-    .add_argument("lhs", "Left matrix tile [M,K] (TileType)")
-    .add_argument("rhs", "Right matrix tile [K,N] (TileType)")
-    .add_argument("bias", "Bias tile [1,N] (TileType)")
-    .set_attr<int>("phase")
-    .f_deduce_type([]([[maybe_unused]] const std::vector<ExprPtr>& args,
-                      [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 0x4)
-            << "The operator block.matmul_bias requires 4 arguments (out, lhs, rhs, bias)";
-        CheckTileArg(args, 0, "block.matmul_bias", {MemorySpace::Acc});
-        CheckTileArg(args, 1, "block.matmul_bias", {MemorySpace::Left});
-        CheckTileArg(args, 2, "block.matmul_bias", {MemorySpace::Right});
-        CheckTileArg(args, 3, "block.matmul_bias", {MemorySpace::Bias});
-        return DeduceBlockOutType(args, kwargs, "block.matmul_bias", 4);
     });
 
 // block.matmul_mx: (out, lhs, rhs, scale_a, scale_b[, bias]) -> NoneType

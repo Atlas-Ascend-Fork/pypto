@@ -5407,17 +5407,23 @@ def _validate_acc_phase(op_name: str, phase: AccPhase | None) -> None:
         require_enum(phase, AccPhase, subject=f"{op_name}: phase")
 
 
-def _ir_matmul(dst: Expr, lhs: Expr, rhs: Expr, *, span: Span | None = None, phase: AccPhase | None = None) -> Expr:
+def _ir_matmul(
+    dst: Expr, lhs: Expr, rhs: Expr, bias: Expr | None = None, *, span: Span | None = None,
+    phase: AccPhase | None = None
+) -> Expr:
     actual_span = span or _span()
     _validate_acc_phase("matmul", phase)
     _check_tile_memory_space("matmul", "dst_tile", dst, MemorySpace.Acc, "L0C (Acc)")
     _check_tile_memory_space("matmul", "lhs_tile", lhs, MemorySpace.Left, "L0A (Left)")
     _check_tile_memory_space("matmul", "rhs_tile", rhs, MemorySpace.Right, "L0B (Right)")
-    _check_matmul_dtype("matmul", dst, lhs, rhs)
+    if bias is not None:
+        _check_tile_memory_space("matmul", "bias_tile", bias, MemorySpace.Bias, "L0B (Bias)")
+    _check_matmul_dtype("matmul", dst, lhs, rhs, bias=bias)
     kwargs: dict[str, Any] = {}
     if phase is not None:
         kwargs["phase"] = phase
-    return _ir_core.create_op_call(block_ir_op("matmul"), [dst, lhs, rhs], kwargs, actual_span)
+    args = [dst, lhs, rhs] if bias is None else [dst, lhs, rhs, bias]
+    return _ir_core.create_op_call(block_ir_op("matmul"), args, kwargs, actual_span)
 
 
 @op_impl("matmul_acc")
@@ -5439,30 +5445,12 @@ def _ir_matmul_acc(self,
     return _ir_core.create_op_call(block_ir_op("matmul_acc"), [dst, acc, lhs, rhs], kwargs, actual_span)
 
 
-def _ir_matmul_bias(
-    dst: Expr, lhs: Expr, rhs: Expr, bias: Expr, *, span: Span | None = None, phase: AccPhase | None = None
-) -> Expr:
-    actual_span = span or _span()
-    _validate_acc_phase("matmul_bias", phase)
-    _check_tile_memory_space("matmul_bias", "dst_tile", dst, MemorySpace.Acc, "L0C (Acc)")
-    _check_tile_memory_space("matmul_bias", "lhs_tile", lhs, MemorySpace.Left, "L0A (Left)")
-    _check_tile_memory_space("matmul_bias", "rhs_tile", rhs, MemorySpace.Right, "L0B (Right)")
-    _check_tile_memory_space("matmul_bias", "bias_tile", bias, MemorySpace.Bias, "L0B (Bias)")
-    _check_matmul_dtype("matmul_bias", dst, lhs, rhs, bias=bias)
-    kwargs: dict[str, Any] = {}
-    if phase is not None:
-        kwargs["phase"] = phase
-    return _ir_core.create_op_call(block_ir_op("matmul_bias"), [dst, lhs, rhs, bias], kwargs, actual_span)
-
-
 @op_impl("matmul")
 def _build_matmul(
     self, dst_tile: Expr, lhs_tile: Expr, rhs_tile: Expr, bias_tile: Expr | None = None, /,
     *, phase: AccPhase | None = None, span: Span,
 ) -> Expr:
-    if bias_tile is not None:
-        return _ir_matmul_bias(dst_tile, lhs_tile, rhs_tile, bias_tile, phase=phase, span=span)
-    return _ir_matmul(dst_tile, lhs_tile, rhs_tile, phase=phase, span=span)
+    return _ir_matmul(dst_tile, lhs_tile, rhs_tile, bias_tile, phase=phase, span=span)
 
 
 _MX_FP8_DTYPES = (DataType.FP8E4M3FN, DataType.FP8E5M2)
@@ -5562,14 +5550,6 @@ def _check_mx_operands(
     rhs_shape = _tile_shape_ints(rhs.type)
     lhs_k = lhs_shape[1] if lhs_shape is not None else None
     rhs_k = rhs_shape[0] if rhs_shape is not None else None
-
-    if bias is not None:
-        bias_shape = _tile_shape_ints(bias.type)
-        if rhs_shape is not None and bias_shape is not None and bias_shape[1] != rhs_shape[1]:
-            raise InvalidShape(
-                f"{op_name}: bias_tile columns must match rhs_tile N dimension, "
-                f"expected {rhs_shape[1]}, got {bias_shape[1]}."
-            )
 
     for name, k_value in (("lhs", lhs_k), ("rhs", rhs_k)):
         if k_value is not None and k_value % 64 != 0:

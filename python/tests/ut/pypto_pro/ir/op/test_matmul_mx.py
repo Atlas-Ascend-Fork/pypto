@@ -36,7 +36,7 @@ _LAYOUT_HARDWARE = {
 }
 
 
-def _tile(name, shape, dtype, memory_space, addr=0, *, layout=None, fractal=None):
+def _tile(name, shape, dtype, memory_space, addr=0, *, layout=None, fractal=None, valid_shape=None):
     span = ir.Span.unknown()
     dims = [ir.ConstInt(dim, DataType.INT64, span) for dim in shape]
     memref = ir.MemRef(
@@ -53,7 +53,10 @@ def _tile(name, shape, dtype, memory_space, addr=0, *, layout=None, fractal=None
     if layout is not None:
         blayout, slayout = _LAYOUT_HARDWARE[layout]
         hardware_info = ir.HardwareInfo(blayout, slayout, 512 if fractal is None else fractal)
-    return ir.Var(name, ir.TileType(dims, dtype, memref, hardware_info=hardware_info), span)
+    tile_view = None
+    if valid_shape is not None:
+        tile_view = ir.TileView([ir.ConstInt(dim, DataType.INT64, span) for dim in valid_shape])
+    return ir.Var(name, ir.TileType(dims, dtype, memref, tile_view, hardware_info=hardware_info), span)
 
 
 def _tensor(name, shape, dtype):
@@ -62,18 +65,18 @@ def _tensor(name, shape, dtype):
     return ir.Var(name, ir.TensorType(dims, dtype), span)
 
 
-def _mx_tiles(*, k=64, lhs_dtype=DataType.FP8E4M3FN,
+def _mx_tiles(*, k=64, n=64, lhs_dtype=DataType.FP8E4M3FN,
               rhs_dtype=DataType.FP8E5M2, dst_dtype=DataType.FP32,
               scale_a_dtype=DataType.FP8E8M0,
               scale_a_space=ir.MemorySpace.ScaleLeft):
     return {
-        "dst": _tile("dst", [64, 64], dst_dtype, ir.MemorySpace.Acc),
-        "acc": _tile("acc", [64, 64], DataType.FP32, ir.MemorySpace.Acc),
+        "dst": _tile("dst", [64, n], dst_dtype, ir.MemorySpace.Acc),
+        "acc": _tile("acc", [64, n], DataType.FP32, ir.MemorySpace.Acc),
         "lhs": _tile("lhs", [64, k], lhs_dtype, ir.MemorySpace.Left),
-        "rhs": _tile("rhs", [k, 64], rhs_dtype, ir.MemorySpace.Right),
+        "rhs": _tile("rhs", [k, n], rhs_dtype, ir.MemorySpace.Right),
         "scale_a": _tile("scale_a", [64, k // 32], scale_a_dtype, scale_a_space),
-        "scale_b": _tile("scale_b", [k // 32, 64], DataType.FP8E8M0, ir.MemorySpace.ScaleRight),
-        "bias": _tile("bias", [1, 64], DataType.FP32, ir.MemorySpace.Bias),
+        "scale_b": _tile("scale_b", [k // 32, n], DataType.FP8E8M0, ir.MemorySpace.ScaleRight),
+        "bias": _tile("bias", [1, n], DataType.FP32, ir.MemorySpace.Bias),
     }
 
 
@@ -243,15 +246,31 @@ def test_matmul_mx_rejects_non_fp32_bias():
         _ir_matmul_mx(t["dst"], t["lhs"], t["rhs"], t["scale_a"], t["scale_b"], t["bias"])
 
 
-def test_matmul_mx_rejects_bias_columns_mismatched_with_rhs():
+@pytest.mark.parametrize("rhs_cols,valid_n,bias_cols", [(128, 62, 64), (128, 63, 64), (64, 64, 128), (64, 32, 32)])
+def test_matmul_mx_accepts_independent_bias_padding(rhs_cols, valid_n, bias_cols):
+    t = _mx_tiles(n=rhs_cols)
+    t["rhs"] = _tile(
+        "rhs", [64, rhs_cols], DataType.FP8E5M2, ir.MemorySpace.Right, valid_shape=[64, valid_n],
+    )
+    t["bias"] = _tile("bias", [1, bias_cols], DataType.FP32, ir.MemorySpace.Bias)
+
+    call = _ir_matmul_mx(t["dst"], t["lhs"], t["rhs"], t["scale_a"], t["scale_b"], t["bias"])
+
+    assert call.name == "block.matmul_mx"
+    assert call.args[-1].name == "bias"
+
+
+@pytest.mark.parametrize("valid_shape", [None, [64, -1]])
+def test_matmul_mx_accepts_bias_with_dynamic_rhs_n(valid_shape):
     t = _mx_tiles()
+    t["rhs"] = _tile(
+        "rhs", [64, 64], DataType.FP8E5M2, ir.MemorySpace.Right, valid_shape=valid_shape,
+    )
     t["bias"] = _tile("bias", [1, 32], DataType.FP32, ir.MemorySpace.Bias)
 
-    with pytest.raises(
-        InvalidShape,
-        match=r"bias_tile columns must match rhs_tile N dimension, expected 64, got 32",
-    ):
-        _ir_matmul_mx(t["dst"], t["lhs"], t["rhs"], t["scale_a"], t["scale_b"], t["bias"])
+    call = _ir_matmul_mx(t["dst"], t["lhs"], t["rhs"], t["scale_a"], t["scale_b"], t["bias"])
+
+    assert call.name == "block.matmul_mx"
 
 
 def test_matmul_mx_acc_builds_registered_call():

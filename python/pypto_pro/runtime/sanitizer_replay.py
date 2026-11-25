@@ -554,7 +554,7 @@ def check_tile_overlap(records: list[TileDeclRecord], ctx: ReplayContext) -> lis
 PHASE_UNSPECIFIED, PHASE_PARTIAL, PHASE_FINAL = 0, 1, 2
 PHASE_WRITE_KINDS = {1, 2, 3, 4, 5}   # matmul family (dst Acc tile)
 PHASE_ACC_KINDS = {2, 5}              # matmul_acc / matmul_mx_acc: accumulate
-PHASE_BIAS_KINDS = {3}                # matmul_bias: initializes L0C (chain head only)
+PHASE_BIAS_KINDS = {3}                # matmul with bias: initializes L0C (chain head only)
 PHASE_OVERWRITE_KINDS = {1, 4}        # matmul / matmul_mx: overwrite (chain head only)
 PHASE_NO_ACC_SRC_ADDR = -1
 
@@ -854,10 +854,10 @@ def _check_k_shape(state: _PhaseAccState, token: _PhaseToken,
     elif kchain.round_has_write and rec.op_kind in PHASE_BIAS_KINDS:
         issue = _phase_issue(token.record_index, rec=token.record, finding=Finding(
             "PHASE_MISMATCH",
-            f"matmul_bias appears mid-chain on {tile_desc}: its L0C initialization "
+            f"matmul with bias appears mid-chain on {tile_desc}: its L0C initialization "
             f"wipes the partial sums accumulated so far",
             ctx.location(rec.line),
-            hint="matmul_bias is only valid as the first block of a K chain",
+            hint="matmul with bias is only valid as the first block of a K chain",
         ))
     elif kchain.round_has_write and rec.op_kind in PHASE_OVERWRITE_KINDS:
         issue = _phase_issue(token.record_index, rec=token.record, finding=Finding(

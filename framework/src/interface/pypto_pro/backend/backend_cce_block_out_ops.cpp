@@ -1212,20 +1212,25 @@ static std::string MakeBlockOutSetValidShapeCodegenCCE(const ir::CallPtr& op, co
 }
 
 // ============================================================================
-// block.matmul  - args = [dst, left, right]
+// block.matmul  - args = [dst, left, right, optional bias]
 // Emits: TMATMUL[<AccPhase::Phase>](dst, left, right);
+//     or TMATMUL_BIAS[<AccPhase::Phase>](dst, left, right, bias);
 // ============================================================================
 static std::string MakeBlockOutMatmulCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
-        << "block.matmul: expected 3 args (dst, left, right), got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3 || op->args_.size() == 4)
+        << "block.matmul: expected 3 or 4 args (dst, left, right[, bias]), got " << op->args_.size();
     std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
     std::string left = cce::GetOperandAsCode(codegen, op->args_[1]);
     std::string right = cce::GetOperandAsCode(codegen, op->args_[2]);
 
-    // Get phase (unit-flag) — AccPhase template parameter for TMATMUL.
-    EmitTemplated(codegen, "TMATMUL", {GetAccPhaseCCE(op)}, {dst, left, right});
+    if (op->args_.size() == 4) {
+        std::string bias = cce::GetOperandAsCode(codegen, op->args_[3]);
+        EmitTemplated(codegen, "TMATMUL_BIAS", {GetAccPhaseCCE(op)}, {dst, left, right, bias});
+    } else {
+        EmitTemplated(codegen, "TMATMUL", {GetAccPhaseCCE(op)}, {dst, left, right});
+    }
     return "";
 }
 
@@ -1243,24 +1248,6 @@ static std::string MakeBlockOutMatmulAccCodegenCCE(const ir::CallPtr& op, codege
 
     // Get phase (unit-flag) — AccPhase template parameter for TMATMUL_ACC.
     EmitTemplated(codegen, "TMATMUL_ACC", {GetAccPhaseCCE(op)}, {dst, acc, left, right});
-    return "";
-}
-
-// block.matmul_bias  - args = [dst, left, right, bias]
-// Emits: TMATMUL_BIAS[<AccPhase::Phase>](dst, left, right, bias);  (when phase present)
-//     or TMATMUL_BIAS(dst, left, right, bias);                      (no phase)
-static std::string MakeBlockOutMatmulBiasCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
-{
-    auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
-        << "block.matmul_bias: expected 4 args (dst, left, right, bias), got " << op->args_.size();
-    std::string dst = cce::GetOperandAsCode(codegen, op->args_[0]);
-    std::string left = cce::GetOperandAsCode(codegen, op->args_[1]);
-    std::string right = cce::GetOperandAsCode(codegen, op->args_[2]);
-    std::string bias = cce::GetOperandAsCode(codegen, op->args_[3]);
-
-    // Get phase (unit-flag) — AccPhase template parameter for TMATMUL_BIAS.
-    EmitTemplated(codegen, "TMATMUL_BIAS", {GetAccPhaseCCE(op)}, {dst, left, right, bias});
     return "";
 }
 
@@ -2538,12 +2525,6 @@ REGISTER_BACKEND_OP(BackendCCE, "block.matmul_acc")
     .set_pipe(ir::PipeType::M)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeBlockOutMatmulAccCodegenCCE(op, codegen);
-    });
-
-REGISTER_BACKEND_OP(BackendCCE, "block.matmul_bias")
-    .set_pipe(ir::PipeType::M)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
-        return MakeBlockOutMatmulBiasCodegenCCE(op, codegen);
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "block.matmul_mx")
