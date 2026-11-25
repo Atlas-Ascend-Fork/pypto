@@ -636,7 +636,7 @@ REGISTER_BACKEND_OP(BackendCCE, "ptr.make_ptr")
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "get_block_idx")
-    .set_pipe(ir::PipeType::V)
+    .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeBlockGetBlockIdxCodegenCCE(op, codegen);
     });
@@ -674,7 +674,7 @@ static std::string MakeGetCycleCodegenCCE(const ir::CallPtr& op, codegen::Codege
 }
 
 REGISTER_BACKEND_OP(BackendCCE, "get_cycle")
-    .set_pipe(ir::PipeType::V)
+    .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeGetCycleCodegenCCE(op, codegen);
     });
@@ -1316,13 +1316,13 @@ REGISTER_BACKEND_OP(BackendCCE, "system.sync_dst_dyn")
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "debug.dump_tensor")
-    .set_pipe(ir::PipeType::V)
+    .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeDebugDumpTensorCodegenCCE(op, codegen);
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "debug.dump_tile")
-    .set_pipe(ir::PipeType::V)
+    .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegen) {
         return MakeDebugDumpTileCodegenCCE(op, codegen);
     });
@@ -1500,7 +1500,7 @@ REGISTER_BACKEND_OP(BackendCCE, "block.tile_addr").set_pipe(ir::PipeType::S).f_c
 // ============================================================================
 
 REGISTER_BACKEND_OP(BackendCCE, "get_block_num")
-    .set_pipe(ir::PipeType::V)
+    .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& /*codegen_base*/) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 0)
             << "get_block_num requires no arguments";
@@ -1511,7 +1511,7 @@ REGISTER_BACKEND_OP(BackendCCE, "get_block_num")
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "get_subblock_idx")
-    .set_pipe(ir::PipeType::V)
+    .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& /*codegen_base*/) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 0)
             << "get_subblock_idx requires no arguments";
@@ -1519,7 +1519,7 @@ REGISTER_BACKEND_OP(BackendCCE, "get_subblock_idx")
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "get_subblock_num")
-    .set_pipe(ir::PipeType::V)
+    .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 0)
             << "get_subblock_num requires no arguments";

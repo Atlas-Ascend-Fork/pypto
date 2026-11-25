@@ -157,18 +157,8 @@ std::optional<CoreMask> OpSpecificCores(const CallPtr& call)
 {
     // The registered pipe alone cannot determine the allowed cores for these operations.
     static const std::unordered_map<std::string, CoreMask> fixedCores{
-        {"get_block_idx", CoreMask::Both},
-        {"get_block_num", CoreMask::Both},
-        {"get_cycle", CoreMask::Both},
-        {"get_subblock_idx", CoreMask::Both},
-        {"get_subblock_num", CoreMask::Both},
-
         // TCI fills a UB tile even though its registered scheduling pipe is S.
         {"block.fill_index", CoreMask::Vector},
-
-        {"debug.dump_tensor", CoreMask::Both},
-
-        {"struct.create", CoreMask::Both},
 
         // Barrier placement follows the pipe being fenced.
         {"system.bar_fix", CoreMask::Cube},
@@ -186,7 +176,7 @@ std::optional<CoreMask> OpSpecificCores(const CallPtr& call)
     // Window accessors read scalar fields from GM on either core.
     if (name.rfind("dist.", 0) == 0 && name != "dist.window_get")
         return CoreMask::Vector;
-    if (name == "block.load" || name == "block.expands" || name == "debug.dump_tile")
+    if (name == "block.load" || name == "block.expands" || name == "block.fillpad" || name == "debug.dump_tile")
         return LocalTileCore(call, 0);
     if (name == "block.store" || name == "block.move" || name == "block.insert")
         return LocalTileCore(call, 1);
@@ -200,9 +190,9 @@ std::optional<CoreMask> OpSpecificCores(const CallPtr& call)
 
 CoreMask GetAllowedCores(const CallPtr& call)
 {
-    if (auto cores = OpSpecificCores(call))
-        return *cores;
     if (auto cores = RegisteredPipeCores(call->name_))
+        return *cores;
+    if (auto cores = OpSpecificCores(call))
         return *cores;
     return CoreMask::Both;
 }

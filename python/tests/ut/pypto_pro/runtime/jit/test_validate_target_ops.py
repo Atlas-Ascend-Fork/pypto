@@ -152,6 +152,31 @@ def test_dump_tile_placement(memory, target, allowed):
         ir.Pass.validate_target_ops(kind)(program)
 
 
+@pytest.mark.parametrize(
+    "memory,layout,allowed",
+    [(pl.MemorySpace.Vec, pl.ND, "Vector"), (pl.MemorySpace.Mat, pl.NZ, "Cube")],
+)
+@pytest.mark.parametrize("target", ["Cube", "Vector"])
+def test_fillpad_placement(memory, layout, allowed, target):
+    @pl.jit(auto_mutex=False)
+    def kernel():
+        tt = pl.TileType(
+            shape=[16, 32], dtype=pl.DT_FP16, target_memory=memory,
+            layout=layout, pad=pl.TilePad.zero,
+        )
+        dst = pl.make_tile(tt, addr=0)
+        src = pl.make_tile(tt, addr=1024)
+        pl.fillpad(dst, src)
+
+    kind = getattr(ir.SectionKind, target)
+    program, _ = kernel.to_kernel_def().parse_target_program(kind)
+    if target == allowed:
+        ir.Pass.validate_target_ops(kind)(program)
+    else:
+        with pytest.raises(ValueError, match=_placement_error(target, allowed)):
+            ir.Pass.validate_target_ops(kind)(program)
+
+
 def test_sectionless_cube_barrier_rejected_on_vector(tmp_path):
     @pl.jit(auto_mutex=False)
     def kernel(n: pl.DT_INT32):

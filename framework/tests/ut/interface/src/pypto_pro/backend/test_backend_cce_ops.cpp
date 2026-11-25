@@ -240,7 +240,7 @@ TEST(BackendCceOpsTest, GetCycle)
 
     const auto* info = BackendCCE::Instance().GetOpInfo("get_cycle");
     ASSERT_NE(info, nullptr);
-    EXPECT_EQ(info->pipe, ir::PipeType::V);
+    EXPECT_EQ(info->pipe, ir::PipeType::S);
 }
 
 TEST(BackendCceOpsTest, ICachePreloadUsesAscendC)
@@ -289,7 +289,7 @@ TEST(BackendCceOpsTest, GetSubBlockNumIsTargetSpecific)
                                                  ir::Span::Unknown());
     const auto* info = BackendCCE::Instance().GetOpInfo("get_subblock_num");
     ASSERT_NE(info, nullptr);
-    EXPECT_EQ(info->pipe, ir::PipeType::V);
+    EXPECT_EQ(info->pipe, ir::PipeType::S);
 
     codegen::CCECodegen cube_codegen(ir::SectionKind::Cube);
     EXPECT_EQ(info->codegenFunc(call, cube_codegen), "(int64_t)(1)");

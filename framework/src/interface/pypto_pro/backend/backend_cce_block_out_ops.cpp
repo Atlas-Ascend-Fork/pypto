@@ -2640,7 +2640,7 @@ REGISTER_BACKEND_OP(BackendCCE, "block.scatter")
 // the CCE codegen emits `Name var = {.f0=v0, .f1=v1, ...};`. The struct type
 // definition itself is emitted after body traversal from CCECodegen's definition registry.
 REGISTER_BACKEND_OP(BackendCCE, "struct.create")
-    .set_pipe(ir::PipeType::V)
+    .set_pipe(ir::PipeType::S)
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
         auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegenBase);
         std::string structName = op->GetKwarg<std::string>("name");
