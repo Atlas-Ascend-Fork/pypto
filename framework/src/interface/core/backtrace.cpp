@@ -12,9 +12,12 @@
 #include "interface/utils/common.h"
 
 #include <cxxabi.h>
+#include <cerrno>
+#include <climits>
 #include <cstring>
 #include <dlfcn.h>
 #include <execinfo.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cstdio>
@@ -178,6 +181,24 @@ static FileLocation ParseAddr2lineOutput(const std::string& output)
     return FileLocation{"", 0};
 }
 
+/// Return the module path to hand to addr2line for a frame.
+/// For frames in the main executable, dladdr reports argv[0] verbatim (e.g. "python3"), which
+/// addr2line cannot open because it does not search PATH; such frames are mapped to
+/// /proc/self/exe. Frames in shared objects keep the path dladdr reports.
+static std::string ResolveModulePath(const char* dliFname)
+{
+    if (std::strcmp(dliFname, program_invocation_name) != 0) {
+        return dliFname;
+    }
+
+    char exePath[PATH_MAX];
+    ssize_t len = ::readlink("/proc/self/exe", exePath, sizeof(exePath) - 1);
+    if (len <= 0) {
+        return dliFname;
+    }
+    return std::string(exePath, static_cast<size_t>(len));
+}
+
 static std::string ExecuteAddr2line(void* addr)
 {
     Dl_info info;
@@ -187,7 +208,8 @@ static std::string ExecuteAddr2line(void* addr)
 
     std::stringstream addrStr;
     addrStr << addr;
-    std::vector<std::string> args = {"addr2line", "-e", info.dli_fname, "-f", "-C", "-p", addrStr.str()};
+    std::vector<std::string> args = {"addr2line", "-e",         ResolveModulePath(info.dli_fname), "-f", "-C",
+                                     "-p",        addrStr.str()};
     return npu::tile_fwk::SafeExecCommandWithOutput(args);
 }
 
