@@ -191,15 +191,25 @@ INLINE void TCopyL0C2UBConv2DNZ2DN(T& dst, U& src, const OffsetInfo& offsetInfo,
     int64_t ubOffset = offsetInfo.offset0 * dstStrideN + offsetInfo.offset1 * dstStrideC +
                        offsetInfo.offset2 * dstStrideH + offsetInfo.offset3;
     constexpr uint16_t srcStride = static_cast<uint16_t>(srcM);
-    // n 方向搬运大小: 大搬小 (srcN > dstN) 按 dst 的 N 搬出, 防止越界写相邻 UB buffer;
-    // 小搬大 (srcN <= dstN) 按搬运需要的源大小 srcN 搬出; 两者均为 C0 对齐值,
-    // 非 C0 倍数的 realN (cout 尾块) 不能直接使用
-    constexpr uint16_t nSize = static_cast<uint16_t>(srcN < dstN ? srcN : dstN);
-    // m 方向 (W) 同理: 大搬小 (cutW > dstW) 按 dst 的 W 搬出, 防止溢出到后续行/相邻
-    // UB buffer; 小搬大 (cutW <= dstW) 按搬运需要的源行宽 cutW 搬出; mix 路径已保证
-    // dstW 16 对齐 (末维对齐校验), cutW 亦为 16 的倍数, min 结果保持 32B 行对齐;
-    // cutW 为运行时参数, mSize 不能为 constexpr
-    const uint16_t mSize = static_cast<uint16_t>(cutW < dstW ? cutW : dstW);
+    // nSize 还须扣除 dst 的 c 起始偏移: cout 尾块从 offset1 起、按整分形 srcN 列搬出时,
+    // dst tile 的 C 维剩余空间 (dstN - offset1) 可能小于 srcN (tile C 非 C0 倍数),
+    // 超出的列会溢出写 UB tile 内下一 batch 的区域, 覆盖该 batch 已写入的数据
+    const int64_t nRemain = dstN - offsetInfo.offset1;
+    const uint16_t nSize = static_cast<uint16_t>(srcN < nRemain ? srcN : (nRemain > 0 ? nRemain : 0));
+    if (nSize == 0) {
+        return;
+    }
+    // 部分行写入的跨核(AIC->AIV) 可见性行为会污染本 UB tile 内先前已写入的行,
+    // 须按整分形宽 (16) 向上取整搬出; 额外行落在 dst 行宽 (dstStrideH) 的 padding 区,
+    // 向量侧按 valid 形状存出不会读到; 为防越界写相邻行, 取整后仍钳制到本行剩余空间
+    const int64_t mWant = (cutW < dstW ? cutW : dstW);
+    const int64_t mRound = (mWant + BLOCK_CUBE_M_N - 1) / BLOCK_CUBE_M_N * BLOCK_CUBE_M_N;
+    const int64_t mRoom = dstStrideH - offsetInfo.offset3;
+    const int64_t mCeil = (mRound < mRoom ? mRound : mRoom);
+    if (mCeil <= 0) {
+        return;
+    }
+    const uint16_t mSize = static_cast<uint16_t>(mCeil);
     uint32_t dstStride = static_cast<uint32_t>(dstStrideC);
     uint64_t quantPre = GetConvL0C2UBQuantPre<typename U::Type, typename T::Type>();
     uint8_t reluPre = reluType == 0 ? static_cast<uint8_t>(pto::ReluPreMode::NoRelu) :
@@ -243,14 +253,23 @@ INLINE void TCopyL0C2UBConv3DNZ2DN(T& dst, U& src, const OffsetInfo& offsetInfo,
     constexpr auto dstN = Std::tuple_element<CONV_IDX_1, typename T::TileShape>::type::value;
     constexpr auto dstTileW = Std::tuple_element<CONV_IDX_4, typename T::TileShape>::type::value;
     int64_t dstStrideC = GetConvStride<CONV_IDX_1>(dst);
+    int64_t dstStrideH = GetConvStride<CONV_IDX_3>(dst);
     constexpr uint16_t srcStride = static_cast<uint16_t>(srcM);
-    // n 方向搬运大小: 大搬小 (srcN > dstN) 按 dst 的 N 搬出, 防止越界写相邻 UB buffer;
-    // 小搬大 (srcN <= dstN) 按搬运需要的源大小 srcN 搬出; 两者均为 C0 对齐值,
-    // 非 C0 倍数的 realN (cout 尾块) 不能直接使用
-    constexpr uint16_t nSize = static_cast<uint16_t>(srcN < dstN ? srcN : dstN);
-    // m 方向 (W) 同理: 大搬小按 dst tile 静态 W, 小搬大按源行宽 cutW; 取静态 TileShape
-    // 的 W (运行时 dstW 可能携带 valid 值), cutW 为运行时参数, mSize 不能为 constexpr
-    const uint16_t mSize = static_cast<uint16_t>(cutW < dstTileW ? cutW : dstTileW);
+
+    const int64_t nRemain = dstN - offsetInfo.offset1;
+    const uint16_t nSize = static_cast<uint16_t>(srcN < nRemain ? srcN : (nRemain > 0 ? nRemain : 0));
+    if (nSize == 0) {
+        return;
+    }
+
+    const int64_t mWant = (cutW < dstTileW ? cutW : dstTileW);
+    const int64_t mRound = (mWant + BLOCK_CUBE_M_N - 1) / BLOCK_CUBE_M_N * BLOCK_CUBE_M_N;
+    const int64_t mRoom = dstStrideH - offsetInfo.offset4;
+    const int64_t mCeil = (mRound < mRoom ? mRound : mRoom);
+    if (mCeil <= 0) {
+        return;
+    }
+    const uint16_t mSize = static_cast<uint16_t>(mCeil);
     uint32_t dstStride = static_cast<uint32_t>(dstStrideC);
     uint64_t quantPre = GetConvL0C2UBQuantPre<typename U::Type, typename T::Type>();
     uint8_t reluPre = reluType == 0 ? static_cast<uint8_t>(pto::ReluPreMode::NoRelu) :
@@ -263,7 +282,6 @@ INLINE void TCopyL0C2UBConv3DNZ2DN(T& dst, U& src, const OffsetInfo& offsetInfo,
     // shape 当 stride 正确 (GM 稠密布局 stride 即 shape), UB 侧须用静态 stride
     int64_t dstStrideN = GetConvStride<CONV_IDX_0>(dst);
     int64_t dstStrideD = GetConvStride<CONV_IDX_2>(dst);
-    int64_t dstStrideH = GetConvStride<CONV_IDX_3>(dst);
     int64_t ubOffset = offsetInfo.offset0 * dstStrideN + offsetInfo.offset1 * dstStrideC +
                        offsetInfo.offset2 * dstStrideD + offsetInfo.offset3 * dstStrideH + offsetInfo.offset4;
 
