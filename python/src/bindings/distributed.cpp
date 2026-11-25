@@ -172,22 +172,6 @@ void BindDistributed(py::module_& m)
         .def("is_shared", &WindowContext::IsShared,
              "True when all peers share one local UBC_CTP endpoint and each AIV owns a private shared-window "
              "jetty; False when the window is per-endpoint (one jetty per peer).")
-        .def("connected", &WindowContext::Connected, "True once connect() has completed.")
-        .def(
-            "register_memory",
-            [](WindowContext& win, int64_t tensorAddr, int64_t size, const std::string& name, int32_t protocol) {
-                win.RegisterMemory(tensorAddr, size, name, protocol);
-            },
-            py::arg("tensor_addr"), py::arg("size"), py::arg("name"), py::arg("protocol"),
-            "Register one existing device memory region in place (zero-copy, local, before connect()). "
-            "protocol is a bitmask: 1 = UB_MEM, 2 = URMA, 3 = both. The name is the engine memTag.")
-        .def(
-            "connect",
-            [](WindowContext& win) {
-                py::gil_scoped_release gil;
-                win.Connect();
-            },
-            "All-rank collective: register regions, exchange peer bases, build channels; seals the region set.")
         .def("__str__", &WindowContext::ToString)
         .def(
             "close",
@@ -201,9 +185,24 @@ void BindDistributed(py::module_& m)
     dist.def(
         "create_window",
         [](int32_t rank, int32_t nrank, int64_t streamAddr, const std::string& hcclGroupName, const std::string& name,
-           int32_t layer) { return CreateWindow(rank, nrank, streamAddr, hcclGroupName, name, layer); },
+           const std::vector<std::tuple<int64_t, int64_t, int32_t>>& memories, int32_t layer) {
+            auto win = CreateWindow(rank, nrank, streamAddr, hcclGroupName, name, layer);
+            const auto tagPrefix = name.empty() ? hcclGroupName : name;
+            for (size_t index = 0; index < memories.size(); ++index) {
+                const auto& [tensorAddr, size, protocol] = memories[index];
+                win->RegisterMemory(tensorAddr, size, tagPrefix + "_mem" + std::to_string(index), protocol);
+            }
+            {
+                // The connect collective blocks on all ranks; don't stall other Python threads.
+                py::gil_scoped_release gil;
+                win->Connect();
+            }
+            return win;
+        },
         py::arg("rank"), py::arg("nrank"), py::arg("stream"), py::arg("hccl_name"), py::arg("name") = std::string(),
-        py::arg("layer") = -1, "Create a symmetric window for specific layer");
+        py::arg("memories") = std::vector<std::tuple<int64_t, int64_t, int32_t>>{}, py::arg("layer") = -1,
+        "Create and connect a symmetric window for the requested layer; each (addr, size, protocol) entry is "
+        "registered in list order before the connect collective.");
 
     dist.def(
         "dump_topology",

@@ -125,8 +125,8 @@ def _ptr_operand(value, api, arg_name, span):
     if isinstance(value, _ir_core.Var) and isinstance(value.type, _ir_core.TensorType):
         return make_ptr(value, None, span=span)
     raise InvalidType(
-        f"{api} {arg_name} must be a kernel tensor parameter registered by "
-        "Window.register_memory or a pl.Ptr inside such a region",
+        f"{api} {arg_name} must be a kernel tensor parameter registered in "
+        "pld.create_window(memories=...) or a pl.Ptr inside such a region",
     )
 
 
@@ -141,8 +141,8 @@ def _build_remote_tensor(self, window, tensor, peer, *, span: Span | None = None
     source = tensor if isinstance(tensor, _ir_core.Expr) else None
     if source is None or not isinstance(source.type, _ir_core.TensorType):
         raise InvalidType(
-            "pld.remote_tensor 'tensor' must be a kernel tensor parameter registered by "
-            "Window.register_memory; use pld.remote_ptr + pl.make_tensor for a raw-pointer view",
+            "pld.remote_tensor 'tensor' must be a kernel tensor parameter registered in "
+            "pld.create_window(memories=...); use pld.remote_ptr + pl.make_tensor for a raw-pointer view",
         )
     window = _window_param(window, "pld.remote_tensor", "win")
     peer_operand = _int_operand(peer, "pld.remote_tensor", "peer")

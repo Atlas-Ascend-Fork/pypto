@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 
 __all__ = [
     "create_window",
-    "register_memory",
     "dump_topology",
     "barrier",
     "channel",
@@ -37,6 +36,16 @@ __all__ = [
 ]
 
 Window = pypto_impl.dist.Window
+_ORIG_WINDOW_CLOSE = Window.close
+
+
+def _close_window(win):
+    """Close the window, then release the tensors :func:`create_window` pinned in place."""
+    _ORIG_WINDOW_CLOSE(win)
+    setattr(win, "_memory_refs", None)
+
+
+setattr(Window, "close", _close_window)
 
 
 class ReduceOp(enum.IntEnum):
@@ -111,8 +120,8 @@ class Channel(NamedTuple):
     def remote_ptr(self, tensor) -> Ptr:
         """URMA-plane address of a region registered on this channel (device-only).
 
-        ``tensor`` is a kernel tensor parameter registered with
-        ``Window.register_memory`` on the URMA plane, or a ``pl.Ptr`` inside such a
+        ``tensor`` is a kernel tensor parameter registered with URMA in
+        :func:`create_window`'s ``memories``, or a ``pl.Ptr`` inside such a
         tensor. The channel resolves the matching local buffer and returns the peer
         address of the same byte, typed like the source. Resolve once and reuse the
         result for :meth:`write`.
@@ -501,59 +510,62 @@ def _get_hccl_name(group: "dist.ProcessGroup") -> str:
     return group._get_backend(torch.device("npu")).get_hccl_comm_name(dist.get_rank())
 
 
-def register_memory(win: Window, tensor, name, protocol: Protocol):
-    """Register an existing NPU tensor's storage in place (zero-copy, local, before connect).
-
-    Tensor form of :meth:`Window.register_memory`: validates the tensor and passes its
-    address/size to the window. ``name`` is the engine memTag (every rank must register
-    the same names); ``protocol`` selects the engine plane(s). The caller keeps owning
-    the tensor and must keep it alive while the window is in use.
-    """
-    import torch
-
-    if not isinstance(tensor, torch.Tensor):
-        raise TypeError(f"tensor must be a torch.Tensor, got {type(tensor).__name__}")
-    if tensor.device.type != "npu":
-        raise ValueError(f"tensor must live on an NPU device, got {tensor.device}")
-    if not tensor.is_contiguous():
-        raise ValueError("tensor must be contiguous")
-
-    size = tensor.numel() * tensor.element_size()
-    win.register_memory(tensor.data_ptr(), size, name, int(protocol))
-
-
-def create_window(group: "dist.ProcessGroup", name=None, layer: int = -1):
-    """Create a communication window over ``group`` (local; not a collective).
+def create_window(group: "dist.ProcessGroup", name=None, memories=None, layer: int = -1):
+    """Create and connect a communication window over ``group`` (all-rank collective).
 
     The window allocates only its framework-owned barrier region (one zeroed L2 line,
-    registered as region 0). Payload memory is not allocated — register existing NPU
-    tensors in place with :func:`register_memory` and keep them alive while the window
-    is in use; signals are ordinary registered tensors too. Then call
-    ``win.connect()`` (all-rank collective) before launching kernels.
+    registered as region 0). Payload memory is not allocated — existing NPU tensors are
+    registered in place (zero-copy) through ``memories`` before the connect collective.
 
-    Region names are the engine memTags, so every rank must register the same names, and
-    every window on a comm needs a distinct ``name``.
+    Entries are registered in list order, so every rank must pass the same memories in
+    the same order; region tags are derived from the window name and position. The window
+    keeps a reference to each tensor until :meth:`Window.close`, so temporaries (e.g.
+    ``torch.empty(...)``) stay alive.
 
     Args:
         group: ``torch.distributed`` process group with the ``hccl`` backend.
-        name: optional window name, used as the barrier-region tag prefix
-            (``"<name>_barrier"``, or ``"<hccl_name>_barrier"`` when unnamed).
+        name: optional window name, used as the region-tag prefix
+            (``"<name>_barrier"`` / ``"<name>_mem<i>"``, or the same with
+            ``<hccl_name>`` when unnamed).
+        memories: optional iterable of ``(tensor, protocol)`` pairs; ``tensor`` must be a
+            contiguous NPU tensor and ``protocol`` selects the engine plane(s).
         layer: HCCL net layer for the window's channels; ``-1`` auto-selects the top
             layer, explicit ids are listed by :func:`dump_topology`.
 
     Returns:
-        :class:`Window`: register payloads, then call :meth:`Window.connect`.
+        :class:`Window`: connected and ready for kernel launches.
     """
     import torch
 
-    return pypto_impl.dist.create_window(
+    mems = []
+    refs = []
+    for index, entry in enumerate(memories or ()):
+        if not isinstance(entry, (tuple, list)) or len(entry) != 2:
+            raise TypeError(f"memories[{index}] must be a (tensor, protocol) pair")
+        tensor, protocol = entry
+        if not isinstance(tensor, torch.Tensor):
+            raise TypeError(f"memories[{index}][0] must be a torch.Tensor, got {type(tensor).__name__}")
+        if tensor.device.type != "npu":
+            raise ValueError(f"memories[{index}][0] must live on an NPU device, got {tensor.device}")
+        if not tensor.is_contiguous():
+            raise ValueError(f"memories[{index}][0] must be contiguous")
+        planes = int(protocol)
+        if planes == 0 or planes & ~int(Protocol.UB_MEM | Protocol.URMA):
+            raise ValueError(f"memories[{index}][1] must select UB_MEM (1), URMA (2), or both (3), got {planes}")
+        mems.append((tensor.data_ptr(), tensor.nbytes, planes))
+        refs.append(tensor)
+
+    win = pypto_impl.dist.create_window(
         group.rank(),
         group.size(),
         torch.npu.current_stream().npu_stream,
         _get_hccl_name(group),
         name or "",
+        mems,
         layer,
     )
+    setattr(win, "_memory_refs", refs)  # the window holds addresses only: own the storage until close()
+    return win
 
 
 def dump_topology(group: "dist.ProcessGroup", layer: int = -1) -> str:

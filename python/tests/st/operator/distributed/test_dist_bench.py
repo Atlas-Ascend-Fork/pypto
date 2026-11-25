@@ -500,12 +500,12 @@ def _run_case(rank, name, kernel, args, out, baseline, failures):
 def worker(rank, nrank):
     torch.npu.set_device(rank)
     init_dist(rank, nrank)
-    win = pld.create_window(dist.distributed_c10d._get_default_group())
     ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device="npu")
     sig = torch.zeros(_SIG_SLOTS, dtype=torch.int64, device="npu")
-    pld.register_memory(win, ws, "ws", _PROTOCOL)
-    pld.register_memory(win, sig, "sig", _PROTOCOL)
-    win.connect()
+    win = pld.create_window(
+        dist.distributed_c10d._get_default_group(),
+        memories=[(ws, _PROTOCOL), (sig, _PROTOCOL)],
+    )
 
     src = torch.zeros(_PAYLOAD_BYTES, dtype=torch.uint8, device="npu")
     src2k = torch.zeros(_PAYLOAD_2K, dtype=torch.uint8, device="npu")

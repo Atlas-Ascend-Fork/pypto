@@ -63,10 +63,8 @@ def probe(win: pld.Window, out: pl.Tensor[[2], pl.DT_INT64]):
 def probe_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
-    win = pld.create_window(group)
     ws = torch.zeros(4096, dtype=torch.uint8, device='npu')
-    pld.register_memory(win, ws, "ws", _PROTOCOL)
-    win.connect()
+    win = pld.create_window(group, memories=[(ws, _PROTOCOL)])
     # Fill on CPU + H2D copy: some CANN installs miss the NPU Fill operator package
     # (EZ1013 on aclnnInplaceFillScalar), which is unrelated to the code under test.
     out = torch.full((2,), -1, dtype=torch.int64).npu()
@@ -94,8 +92,8 @@ def layer_worker(rank, nrank):
     # Explicit layer: take the first id dump_topology reports (0 = intra-server mesh).
     topo = pld.dump_topology(group)
     layer = int(topo.split("Network Layer: ")[1].split()[0])
+    # Layer selection happens inside create_window (at connect), not at creation.
     win = pld.create_window(group, name="layer_probe", layer=layer)
-    win.connect()  # layer selection happens at connect, not at creation
     assert f"layer {layer}" in str(win), f"[rank {rank}] window not built on layer {layer}:\n{win}"
 
     out = torch.full((2,), -1, dtype=torch.int64).npu()
@@ -109,7 +107,6 @@ def layer_worker(rank, nrank):
     # A layer outside the rank graph must be rejected on every rank.
     try:
         win = pld.create_window(group, layer=9999)
-        win.connect()
         raise AssertionError(f"[rank {rank}] invalid layer 9999 accepted")
     except RuntimeError as e:
         assert "not in rank graph" in str(e), f"[rank {rank}] unexpected error: {e}"
@@ -144,7 +141,6 @@ def barrier_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
     win = pld.create_window(group)
-    win.connect()
     out = torch.full((3,), -1, dtype=torch.int64).npu()
 
     time.sleep(rank * 0.5)  # stagger launches: the barrier must block until the last rank arrives
@@ -233,11 +229,9 @@ def _wait_equal(tensor, offset, val, timeout):
             pl.trap()
 
 
-def _signal_tensor(win):
+def _signal_tensor():
     """User-registered signal buffer: 64-bit words, one slot per sender/peer."""
-    sig = torch.zeros(_SIG_SLOTS, dtype=torch.int64, device='npu')
-    pld.register_memory(win, sig, "sig", _PROTOCOL)
-    return sig
+    return torch.zeros(_SIG_SLOTS, dtype=torch.int64, device='npu')
 
 
 def _shift_setup(rank, nrank, *, with_signal=False, group_ranks=None):
@@ -249,7 +243,10 @@ def _shift_setup(rank, nrank, *, with_signal=False, group_ranks=None):
         dist.barrier()
         dist.destroy_process_group()
         return None
-    win = pld.create_window(group)
+    ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
+    sig = _signal_tensor() if with_signal else None
+    memories = [(ws, _PROTOCOL)] + ([(sig, _PROTOCOL)] if with_signal else [])
+    win = pld.create_window(group, memories=memories)
     if group_ranks is not None:
         # The window must run on group ranks: global 1/3 -> window rank 0/1.
         assert dist.get_global_rank(group, win.rank()) == rank, (
@@ -258,10 +255,6 @@ def _shift_setup(rank, nrank, *, with_signal=False, group_ranks=None):
         assert win.nrank() == len(group_ranks), (
             f"[rank {rank}] window nrank {win.nrank()} != {len(group_ranks)}"
         )
-    ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
-    pld.register_memory(win, ws, "ws", _PROTOCOL)
-    sig = _signal_tensor(win) if with_signal else None
-    win.connect()
     src = torch.full((1, _SHIFT_N), float(rank), dtype=torch.bfloat16).npu()
     out = torch.zeros((1, _SHIFT_N), dtype=torch.bfloat16).npu()
     if with_signal:
@@ -595,10 +588,8 @@ def write_value_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
 def write_value_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
-    win = pld.create_window(group)
     ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
-    pld.register_memory(win, ws, "ws", _PROTOCOL)
-    win.connect()
+    win = pld.create_window(group, memories=[(ws, _PROTOCOL)])
     out = torch.full((_ST_MAX_RANKS, 1), -1, dtype=torch.int64).npu()
     out_f32 = torch.full((_ST_MAX_RANKS * 2, 1), -1.0, dtype=torch.float32).npu()
 
@@ -682,12 +673,9 @@ def two_region_kernel(win: pld.Window, ra: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
 def two_region_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
-    win = pld.create_window(group)
     ra = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
     rb = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
-    pld.register_memory(win, ra, "ra", _PROTOCOL)
-    pld.register_memory(win, rb, "rb", _PROTOCOL)
-    win.connect()
+    win = pld.create_window(group, memories=[(ra, _PROTOCOL), (rb, _PROTOCOL)])
     out = torch.full((_ST_MAX_RANKS * 2, 1), -1, dtype=torch.int64).npu()
 
     two_region_kernel[None, 1](win, ra, rb, out)
@@ -1007,10 +995,8 @@ def write_reduce_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8]
 def write_reduce_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
-    win = pld.create_window(group)
     ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
-    pld.register_memory(win, ws, "ws", _PROTOCOL)
-    win.connect()
+    win = pld.create_window(group, memories=[(ws, _PROTOCOL)])
     src_a = torch.full((1, _RED_N), float(rank + 1), dtype=torch.int32).npu()
     src_b = torch.full((1, _RED_N), float(rank + 10), dtype=torch.int32).npu()
     src_f = torch.full((1, _RED_N), float(rank + 1), dtype=torch.float32).npu()
@@ -1073,11 +1059,9 @@ def atomic_race_kernel(win: pld.Window, tgt: pl.Tensor[[8], pl.DT_INT64],
 def _atomic_setup(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
-    win = pld.create_window(group)
     tgt = torch.zeros(8, dtype=torch.int64, device='npu')
     tgt[1] = 99
-    pld.register_memory(win, tgt, "tgt", _PROTOCOL)
-    win.connect()
+    win = pld.create_window(group, memories=[(tgt, _PROTOCOL)])
     return win, tgt
 
 
@@ -1191,12 +1175,10 @@ def channel_shared_per_aiv_kernel(win: pld.Window, out: pl.Tensor[[1], pl.DT_INT
 def channel_shared_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
-    win = pld.create_window(group)
     # A channel's jetty is built from the window's URMA regions; with none the jetty
     # has no buffers and constructing the channel traps.
     ctrl = torch.zeros(64, dtype=torch.uint8, device='npu')
-    pld.register_memory(win, ctrl, "ctrl", _PROTOCOL)
-    win.connect()
+    win = pld.create_window(group, memories=[(ctrl, _PROTOCOL)])
     out = torch.full((1,), -1, dtype=torch.int64).npu()
 
     # Pick the spelling the topology supports; the device answer must match the host query.
@@ -1256,11 +1238,9 @@ def all_gather_signals_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_
 def all_gather_signals_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
-    win = pld.create_window(group)
     ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
-    pld.register_memory(win, ws, "ws", _PROTOCOL)
-    sig = _signal_tensor(win)
-    win.connect()
+    sig = _signal_tensor()
+    win = pld.create_window(group, memories=[(ws, _PROTOCOL), (sig, _PROTOCOL)])
     src = torch.full((1, _AG_SHARD), float(rank), dtype=torch.bfloat16).npu()
     out = torch.zeros((_ST_MAX_RANKS, _AG_SHARD), dtype=torch.bfloat16).npu()
 
@@ -1332,10 +1312,8 @@ def all_reduce_put_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT
 def all_reduce_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
-    win = pld.create_window(group)
     ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
-    pld.register_memory(win, ws, "ws", _PROTOCOL)
-    win.connect()
+    win = pld.create_window(group, memories=[(ws, _PROTOCOL)])
     # AtomicAdd accumulates, so zero the payload before the launch.
     ws.zero_()
     src = torch.full((1, _AR_SHARD), float(rank), dtype=torch.bfloat16).npu()
@@ -1413,10 +1391,8 @@ def remote_ptr_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
 def remote_ptr_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
-    win = pld.create_window(group)
     ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
-    pld.register_memory(win, ws, "ws", _PROTOCOL)
-    win.connect()
+    win = pld.create_window(group, memories=[(ws, _PROTOCOL)])
 
     peer = (rank + 1) % nrank
     prev = (rank - 1) % nrank
@@ -1582,10 +1558,8 @@ def atomic_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES], pl.DT_UINT8],
 def atomic_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
-    win = pld.create_window(group)
     ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
-    pld.register_memory(win, ws, "ws", _PROTOCOL)
-    win.connect()
+    win = pld.create_window(group, memories=[(ws, _PROTOCOL)])
     # Zero only the payload before launch; the signal/barrier regions are framework-managed.
     ws.zero_()
     out = torch.full((6,), -1, dtype=torch.int64).npu()
@@ -1720,10 +1694,8 @@ def buffer_channel_value_flush_kernel(win: pld.Window, ws: pl.Tensor[[_WS_BYTES]
 def buffer_channel_value_flush_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
-    win = pld.create_window(group)
     ws = torch.zeros(_WS_BYTES, dtype=torch.uint8, device='npu')
-    pld.register_memory(win, ws, "ws", _PROTOCOL)
-    win.connect()
+    win = pld.create_window(group, memories=[(ws, _PROTOCOL)])
     fetch = torch.zeros(1, dtype=torch.int64).npu()
     buffer_channel_value_flush_kernel[None, 1](win, ws, fetch)
     torch.npu.synchronize()
@@ -1879,10 +1851,8 @@ def buffer_channel_atomic32_kernel(win: pld.Window, words: pl.Tensor[[_SIG_SLOTS
 def buffer_channel_atomic32_worker(rank, nrank):
     torch.npu.set_device(rank)
     group = init_dist(rank, nrank)
-    win = pld.create_window(group)
     words = torch.ones(_SIG_SLOTS, dtype=torch.int32, device='npu')
-    pld.register_memory(win, words, 'atomic32', _PROTOCOL)
-    win.connect()
+    win = pld.create_window(group, memories=[(words, _PROTOCOL)])
     fetch = torch.zeros(1, dtype=torch.int32, device='npu')
     buffer_channel_atomic32_kernel[None, 1](win, words, fetch)
     torch.npu.synchronize()

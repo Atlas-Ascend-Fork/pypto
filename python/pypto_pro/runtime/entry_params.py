@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from pypto_pro import DataType
 
-from .._errors import InvalidOperation, InvalidShape, InvalidType
+from .._errors import InvalidShape, InvalidType
 
 if TYPE_CHECKING:
     # Annotation-only: the plan/spec types stay jit-owned (no runtime import cycle).
@@ -170,10 +170,6 @@ def pack_launch_args(plan: "_LaunchPlan", args: tuple, window_cls=None) -> list:
             if window_cls is None or not isinstance(arg, window_cls):
                 raise InvalidType(
                     f"arg[{index}] '{slot[2]}': expected a pld.Window, got {type(arg).__name__}"
-                )
-            if not arg.connected():
-                raise InvalidOperation(
-                    f"arg[{index}] '{slot[2]}': window is not connected; call win.connect() before launching"
                 )
             append(arg.data_ptr())
             continue

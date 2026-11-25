@@ -493,7 +493,13 @@ void WindowContext::Impl::Connect()
     }
 
     AcquireUlbmemChannels();
-    AcquireJettyChannels();
+    // No URMA-plane region: kernels never touch the jetty table, skip channel setup.
+    const bool hasUrmaRegion = std::any_of(regions_.begin(), regions_.end(), [](const MemoryRegion& reg) {
+        return (reg.protocol & pypto::dist::kPolicyUrma) != 0;
+    });
+    if (hasUrmaRegion) {
+        AcquireJettyChannels();
+    }
     WriteDeviceWindow();
     state_ = State::Connected;
     DISTRIBUTED_LOGI("Window %s connected on rank %d/%d, regions %zu, control %lldB, topology %s, jetties %zu, "
@@ -636,12 +642,14 @@ void WindowContext::Impl::WriteDeviceWindow()
     window.region_table = reinterpret_cast<int64_t>(regionTableDevPtr_);
 
     const auto tableBytes = channelHandles_.size() * sizeof(ChannelHandle);
-    DIST_CHECK(AclRtMalloc(&jettyTableDevPtr_, tableBytes, AclRtMemMallocPolicy::HUGE_FIRST) == 0)
-        << "alloc jetty table of " << tableBytes << " bytes failed";
-    DIST_CHECK(AclRtMemcpy(jettyTableDevPtr_, tableBytes, channelHandles_.data(), tableBytes,
-                           AclRtMemcpyKind::HOST_TO_DEVICE) == 0)
-        << "copy jetty table failed";
-    window.jetty_ptrs = reinterpret_cast<int64_t>(jettyTableDevPtr_);
+    if (tableBytes != 0) {
+        DIST_CHECK(AclRtMalloc(&jettyTableDevPtr_, tableBytes, AclRtMemMallocPolicy::HUGE_FIRST) == 0)
+            << "alloc jetty table of " << tableBytes << " bytes failed";
+        DIST_CHECK(AclRtMemcpy(jettyTableDevPtr_, tableBytes, channelHandles_.data(), tableBytes,
+                               AclRtMemcpyKind::HOST_TO_DEVICE) == 0)
+            << "copy jetty table failed";
+        window.jetty_ptrs = reinterpret_cast<int64_t>(jettyTableDevPtr_);
+    }
 
     DIST_CHECK(AclRtMalloc(&windowDevPtr_, sizeof(window), AclRtMemMallocPolicy::HUGE_FIRST) == 0)
         << "alloc window descriptor failed";
