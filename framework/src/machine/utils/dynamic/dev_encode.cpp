@@ -3188,7 +3188,7 @@ static uint32_t FastSlowStitchCheckInitPartialUpdate(const std::vector<const Dev
         cellShape.push_back(mergeDim);
     }
     partialUpdateCellMatchTableDesc->SetCellShape(cellShape);
-    // Per-dim factor: 1 if cell<=1, divides, or (!hasWaw && minReadOp > maxAllWriteOp);
+    // Per-dim factor: 1 if cell<=1, divides, or (!hasWaw && minReadOp >= maxAllWriteOp);
     // else 2. Cover→Fast must match WAW stitch gate: WAW slots keep Slow for write-write overlap.
     // NORMAL_WRITE capacity = product (2^N) for fully-static shapes; dynamic Slow uses fixed cap when
     // tensor stride is unknown (HasDynamicShape) OR any WRITE use carries Expression valid/shape
@@ -3230,8 +3230,8 @@ static uint32_t FastSlowStitchCheckInitPartialUpdate(const std::vector<const Dev
                 minReadOp = minReadOp == 0 ? readOpShape : std::min(minReadOp, readOpShape);
             }
         }
-        // Factor 1 only when no WAW and read strictly covers write — same WAW notion as stitchCtrlBitMask.
-        if (!hasWaw && minReadOp > maxAllWriteOp) {
+        // Factor 1 when no WAW and read covers write (incl. both 0: no valid R/W shape on this dim).
+        if (!hasWaw && minReadOp >= maxAllWriteOp) {
             continue;
         }
         normalWriteCount *= 2;
