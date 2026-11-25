@@ -25,6 +25,7 @@ from pypto_pro._errors import (
     NotSupported,
     OutOfRange,
 )
+from pypto_pro.ir.op import block_ops
 import pypto_pro.language as pl
 import pytest
 from test_common import assert_ir_matches_dump
@@ -986,6 +987,83 @@ def test_acc_to_vec_move_accepts_acc_to_vec_mode_and_relu_pre_mode():
     assert "relu_pre_mode" in call.kwargs
 
 
+_ATOMIC_ADD_DTYPES = (pl.DT_INT8, pl.DT_FP16, pl.DT_BF16, pl.DT_INT16, pl.DT_FP32, pl.DT_INT32)
+_UNSUPPORTED_DTYPES = [
+    getattr(ir.DataType, name) for name in dir(ir.DataType)
+    if name.isupper() and getattr(ir.DataType, name) not in _ATOMIC_ADD_DTYPES
+]
+
+
+@pytest.fixture(params=["store", "store_tile"])
+def store_op(request):
+    return getattr(block_ops, "_ir_" + request.param)
+
+
+def _operands(src_dtype, dst_dtype, memory=pl.MemorySpace.Vec):
+    tile = block_ops.make_mutex_tile_expr(
+        [64, 64], src_dtype, memory, addr=0,
+        layout=pl.NZ if memory == pl.MemorySpace.Acc else pl.ND,
+    )
+    tensor = ir.Var("dst", ir.TensorType([64, 64], dst_dtype), ir.Span.unknown())
+    return tensor, tile
+
+
+@pytest.mark.parametrize("dtype", _UNSUPPORTED_DTYPES, ids=str)
+def test_atomic_add_rejects_unsupported_destination_dtype(store_op, dtype):
+    tensor, tile = _operands(pl.DT_FP32, dtype)
+    with pytest.raises(InvalidType, match=r"AtomicAdd destination: unsupported dtype"):
+        store_op(tensor, tile, [0, 0], atomic=pl.AtomicType.AtomicAdd)
+
+
+@pytest.mark.parametrize(
+    "src_dtype,dst_dtype",
+    [(dtype, dtype) for dtype in _ATOMIC_ADD_DTYPES] + [(pl.DT_UINT32, pl.DT_INT32)],
+    ids=str,
+)
+def test_atomic_add_accepts_supported_destination_dtype(store_op, src_dtype, dst_dtype):
+    tensor, tile = _operands(src_dtype, dst_dtype)
+    call = store_op(tensor, tile, [0, 0], atomic=pl.AtomicType.AtomicAdd)
+    assert call.name == "block.store"
+    assert "atomic" in call.kwargs
+
+
+@pytest.mark.parametrize("dtype", [pl.DT_INT64, pl.DT_UINT8, pl.DT_UINT16, pl.DT_UINT32, pl.DT_UINT64], ids=str)
+def test_plain_store_accepts_dtypes_without_atomic_add_support(store_op, dtype):
+    tensor, tile = _operands(dtype, dtype)
+    call = store_op(tensor, tile, [0, 0])
+    assert call.name == "block.store"
+    assert "atomic" not in call.kwargs
+
+
+def test_scalar_scale_atomic_add_checks_destination_dtype(store_op):
+    tensor, tile = _operands(pl.DT_FP32, pl.DT_INT8, pl.MemorySpace.Acc)
+    scale = ir.ConstFloat(0.5, pl.DT_FP32, ir.Span.unknown())
+    call = store_op(tensor, tile, [0, 0], scale=scale, atomic=pl.AtomicType.AtomicAdd)
+    assert call.name == "block.store"
+    assert len(call.args) == 4
+    assert "atomic" in call.kwargs
+
+
+@pytest.mark.parametrize("auto_mutex", [False, True])
+@pytest.mark.parametrize("store_tile", [False, True])
+def test_int64_atomic_add_is_rejected_at_the_dsl_call(auto_mutex, store_tile):
+    @pl.jit(arch="3510", auto_mutex=auto_mutex)
+    def kernel(dst: pl.Tensor[[64, 64], pl.DT_INT64]):
+        tile_type = pl.TileType(shape=[64, 64], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec)
+        tile = pl.make_tile(tile_type, addr=0)
+        if store_tile:
+            pl.store_tile(dst, tile, [0, 0], atomic=pl.AtomicType.AtomicAdd)
+        else:
+            pl.store(dst, tile, [0, 0], atomic=pl.AtomicType.AtomicAdd)
+
+    with pytest.raises(InvalidType, match=r"AtomicAdd destination: unsupported dtype") as caught:
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    location = caught.value.span
+    assert location["filename"] == __file__
+    with open(__file__, encoding="utf-8") as source:
+        assert "atomic=pl.AtomicType.AtomicAdd" in source.readlines()[location["line"] - 1]
+
+
 def test_acc_store_accepts_relu_pre_mode():
     @pl.jit(auto_mutex=False)
     def main(output: pl.Tensor[[128, 128], pl.DT_FP32]):
@@ -1937,6 +2015,70 @@ def test_non_column_dn_load_tile_accepts_descending_order():
     program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     function = program.get_function(main.__name__)
     assert_ir_matches_dump(_find_call(function, "block.load"), Path(__file__).with_suffix(".pypto"))
+
+
+@pytest.mark.parametrize("auto_mutex", [False, True])
+@pytest.mark.parametrize(
+    "order,layout,tile_offsets,expected",
+    [
+        ([1, 0], pl.ZN, [1, 0], [128, 0]),
+        ([1, 0], pl.ZN, [0, 1], [0, 64]),
+        ([1, 0], pl.ZN, [1, 1], [128, 64]),
+        ([1, 0], pl.ZN, [0, 3], [0, 192]),
+        ([0, 1], pl.NZ, [1, 1], [64, 128]),
+    ],
+)
+def test_load_tile_nonsquare_offsets(auto_mutex, order, layout, tile_offsets, expected):
+    @pl.jit(auto_mutex=auto_mutex)
+    def main(x: pl.Tensor[[256, 256], pl.DT_FP16]):
+        tile_type = pl.TileType(
+            shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=layout
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        pl.load_tile(tile, x, tile_offsets, order=order)
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
+    call = _find_call(program.get_function(main.__name__), "block.load")
+    assert [offset.value for offset in call.args[2].elements] == expected
+    attrs = ir.get_attributes(call)
+    assert bool(attrs.get("is_transpose", False)) == (order == [1, 0])
+    assert list(attrs["tile_dims"]) == [0, 1]
+
+
+@pytest.mark.parametrize("auto_mutex", [False, True])
+def test_load_tile_nonsquare_offsets_with_default_order(auto_mutex):
+    @pl.jit(auto_mutex=auto_mutex)
+    def main(x: pl.Tensor[[256, 256], pl.DT_FP16]):
+        tile_type = pl.TileType(
+            shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.NZ
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        pl.load_tile(tile, x, [1, 1])
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
+    call = _find_call(program.get_function(main.__name__), "block.load")
+    assert [offset.value for offset in call.args[2].elements] == [64, 128]
+    attrs = ir.get_attributes(call)
+    assert "is_transpose" not in attrs
+    assert "tile_dims" not in attrs
+
+
+def test_load_tile_transposed_high_dim_offsets():
+    @pl.jit(auto_mutex=True)
+    def main(x: pl.Tensor[[2, 256, 3, 256], pl.DT_FP16]):
+        tile_type = pl.TileType(
+            shape=[64, 128], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat,
+            layout=pl.ZN, valid_shape=[32, 64],
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        pl.load_tile(tile, x, [1, 1, 2, 1], order=[3, 1])
+
+    program, _ = main.to_kernel_def().parse_target_program(ir.SectionKind.Cube)
+    call = _find_call(program.get_function(main.__name__), "block.load")
+    assert [offset.value for offset in call.args[2].elements] == [1, 128, 2, 64]
+    attrs = ir.get_attributes(call)
+    assert attrs["is_transpose"]
+    assert list(attrs["tile_dims"]) == [1, 3]
 
 
 def test_if_merged_non_column_dn_load_requires_descending_order():

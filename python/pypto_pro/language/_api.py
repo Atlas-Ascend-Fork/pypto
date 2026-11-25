@@ -224,7 +224,9 @@ def store(
             E.g. ``order=[0, 2]`` means Tile dim 0 → Tensor axis 0, Tile dim 1 → Tensor axis 2.
             Default: last N axes of the Tensor (N = Tile ndim)
         atomic: Atomic write mode — ``pl.AtomicType.AtomicNone`` (overwrite) or
-            ``pl.AtomicType.AtomicAdd`` (atomic accumulate)
+            ``pl.AtomicType.AtomicAdd`` (atomic accumulate). ``AtomicAdd`` requires
+            the destination Tensor dtype to be ``pl.DT_FP16``, ``pl.DT_FP32``,
+            ``pl.DT_BF16``, ``pl.DT_INT8``, ``pl.DT_INT16``, or ``pl.DT_INT32``
         phase: Fixpipe drain phase — ``pl.STPhase.Partial`` or ``pl.STPhase.Final``
         l2_cache_mode: Optional L2 cache hint for this GM write. ``None`` uses the PTO-ISA default
             ``TStoreL2Hint.NormalFirstVictim``. UB → GM and L0C Buffer → GM support
@@ -273,7 +275,9 @@ def store_tile(
             E.g. ``order=[0, 2]`` means Tile dim 0 → Tensor axis 0, Tile dim 1 → Tensor axis 2.
             Default: last N axes of the Tensor (N = Tile ndim)
         atomic: Atomic write mode — ``pl.AtomicType.AtomicNone`` (overwrite) or
-            ``pl.AtomicType.AtomicAdd`` (atomic accumulate)
+            ``pl.AtomicType.AtomicAdd`` (atomic accumulate). ``AtomicAdd`` requires
+            the destination Tensor dtype to be ``pl.DT_FP16``, ``pl.DT_FP32``,
+            ``pl.DT_BF16``, ``pl.DT_INT8``, ``pl.DT_INT16``, or ``pl.DT_INT32``
         phase: Fixpipe drain phase — ``pl.STPhase.Partial`` or ``pl.STPhase.Final``
         l2_cache_mode: Optional L2 cache hint for this GM write. ``None`` uses the PTO-ISA default
             ``TStoreL2Hint.NormalFirstVictim``. UB → GM and L0C Buffer → GM support

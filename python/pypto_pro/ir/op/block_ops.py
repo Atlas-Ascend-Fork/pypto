@@ -462,10 +462,12 @@ def _ir_load_tile(
     )
     _validate_nz_transfer_axes(src_tensor.type, resolved_tile_dims, op_name)
 
+    # Block strides follow Tile-axis order; IR tile_dims remain ascending.
+    offset_tile_dims = resolved_tile_dims[::-1] if is_transpose else resolved_tile_dims
     abs_offsets = _compute_absolute_offsets(
         offsets_tuple,
         tile_shape,
-        resolved_tile_dims,
+        offset_tile_dims,
         actual_span,
         access_size=access_size,
     )
@@ -540,6 +542,10 @@ def _ir_store(
     if phase is not None:
         require_enum(phase, STPhase, subject=f"{op_name}: phase")
     require_enum(atomic, AtomicType, subject=f"{op_name}: atomic")
+    if atomic == AtomicType.AtomicAdd:
+        require_dtype_in(
+            dst_tensor.type.dtype, _STORE_ATOMIC_ADD_DTYPES, subject=f"{op_name}: AtomicAdd destination"
+        )
 
     _dst_declared = getattr(getattr(dst_tensor.type, "tensor_view", None), "layout", None)
     if _dst_declared in (Layout.NCHW, Layout.NCDHW):
@@ -632,6 +638,10 @@ def _ir_store_tile(
     if phase is not None:
         require_enum(phase, STPhase, subject=f"{op_name}: phase")
     require_enum(atomic, AtomicType, subject=f"{op_name}: atomic")
+    if atomic == AtomicType.AtomicAdd:
+        require_dtype_in(
+            dst_tensor.type.dtype, _STORE_ATOMIC_ADD_DTYPES, subject=f"{op_name}: AtomicAdd destination"
+        )
 
     tensor_ndim = len(dst_tensor.type.shape)
     tile_shape = list(src_tile.type.shape)
@@ -1846,6 +1856,12 @@ _INIT_OUTPUT_DTYPES: tuple[DataType, ...] = (
     DataType.UINT16, DataType.INT16, DataType.BF16, DataType.FP16,
     DataType.UINT32, DataType.INT32, DataType.FP32,
     DataType.UINT64, DataType.INT64,
+)
+# pto-isa SetAtomicAdd checks the destination GM element type.
+_STORE_ATOMIC_ADD_DTYPES: tuple[DataType, ...] = (
+    DataType.INT8,
+    DataType.FP16, DataType.BF16, DataType.INT16,
+    DataType.FP32, DataType.INT32,
 )
 # Row/col expand variants broadcast a per-row (per-col) vector over a tile.
 # Row/col expand ISA admits the full binary set: TROWEXPAND/TCOLEXPAND are
