@@ -58,9 +58,8 @@ max_mixed_blocks = min(max_cube_blocks, max_vector_blocks // 2)
 
 同一Kernel对象按照编译签名区分编译实例。以下信息可能产生不同实例：
 
-
 | 信息                           | 对编译实例的影响                                                                                           |
-| -------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| ------------------------------ | ---------------------------------------------------------------------------------------------------------- |
 | Tensor固定维度                 | 声明为固定值的维度在Kernel定义时编入IR，调用时Tensor的对应维度必须匹配。                                   |
 | pypto_pro.language.STATIC维度  | 运行时取值参与特化，值变化时生成新实例。                                                                   |
 | pypto_pro.language.DYNAMIC维度 | 维度值不参与特化，值变化时复用实例。                                                                       |
@@ -79,21 +78,20 @@ JIT复用范围限于当前Python进程。重新启动进程后会重新执行�
 
 `pypto_pro.language.jit`支持以下可配置参数：
 
-
-| 参数            | 类型                                       | 说明                                                                                                                                                                                                                                                                                                                                                                                                                       | 默认值                    |
-| ----------------- | -------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------- |
-| mode            | str或None                                  | 指定Kernel的编程模式。支持SIMD、SIMT和AI CPU编程，传入"simd"、None或省略时使用SIMD编程，传入"simt"时为SIMT编程，传入"aicpu_kernel"时为AI CPU编程（Kernel运行在控制CPU上）。                                                                                                                                                                                                                              | None                      |
-| arch            | str                                        | 指定编译目标。通常省略，由运行环境自动确定。                                                                                                                                                                                                                                                                                                                                                                               | None                      |
-| auto_mutex      | bool                                       | 是否根据TileGroup声明的mutex元数据，为框架能够识别的数据依赖自动插入同步。                                                                                                                                                                                                                                                                                                                                                 | True                      |
-| name | str或None | 自定义Kernel名称，用于区分编译产物，并作为profiling中显示的算子名。未设置时使用Python函数名。 | None |
-| pipeline        | pypto_pro.language.pipeline.PipelineConfig | 配置自动CV并行流水变换。                                                                                                                                                                                                                                                                                                                                                                                                   | None                      |
-| sanitizer       | bool                                       | 开启Kernel异常检测，检测GM访问越界、Tile访问越界、Tile内存区间重叠、同步与互斥配对错误、相位使用错误，检测结果写入报告文件，详见[异常检测工具](../../debug/ai_core/sanitizer.md)。                                                                                                                                                                                                                                                 | False                     |
-| tiling_key      | TilingKey定义类                            | 绑定当前Kernel支持的TilingKey字段及其候选值。                                                                                                                                                                                                                                                                                                                                                                              | None                      |
-| datatype        | dict[str, str]                             | 声明需要进行数据类型特化的Kernel参数，以及Kernel函数体中引用的数据类型变量名。                                                                                                                                                                                                                                                                                                                                             | None                      |
-| compile_timeout | int                                        | 设置当前Kernel的编译超时时间，单位为秒。                                                                                                                                                                                                                                                                                                                                                                                   | None（基础默认值为600秒） |
-| max_threads     | int或None                                  | SIMT kernel每个Thread Block允许的最大线程数，取值为[1, 2048]，SIMT模式必填，SIMD模式不接受该参数。                                                                                                                                                                                                                                                                                                                         | None                      |
-| sk_cap          | pypto_pro.language.SkCap                   | SuperKernel能力位。设置后除`__global__`入口外，额外生成`__sk__`入口和`SK_BIND`记录，Kernel可被图编译侧融合；按位或组合`CAP_0_SK_ONLY`、`CAP_1_EARLY_START_WAIT`、`CAP_2_EARLY_START_SET`、`CAP_4_DISABLE_DCCI_ALL`、`CAP_8_DISABLE_BATCHMODE_CHECK`、`CAP_16_BLOCKDIM_SCALE_UP`。`None`表示不生成SK入口，`CAP_0_SK_ONLY`表示只生成SK绑定、不启用其他特性。只接受pypto_pro.language.SkCap成员及其按位或组合，不接受裸整数。 | None                      |
-| schedmode       | int或None                                  | Kernel调度模式，写入`__global__`入口的`__schedmode__(mode)`限定符：0为普通模式，1为batch模式。默认`None`表示自动：JIT检测到Kernel调用`pypto_pro.language.system.sync_all()`时为1，否则为0；显式设置0/1时以显式配置为准。                                                                                                                                                                                                     | None（自动）              |
+| 参数            | 类型                                       | 说明                                                                                                                                                                                                                                                                                                                                                                                                                                             | 默认值                    |
+| --------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------- |
+| mode            | str或None                                  | 指定Kernel的编程模式。支持SIMD、SIMT和AI CPU编程，传入"simd"、None或省略时使用SIMD编程，传入"simt"时为SIMT编程，传入"aicpu_kernel"时为AI CPU编程（Kernel运行在控制CPU上）。                                                                                                                                                                                                                                                                      | None                      |
+| arch            | str                                        | 指定编译目标。通常省略，由运行环境自动确定。                                                                                                                                                                                                                                                                                                                                                                                                     | None                      |
+| auto_mutex      | bool                                       | 是否根据TileGroup声明的mutex元数据，为框架能够识别的数据依赖自动插入同步。                                                                                                                                                                                                                                                                                                                                                                       | True                      |
+| name            | str或None                                  | 自定义Kernel名称，用于区分编译产物，并作为profiling中显示的算子名。未设置时使用Python函数名。                                                                                                                                                                                                                                                                                                                                                    | None                      |
+| pipeline        | pypto_pro.language.pipeline.PipelineConfig | 配置自动CV并行流水变换。                                                                                                                                                                                                                                                                                                                                                                                                                         | None                      |
+| sanitizer       | bool                                       | 开启Kernel异常检测，检测GM访问越界、Tile访问越界、Tile内存区间重叠、同步与互斥配对错误、相位使用错误，检测结果写入报告文件，详见[异常检测工具](../../debug/ai_core/sanitizer.md)。                                                                                                                                                                                                                                                                | False                     |
+| tiling_key      | TilingKey定义类                            | 绑定当前Kernel支持的TilingKey字段及其候选值。                                                                                                                                                                                                                                                                                                                                                                                                    | None                      |
+| datatype        | dict[str, str]                             | 声明需要进行数据类型特化的Kernel参数，以及Kernel函数体中引用的数据类型变量名。                                                                                                                                                                                                                                                                                                                                                                   | None                      |
+| compile_timeout | int                                        | 设置当前Kernel的编译超时时间，单位为秒。                                                                                                                                                                                                                                                                                                                                                                                                         | None（基础默认值为600秒） |
+| max_threads     | int或None                                  | SIMT kernel每个Thread Block允许的最大线程数，取值为[1, 2048]，SIMT模式必填，SIMD模式不接受该参数。                                                                                                                                                                                                                                                                                                                                               | None                      |
+| sk_cap          | pypto_pro.language.SkCap                   | SuperKernel标志位。设置后除`__global__`入口外，额外生成`__sk__`入口和`SK_BIND`记录，Kernel可被图编译侧融合；按位或组合`CAP_0_SK_ONLY`、`CAP_1_EARLY_START_WAIT`、`CAP_2_EARLY_START_SET`、`CAP_4_DISABLE_DCCI_ALL`、`CAP_8_DISABLE_BATCHMODE_CHECK`、`CAP_16_BLOCKDIM_SCALE_UP`。`None`表示不生成SK入口，`CAP_0_SK_ONLY`表示只生成SK绑定、不启用其他特性。只接受pypto_pro.language.SkCap成员及其按位或组合，不接受裸整数。 | None                      |
+| schedmode       | int或None                                  | Kernel调度模式，写入`__global__`入口的`__schedmode__(mode)`限定符：0为普通模式，1为batch模式。默认`None`表示自动：JIT检测到Kernel调用`pypto_pro.language.system.sync_all()`时为1，否则为0；显式设置0/1时以显式配置为准。                                                                                                                                                                                                                 | None（自动）              |
 
 设置`name`后，编译产物和profiling中的算子名均使用该名称。指定名称和默认函数名均须为合法的ASCII C++标识符，不能使用C++关键字、保留前缀`__`或`_`后接大写字母，以及`call_kernel`、`AICORE`、`SK_BIND`等保留名称。
 
@@ -112,11 +110,10 @@ def add_kernel(x, y, out):
 
 `pipeline`接收`pypto_pro.language.pipeline.PipelineConfig`对象，用于配置自动CV并行流水变换；未设置时不执行该变换。配置方法和使用约束参考[自动CV并行流水](../advanced_programming/auto_parallel_pipeline.md)。
 
-`sk_cap`用于SuperKernel（SK）融合适配，取值为pypto_pro.language.SkCap的成员或其按位或组合，`None`表示不生成SK入口，`CAP_0_SK_ONLY`表示生成SK入口但不启用其他能力位。设置后JIT在Host侧Launcher中额外生成`__sk__`入口与`SK_BIND`记录，并在编译阶段追加SK相关的头文件路径和编译宏；`kernel.cpp`内容与普通构建一致。能力位含义如下：
-
+`sk_cap`用于SuperKernel（SK）融合适配，取值为pypto_pro.language.SkCap的成员或其按位或组合，`None`表示不生成SK入口，`CAP_0_SK_ONLY`表示生成SK入口但不启用其他标志位。设置后JIT在Host侧Launcher中额外生成`__sk__`入口与`SK_BIND`记录，并在编译阶段追加SK相关的头文件路径和编译宏；`kernel.cpp`内容与普通构建一致。标志位含义如下：
 
 | 成员                            | 位值 | 含义                                                                                                                                      |
-| --------------------------------- | ------ | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| ------------------------------- | ---- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `CAP_0_SK_ONLY`                 | 0    | 只生成SK入口和`SK_BIND`，不启用早启、DCCI、batchmode或扩核特性                                                                            |
 | `CAP_1_EARLY_START_WAIT`        | 1    | 核内调用pypto_pro.language.system.wait_pre_task_end，允许调用点之前的指令与前序子核重叠                                                   |
 | `CAP_2_EARLY_START_SET`         | 2    | 核内调用pypto_pro.language.system.set_next_task_start，允许调用点之后的指令与后序子核重叠                                                 |
@@ -128,13 +125,13 @@ def add_kernel(x, y, out):
 
 `schedmode`只影响Kernel的下发方式：`0`为普通模式，`1`为batch模式，JIT据此在入口上生成`__schedmode__`限定符。缺省为`None`，JIT会检测Kernel是否调用`pypto_pro.language.system.sync_all()`：调用了则自动按`1`生成，未调用则为`0`，从而避免因漏配`schedmode=1`在多流并发下卡死。显式设置`0/1`时以显式配置为准；显式`0`且调用了全核同步时保留`0`并打印告警。`schedmode=1`且需要和启动核数更大的算子融合时，需要设置`CAP_8_DISABLE_BATCHMODE_CHECK`跳过`__schedmode__`校验。
 
-mode="aicpu_kernel"时，装饰器仅接受arch、name、compile_timeout和max_threads；pipeline、tiling_key、datatype、sanitizer、sk_cap和schedmode为Tile/SIMT或AI Core专属机制，装饰时抛出NotSupported并逐项点名；auto_mutex被强制关闭。sk_cap与schedmode依赖的`__sk__`入口、`SK_BIND`记录和`__schedmode__`限定符均为AI Core编译产物，AI CPU工具链不生成对应构造。
+mode="aicpu_kernel"时，装饰器仅支持arch、name、compile_timeout和max_threads；pipeline、tiling_key、datatype、sanitizer、sk_cap和schedmode属于Tile/SIMT或AI Core专属机制，装饰时抛出NotSupported并逐项点名；auto_mutex被强制关闭。sk_cap与schedmode依赖的`__sk__`、`SK_BIND`和`__schedmode__`等构造均为AI Core编译产物，AI CPU工具链不生成。
 
 ## Kernel下发与同步
 
 编译完成后，JIT通过Host侧Launcher将Kernel提交到指定Stream。SIMD模式中，`kernel[None, block_dim](...)`使用当前Stream，`kernel[stream, block_dim](...)`使用显式Stream。SIMT kernel的启动方式参见[从Host启动SIMT kernel](../vector_computation/simt_computation.md#从host启动simt-kernel)。
 
-AI CPU Kernel单任务串行执行，没有启动规模配置，方括号中只接受Stream：`kernel(...)`使用当前Stream，`kernel[stream](...)`使用显式Stream；`kernel[stream, block_dim]`会被拒绝。AI CPU任务异步下发，Kernel状态返回非零时任务被标记失败，Host在同步Stream时观察到错误，参见[AI CPU Kernel任务失败：同步时报Stream错误](../../../../appendix/faq/aicpu-stream-task-failed.md)。
+AI CPU Kernel单任务串行执行，没有block_dim等启动配置，方括号中只接受Stream：`kernel(...)`使用当前Stream，`kernel[stream](...)`使用显式Stream；`kernel[stream, block_dim]`会被拒绝。AI CPU任务异步下发，Kernel返回值非零时任务被标记失败，要等Host同步时才报错，参见[AI CPU Kernel任务失败：流同步时报错](../../../../appendix/faq/aicpu-stream-task-failed.md)。
 
 Kernel下发是异步操作。在读取输出、检查精度或统计完整执行时间前，同步相应Stream：
 
@@ -154,9 +151,8 @@ Stream和`block_dim`的完整说明参考[Kernel核函数](../kernel_function.md
 
 未设置`ASCEND_WORK_PATH`时，JIT产物以`./build/`为根目录；设置后，以`${ASCEND_WORK_PATH}/PYPTO_PRO/build/`为根目录。Kernel目录名称以`{kernel_name}__{arch}`开头；存在STATIC维度特化时追加`__shape_{hash}`；还会根据环境附加设备和分布式进程标识，例如`__d0`、`__r1`或`__d0_r1`。设备标识是当前NPU设备编号，Rank是分布式进程编号，不是Tensor的维度数。datatype和TilingKey实例还会分别使用`dt_{hash}`和`tk_{packed}`（未使用TilingKey时为`tk_none`）子目录。主要文件包括：
 
-
 | 文件                  | 作用                                           |
-| ----------------------- | ------------------------------------------------ |
+| --------------------- | ---------------------------------------------- |
 | kernel.cpp            | CodeGen生成的Device侧源码。                    |
 | call_kernel.cpp       | Host侧Launcher源码，负责参数打包和Kernel下发。 |
 | call_kernel_{hash}.so | 编译后的Launcher共享库。                       |
@@ -164,10 +160,10 @@ Stream和`block_dim`的完整说明参考[Kernel核函数](../kernel_function.md
 
 AI CPU Kernel（mode="aicpu_kernel"）的产物集合不同：
 
-| 文件 | 作用 |
-| --- | --- |
-| {op}_aicpu.cpp | Kernel TU：共享CCE代码生成产出的裸函数体，加上扁平参数的`__global__ __aicpu__`入口（返回状态字）。 |
-| {op}_aicpu_host.cpp | Host TU：限定符擦除宏、扁平入口声明和`{op}Run` C-ABI shim（`Kernel<<<1, nullptr, stream>>>`下发）。 |
-| lib{op}_aicpu_{hash}.so | 交叉编译并链接后的共享库：Kernel TU经bisheng以`-x aicpu`编译，AI CPU二进制嵌入`.aicpu_binary`段；Host TU以ASC方言编译，启动时经ACL运行时解析符号并下发。 |
+| 文件                    | 作用                                           |
+| ----------------------- | ---------------------------------------------- |
+| {op}_aicpu.cpp          | codegen生成的运行在AI CPU上的Kernel代码。      |
+| {op}_aicpu_host.cpp     | Host侧Launcher源码，负责参数打包和Kernel下发。 |
+| lib{op}_aicpu_{hash}.so | 编译并链接后的共享库                           |
 
 编译失败时，优先结合错误日志和`kernel.cpp`定位解析、代码生成或工具链问题。编译成功后，中间源码默认保留在产物目录中，可用于核对生成代码。

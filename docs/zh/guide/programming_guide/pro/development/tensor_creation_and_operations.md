@@ -29,7 +29,7 @@ nz_tensor: pl.Tensor[[64, 128], pl.DT_FP16, pl.NZ]
 
 layout标注只描述GM中已有数据的排布，不执行不同layout之间的数据转换。数据转换由支持相应格式的搬运接口完成。
 
-### 输入和输出方向标注
+### 输入和输出标注
 
 使用Profiling采集Kernel信息时，可以通过Tensor类型标注中的pypto_pro.language.Input或pypto_pro.language.Output枚举值声明参数方向：
 
@@ -49,7 +49,7 @@ pypto_pro.language.Input表示输入，pypto_pro.language.Output表示输出。d
 
 在方括号形式中，direction可与layout、memref一起声明，推荐将direction放在标注末尾，例如`pl.Tensor[[64, 128], pl.DT_FP16, pl.NZ, pl.Output]`。调用式也支持将direction作为第三个参数，例如`pl.Tensor([64, 128], pl.DT_FP16, pl.Output)`。
 
-方向标注只影响Profiling结果中的Tensor输入、输出信息，不改变Kernel的读写语义。完整语法和约束请参考[pypto_pro.language.Tensor](../../../../api/pro_api/SIMD-API/basic_data_structures/Tensor.md)。
+输入/输出标注只影响Profiling结果中的Tensor输入、输出信息，不改变Kernel的读写语义。完整语法和约束请参考[pypto_pro.language.Tensor](../../../../api/pro_api/SIMD-API/basic_data_structures/Tensor.md)。
 
 ### Shape声明方式
 

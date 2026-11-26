@@ -93,7 +93,7 @@ scale_a: pl.Tensor[[64, 2, 2], pl.DT_FP8E8M0]
 dynamic_tensor: pl.Tensor[[pl.DYNAMIC, pl.DYNAMIC], pl.DT_FP32]
 ```
 
-### Tensor参数方向标注
+### Tensor参数输入/输出标注
 
 Kernel形参的Tensor类型标注支持使用`pypto_pro.language.Input`和`pypto_pro.language.Output`两个枚举值声明该参数在Profiling元数据中的方向：
 

@@ -10,7 +10,7 @@ PyPTO Pro通过pypto_pro.language.jit的sk_cap参数声明Kernel的SK能力。�
 
 ### 声明SK能力（sk_cap）
 
-在pypto_pro.language.jit中通过sk_cap声明能力位，取值为pypto_pro.language.SkCap的成员或其按位或组合，只接受枚举成员，不接受裸整数。各能力位的位值与含义见[JIT编译：JIT装饰器参数](../compilation_and_execution/JIT_compilation.md#jit装饰器参数)。
+在pypto_pro.language.jit中通过sk_cap声明标志位，取值为pypto_pro.language.SkCap的成员或其按位或组合，只接受枚举成员，不接受裸整数。各标志位的位值与含义见[JIT编译：JIT装饰器参数](../compilation_and_execution/JIT_compilation.md#jit装饰器参数)。
 
 ```python
 import pypto_pro.language as pl
@@ -81,15 +81,15 @@ SIMD外层调用SIMT VF时，VF内不得读取`pypto_pro.language.simt.grid_dim(
 
 ### AI CPU Kernel与SuperKernel的关系
 
-SuperKernel融合的对象是AI Core子核函数的二进制：容器Kernel运行在AI Core上，通过`SK_BIND`记录以子函数调用方式整合各子核。AI CPU Kernel（mode="aicpu_kernel"）运行在SoC控制CPU上，以独立AI CPU任务下发，不参与SuperKernel融合：
+SuperKernel融合的是AI Core子核函数编译出的二进制：容器Kernel运行在AI Core上，通过`SK_BIND`记录把各子核当作子函数调用整合起来。AI CPU Kernel（mode="aicpu_kernel"）运行在SoC控制CPU上，作为独立任务下发，不参与SuperKernel融合：
 
-- AI CPU工具链没有SK绑定基础设施：`__sk__`入口与`SK_BIND`记录是AI Core编译产物，AI CPU编译不生成对应构造；sk_cap各能力位（DCCI、早启同步、扩核）依赖的均为AI Core硬件机制，在控制CPU上不存在。
+- AI CPU工具链没有SK绑定基础设施：`__sk__`入口与`SK_BIND`记录是AI Core编译产物，AI CPU编译不生成对应构造；sk_cap各标志位（DCCI、早启同步、扩核）依赖的均为AI Core硬件机制，在控制CPU上不存在。
 - 装饰器在mode="aicpu_kernel"下拒绝sk_cap与schedmode（抛出NotSupported），参见[JIT编译](../compilation_and_execution/JIT_compilation.md#jit装饰器参数)。
 - 图调度层面，AI CPU节点是天然的融合边界：开启SuperKernel优化后，图编译只把可融合的AI Core节点编入容器，容器在AI CPU节点处断开；先后顺序由正常的Stream/图任务依赖保证，早启握手只发生在容器内相邻AI Core子核之间。
 - 数据衔接依靠GM与缓存一致性：AI CPU在控制CPU上直接写GM（不经过AI Core的DCache）；容器内子核通过GetValue等标量读接口消费时，SK编译会自动插入单Cache Line的DataCacheCleanAndInvalid，保证读到AI CPU刚写入的值。
-- 容器启动核数取容器内所有AI Core子核的最大启动核数，AI CPU任务不计入，也无需能力位声明。
+- 容器启动核数取容器内所有AI Core子核的最大启动核数，AI CPU任务不计入，也无需标志位声明。
 
-典型协作形态：AI CPU元数据Kernel产出规划表（如多核任务切分metadata），下游AI Core Kernel（可参与融合）按规划表执行计算。
+典型协作形态：AI CPU Kernel生成tiling分核、偏移等调度信息，下游AI Core Kernel（可参与融合）据此执行计算。
 
 ## 约束说明
 

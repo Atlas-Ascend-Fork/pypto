@@ -1,4 +1,4 @@
-# Kernel核函数创建
+# Kernel核函数
 
 Kernel是在AI Core上执行的函数，在函数签名中定义输入、输出和运行时参数，在函数体中组织数据搬运与计算。
 
@@ -27,12 +27,12 @@ jit在首次启动Kernel时解析函数体并触发编译。JIT流程、编译�
 
 Kernel参数需要通过类型标注明确数据类型和传递方式：
 
-| 参数类型 | 用途 |
-| --- | --- |
-| [pypto_pro.language.Tensor](../../../../api/pro_api/SIMD-API/basic_data_structures/Tensor.md) | 接收GM中的多维数据；在类型中声明shape、dtype和可选layout。 |
-| [pypto_pro.language.Ptr](../../../../api/pro_api/SIMD-API/basic_data_structures/Ptr.md) | 接收裸指针；通常使用[pypto_pro.language.make_tensor](../../../../api/pro_api/SIMD-API/resource_management/make_tensor.md)构造Tensor视图。 |
-| [pypto_pro.language.DT_*](../../../../api/pro_api/SIMD-API/basic_data_structures/DataType.md) | 接收整型、浮点型等运行时标量。 |
-| [TilingData类](tiling/tiling_parameter_definition.md#tilingdata) | 接收shape、stride、循环边界等结构化运行时参数。 |
+| 参数类型                                                                                     | 用途                                                                                                                                     |
+| -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| [pypto_pro.language.Tensor](../../../../api/pro_api/SIMD-API/basic_data_structures/Tensor.md) | 接收GM中的多维数据；在类型中声明shape、dtype和可选layout。                                                                               |
+| [pypto_pro.language.Ptr](../../../../api/pro_api/SIMD-API/basic_data_structures/Ptr.md)       | 接收裸指针；通常使用[pypto_pro.language.make_tensor](../../../../api/pro_api/SIMD-API/resource_management/make_tensor.md)构造Tensor视图。 |
+| [pypto_pro.language.DT_*](../../../../api/pro_api/SIMD-API/basic_data_structures/DataType.md) | 接收整型、浮点型等运行时标量。                                                                                                           |
+| [TilingData类](tiling/tiling_parameter_definition.md#tilingdata)                              | 接收shape、stride、循环边界等结构化运行时参数。                                                                                          |
 
 Tensor参数适合直接使用调用侧Tensor的shape；Ptr参数适合由TilingData提供shape和stride：
 
@@ -68,11 +68,11 @@ Kernel不返回Python值。计算结果通过Tensor或Ptr对应的GM区域写回
 
 使用[pypto_pro.language.section_vector()](../../../../api/pro_api/SIMD-API/controlflow/section_vector.md)和[pypto_pro.language.section_cube()](../../../../api/pro_api/SIMD-API/controlflow/section_cube.md)定义计算代码所在的执行域：
 
-| Kernel组成 | 执行方式 |
-| --- | --- |
-| 仅包含Vector执行域 | 启动Vector Kernel。 |
-| 仅包含Cube执行域 | 启动Cube Kernel。 |
-| 同时包含Cube和Vector执行域 | 启动混合Kernel。 |
+| Kernel组成                 | 执行方式            |
+| -------------------------- | ------------------- |
+| 仅包含Vector执行域         | 启动Vector Kernel。 |
+| 仅包含Cube执行域           | 启动Cube Kernel。   |
+| 同时包含Cube和Vector执行域 | 启动混合Kernel。    |
 
 ```python
 import pypto_pro.language as pl
@@ -142,12 +142,12 @@ Tile声明、地址和TileGroup操作参考[Tile创建和操作](tile_creation_a
 
 Kernel使用方括号指定启动配置，使用圆括号传入函数实参：
 
-| 调用形式 | 含义 |
-| --- | --- |
-| kernel(args...) | 使用当前Stream，block_dim=1。 |
-| kernel\[block_dim\](args...) | 使用当前Stream，并指定逻辑核数。 |
-| kernel\[stream, block_dim\](args...) | 指定Stream和逻辑核数。 |
-| kernel\[stream, block_dim, tiling_key\](args...) | 选择TilingKey对应的编译实例。 |
+| 调用形式                                                   | 含义                                  |
+| ---------------------------------------------------------- | ------------------------------------- |
+| kernel(args...)                                            | 使用当前Stream，block_dim=1。         |
+| kernel\[block_dim\](args...)                               | 使用当前Stream，并指定逻辑核数。      |
+| kernel\[stream, block_dim\](args...)                       | 指定Stream和逻辑核数。                |
+| kernel\[stream, block_dim, tiling_key\](args...)           | 选择TilingKey对应的编译实例。         |
 | kernel\[stream, block_dim, tiling_key, datatype\](args...) | 同时选择TilingKey和datatype特化实例。 |
 
 使用TilingKey或datatype特化时，必须通过方括号传入相应字典。
@@ -196,10 +196,10 @@ block_dim表示请求启动的逻辑核数，取值必须是正整数，且不�
 
 以下示例假设所述核数均在当前可用范围内。
 
-| Kernel类型 | block_dim的含义 |
-| --- | --- |
-| Vector Kernel | 用于设置逻辑Vector（AIV）核数。比如某款AI处理器上有40个Vector核，设置`block_dim=40`表示请求启动40个逻辑Vector核。 |
-| Cube Kernel | 用于设置逻辑Cube（AIC）核数。比如某款AI处理器上有20个Cube核，设置`block_dim=20`表示请求启动20个逻辑Cube核。 |
+| Kernel类型             | block_dim的含义                                                                                                                                                                                                                                                                                                                                                                                                  |
+| ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Vector Kernel          | 用于设置逻辑Vector（AIV）核数。比如某款AI处理器上有40个Vector核，设置`block_dim=40`表示请求启动40个逻辑Vector核。                                                                                                                                                                                                                                                                                              |
+| Cube Kernel            | 用于设置逻辑Cube（AIC）核数。比如某款AI处理器上有20个Cube核，设置`block_dim=20`表示请求启动20个逻辑Cube核。                                                                                                                                                                                                                                                                                                    |
 | Cube与Vector混合Kernel | 按照AIV和AIC组合启动，用于设置逻辑执行组数。比如某款AI处理器上有40个Vector核和20个Cube核，一个执行组包含2个Vector核和1个Cube核，设置`block_dim=20`表示请求启动20个执行组；若20组均实际生效，对应40个Vector核和20个Cube核。实际生效的执行组数由`get_block_num()`获取，Vector侧逻辑核数还需乘以[pypto_pro.language.get_subblock_num()](../../../../api/pro_api/SIMD-API/system_variables/get_subblock_num.md)。 |
 
 ## 使用TilingKey和datatype

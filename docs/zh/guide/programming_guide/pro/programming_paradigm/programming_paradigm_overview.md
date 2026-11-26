@@ -63,21 +63,21 @@ SIMT适合需要逐线程控制或难以使用规整Tile计算表达的场景，
 
 ## AI CPU（控制CPU串行任务）
 
-除运行在AI Core上的SIMD与SIMT Kernel外，PyPTO Pro还支持将Kernel运行在SoC控制CPU（AI CPU）上。AI CPU Kernel是单任务串行执行的标量程序：没有多核启动规模，不使用片上存储与Tile编程，直接对GM中的Tensor做逐元素标量读写，适合元数据规划、动态shape预处理等控制流密集、计算量小的任务，并遵循状态ABI（0为成功，1为参数非法）。
+PyPTO Pro支持运行在AI CPU上的Kernel。AI CPU Kernel用于在运行时计算tiling分核策略、任务划分、运行时值依赖等调度信息；AI CPU完成调度策略的计算后，将输出Tensor作为输入传给AI Core，让AI Core按给定计划执行计算任务。
 
-AI CPU Kernel通过pypto_pro.language.jit的mode="aicpu_kernel"声明，与SIMD/SIMT Kernel在同一个算子中按Stream依赖协作。详细内容参见[AI CPU编程范式](AICPU/programming_paradigm.md)。
+AI CPU Kernel通过pypto_pro.language.jit的mode="aicpu_kernel"声明。详细内容参见[AI CPU编程概述](AICPU/programming_paradigm.md)。
 
 ## AI Core硬件基础
 
 AI处理器包含多个AI Core，多个AI Core可以并行处理不同的数据分片。AI Core内部包含Scalar、Vector、Cube、片上存储和数据搬运等单元：
 
-| 硬件组成 | 主要职责 | PyPTO Pro中的对应表达 |
-|---|---|---|
-| Scalar单元 | Kernel控制流、地址计算和指令调度 | Python控制流、标量表达式和数据索引计算 |
-| Vector单元 | 矢量计算和SIMT线程计算 | Vector执行域中的Tile API、VF函数和SIMT函数 |
-| Cube单元 | 矩阵乘加等矩阵计算 | Cube执行域中的矩阵计算接口 |
-| 片上存储 | 保存计算输入、输出和中间数据 | 不同内存空间中的Tile |
-| 数据搬运单元 | 在GM与片上存储、不同片上存储之间搬运数据 | 数据搬入、片上搬运和结果写回操作 |
+| 硬件组成     | 主要职责                                 | PyPTO Pro中的对应表达                      |
+| ------------ | ---------------------------------------- | ------------------------------------------ |
+| Scalar单元   | Kernel控制流、地址计算和指令调度         | Python控制流、标量表达式和数据索引计算     |
+| Vector单元   | 矢量计算和SIMT线程计算                   | Vector执行域中的Tile API、VF函数和SIMT函数 |
+| Cube单元     | 矩阵乘加等矩阵计算                       | Cube执行域中的矩阵计算接口                 |
+| 片上存储     | 保存计算输入、输出和中间数据             | 不同内存空间中的Tile                       |
+| 数据搬运单元 | 在GM与片上存储、不同片上存储之间搬运数据 | 数据搬入、片上搬运和结果写回操作           |
 
 计算与搬运任务在不同流水上执行，存在数据依赖时需要通过同步机制约束执行顺序。
 
@@ -99,6 +99,6 @@ PyPTO Pro算子的典型开发与运行流程如下：
 - [PyPTO Pro快速入门](../../../quick_start/pro/index.md)：通过完整算子示例了解Kernel定义、编译和运行流程。
 - [SIMD编程](SIMD/index.md)：了解SPMD多核并行、Tile编程、SIMD矢量计算和矩阵计算。
 - [SIMT编程](SIMT/index.md)：了解线程架构、内存层级、SIMT函数、同步和原子操作。
-- [AI CPU算子开发](../aicpu_development/index.md)：了解控制CPU串行任务的编程面、状态ABI与启动方式。
+- [AI CPU编程](../aicpu_development/index.md)：了解AI CPU Kernel的tiling划分、值依赖计算等调度相关的标量计算操作。
 - [Kernel核函数](../development/kernel_function.md)：了解Kernel参数、实际核数和启动方式。
 - [编译与执行](../development/compilation_and_execution/index.md)：了解JIT编译和离线二进制编译。
