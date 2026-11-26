@@ -348,6 +348,64 @@ std::any IRTextParser::ParseAs<std::shared_ptr<npu::tile_fwk::ConfigScope>>(cons
     return npu::tile_fwk::ConfigManagerNg::CurrentScope();
 }
 
+bool IRTextParser::CollectScopeTileAttrs(const std::map<std::string, std::any>& attrDict,
+                                         std::map<std::string, std::any>& values)
+{
+    for (const auto& [key, value] : attrDict) {
+        if (key.rfind("_scope_", 0) != 0) {
+            continue;
+        }
+        std::vector<int64_t> ints;
+        SetValue(ints, value);
+        if (key == "_scope_vec_tile") {
+            if (!ints.empty()) {
+                values["vec_tile_shapes"] = ints;
+            }
+        } else if (key == "_scope_cube_tile") {
+            CubeTile tile;
+            std::string error;
+            if (!DecodeTile(ints, tile, error)) {
+                Error(error);
+                return false;
+            }
+            values["cube_tile_shapes"] = tile;
+        } else if (key == "_scope_conv_tile") {
+            ConvTile tile;
+            std::string error;
+            if (!DecodeTile(ints, tile, error)) {
+                Error(error);
+                return false;
+            }
+            values["conv_tile_shapes"] = tile;
+        } else if (key == "_scope_convbp_input_tile") {
+            ConvBpTile tile;
+            std::string error;
+            if (!DecodeTile(ints, tile, error)) {
+                Error(error);
+                return false;
+            }
+            values["convbp_input_tile_shapes"] = tile;
+        } else if (key == "_scope_convbp_filter_tile") {
+            ConvBpTile tile;
+            std::string error;
+            if (!DecodeTile(ints, tile, error)) {
+                Error(error);
+                return false;
+            }
+            values["convbp_filter_tile_shapes"] = tile;
+        } else if (key == "_scope_dist_tile") {
+            DistTile tile;
+            std::string error;
+            if (!DecodeTile(ints, tile, error)) {
+                Error(error);
+                return false;
+            }
+            values["dist_tile_shapes"] = tile;
+        }
+    }
+    return true;
+}
+
 bool IRTextParser::FillForStmtAttrs(const std::map<std::string, std::any>& attrDict,
                                     std::vector<std::pair<std::string, std::any>>& attrs)
 {
@@ -357,8 +415,15 @@ bool IRTextParser::FillForStmtAttrs(const std::map<std::string, std::any>& attrD
         {"unroll_times", &IRTextParser::ParseAs<int>},
         {"_config_scope", &IRTextParser::ParseAs<std::shared_ptr<npu::tile_fwk::ConfigScope>>},
     };
+    std::map<std::string, std::any> tileValues;
+    if (!CollectScopeTileAttrs(attrDict, tileValues)) {
+        return false;
+    }
     attrs.reserve(attrDict.size());
     for (const auto& [key, value] : attrDict) {
+        if (key.rfind("_scope_", 0) == 0) {
+            continue;
+        }
         const auto it = parsers.find(key);
         if (it == parsers.end()) {
             attrs.emplace_back(key, value);
@@ -370,6 +435,15 @@ bool IRTextParser::FillForStmtAttrs(const std::map<std::string, std::any>& attrD
             return false;
         }
         attrs.emplace_back(key, rebuilt);
+    }
+    if (!tileValues.empty()) {
+        npu::tile_fwk::ConfigScopePtr scope;
+        {
+            npu::tile_fwk::ConfigManagerNg::JitScopeGuard guard("io_text_tile_scope",
+                                                                std::map<std::string, std::any>(tileValues));
+            scope = npu::tile_fwk::ConfigManagerNg::CurrentScope();
+        }
+        attrs.emplace_back("_config_scope", scope);
     }
     return true;
 }
@@ -676,7 +750,27 @@ bool IRTextParser::RestoreProgramTileShape(const std::map<std::string, std::any>
 bool IRTextParser::SetFunctionAttrDict(const FunctionPtr& func, const std::map<std::string, std::any>& attrDict)
 {
     auto f = std::const_pointer_cast<Function>(func);
+    std::map<std::string, std::any> tileValues;
+    if (!CollectScopeTileAttrs(attrDict, tileValues)) {
+        return false;
+    }
+    if (!tileValues.empty()) {
+        npu::tile_fwk::ConfigScopePtr scope;
+        {
+            npu::tile_fwk::ConfigManagerNg::JitScopeGuard guard("io_text_tile_scope",
+                                                                std::map<std::string, std::any>(tileValues));
+            scope = npu::tile_fwk::ConfigManagerNg::CurrentScope();
+        }
+        f->attrs_.emplace_back("_config_scope", scope);
+    }
     for (const auto& [key, value] : attrDict) {
+        if (key.rfind("_scope_", 0) == 0) {
+            continue;
+        }
+        if (key == "_config_scope" && value.type() == typeid(std::string)) {
+            f->attrs_.emplace_back("_config_scope", npu::tile_fwk::ConfigManagerNg::CurrentScope());
+            continue;
+        }
         if (key == IR_KW_TYPE) {
             const std::string& typeName = AnyCast<std::string>(value);
             if (typeName == "pro") {

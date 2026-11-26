@@ -277,6 +277,8 @@ protected:
                                     std::vector<npu::tile_fwk::SymbolicScalar>& out);
     bool FillForStmtAttrs(const std::map<std::string, std::any>& attrDict,
                           std::vector<std::pair<std::string, std::any>>& attrs);
+    bool CollectScopeTileAttrs(const std::map<std::string, std::any>& attrDict,
+                               std::map<std::string, std::any>& values);
     template <typename T>
     std::any ParseAs(const std::string& key, const std::any& value);
 

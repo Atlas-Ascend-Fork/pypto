@@ -553,6 +553,7 @@ private:
     void PrintTokenList(const std::vector<VarPtr>& tokenList);
     void PrintAttrValue(const std::string& key, const std::any& value);
     void PrintAttr(const std::string& key, const std::any& value);
+    void PrintScopeTileAttrs(const std::string& key, const std::any& scopeValue);
     void PrintDataArray(const std::vector<int64_t>& vals);
     // Attr is the leaf layer of the traversal: nodes carrying attrs hand their
     // attr dict to PrintAttrDict, which dispatches value formatting.

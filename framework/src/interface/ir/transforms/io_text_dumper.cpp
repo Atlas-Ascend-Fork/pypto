@@ -327,6 +327,10 @@ void IRTextDumper::PrintAttrsSorted(const std::vector<std::pair<std::string, std
     std::vector<std::pair<std::string, std::any>> sorted(attrs.begin(), attrs.end());
     std::sort(sorted.begin(), sorted.end(), [](const auto& lhs, const auto& rhs) { return lhs.first < rhs.first; });
     for (const auto& [key, value] : sorted) {
+        if (value.type() == typeid(npu::tile_fwk::ConfigScopePtr)) {
+            PrintScopeTileAttrs(key, value);
+            continue;
+        }
         PrintAttr(key, value);
     }
 }
