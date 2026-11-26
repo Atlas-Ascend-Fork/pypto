@@ -38,6 +38,10 @@
 using Json = nlohmann::json;
 using namespace pypto;
 
+namespace pypto::ir {
+class IRTextParser;
+}
+
 namespace npu::tile_fwk {
 constexpr size_t NON_GROUP = -1;
 constexpr int32_t TILE_STR_PREFIX_LEN = 5;
@@ -418,6 +422,8 @@ public:
         Function& cur, const std::unordered_map<int, std::shared_ptr<LogicalTensor>>& tensorDict, const Json& opDump);
 
 private:
+    friend class pypto::ir::IRTextParser;
+    void SetOpMagic(int magic) { opmagic = magic; }
     void UnlinkFromLogicalTensors();
     void DumpOperandsJson(Json& opDump, bool dumpTensor) const;
     void DumpCalleeHashJson(Json& opDump) const;

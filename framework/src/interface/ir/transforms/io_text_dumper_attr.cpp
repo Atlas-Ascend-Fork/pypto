@@ -14,6 +14,7 @@
 #include "ir/transforms/io_text.h"
 
 #include <any>
+#include <cmath>
 #include <cstdint>
 #include <iomanip>
 #include <limits>
@@ -204,7 +205,7 @@ std::string FormatFloat(double value)
 std::string FormatFloatLiteral(double value)
 {
     std::string text = FormatFloat(value);
-    if (text.find_first_of(".eE") == std::string::npos) {
+    if (std::isfinite(value) && text.find_first_of(".eE") == std::string::npos) {
         text += ".0";
     }
     return text;

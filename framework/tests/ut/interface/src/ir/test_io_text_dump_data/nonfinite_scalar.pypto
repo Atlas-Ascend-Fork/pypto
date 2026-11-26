@@ -1,0 +1,5 @@
+program #entry() {
+    function nonfinite_scalar incast() outcast() #entry(false) #type(Opaque) {
+        OP_CONFIG() token() #probe_nan(nan) #probe_neg_inf(-inf) #probe_pos_inf(inf);
+    }
+}
