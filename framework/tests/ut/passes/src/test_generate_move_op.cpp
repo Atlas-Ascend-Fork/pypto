@@ -2103,5 +2103,27 @@ TEST_F(GenerateMoveOpPassTest, l0CCopyOutConvEmptyConsumerOperandsFails)
     EXPECT_EQ(pass.ProcessL0CCopyOutConv(copyOp), FAILED);
     EXPECT_FALSE(assembleOp.IsDeleted());
 }
+
+TEST_F(GenerateMoveOpPassTest, RunOnFunctionFailsForNegativeCopyShape)
+{
+    // incast(DDR) -> copy_in(UB) -> copy_out -> outcast(DDR)
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(
+        graph.AddTensors(DT_FP32, {16, 16}, {MEM_DEVICE_DDR, MEM_UB, MEM_DEVICE_DDR}, {"incast", "ub", "outcast"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_COPY_IN, {"incast"}, {"ub"}, "copy_in"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_COPY_OUT, {"ub"}, {"outcast"}, "copy_out"));
+    ASSERT_TRUE(graph.SetInCast({"incast"}));
+    ASSERT_TRUE(graph.SetOutCast({"outcast"}));
+
+    auto copyOp = graph.GetOp("copy_in");
+    ASSERT_NE(copyOp, nullptr);
+    auto copyOpAttr = std::dynamic_pointer_cast<CopyOpAttribute>(copyOp->GetOpAttribute());
+    ASSERT_NE(copyOpAttr, nullptr);
+    copyOpAttr->SetShape({OpImmediate::Specified(IRBuilder().CreateConstInt(-1)),
+                          OpImmediate::Specified(IRBuilder().CreateConstInt(16))});
+
+    GenerateMoveOp pass;
+    EXPECT_EQ(pass.RunOnFunction(*graph.GetFunction()), FAILED);
+}
 } // namespace tile_fwk
 } // namespace npu

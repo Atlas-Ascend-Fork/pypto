@@ -16,6 +16,8 @@
 #ifndef PASS_GENERATE_MOVE_OP_H_
 #define PASS_GENERATE_MOVE_OP_H_
 
+#include <cstdint>
+#include <vector>
 #include "passes/pass_interface/pass.h"
 #include "interface/operation/opcode.h"
 #include "interface/operation/attribute.h"
@@ -55,6 +57,7 @@ private:
     static bool IsTransFormatOp(Opcode opcode);
     static bool HasConvConsumer(const Operation& op);
     static bool HasConvProducer(const Operation& op);
+    static Status CheckCopyShape(Function& function);
     Status PreCheck(Function& function) override;
     Status PostCheck(Function& function) override;
     Status RunOnFunction(Function& function) override;

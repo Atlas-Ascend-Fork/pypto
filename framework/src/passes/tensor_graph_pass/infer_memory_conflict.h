@@ -35,6 +35,9 @@ public:
 
 private:
     Status RunOnFunction(Function& function) override;
+    bool CheckRegisterCopyShape(const OperationsViewer& operations, const Operation* copyOp, const Function& function);
+    Status CheckPreRegCopyShapes(const OperationsViewer& operations, const Function& function);
+    Status CheckPostRegCopyShapes(const OperationsViewer& operations, const Function& function);
     Status Init(Function& function);
     Status ForwardPropagation(Function& function);
     Status UpdateForwardTensor(Function& function, const LogicalTensorPtr& curTensor, Operation* consumer,

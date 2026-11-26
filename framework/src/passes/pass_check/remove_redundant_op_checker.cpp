@@ -15,6 +15,7 @@
 
 #include "remove_redundant_op_checker.h"
 #include "passes/pass_log/pass_log.h"
+#include "passes/pass_utils/pass_attr_defs.h"
 #include "passes/pass_utils/pass_utils.h"
 #include "tilefwk/error_code.h"
 #include "tilefwk/tilefwk_op.h"
@@ -223,6 +224,9 @@ Status RemoveRedundantOpChecker::PostCheckAssemble(Function& function, const Ope
 
 Status RemoveRedundantOpChecker::PostCheckView(const Operation& op)
 {
+    if (op.GetBoolAttribute(SKIP_REMOVE_REDUNDANT_OP_VIEW_CHECK_ATTR)) {
+        return SUCCESS;
+    }
     auto viewIn = op.iOperand.front();
     auto viewOut = op.oOperand.front();
     auto viewOpAttribute = dynamic_cast<ViewOpAttribute*>(op.GetOpAttribute().get());

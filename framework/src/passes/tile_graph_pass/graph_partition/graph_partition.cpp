@@ -65,10 +65,36 @@ Status RunOspPartition(Function& function, const std::string& partitionMode)
     return SUCCESS;
 }
 
+Status CheckContract(Function& function)
+{
+    for (const auto& op : function.Operations()) {
+        if (op.GetOpcode() != Opcode::OP_CONTRACT) {
+            continue;
+        }
+        for (const auto& output : op.GetOOperands()) {
+            if (output == nullptr) {
+                continue;
+            }
+            for (const auto& consumer : output->GetConsumers()) {
+                if (consumer == nullptr || consumer->GetOpcode() != Opcode::OP_CONTRACT) {
+                    continue;
+                }
+                APASS_LOG_ERROR_F(Elements::Operation, "GraphPartition found consecutive contract ops [%d] and [%d].%s",
+                                  op.GetOpMagic(), consumer->GetOpMagic(), GetFormatBacktrace(op).c_str());
+                return FAILED;
+            }
+        }
+    }
+    return SUCCESS;
+}
+
 } // namespace
 
 Status GraphPartition::RunOnFunction(Function& function)
 {
+    if (CheckContract(function) != SUCCESS) {
+        return FAILED;
+    }
     const std::string partitionMode = function.paramConfigs_.sgPartitionAlgorithm;
 
     if (partitionMode == "Iso") {
