@@ -68,4 +68,4 @@ def batch_row_plan(
     return  # KERNEL_STATUS_OK
 ```
 
-完整示例参见[元数据规划算子快速入门（AI CPU）](../../../guide/quick_start/pro/metadata_aicpu.md)。
+完整示例参见[Metadata算子快速入门（AI CPU）](../../../guide/quick_start/pro/metadata_aicpu.md)。

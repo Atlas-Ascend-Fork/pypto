@@ -11,11 +11,11 @@ Error async task report, device_id:1, stream_id:xxx, task_id:xxx, retcode:0x...
 
 ## 可能原因
 
-- Kernel状态ABI返回非零：函数体中的早退`return 1`表示KERNEL_STATUS_PARAM_INVALID，AI CPU运行时将任务标记为失败，Host在同步时观察到错误。常见触发条件是Kernel内的参数校验分支命中（如行数、核数超出合法范围）。
-- 输入数据内容使Kernel走入失败分支（Device上的shape类数据与Host预期不一致）。
+- Kernel返回值非零：函数体中的`return 1`表示KERNEL_STATUS_PARAM_INVALID，AI CPU运行时将任务标记为失败，要等Host同步时才报错。常见触发条件是Kernel内的参数校验分支命中（如行数、核数超出合法范围）。
+- 输入数据不满足Kernel的参数校验条件，Kernel返回失败状态（Device上的shape类数据与Host预期不一致）。
 
 ## 处理步骤
 
 1. 核对Kernel函数体中所有`return 1`分支的触发条件，确认Host侧传入的Scalar参数与Tensor内容满足约束。
-2. 失败任务会污染发起进程的设备上下文：同一进程内后续Device操作可能持续报错。验证失败路径时使用子进程执行，避免影响主测试进程。
-3. 需要定位具体失败分支时，将可疑中间值写入输出Tensor的保留字（调试用），或在子进程中缩小输入规模复现。
+2. 失败任务会污染发起进程的设备上下文：同一进程内后续Device操作可能持续报错。验证失败路径时，建议单独启动一个子进程运行，该子进程退出后设备上下文随之销毁，不会影响主测试进程。
+3. 需要定位具体校验分支时，将可疑中间值写入输出Tensor的保留字（调试用），或在子进程中缩小输入规模复现。

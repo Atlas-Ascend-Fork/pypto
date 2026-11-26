@@ -32,14 +32,14 @@ PyPTO Pro Kernel可以接入算子工程的离线构建流程，生成随算子�
 └── CMakeLists.txt
 ```
 
-| 文件或目录 | 作用 |
-| --- | --- |
-| `${op_name}_def.cpp` | 定义算子的输入、输出、属性和数据类型。 |
-| `${op_name}_infershape.cpp` | 推导输出shape和数据类型。 |
-| `${op_name}_tiling.cpp` | 计算TilingData、TilingKey、BlockDim和Workspace。 |
-| `${op_file}.py` | 实现Device侧Kernel。 |
-| `test_aclnn_${op_name}.cpp` | 通过aclnn接口调用并验证算子。 |
-| `op_graph` | 保存图模式所需的Graph Infer和算子原型注册等内容；仅使用aclnn时不需要。 |
+| 文件或目录                    | 作用                                                                   |
+| ----------------------------- | ---------------------------------------------------------------------- |
+| `${op_name}_def.cpp`        | 定义算子的输入、输出、属性和数据类型。                                 |
+| `${op_name}_infershape.cpp` | 推导输出shape和数据类型。                                              |
+| `${op_name}_tiling.cpp`     | 计算TilingData、TilingKey、BlockDim和Workspace。                       |
+| `${op_file}.py`             | 实现Device侧Kernel。                                                   |
+| `test_aclnn_${op_name}.cpp` | 通过aclnn接口调用并验证算子。                                          |
+| `op_graph`                  | 保存图模式所需的Graph Infer和算子原型注册等内容；仅使用aclnn时不需要。 |
 
 ## 使用PyPTO Pro实现Kernel
 
@@ -152,10 +152,9 @@ compiled = torch.compile(model, backend=npugraph_ex.get_npu_backend(compiler_con
 以及SuperKernel优化前后的节点变化。部分图后端在再次编译失败后会继续运行普通binary；
 单独的精度通过或图级开关开启不能证明静态编译或融合已生效。
 
-## AI CPU Kernel离线交付 <a id="aicpu-kernel离线交付"></a>
+## AI CPU Kernel离线编译 <a id="aicpu-kernel离线编译"></a>
 
-mode="aicpu_kernel"的Kernel走独立的离线交付链路，产物与手写AI CPU算子（CpuKernel）完全同构，
-合入ops-transformer风格的自定义算子包：
+AI CPU Kernel采用独立的离线编译流程，编译过程会先通过codegen机制生成运行在AI CPU上的.cpp/.h和算子json文件，算子代码合入ops-transformer仓后，通过ops-transformer仓的编译工具链完成离线编译打包，整体流程如下：
 
 1. 算子工程CMake在配置阶段调用PyPTO提供的AI CPU代码生成入口
    （`pypto_pro/runtime/opc/pypto_aicpu_codegen_cli.py`，由`enable_pypto_aicpu_kernel`触发）：
@@ -164,23 +163,19 @@ mode="aicpu_kernel"的Kernel走独立的离线交付链路，产物与手写AI C
    python pypto_aicpu_codegen_cli.py --py-file <op>.py --out-dir <gen> \
        --op-file <op_file> --soc ascend950 [--arch 3510] [--op-type <T>]
    ```
-
 2. 生成三类产物：
+
    - Args头文件：扁平参数结构，Host与Device共用；
    - 适配TU：`REGISTER_CPU_KERNEL`形态的CpuKernel适配代码（`RunCpuKernel`入口），
      内部包裹与JIT fast-launch同源的裸函数体；
    - opInfo json：`functionName`为`RunCpuKernel`、`kernelSo`指向目标库的算子注册项。
 3. 编译、链接（`--whole-archive`合入`libtransformer_aicpu_kernels.so`）、json合并
-   （`cust_aicpu_kernel.json`）与安装全部复用算子工程既有的AI CPU自定义包链路，
-   与手写AI CPU算子一致。
+   （`cust_aicpu_kernel.json`）与安装全部复用算子工程既有的AI CPU自定义包链路。
 
 约束：
 
-- 离线交付的AI CPU Kernel参数仅支持Tensor与指针类（运行时None按空指针打包，Kernel体内用
-  `is not None`判断在位性）；TILING、WINDOW参数无离线通道，参数校验阶段拒绝。
-- soc当前仅支持ascend950（默认arch为3510），其他soc需显式指定--arch且以工具链支持为准。
-- AI CPU Kernel不参与SuperKernel融合，离线链路不生成SK相关构造，
-  参见[SuperKernel](../advanced_programming/superkernel.md#ai-cpu-kernel与superkernel的关系)。
+- 离线交付的AI CPU Kernel参数仅支持Tensor与指针类（运行时None按空指针处理）；不支持TILING、WINDOW等参数。
+- AI CPU Kernel不参与SuperKernel融合。
 
 ## 配置CMakeLists.txt
 
