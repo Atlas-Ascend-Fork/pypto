@@ -217,7 +217,7 @@ REGISTER_OP("block.move")
         return GetNoneType();
     });
 
-// block.img2col: (dst, src, pos_m, pos_k) + geometry attrs -> NoneType
+// block.img2col: (dst, src, pos_m, pos_k, pad_top, pad_bottom, pad_left, pad_right) + geometry attrs -> NoneType
 REGISTER_OP("block.img2col")
     .set_op_category("BlockOp")
     .set_description("Block explicit-output img2col: expand one NC1HWC0/NDC1HWC0 feature-map window into an FM matrix.")
@@ -225,24 +225,26 @@ REGISTER_OP("block.img2col")
     .add_argument("src", "Source tile (conv-layout TileType, Mat memory, one NC1HWC0/NDC1HWC0 window)")
     .add_argument("pos_m", "Element offset of the first generated row in the M enumeration")
     .add_argument("pos_k", "Element offset of the first generated column in the K enumeration")
+    .add_argument("pad_top", "Top border fill, a constant or runtime integer scalar")
+    .add_argument("pad_bottom", "Bottom border fill, a constant or runtime integer scalar")
+    .add_argument("pad_left", "Left border fill, a constant or runtime integer scalar")
+    .add_argument("pad_right", "Right border fill, a constant or runtime integer scalar")
     .set_attr<int>("kernel_h")
     .set_attr<int>("kernel_w")
     .set_attr<int>("stride_h")
     .set_attr<int>("stride_w")
     .set_attr<int>("dilation_h")
     .set_attr<int>("dilation_w")
-    .set_attr<int>("pad_top")
-    .set_attr<int>("pad_bottom")
-    .set_attr<int>("pad_left")
-    .set_attr<int>("pad_right")
     .set_attr<int>("pad_value")
     .set_attr<int>("fmap_h")
     .set_attr<int>("fmap_w")
     .set_attr<int>("channel_size")
     .f_deduce_type([](const std::vector<ExprPtr>& args,
                       [[maybe_unused]] const std::vector<std::pair<std::string, std::any>>& kwargs) {
-        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 4)
-            << "The operator block.img2col requires 4 arguments (dst, src, pos_m, pos_k), but got " << args.size();
+        PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 8)
+            << "The operator block.img2col requires 8 arguments "
+               "(dst, src, pos_m, pos_k, pad_top, pad_bottom, pad_left, pad_right), but got "
+            << args.size();
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TileType>(args[0]->GetType()))
             << "block.img2col: first argument (dst) must be TileType";
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, As<TileType>(args[1]->GetType()))

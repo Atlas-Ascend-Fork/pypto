@@ -446,8 +446,10 @@ static void EmitMergedTLoad(codegen::CCECodegen& codegen, const std::string& out
     codegen.Emit("}");
 }
 
-static std::vector<std::string> GetConvLoadWindowShapeArgs(const ir::TileTypePtr& dstTileType,
-                                                           const ir::TensorTypePtr& srcTensorType)
+static std::vector<std::string> GetConvLoadWindowShapeArgs(codegen::CCECodegen& codegen,
+                                                           const ir::TileTypePtr& dstTileType,
+                                                           const ir::TensorTypePtr& srcTensorType,
+                                                           const ir::MakeTuplePtr& offsets)
 {
     const auto layout = static_cast<ir::Layout>(dstTileType->hardwareInfo_->convLayout);
     auto tileDim = [&dstTileType, &layout](size_t idx) {
@@ -466,33 +468,55 @@ static std::vector<std::string> GetConvLoadWindowShapeArgs(const ir::TileTypePtr
         return dim->value_;
     };
 
+    auto clampExtent = [&](int64_t tileExtent, size_t tensorIdx) -> std::string {
+        const std::string tileStr = std::to_string(tileExtent);
+        auto srcDim = ir::As<ir::ConstInt>(srcTensorType->shape_[tensorIdx]);
+        const auto offsetDim = ir::As<ir::ConstInt>(offsets->elements_[tensorIdx]);
+        if (srcDim != nullptr && srcDim->value_ % tileExtent == 0) {
+            return tileStr;
+        }
+        const std::string srcStr = srcDim != nullptr ? std::to_string(srcDim->value_) :
+                                                       cce::GetOperandAsCode(codegen, srcTensorType->shape_[tensorIdx]);
+        const std::string offsetStr = offsetDim != nullptr ?
+                                          std::to_string(offsetDim->value_) :
+                                          cce::GetOperandAsCode(codegen, offsets->elements_[tensorIdx]);
+        const std::string remaining = "(" + srcStr + " - " + offsetStr + ")";
+        return "(" + tileStr + " < " + remaining + " ? " + tileStr + " : " + remaining + ")";
+    };
+
+    std::vector<std::string> windowShape;
     switch (layout) {
         case ir::Layout::NC1HWC0:
-            // [N, C1, H, W, C0] -> NCHW [N, C1*C0, H, W]
-            return {std::to_string(tileDim(0)), std::to_string(tileDim(1) * tileDim(4)), std::to_string(tileDim(2)),
-                    std::to_string(tileDim(3))};
+            // [N, C1, H, W, C0] -> NCHW [N, C1*C0, H, W]: fmap window, cin clamped
+            windowShape = {std::to_string(tileDim(0)), clampExtent(tileDim(1) * tileDim(4), 1),
+                           std::to_string(tileDim(2)), std::to_string(tileDim(3))};
+            break;
         case ir::Layout::NDC1HWC0:
-            // [N, D, C1, H, W, C0] -> NCDHW [N, C1*C0, D, H, W]
-            return {std::to_string(tileDim(0)), std::to_string(tileDim(2) * tileDim(5)), std::to_string(tileDim(1)),
-                    std::to_string(tileDim(3)), std::to_string(tileDim(4))};
+            // [N, D, C1, H, W, C0] -> NCDHW [N, C1*C0, D, H, W]: fmap window, cin clamped
+            windowShape = {std::to_string(tileDim(0)), clampExtent(tileDim(2) * tileDim(5), 1),
+                           std::to_string(tileDim(1)), std::to_string(tileDim(3)), std::to_string(tileDim(4))};
+            break;
         case ir::Layout::FRACTAL_Z: {
-            // [C1HW, N/16, 16, C0] over NCHW weight [Cout, Cin, Kh, Kw]
+            // [C1HW, N/16, 16, C0] over NCHW weight [Cout, Cin, Kh, Kw]: cin and cout clamped
             const int64_t kh = tensorDim(2);
             const int64_t kw = tensorDim(3);
-            return {std::to_string(tileDim(1) * tileDim(2)), std::to_string(tileDim(0) / (kh * kw) * tileDim(3)),
-                    std::to_string(kh), std::to_string(kw)};
+            windowShape = {clampExtent(tileDim(1) * tileDim(2), 0), clampExtent(tileDim(0) / (kh * kw) * tileDim(3), 1),
+                           std::to_string(kh), std::to_string(kw)};
+            break;
         }
         case ir::Layout::FRACTAL_Z_3D: {
-            // [C1DHW, N/16, 16, C0] over NCDHW weight [Cout, Cin, Kd, Kh, Kw]
+            // [C1DHW, N/16, 16, C0] over NCDHW weight [Cout, Cin, Kd, Kh, Kw]: cin and cout clamped
             const int64_t kh = tensorDim(3);
             const int64_t kw = tensorDim(4);
-            return {std::to_string(tileDim(1) * tileDim(2)), std::to_string(tileDim(0) / (kh * kw) * tileDim(3)), "1",
-                    std::to_string(kh), std::to_string(kw)};
+            windowShape = {clampExtent(tileDim(1) * tileDim(2), 0), clampExtent(tileDim(0) / (kh * kw) * tileDim(3), 1),
+                           "1", std::to_string(kh), std::to_string(kw)};
+            break;
         }
         default:
             INTERNAL_CHECK(false) << "block.load: unexpected conv layout " << ir::EnumToString(layout);
             return {};
     }
+    return windowShape;
 }
 
 // ============================================================================
@@ -530,7 +554,8 @@ static std::string MakeConvLoadCodegenCCE(codegen::CCECodegen& codegen, const ir
     const std::string gt = "__conv_gt" + std::to_string(codegen.GetTileOffsetCounter());
     const std::string shapeType = isConv3d ? "pto::Shape<-1, -1, -1, -1, -1>" : "pto::Shape<1, -1, -1, -1, -1>";
     const std::string strideType = isConv3d ? "pto::Stride<-1, -1, -1, -1, -1>" : "pto::Stride<1, -1, -1, -1, -1>";
-    const std::vector<std::string> windowShape = GetConvLoadWindowShapeArgs(dstTileType, srcTensorType);
+    const std::vector<std::string> windowShape = GetConvLoadWindowShapeArgs(codegen, dstTileType, srcTensorType,
+                                                                            offsets);
     std::string shapeArgs = windowShape[0];
     std::string strideArgs = strides[0];
     for (size_t i = 1; i < srcShapeSize; ++i) {
@@ -1048,13 +1073,17 @@ static std::string MakeBlockOutMoveCodegenCCE(const ir::CallPtr& op, codegen::Co
 }
 
 // ============================================================================
-// block.img2col  -  args = [dst, src, pos_m, pos_k] + geometry kwargs
+// block.img2col  -  args = [dst, src, pos_m, pos_k, pad_top, pad_bottom, pad_left, pad_right]
+//                    + geometry kwargs (kernel/stride/dilation/pad_value/fmap/channel)
+// The padding entries are operands, so runtime scalars reach the fmatrix pad
+// registers; constants fold to literals through the same operand path.
 // ============================================================================
 static std::string MakeBlockOutImg2ColCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegen_base)
 {
     auto& codegen = dynamic_cast<codegen::CCECodegen&>(codegen_base);
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 4)
-        << "block.img2col: expected 4 args (dst, src, pos_m, pos_k), got " << op->args_.size();
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 8)
+        << "block.img2col: expected 8 args (dst, src, pos_m, pos_k, pad_top, pad_bottom, pad_left, pad_right), got "
+        << op->args_.size();
 
     auto dst_tile_type = ir::As<ir::TileType>(op->args_[0]->GetType());
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dst_tile_type != nullptr) << "block.img2col: expected TileType dst";
@@ -1106,10 +1135,6 @@ static std::string MakeBlockOutImg2ColCodegenCCE(const ir::CallPtr& op, codegen:
     const int64_t stride_w = op->GetKwarg<int>("stride_w");
     const int64_t dilation_h = op->GetKwarg<int>("dilation_h");
     const int64_t dilation_w = op->GetKwarg<int>("dilation_w");
-    const int64_t pad_top = op->GetKwarg<int>("pad_top");
-    const int64_t pad_bottom = op->GetKwarg<int>("pad_bottom");
-    const int64_t pad_left = op->GetKwarg<int>("pad_left");
-    const int64_t pad_right = op->GetKwarg<int>("pad_right");
     const int64_t pad_value = op->GetKwarg<int>("pad_value");
     const int64_t fmap_h = op->GetKwarg<int>("fmap_h");
     const int64_t fmap_w = op->GetKwarg<int>("fmap_w");
@@ -1132,6 +1157,12 @@ static std::string MakeBlockOutImg2ColCodegenCCE(const ir::CallPtr& op, codegen:
     const std::string src = cce::GetOperandAsCode(codegen, op->args_[1]);
     const std::string pos_m = cce::GetOperandAsCode(codegen, op->args_[2]);
     const std::string pos_k = cce::GetOperandAsCode(codegen, op->args_[3]);
+    // padding rides as operands: constants fold to literals, runtime scalars
+    // stay expressions that the kernel evaluates before packing the registers.
+    const std::string pad_top = cce::GetOperandAsCode(codegen, op->args_[4]);
+    const std::string pad_bottom = cce::GetOperandAsCode(codegen, op->args_[5]);
+    const std::string pad_left = cce::GetOperandAsCode(codegen, op->args_[6]);
+    const std::string pad_right = cce::GetOperandAsCode(codegen, op->args_[7]);
 
     const std::string ctype = src_tile_type->dtype_.ToCTypeString();
     int64_t buffer_elements = 1;
@@ -1158,8 +1189,10 @@ static std::string MakeBlockOutImg2ColCodegenCCE(const ir::CallPtr& op, codegen:
     codegen.Emit(dst_type_name + " " + dst_var + "(" + ValidRows(dst) + ", " + ValidCols(dst) + ");");
 
     // pto padList order is {left, right, top, bottom} (fmatrix register packing).
-    codegen.Emit("uint8_t " + pad_list + "[4] = {" + std::to_string(pad_left) + ", " + std::to_string(pad_right) +
-                 ", " + std::to_string(pad_top) + ", " + std::to_string(pad_bottom) + "};");
+    // Each entry is cast from the operand expression: constants fold to literals,
+    // runtime scalars are evaluated in the kernel before the registers are packed.
+    codegen.Emit("uint8_t " + pad_list + "[4] = {static_cast<uint8_t>(" + pad_left + "), static_cast<uint8_t>(" +
+                 pad_right + "), static_cast<uint8_t>(" + pad_top + "), static_cast<uint8_t>(" + pad_bottom + ")};");
     codegen.Emit(src_var + ".SetPadListArray(" + pad_list + ");");
     codegen.Emit(src_var + ".SetFilterH(" + std::to_string(kernel_h) + ");");
     codegen.Emit(src_var + ".SetFilterW(" + std::to_string(kernel_w) + ");");

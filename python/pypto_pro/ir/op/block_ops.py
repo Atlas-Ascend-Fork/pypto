@@ -1168,25 +1168,53 @@ def _require_config_ints(
 
 @dataclass
 class Img2ColConfig:
-    """Compile-time window geometry for ``pl.img2col``.
+    """Window geometry for ``pl.img2col``.
 
-    kernel/stride/dilation describe the convolution window; padding and
-    pad_value describe the feature-map border fill.
+    kernel/stride/dilation describe the convolution window and stay compile-time
+    constants; padding entries are constant ints or runtime integer scalars, and
+    pad_value describes the feature-map border fill.
     """
 
     kernel: Sequence[int]
     stride: Sequence[int]
     dilation: Sequence[int]
-    padding: Sequence[int]
+    padding: Sequence["int | Expr"]
     pad_value: int = 0
 
     def __post_init__(self):
         self.kernel = _require_config_ints(self.kernel, "kernel", 2, 1, _IMG2COL_MAX_FILTER)
         self.stride = _require_config_ints(self.stride, "stride", 2, 1, _IMG2COL_MAX_STRIDE_DILATION)
         self.dilation = _require_config_ints(self.dilation, "dilation", 2, 1, _IMG2COL_MAX_STRIDE_DILATION)
-        self.padding = _require_config_ints(self.padding, "padding", 4, 0, _IMG2COL_MAX_PAD)
+        # padding: 4 entries, each a constant int in [0, 255] or a runtime integer
+        # scalar. Constants fold to Python ints (range-checked against the img2col
+        # hardware register width); runtime expressions stay expressions and are
+        # only checked to be integer scalars — their values reach the hardware
+        # registers at run time, so the [0, 255] range cannot be enforced here.
+        if isinstance(self.padding, (str, bytes)) or not isinstance(self.padding, (list, tuple)):
+            raise InvalidType(
+                f"Img2ColConfig padding must be a list of 4 integers, got {self.padding!r}."
+            )
+        if len(self.padding) != 4:
+            raise InvalidArgument(
+                f"Img2ColConfig padding must contain exactly 4 elements, got {len(self.padding)} ({self.padding!r})."
+            )
+        self.padding = tuple(
+            _require_padding_element(element, f"Img2ColConfig padding[{index}]")
+            for index, element in enumerate(self.padding)
+        )
         if isinstance(self.pad_value, bool) or not isinstance(self.pad_value, int):
             raise InvalidType(f"Img2ColConfig pad_value must be an integer, got {self.pad_value!r}.")
+
+
+def _require_padding_element(element: Any, subject: str) -> "int | Expr":
+    """One padding entry: a constant int in ``[0, 255]`` or a runtime integer scalar."""
+    if isinstance(element, bool) or not isinstance(element, (int, float, Expr)):
+        raise InvalidType(
+            f"{subject} must contain integers, got {element!r} ({type(element).__name__})."
+        )
+    expr = element if isinstance(element, Expr) else _normalize_expr(element)
+    constant = require_int(expr, subject=subject, lower_bound=0, upper_bound=_IMG2COL_MAX_PAD)
+    return constant if constant is not None else expr
 
 
 def _img2col_out_extent(
@@ -1211,7 +1239,9 @@ def _ir_img2col(
 
     dst (Left) receives [align16(H*W), C1*Kh*Kw*C0]; src is a conv-layout
     TileType holding exactly one window. ``pos_m``/``pos_k`` name the
-    window/K enumeration offsets of the generated block.
+    window/K enumeration offsets of the generated block, and the four
+    config ``padding`` entries ride as operands after them — constants or
+    runtime integer scalars feeding the fmatrix pad registers.
     """
     if not isinstance(config, Img2ColConfig):
         raise InvalidType(f"img2col: config must be a pl.Img2ColConfig, got {type(config).__name__}")
@@ -1252,7 +1282,12 @@ def _ir_img2col(
     kh, kw = config.kernel
     sh, sw = config.stride
     dh, dw = config.dilation
-    pad_top, pad_bottom, pad_left, pad_right = config.padding
+    # Re-validated on the op build path (the config also checks on construction);
+    # runtime scalars survive as operands while constants fold back to ints.
+    pads = tuple(
+        _require_padding_element(element, f"img2col: padding[{index}]")
+        for index, element in enumerate(config.padding)
+    )
 
     src_shape = _static_shape_ints(src_tile.type.shape, "img2col: src")
     expected_rank = 5 if src_layout == Layout.NC1HWC0 else 6
@@ -1292,7 +1327,9 @@ def _ir_img2col(
 
     return _ir_core.create_op_call(
         block_ir_op("img2col"),
-        [dst_tile, src_tile, pos_m, pos_k],
+        # padding rides as operands (like pos_m/pos_k): constants fold to
+        # ConstInt, runtime scalars reach the fmatrix pad registers at run time.
+        [dst_tile, src_tile, pos_m, pos_k, *(_normalize_expr(pad) for pad in pads)],
         {
             "kernel_h": kh,
             "kernel_w": kw,
@@ -1300,17 +1337,13 @@ def _ir_img2col(
             "stride_w": sw,
             "dilation_h": dh,
             "dilation_w": dw,
-            "pad_top": pad_top,
-            "pad_bottom": pad_bottom,
-            "pad_left": pad_left,
-            "pad_right": pad_right,
             "pad_value": config.pad_value,
             "fmap_h": fmap_h,
             "fmap_w": fmap_w,
             "channel_size": channel_size,
         },
         span or _span(),
-        )
+    )
 
 
 def _normalize_2d_sequence(value: Any, parameter: str, span: Span) -> tuple[Expr, Expr]:
@@ -5729,11 +5762,12 @@ def _build_img2col(self, *args, span: Span, **kwargs):
 
 @op_impl_ast("Img2ColConfig")
 def _parse_img2col_config(self, call: ast.Call):
-    geometry = ("kernel", "stride", "dilation", "padding")
+    geometry = ("kernel", "stride", "dilation")
+    lists = ("kernel", "stride", "dilation", "padding")
     kwargs = {}
     for keyword in call.keywords:
         node = keyword.value
-        if keyword.arg in geometry and isinstance(node, (ast.List, ast.Tuple)):
+        if keyword.arg in lists and isinstance(node, (ast.List, ast.Tuple)):
             kwargs[keyword.arg] = [self.parse_expression(element) for element in node.elts]
         else:
             kwargs[keyword.arg] = self.parse_expression(node)
@@ -5749,12 +5783,20 @@ def _parse_img2col_config(self, call: ast.Call):
                     _descriptor_integer(element, f"{key}[{index}]")
                     for index, element in enumerate(elements)
                 ]
+            elif key == "padding":
+                # padding accepts runtime integer scalars: keep the parsed
+                # expressions and let Img2ColConfig fold what is constant.
+                if not isinstance(elements, (list, tuple)):
+                    raise InvalidType(
+                        f"Img2ColConfig padding must be a list of 4 integers, got {value!r}."
+                    )
+                kwargs[key] = list(elements)
             else:
                 kwargs[key] = _descriptor_integer(value, key)
     except InvalidType as error:
         error.hint = (
-            "Img2ColConfig geometry must contain compile-time constants; the window is "
-            "fixed while parsing and cannot depend on runtime values."
+            "Img2ColConfig kernel/stride/dilation must contain compile-time integer "
+            "constants; padding accepts compile-time constants or runtime integer scalars."
         )
         raise
     return Img2ColConfig(**kwargs)

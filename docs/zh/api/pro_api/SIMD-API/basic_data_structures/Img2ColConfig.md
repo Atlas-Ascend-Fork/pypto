@@ -14,7 +14,9 @@
 
 ## 功能说明
 
-[pypto_pro.language.img2col](../memory_data_movement/img2col.md)使用的卷积窗口几何描述，编译期常量配置类。描述卷积核窗口（kernel）、滑动步长（stride）、膨胀系数（dilation）、边界填充（padding）与越界填充值（pad_value），全部字段须为编译期常量，构造时即完成校验并固化进img2col调用。
+[pypto_pro.language.img2col](../memory_data_movement/img2col.md)使用的卷积窗口几何描述，编译期常量配置类。描述卷积核窗口（kernel）、滑动步长（stride）、膨胀系数（dilation）、边界填充（padding）与越界填充值（pad_value）。
+
+kernel、stride、dilation、pad_value须为编译期常量，构造时即完成校验并固化进img2col调用；padding仍为长度4的列表，但元素不要求编译期常量——每个元素可为非负整数常量或运行时整数标量（如循环变量、kernel标量入参），运行时取值在算子执行时写入img2col硬件fmatrix padding寄存器。
 
 通道深度不在本配置中：img2col读取的``channelSize``由源Tile的``C1 × C0``自动推导（见[img2col](../memory_data_movement/img2col.md)约束说明）。
 
@@ -38,13 +40,14 @@ pypto_pro.language.Img2ColConfig(
 | kernel | 输入 | 卷积核高宽``[Kh, Kw]``，长度为2的列表，范围[1, 255]（img2col硬件寄存器位宽）。 |
 | stride | 输入 | 高宽方向滑动步长``[strideH, strideW]``，长度为2的列表，范围[1, 63]。 |
 | dilation | 输入 | 高宽方向膨胀系数``[dilationH, dilationW]``，长度为2的列表，范围[1, 63]。 |
-| padding | 输入 | 边界填充``[padTop, padBottom, padLeft, padRight]``，上、下、左、右顺序，长度为4的列表，范围[0, 255]。 |
+| padding | 输入 | 边界填充``[padTop, padBottom, padLeft, padRight]``，上、下、左、右顺序，长度为4的列表。元素为非负整数常量（范围[0, 255]）或运行时整数标量，两种类型可在同一列表中混用。 |
 | pad_value | 输入 | 越界填充值，整数，默认0。带padding时，越出特征图边界的窗口位置填充该值。 |
 
 ## 约束说明
 
-- 全部字段必须为编译期常量：构造发生在AST解析期，不允许依赖运行时值（如tensor shape、循环变量）。
-- 各字段长度必须与要求一致（kernel/stride/dilation为2、padding为4），元素必须为整数，且逐项满足上表范围。
+- kernel、stride、dilation、pad_value必须为编译期常量：构造发生在AST解析期，不允许依赖运行时值（如tensor shape、循环变量）。
+- kernel/stride/dilation各字段长度必须与要求一致（均为2）、padding长度必须为4，元素必须为整数，kernel/stride/dilation及常量形式的padding逐项满足上表范围。
+- padding元素可为运行时整数标量：运行时取值无法在编译期做范围校验，须由调用方保证运行时落在[0, 255]内（img2col硬件寄存器位宽），否则按硬件寄存器位宽截断。
 - ``padding``顺序为上、下、左、右（用户语义）；img2col生成代码内部按硬件fmatrix寄存器的``{left, right, top, bottom}``顺序打包，无需用户关心。
 - ``pad_value``为整数即可，不做类型收窄；填充行为按源Tile的dtype写入。
 - 窗口几何决定目的矩阵形状（``M = align16(Ho × Wo)``、``K = C1 × Kh × Kw × C0``），推导公式见[img2col](../memory_data_movement/img2col.md)功能说明。
@@ -69,4 +72,11 @@ cfg = pl.Img2ColConfig(
     kernel=[5, 5], stride=[2, 2], dilation=[2, 2],
     padding=[2, 2, 2, 2], pad_value=0,
 )
+
+# 运行时padding：padding来自循环变量（或其他运行时整数标量），常量与运行时标量可混用
+for pad in pl.range(0, 3, 1):
+    cfg = pl.Img2ColConfig(
+        kernel=[3, 3], stride=[1, 1], dilation=[1, 1],
+        padding=[pad, pad, 1, 1],
+    )
 ```

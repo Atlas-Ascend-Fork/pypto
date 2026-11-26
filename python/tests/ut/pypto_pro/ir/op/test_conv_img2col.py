@@ -246,6 +246,63 @@ def test_img2col_config_rejects_out_of_range_padding():
                          padding=[256, 1, 1, 1])
 
 
+def test_img2col_config_rejects_wrong_padding_length():
+    with pytest.raises(InvalidArgument, match="exactly 4 elements"):
+        pl.Img2ColConfig(kernel=[3, 3], stride=[1, 1], dilation=[1, 1],
+                         padding=[1, 1, 1])
+
+
+def test_img2col_config_rejects_non_integer_padding():
+    with pytest.raises(InvalidType):
+        pl.Img2ColConfig(kernel=[3, 3], stride=[1, 1], dilation=[1, 1],
+                         padding=[1.5, 1, 1, 1])
+
+
+# ---------------------------------------------------------------------------
+# runtime padding
+# ---------------------------------------------------------------------------
+
+
+def test_img2col_runtime_padding_parses():
+    @pl.jit()
+    def kernel(x: pl.Tensor[[1, 16, 8, 8], pl.DT_FP16]):
+        with pl.section_cube():
+            window = pl.make_tile(_l1_2d_type(), addr=0x0)
+            a = pl.make_tile(_l0a_type(), addr=0x0)
+            pl.load(window, x, [0, 0, 0, 0])
+            for pad in pl.range(0, 2, 1):
+                # Runtime scalars are legal padding entries alongside constants.
+                cfg = pl.Img2ColConfig(
+                    kernel=[3, 3], stride=[1, 1], dilation=[1, 1],
+                    padding=[pad, pad, 1, 1],
+                )
+                pl.img2col(a, window, config=cfg, pos_m=0, pos_k=0)
+
+    text = str(_parse(kernel))
+    assert "block.img2col" in text
+    # Geometry attrs stay; padding no longer rides as compile-time kwargs.
+    assert "kernel_h=3" in text and "kernel_w=3" in text
+    assert "pad_top=" not in text
+
+
+def test_img2col_runtime_padding_must_be_integer_scalar():
+    @pl.jit()
+    def kernel(x: pl.Tensor[[1, 16, 8, 8], pl.DT_FP16]):
+        with pl.section_cube():
+            window = pl.make_tile(_l1_2d_type(), addr=0x0)
+            a = pl.make_tile(_l0a_type(), addr=0x0)
+            pl.load(window, x, [0, 0, 0, 0])
+            # A tile is not an integer scalar, runtime or otherwise.
+            cfg = pl.Img2ColConfig(
+                kernel=[3, 3], stride=[1, 1], dilation=[1, 1],
+                padding=[window, window, 1, 1],
+            )
+            pl.img2col(a, window, config=cfg, pos_m=0, pos_k=0)
+
+    with pytest.raises(InvalidType, match="padding"):
+        _parse(kernel)
+
+
 def test_img2col_config_rejects_wrong_length():
     with pytest.raises(InvalidArgument, match="exactly 2 elements"):
         pl.Img2ColConfig(kernel=[3], stride=[1, 1], dilation=[1, 1],
