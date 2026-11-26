@@ -81,6 +81,33 @@ std::vector<int64_t> EncodeTile(const DistTile& tile)
             tile.col[2], tile.rank[0], tile.rank[1], tile.rank[2], tile.rankId};
 }
 
+void AppendScopeTileAttrs(const npu::tile_fwk::ConfigScopePtr& scope,
+                          std::vector<std::pair<std::string, std::any>>& attrs)
+{
+    if (!scope) {
+        return;
+    }
+    const auto ts = scope->GenerateTileShape();
+    if (!ts.GetVecTile().tile.empty()) {
+        attrs.emplace_back("_scope_vec_tile", ts.GetVecTile().tile);
+    }
+    if (ts.GetCubeTile().valid()) {
+        attrs.emplace_back("_scope_cube_tile", EncodeTile(ts.GetCubeTile()));
+    }
+    if (ts.GetConvTile().valid()) {
+        attrs.emplace_back("_scope_conv_tile", EncodeTile(ts.GetConvTile()));
+    }
+    if (ts.GetConvBpInputTile().valid()) {
+        attrs.emplace_back("_scope_convbp_input_tile", EncodeTile(ts.GetConvBpInputTile()));
+    }
+    if (ts.GetConvBpFilterTile().valid()) {
+        attrs.emplace_back("_scope_convbp_filter_tile", EncodeTile(ts.GetConvBpFilterTile()));
+    }
+    if (ts.GetDistTile().valid()) {
+        attrs.emplace_back("_scope_dist_tile", EncodeTile(ts.GetDistTile()));
+    }
+}
+
 std::string EncodeString(const std::string& value, bool quoted = false)
 {
     static const std::regex ident("[A-Za-z_][A-Za-z0-9_]*");
@@ -282,6 +309,19 @@ void IRTextDumper::PrintAttrValue(const std::string& key, const std::any& value)
     }
 }
 
+void IRTextDumper::PrintScopeTileAttrs(const std::string& key, const std::any& scopeValue)
+{
+    std::vector<std::pair<std::string, std::any>> attrs;
+    AppendScopeTileAttrs(std::any_cast<npu::tile_fwk::ConfigScopePtr>(scopeValue), attrs);
+    if (attrs.empty()) {
+        PrintAttr(key, std::string("Unsupported"));
+        return;
+    }
+    for (auto& attr : attrs) {
+        PrintAttr(attr.first, std::move(attr.second));
+    }
+}
+
 void IRTextDumper::PrintAttr(const std::string& key, const std::any& value)
 {
     stream_ << " " << IR_PUN_ATTRNAME << key << IR_PUN_LPAREN;
@@ -401,10 +441,16 @@ std::map<std::string, std::any> IRTextDumper::GetTensorAttrDict(const VarPtr& va
 
 std::map<std::string, std::any> IRTextDumper::GetFunctionAttrDict(const FunctionPtr& func)
 {
-    return {
+    std::map<std::string, std::any> attrs = {
         {IR_KW_TYPE, FunctionTypeToString(func->funcType_)},
         {IR_KW_ENTRY, func->entry_},
     };
+    std::vector<std::pair<std::string, std::any>> tileAttrs;
+    AppendScopeTileAttrs(func->GetAttr<npu::tile_fwk::ConfigScopePtr>("_config_scope"), tileAttrs);
+    for (auto& attr : tileAttrs) {
+        attrs.emplace(attr.first, std::move(attr.second));
+    }
+    return attrs;
 }
 
 } // namespace ir
