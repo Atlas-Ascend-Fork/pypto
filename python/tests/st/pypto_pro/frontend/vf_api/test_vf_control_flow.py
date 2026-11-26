@@ -75,13 +75,30 @@ VF bodies, with VF-specific restrictions: pl.range bounds in [0, 65535], no
       rejected by the SIMD VF codegen interception)
   46. a Tile assigned in a runtime if/else branch (Tile phi rejected by the
       codegen: merging Tile values is not supported in a SIMD VF body)
+  47. mixed-width integer branches merge at parse time (INT16/INT32 -> INT32,
+      INT32/UINT32 -> INT64) before the runtime-scalar-phi rejection
+  48. a scalar initialized INT64 before a for loop and reassigned from the
+      UINT16 loop variable (narrow value into a wide loop-carried slot)
+  49. a UINT16 constant body value and a UINT16 break value carried in an
+      INT64 loop slot (the break carry is xfail: the toolchain keeps the slot
+      init value instead of the break value)
+  50. a wider body expression assigned to a narrow UINT16 loop slot is
+      rejected at parse time
+  51. a nested for pair where the inner loop carries a UINT16 value in an
+      INT64 slot and the outer loop carries the inner result
+  52. nested if with mixed integer merges (inner INT32, outer INT64) before
+      the runtime-scalar-phi rejection
+  53. nested for with INT32 outer/inner slots fed by INT16/UINT16 values
+  54. an if wrapping a for whose narrow loop carry feeds the mask
+  55. a for wrapping an if with branch-local stores
 
 Requires an Ascend 950 (3510) device; skips otherwise.
 """
 
 import os
 
-from pypto_pro._errors import NotSupported
+from pypto_pro import ir
+from pypto_pro._errors import InvalidVal, NotSupported
 import pypto_pro.language as pl
 from pypto_pro.language import Vf as vf  # noqa: N813
 import pytest
@@ -3879,3 +3896,579 @@ def test_vf_nested_addr_reg_loop():
     _nested_addr_reg_kernel[None, 1](x, y)
     torch.npu.synchronize()
     torch.testing.assert_close(y.cpu(), x.cpu(), rtol=0, atol=0)
+
+
+def _walk_stmts(stmt):
+    if isinstance(stmt, ir.SeqStmts):
+        for child in stmt.stmts:
+            yield from _walk_stmts(child)
+    elif isinstance(stmt, ir.SectionStmt):
+        yield from _walk_stmts(stmt.body)
+    elif isinstance(stmt, ir.IfStmt):
+        yield stmt
+        yield from _walk_stmts(stmt.then_body)
+        yield from _walk_stmts(stmt.else_body)
+    elif isinstance(stmt, ir.ForStmt):
+        yield stmt
+        yield from _walk_stmts(stmt.body)
+    else:
+        yield stmt
+
+
+@pl.vector_function
+def _if_integer_promote_vf(src, dst, count, flag):
+    for offset in pl.range(0, count, BLOCK):
+        if flag == 0:
+            width32 = pl.const(32, pl.DT_INT16)
+        else:
+            width32 = pl.const(48, pl.DT_INT32)
+        if flag == 1:
+            width64 = pl.const(16, pl.DT_INT32)
+        else:
+            width64 = pl.const(24, pl.DT_UINT32)
+        mask32 = vf.update_mask(width32, dtype=pl.DT_FP32)
+        mask64 = vf.update_mask(width64, dtype=pl.DT_FP32)
+        reg = vf.load_align(src, offset)
+        reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask32)
+        vf.store_align(dst, reg, mask32, offset)
+        reg = vf.load_align(src, offset)
+        reg = vf.muls(reg, pl.const(2.0, pl.DT_FP32), mask64)
+        vf.store_align(dst, reg, mask64, offset)
+
+
+@pl.jit(auto_mutex=True)
+def _if_integer_promote_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+    flag: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _if_integer_promote_vf(src, dst, count, flag)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_if_integer_promotion_ir_types():
+    program, matched = _if_integer_promote_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert matched
+    vf_func = program.get_function("_if_integer_promote_vf")
+    dtypes = [
+        stmt.return_vars[0].type.dtype
+        for stmt in _walk_stmts(vf_func.body)
+        if isinstance(stmt, ir.IfStmt)
+    ]
+    assert dtypes == [ir.DataType.INT32, ir.DataType.INT64]
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_if_integer_promotion_hits_runtime_scalar_phi():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    y = torch.full((1, N), SENTINEL, device=device)
+    with pytest.raises(NotSupported, match="runtime scalar phi"):
+        _if_integer_promote_kernel[None, 1](x, y, N, 0)
+
+
+@pl.vector_function
+def _loop_carry_narrow_vf(src, dst, count):
+    total = 0
+    for offset in pl.range(0, count, BLOCK):
+        total = offset
+        width = pl.min(pl.max(total, 1), BLOCK)
+        mask = vf.update_mask(width, dtype=pl.DT_FP32)
+        reg = vf.load_align(src, offset)
+        reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+        vf.store_align(dst, reg, mask, offset)
+
+
+@pl.jit(auto_mutex=True)
+def _loop_carry_narrow_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _loop_carry_narrow_vf(src, dst, count)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_loop_carry_narrow_ir_type():
+    program, matched = _loop_carry_narrow_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert matched
+    vf_func = program.get_function("_loop_carry_narrow_vf")
+    for_stmt = next(stmt for stmt in _walk_stmts(vf_func.body) if isinstance(stmt, ir.ForStmt))
+    assert for_stmt.iter_args[0].iterVar.type.dtype == ir.DataType.INT64
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_loop_carry_narrow_runs_on_device():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    y = torch.full((1, N), SENTINEL, device=device)
+    _loop_carry_narrow_kernel[None, 1](x, y, N)
+    torch.npu.synchronize()
+    expected = torch.full((1, N), SENTINEL)
+    expected[:, 0] = x[0, 0].cpu() + 1.0
+    expected[:, BLOCK:] = x[:, BLOCK:].cpu() + 1.0
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+
+
+@pl.vector_function
+def _loop_carry_const_vf(src, dst, count):
+    total = 0
+    for _ in pl.range(0, 2):
+        total = pl.const(9, pl.DT_UINT16)
+    width = pl.min(pl.max(total, 1), BLOCK)
+    mask = vf.update_mask(width, dtype=pl.DT_FP32)
+    reg = vf.load_align(src, 0)
+    reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+    vf.store_align(dst, reg, mask, 0)
+
+
+@pl.jit(auto_mutex=True)
+def _loop_carry_const_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _loop_carry_const_vf(src, dst, count)
+        pl.store(y, dst, [0, 0])
+
+
+@pl.vector_function
+def _loop_carry_break_vf(src, dst, count):
+    total = 0
+    for offset in pl.range(0, count, BLOCK):
+        total = offset
+        if offset >= BLOCK:
+            break
+    width = pl.min(pl.max(total, 1), BLOCK)
+    mask = vf.update_mask(width, dtype=pl.DT_FP32)
+    reg = vf.load_align(src, 0)
+    reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+    vf.store_align(dst, reg, mask, 0)
+
+
+@pl.jit(auto_mutex=True)
+def _loop_carry_break_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _loop_carry_break_vf(src, dst, count)
+        pl.store(y, dst, [0, 0])
+
+
+@pl.vector_function
+def _loop_carry_wider_body_vf(src, dst, count):
+    total = pl.const(0, pl.DT_UINT16)
+    for offset in pl.range(0, count, BLOCK):
+        total = offset + 1
+    mask = vf.update_mask(pl.min(total, BLOCK), dtype=pl.DT_FP32)
+    reg = vf.load_align(src, 0)
+    reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+    vf.store_align(dst, reg, mask, 0)
+
+
+@pl.jit(auto_mutex=True)
+def _loop_carry_wider_body_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _loop_carry_wider_body_vf(src, dst, count)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_loop_carry_narrow_variants_ir_types():
+    for kernel, name in (
+        (_loop_carry_const_kernel, "_loop_carry_const_vf"),
+        (_loop_carry_break_kernel, "_loop_carry_break_vf"),
+    ):
+        program, matched = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+        assert matched
+        vf_func = program.get_function(name)
+        for_stmt = next(stmt for stmt in _walk_stmts(vf_func.body) if isinstance(stmt, ir.ForStmt))
+        assert for_stmt.iter_args[0].iterVar.type.dtype == ir.DataType.INT64
+        assert for_stmt.return_vars[0].type.dtype == ir.DataType.INT64
+        if name == "_loop_carry_break_vf":
+            break_stmt = next(stmt for stmt in _walk_stmts(vf_func.body) if isinstance(stmt, ir.BreakStmt))
+            assert break_stmt.value[0].type.dtype == ir.DataType.UINT16
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_loop_rejects_wider_body_value():
+    with pytest.raises(InvalidVal, match="Inconsistent types in control flow"):
+        _loop_carry_wider_body_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_loop_carry_const_runs_on_device():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    y = torch.full((1, N), SENTINEL, device=device)
+    _loop_carry_const_kernel[None, 1](x, y, N)
+    torch.npu.synchronize()
+    expected = torch.full((1, N), SENTINEL)
+    expected[:, :9] = x[:, :9].cpu() + 1.0
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+
+
+@pytest.mark.soc("950", "960")
+@pytest.mark.xfail(
+    strict=False,
+    reason="The VF for-loop break-carried scalar is not reflected in the loop return var on "
+    "the current toolchain: width reads the INT64 slot's init value instead of the UINT16 "
+    "break value. Kept to track the fix.",
+)
+def test_vf_loop_carry_break_runs_on_device():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    y = torch.full((1, N), SENTINEL, device=device)
+    _loop_carry_break_kernel[None, 1](x, y, N)
+    torch.npu.synchronize()
+    expected = torch.full((1, N), SENTINEL)
+    expected[:, :BLOCK] = x[:, :BLOCK].cpu() + 1.0
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+
+
+@pl.vector_function
+def _loop_carry_nested_vf(src, dst, count):
+    total = 0
+    for _ in pl.range(0, 2):
+        inner_total = 0
+        for inner in pl.range(0, 2):
+            inner_total = inner
+        total = inner_total
+    width = pl.min(total + 1, BLOCK)
+    mask = vf.update_mask(width, dtype=pl.DT_FP32)
+    reg = vf.load_align(src, 0)
+    reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+    vf.store_align(dst, reg, mask, 0)
+
+
+@pl.jit(auto_mutex=True)
+def _loop_carry_nested_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _loop_carry_nested_vf(src, dst, count)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_loop_carry_nested_ir_types():
+    program, matched = _loop_carry_nested_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert matched
+    vf_func = program.get_function("_loop_carry_nested_vf")
+    loop_types = [
+        (stmt.iter_args[0].iterVar.type.dtype, stmt.return_vars[0].type.dtype)
+        for stmt in _walk_stmts(vf_func.body)
+        if isinstance(stmt, ir.ForStmt)
+    ]
+    assert loop_types == [
+        (ir.DataType.INT64, ir.DataType.INT64),
+        (ir.DataType.INT64, ir.DataType.INT64),
+    ]
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_loop_carry_nested_runs_on_device():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    y = torch.full((1, N), SENTINEL, device=device)
+    _loop_carry_nested_kernel[None, 1](x, y, N)
+    torch.npu.synchronize()
+    expected = torch.full((1, N), SENTINEL)
+    expected[:, :2] = x[:, :2].cpu() + 1.0
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+
+
+@pl.vector_function
+def _nested_if_promote_vf(src, dst, count, flag):
+    for offset in pl.range(0, count, BLOCK):
+        active = pl.max(0, pl.min(count - offset, BLOCK))
+        if flag == 0:
+            if offset == 0:
+                width = pl.const(16, pl.DT_INT16)
+            else:
+                width = pl.const(24, pl.DT_INT32)
+        else:
+            width = pl.const(32, pl.DT_UINT32)
+        mask = vf.update_mask(pl.min(width, active), dtype=pl.DT_FP32)
+        reg = vf.load_align(src, offset)
+        reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+        vf.store_align(dst, reg, mask, offset)
+
+
+@pl.jit(auto_mutex=True)
+def _nested_if_promote_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+    flag: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _nested_if_promote_vf(src, dst, count, flag)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_nested_if_integer_promotion_ir_types():
+    program, matched = _nested_if_promote_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert matched
+    vf_func = program.get_function("_nested_if_promote_vf")
+    dtypes = [
+        stmt.return_vars[0].type.dtype
+        for stmt in _walk_stmts(vf_func.body)
+        if isinstance(stmt, ir.IfStmt)
+    ]
+    assert dtypes == [ir.DataType.INT64, ir.DataType.INT32]
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_nested_if_integer_promotion_hits_runtime_scalar_phi():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    y = torch.full((1, N), SENTINEL, device=device)
+    with pytest.raises(NotSupported, match="runtime scalar phi"):
+        _nested_if_promote_kernel[None, 1](x, y, N, 0)
+
+
+@pl.vector_function
+def _loop_carry_nested_int32_vf(src, dst, count):
+    outer = pl.const(0, pl.DT_INT32)
+    seen = pl.const(0, pl.DT_INT32)
+    for _ in pl.range(0, 2):
+        inner = pl.const(0, pl.DT_INT32)
+        for inner_i in pl.range(0, 2):
+            inner = inner_i
+        seen = inner
+        outer = pl.const(5, pl.DT_INT16)
+    width = pl.min(pl.max(outer + seen, 1), BLOCK)
+    mask = vf.update_mask(width, dtype=pl.DT_FP32)
+    reg = vf.load_align(src, 0)
+    reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+    vf.store_align(dst, reg, mask, 0)
+
+
+@pl.jit(auto_mutex=True)
+def _loop_carry_nested_int32_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _loop_carry_nested_int32_vf(src, dst, count)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_loop_carry_nested_int32_ir_types():
+    program, matched = _loop_carry_nested_int32_kernel.to_kernel_def().parse_target_program(
+        ir.SectionKind.Vector
+    )
+    assert matched
+    vf_func = program.get_function("_loop_carry_nested_int32_vf")
+    loop_types = [
+        (stmt.iter_args[0].iterVar.type.dtype, stmt.return_vars[0].type.dtype)
+        for stmt in _walk_stmts(vf_func.body)
+        if isinstance(stmt, ir.ForStmt)
+    ]
+    assert loop_types == [
+        (ir.DataType.INT32, ir.DataType.INT32),
+        (ir.DataType.INT32, ir.DataType.INT32),
+    ]
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_loop_carry_nested_int32_runs_on_device():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    y = torch.full((1, N), SENTINEL, device=device)
+    _loop_carry_nested_int32_kernel[None, 1](x, y, N)
+    torch.npu.synchronize()
+    expected = torch.full((1, N), SENTINEL)
+    expected[:, :6] = x[:, :6].cpu() + 1.0
+    torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+
+
+@pl.vector_function
+def _if_wraps_for_vf(src, dst, count, flag):
+    if flag == 0:
+        total = 0
+        for offset in pl.range(0, count, BLOCK):
+            total = offset
+        width = pl.min(total + 1, BLOCK)
+        mask = vf.update_mask(width, dtype=pl.DT_FP32)
+        reg = vf.load_align(src, 0)
+        reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+        vf.store_align(dst, reg, mask, 0)
+    else:
+        mask = vf.update_mask(32, dtype=pl.DT_FP32)
+        reg = vf.load_align(src, 0)
+        reg = vf.adds(reg, pl.const(3.0, pl.DT_FP32), mask)
+        vf.store_align(dst, reg, mask, 0)
+
+
+@pl.jit(auto_mutex=True)
+def _if_wraps_for_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+    flag: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _if_wraps_for_vf(src, dst, count, flag)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_if_wraps_for_runs_on_device():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    expected_by_flag = {
+        0: (slice(0, BLOCK), 1.0),
+        1: (slice(0, 32), 3.0),
+    }
+    for flag, (touched, delta) in expected_by_flag.items():
+        y = torch.full((1, N), SENTINEL, device=device)
+        _if_wraps_for_kernel[None, 1](x, y, N, flag)
+        torch.npu.synchronize()
+        expected = torch.full((1, N), SENTINEL)
+        expected[:, touched] = x[:, touched].cpu() + delta
+        torch.testing.assert_close(y.cpu(), expected, rtol=0, atol=0)
+
+
+@pl.vector_function
+def _for_wraps_if_vf(src, dst, count, flag):
+    for offset in pl.range(0, count, BLOCK):
+        active = pl.max(0, pl.min(count - offset, BLOCK))
+        mask = vf.update_mask(active, dtype=pl.DT_FP32)
+        reg = vf.load_align(src, offset)
+        if flag == 0:
+            reg = vf.adds(reg, pl.const(1.0, pl.DT_FP32), mask)
+            vf.store_align(dst, reg, mask, offset)
+        else:
+            reg = vf.muls(reg, pl.const(2.0, pl.DT_FP32), mask)
+            vf.store_align(dst, reg, mask, offset)
+
+
+@pl.jit(auto_mutex=True)
+def _for_wraps_if_kernel(
+    x: pl.Tensor[[1, N], pl.DT_FP32],
+    y: pl.Tensor[[1, N], pl.DT_FP32],
+    count: pl.DT_INT64,
+    flag: pl.DT_INT64,
+):
+    tile_type = pl.TileType(shape=[1, N], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        pl.load(dst, y, [0, 0])
+        _for_wraps_if_vf(src, dst, count, flag)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_for_wraps_if_runs_on_device():
+    if not _check_npu():
+        return
+    device = _device()
+    x = _input(device)
+    refs = {0: x + 1.0, 1: x * 2.0}
+    for flag, ref in refs.items():
+        y = torch.full((1, N), SENTINEL, device=device)
+        _for_wraps_if_kernel[None, 1](x, y, N, flag)
+        torch.npu.synchronize()
+        torch.testing.assert_close(y.cpu(), ref.cpu(), rtol=0, atol=0)

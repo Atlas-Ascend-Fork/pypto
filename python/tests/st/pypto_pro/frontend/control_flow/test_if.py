@@ -15,11 +15,14 @@
   3. 覆盖控制流组合：for 循环、if/elif/else 分支、with section 上下文、无值 return 提前退出。
   4. 覆盖接口组合：基础算术运算、激活/比较类运算、Tensor 与 Tile 数据搬运、section_vector/section_cube 上下文。
   5. 覆盖边界场景：常量比较、truthiness、三元表达式和深层嵌套分支。
+  6. 覆盖 if 合流整数类型提升：常量/运行时/外层变量/循环携带四种来源，
+     INT16+INT32、INT32+INT64、INT32+UINT32 三组合流方向，以及 if/elif/else 三分支。
 """
 
 import logging
 import os
 
+from pypto_pro import ir
 import pypto_pro.language as pl
 import pytest
 import torch
@@ -1414,6 +1417,132 @@ def test_if_not_in_operator():
     logging.info("test_if_not_in_operator passed! shape=%s", shape)
 
 
+# ===================================================================
+# if_integer_promotion: mixed integer branch dtypes merge to a common type
+# ===================================================================
+
+
+def _walk_stmts(stmt):
+    if isinstance(stmt, ir.SeqStmts):
+        for child in stmt.stmts:
+            yield from _walk_stmts(child)
+    elif isinstance(stmt, ir.SectionStmt):
+        yield from _walk_stmts(stmt.body)
+    elif isinstance(stmt, ir.IfStmt):
+        yield stmt
+        yield from _walk_stmts(stmt.then_body)
+        yield from _walk_stmts(stmt.else_body)
+    elif isinstance(stmt, ir.ForStmt):
+        yield from _walk_stmts(stmt.body)
+    else:
+        yield stmt
+
+
+@pl.jit()
+def if_integer_promotion_kernel(
+    flag: pl.DT_INT32,
+    s16: pl.DT_INT16,
+    s32: pl.DT_INT32,
+    u32: pl.DT_UINT32,
+    out: pl.Tensor[[9], pl.DT_INT64],
+):
+    with pl.section_vector():
+        if flag:
+            v0 = pl.const(7, pl.DT_INT16)
+        else:
+            v0 = pl.const(11, pl.DT_INT32)
+        pl.setval(out, 0, v0)
+
+        if flag:
+            v1 = pl.const(13, pl.DT_INT32)
+        else:
+            v1 = pl.const(17, pl.DT_INT64)
+        pl.setval(out, 1, v1)
+
+        if flag:
+            v2 = pl.const(19, pl.DT_INT32)
+        else:
+            v2 = pl.const(23, pl.DT_UINT32)
+        pl.setval(out, 2, v2)
+
+        v3 = pl.const(41, pl.DT_INT64)
+        if flag:
+            v3 = pl.const(43, pl.DT_INT16)
+        pl.setval(out, 3, v3)
+
+        if flag:
+            v4 = s16
+        else:
+            v4 = s32
+        pl.setval(out, 4, v4)
+
+        if flag:
+            v5 = s32
+        else:
+            v5 = u32
+        pl.setval(out, 5, v5)
+
+        v6 = s32
+        if flag:
+            v6 = s16
+        pl.setval(out, 6, v6)
+
+        total = pl.const(41, pl.DT_INT64)
+        for _ in pl.range(0, 2):
+            total = s16
+        pl.setval(out, 7, total)
+
+        if flag == 0:
+            v8 = pl.const(53, pl.DT_INT16)
+        elif flag == 1:
+            v8 = pl.const(59, pl.DT_INT32)
+        else:
+            v8 = pl.const(61, pl.DT_UINT32)
+        pl.setval(out, 8, v8)
+
+
+@pytest.mark.soc("950", "960")
+def test_if_integer_promotion_ir_types():
+    program, matched = if_integer_promotion_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    assert matched
+    func = program.get_function(if_integer_promotion_kernel.__name__)
+    dtypes = [
+        stmt.return_vars[0].type.dtype
+        for stmt in _walk_stmts(func.body)
+        if isinstance(stmt, ir.IfStmt)
+    ]
+    assert dtypes == [
+        ir.DataType.INT32,
+        ir.DataType.INT64,
+        ir.DataType.INT64,
+        ir.DataType.INT64,
+        ir.DataType.INT32,
+        ir.DataType.INT64,
+        ir.DataType.INT32,
+        ir.DataType.INT64,
+        ir.DataType.INT64,
+    ]
+
+
+@pytest.mark.soc("950", "960")
+def test_if_integer_promotion_runs_on_device():
+    device = ST_DEVICE
+    torch.npu.set_device(device)
+    s16 = -29
+    s32 = -37
+    u32 = 0xFFFFFFDB
+    expected_by_flag = {
+        0: [11, 17, 23, 41, s32, u32, s32, s16, 53],
+        1: [7, 13, 19, 43, s16, s32, s16, s16, 59],
+        2: [7, 13, 19, 43, s16, s32, s16, s16, 61],
+    }
+    for flag, expected in expected_by_flag.items():
+        out = torch.full((9,), -1, dtype=torch.int64, device=device)
+        if_integer_promotion_kernel(flag, s16, s32, u32, out)
+        torch.npu.synchronize()
+        torch.testing.assert_close(out.cpu(), torch.tensor(expected, dtype=torch.int64), rtol=0, atol=0)
+
+
 if __name__ == "__main__":
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     test_if_else()
@@ -1435,4 +1564,6 @@ if __name__ == "__main__":
     test_if_truthiness_int()
     test_if_in_operator()
     test_if_not_in_operator()
+    test_if_integer_promotion_ir_types()
+    test_if_integer_promotion_runs_on_device()
     logging.info("\nAll tests passed!")

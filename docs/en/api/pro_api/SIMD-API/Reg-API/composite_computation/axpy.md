@@ -30,7 +30,7 @@ axpy(src, scalar, preg, /, *, mode: Optional[MergeMode] = None) -> dst
 
 | Parameter| Input/Output| Description|
 |---|---|---|
-| src | Input| Source operand, which is of type [reg_tensor](../basic_data_structures/reg_tensor.md). The source operand src, the scalar (scalar), and the destination operand dst must have the same data type. The supported data types are DT_FP16, DT_FP32, DT_INT64, and DT_UINT64.|
+| src | Input| Source operand, which is of type [reg_tensor](../basic_data_structures/reg_tensor.md). The source operand src and the destination operand dst must have the same data type. The supported data types are DT_FP16, DT_FP32, DT_INT64, and DT_UINT64.|
 | scalar | Input| Scalar source operand.|
 | preg | Input| [mask_reg](../basic_data_structures/mask_reg.md). - This API supports register overlap.|
 | mode | Input| (Optional) This parameter corresponds to the [MergeMode](../basic_data_structures/MergeMode.md) type.<br>- pypto_pro.language.MergeMode.ZEROING (default): Elements not selected by preg are set to 0 in dst.<br>- pypto_pro.language.MergeMode.MERGING: Not supported currently.|

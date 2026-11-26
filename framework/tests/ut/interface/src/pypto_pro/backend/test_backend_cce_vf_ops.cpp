@@ -1193,6 +1193,9 @@ TEST(BackendCCEVFOpsTest, EmitsMaskLogicOperations)
     ExpectInvoke(codegen, VF_OR, {"por("}, {mask1, mask2, mask0}, {}, "mask0");
     ExpectInvoke(codegen, VF_XOR, {"pxor("}, {mask1, mask2, mask0}, {}, "mask0");
     ExpectInvoke(codegen, VF_NOT, {"pnot("}, {mask1, mask2}, {}, "mask0");
+    auto bf16Mask0 = MakeMaskVar("bf16_mask0", ir::DataType::BF16);
+    auto bf16Mask1 = MakeMaskVar("bf16_mask1", ir::DataType::BF16);
+    ExpectInvoke(codegen, VF_NOT, {"pnot("}, {bf16Mask1, bf16Mask0}, {}, "bf16_mask0");
     ExpectInvoke(codegen, VF_MOVE, {"pmov("}, {mask1, mask2}, {}, "mask0");
     ExpectInvoke(codegen, VF_SELECT, {"psel("}, {mask1, mask2, mask0}, {}, "mask0");
     ExpectInvoke(codegen, VF_PACK, {"ppack(mask0, mask1, HIGHER)"}, {mask1}, {{"part", EnumValue(ir::PackPart::UPPER)}},

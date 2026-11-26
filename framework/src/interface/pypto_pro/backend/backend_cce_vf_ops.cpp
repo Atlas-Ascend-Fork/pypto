@@ -2856,6 +2856,13 @@ static std::string EmitVFNot(const ir::CallPtr& op, codegen::CodegenBase& codege
     // Args order (dst prepended by codegen): [dst, src, mask].
     PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
         << "vf.not_ requires 3 args (dst, src, mask)";
+    std::string dst = codegen.GetExprAsCode(op->args_[0]);
+    std::string src = codegen.GetExprAsCode(op->args_[1]);
+    std::string mask = codegen.GetExprAsCode(op->args_[2]);
+    if (IsSrcMaskReg(op, 1)) {
+        codegen.Emit("pnot(" + dst + ", " + src + ", " + mask + ");");
+        return "";
+    }
     DataType srcDt = GetExprDtype(op->args_[1]);
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
                       srcDt == DataType::INT8 || srcDt == DataType::UINT8 || srcDt == DataType::BOOL ||
@@ -2864,13 +2871,6 @@ static std::string EmitVFNot(const ir::CallPtr& op, codegen::CodegenBase& codege
                           srcDt == DataType::INT64 || srcDt == DataType::UINT64)
         << "vf.not_ src only supports INT8/UINT8/INT16/UINT16/INT32/UINT32/FP16/FP32/INT64/UINT64, got "
         << DTypeStr(srcDt);
-    std::string dst = codegen.GetExprAsCode(op->args_[0]);
-    std::string src = codegen.GetExprAsCode(op->args_[1]);
-    std::string mask = codegen.GetExprAsCode(op->args_[2]);
-    if (IsSrcMaskReg(op, 1)) {
-        codegen.Emit("pnot(" + dst + ", " + src + ", " + mask + ");");
-        return "";
-    }
     std::string mode = VFZeroingOnly(op, VF_NOT);
     if (srcDt.GetBit() == 64) {
         // B64 bitwise via b32 vnot (mirrors AscendC NotImpl b64 path, see EmitB64Bitwise).

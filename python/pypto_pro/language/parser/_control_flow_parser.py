@@ -17,7 +17,7 @@ from typing import Any
 
 from pypto.pypto_impl import ir
 from pypto.pypto_impl.ir import DataType
-from pypto_pro.ir._limits import INT64_MAX, INT64_MIN, from_storage_int
+from pypto_pro.ir._limits import INT64_MAX, INT64_MIN, from_storage_int, limits_of
 
 from ..._errors import (
     InvalidArgument,
@@ -43,6 +43,19 @@ from .diagnostics import (
 )
 
 _UINT16_MAX = 65535
+
+_IF_INTEGER_DTYPES = (
+    DataType.INT4,
+    DataType.UINT4,
+    DataType.INT8,
+    DataType.UINT8,
+    DataType.INT16,
+    DataType.UINT16,
+    DataType.INT32,
+    DataType.UINT32,
+    DataType.INT64,
+    DataType.UINT64,
+)
 
 
 def _is_bare_return(stmt: ast.Return) -> bool:
@@ -207,6 +220,30 @@ class ControlFlowParserMixin:
             return value
         return self.builder.var(name, ir.NoneType.get(), span)
 
+    def _ssa_types_match(self, lhs: ir.Type, rhs: ir.Type) -> bool:
+        """Whether the existing merge type can represent the incoming type."""
+        if self._ssa_types_equal(lhs, rhs):
+            return True
+        if not (isinstance(lhs, ir.ScalarType) and isinstance(rhs, ir.ScalarType)):
+            return False
+        if not (lhs.dtype.is_int() and rhs.dtype.is_int()):
+            return False
+        wide_limits = limits_of(lhs.dtype)
+        narrow_limits = limits_of(rhs.dtype)
+        if wide_limits is None or narrow_limits is None:
+            return False
+        return wide_limits.lo <= narrow_limits.lo and narrow_limits.hi <= wide_limits.hi
+
+    def _try_promote_if_merge_type(self, types: list[ir.Type]) -> ir.Type | None:
+        """Try to promote if-branch value types to the smallest integer type containing all."""
+        if not types:
+            return None
+        for dtype in _IF_INTEGER_DTYPES:
+            candidate = ir.ScalarType(dtype)
+            if all(self._ssa_types_match(candidate, ty) for ty in types):
+                return candidate
+        return None
+
     def dispatch_jump(self, jump_kind: JumpKind) -> JumpInfo | None:
         """Create an empty terminator and record its named merge outputs."""
         if jump_kind is JumpKind.RETURN:
@@ -266,14 +303,23 @@ class ControlFlowParserMixin:
         if not info.jumps:
             return []
         output_count = len(info.jumps[0].outputs)
-        states = [PhiState(type_equal=self._ssa_types_equal) for _ in range(output_count)]
         for jump in info.jumps:
             if len(jump.outputs) != output_count:
                 raise InvalidVal("control-flow jump output counts must match")
-            for state, value in zip(states, jump.outputs, strict=True):
-                if self._is_empty_control_flow_value(value):
-                    continue
+        states: list[PhiState] = []
+        for index in range(output_count):
+            values = [
+                jump.outputs[index]
+                for jump in info.jumps
+                if not self._is_empty_control_flow_value(jump.outputs[index])
+            ]
+            merged_type = self._try_promote_if_merge_type([value.type for value in values])
+            state = PhiState(type_equal=self._ssa_types_match)
+            if merged_type is not None:
+                state.ty = merged_type
+            for value in values:
                 state.propagate(value)
+            states.append(state)
         return states
 
     def _update_phi_constant(self, result: ir.Var, state: PhiState) -> None:
@@ -385,9 +431,9 @@ class ControlFlowParserMixin:
             state = LoopVarState(
                 PhiState(
                     constant_state=ConstantState.NONCONSTANT,
-                    type_equal=self._ssa_types_equal,
+                    type_equal=self._ssa_types_match,
                 ),
-                PhiState(type_equal=self._ssa_types_equal),
+                PhiState(type_equal=self._ssa_types_match),
             )
             if self._is_empty_control_flow_value(init_value):
                 iter_var = self.builder.var(name, init_value.type, span)
@@ -515,7 +561,10 @@ class ControlFlowParserMixin:
             if not self._is_empty_control_flow_value(slot.init_value):
                 slot.state.result_phi.propagate(slot.init_value)
         info = ControlFlowInfo(merge_names)
-        loop_var = self.builder.var(loop_var_name, ir.ScalarType(DataType.INT64), span)
+        # The backend emits VF loop counters as uint16_t, so the IR loop variable
+        # carries that dtype too; SIMT loops stay int64_t.
+        loop_dtype = DataType.UINT16 if self._in_simd_vf_body() else DataType.INT64
+        loop_var = self.builder.var(loop_var_name, ir.ScalarType(loop_dtype), span)
         with self.scope_manager.change_loop_info(info):
             body = self._parse_loop_region(stmt.body, "for", span, slots, (loop_var_name, loop_var))
         iter_args, return_vars, merged_bindings = self._finalize_loop_slots(slots, info, span, is_for_loop=True)
