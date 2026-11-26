@@ -21,6 +21,9 @@ struct KernelBinaryTestHelper {
     KernelBinaryTestHelper()
     {
         rawMem = std::malloc(sizeof(KernelBinary));
+        if (rawMem == nullptr) {
+            throw std::bad_alloc();
+        }
         std::memset(rawMem, 0, sizeof(KernelBinary));
         kb = reinterpret_cast<KernelBinary*>(rawMem);
         new (&kb->dynFunc) std::shared_ptr<Function>();
