@@ -254,6 +254,16 @@ def _torch_dtype_from(dtype: DataType) -> "torch.dtype":
         if torch_attr is not None:
             _torch_dtype_dict[pto_dtype] = torch_attr
 
+    # 打包4bit dtype在torch侧无原生dtype(底层存储就是uint8, 每字节2个元素), 仅作staging原始字节缓冲
+    fp4_packed_mappings = {
+        DataType.DT_FP4_E2M1: torch.uint8,
+        DataType.DT_FP4_E1M2: torch.uint8,
+        DataType.DT_HF4: torch.uint8,
+        DataType.DT_FP4_E2M1X2: torch.uint8,
+        DataType.DT_FP4_E1M2X2: torch.uint8,
+    }
+    _torch_dtype_dict.update(fp4_packed_mappings)
+
     torch_dtype = _torch_dtype_dict.get(dtype)
     if torch_dtype is None:
         if dtype == DataType.DT_FP8E8M0:
@@ -285,6 +295,10 @@ def _torch_dtype_from(dtype: DataType) -> "torch.dtype":
     return torch_dtype
 
 
+# 4bit打包dtype(每字节存2个元素, shape为逻辑值个数, 存储减半), 与C++ IsFp4PackedDtype对齐
+_PACKED_FP4_DTYPES = (DataType.DT_FP4_E2M1, DataType.DT_FP4_E1M2, DataType.DT_HF4)
+
+
 def _gen_pto_tensor(input_tensors):
     import torch
 
@@ -293,9 +307,14 @@ def _gen_pto_tensor(input_tensors):
     for t in input_tensors:
         torch_dtype = _torch_dtype_from(t.dtype)
         tshape = t.shape if all([isinstance(s, int) for s in t.shape]) else t.ori_shape
+        pto_shape = tshape
+        if t.dtype in _PACKED_FP4_DTYPES:
+            # FP4一字节存2个元素: staging按打包字节形状(ori_shape)分配; pto形状镜像源张量逻辑形状(动态维还原-1)
+            tshape = t.ori_shape
+            pto_shape = [dim if isinstance(dim, int) else -1 for dim in t.shape]
         torch_tensor = torch.zeros(tshape, dtype=torch_dtype)
         pto_tensor = Tensor(
-            shape=tshape,
+            shape=pto_shape,
             dtype=t.dtype,
             name=t.name,
             data_ptr=torch_tensor.data_ptr(),

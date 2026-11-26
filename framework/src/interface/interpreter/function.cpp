@@ -315,7 +315,18 @@ void FunctionInterpreter::DumpTensorBinary(const std::shared_ptr<LogicalTensorDa
         INTERPRETER_LOGE(OpDumpScene::DUMP_OPEN_FILE_FAILED, "Failed to open file: %s", dumpTensorFilePath.c_str());
         return;
     }
-    DumpBinary(validShape, stride, offset, fdata, dataView->GetData()->data(), BytesOf(dataView->GetDataType()));
+    auto dataType = dataView->GetDataType();
+    if (IsFp4PackedDtype(dataType) && !validShape.empty()) {
+        // FP4 一字节存两个元素，validShape 是逻辑形状；按打包形状落盘，否则会按 BytesOf=1 多读一倍越界内存
+        constexpr int64_t VALUES_PER_BYTE = 0x2;
+        auto packedShape = RawTensorData::PackedShapeFromLogical(validShape, dataType);
+        auto packedStride = RawTensorData::ShapeToStride(packedShape);
+        auto packedOffset = offset;
+        packedOffset.back() = offset.back() / VALUES_PER_BYTE;
+        DumpBinary(packedShape, packedStride, packedOffset, fdata, dataView->GetData()->data(), 1);
+    } else {
+        DumpBinary(validShape, stride, offset, fdata, dataView->GetData()->data(), BytesOf(dataType));
+    }
     fclose(fdata);
 }
 

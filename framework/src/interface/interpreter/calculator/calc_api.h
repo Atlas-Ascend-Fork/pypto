@@ -299,6 +299,7 @@ struct CalcOps {
     void (*NanReduce)(const TensorData&, const TensorData&, const TensorData&, int, bool, int64_t, bool);
     void (*NanPairArg)(const TensorData&, const TensorData&, const TensorData&, const TensorData&, const TensorData&,
                        const TensorData&, bool, bool);
+    void (*ViewType)(const TensorData&, const TensorData&);
 };
 
 extern "C" struct CalcOps* GetCalcOps();

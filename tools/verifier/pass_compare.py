@@ -28,7 +28,7 @@ from parse_dump_tensors import scan_pass_info_from_path
 from tensor_diff import IsCloseConfig, compare_tensors_result_dict
 import torch
 
-# 数据类型 -> 文件原始字节存储 dtype；INT4/FP8/FP8E4M3/FP8E5M2/HF8/BF16 为打包类型，读入后需经 decode_tensor_data 解码
+# 数据类型 -> 文件原始字节存储 dtype；INT4/FP8*/HF8/BF16/FP4* 为打包类型，读入后需经 decode_tensor_data 解码
 _dtype_dict = {
     "INT4": np.uint8,
     "INT8": np.int8,
@@ -38,7 +38,12 @@ _dtype_dict = {
     "FP8": np.uint8,
     "FP8E4M3": np.uint8,
     "FP8E5M2": np.uint8,
+    "FP8E8M0": np.uint8,
+    "FP8E6M2": np.uint8,
     "HF8": np.uint8,
+    "FP4_E2M1": np.uint8,
+    "FP4_E1M2": np.uint8,
+    "HF4": np.uint8,
     "FP16": np.float16,
     "FP32": np.float32,
     "BF16": np.uint16,

@@ -19,7 +19,7 @@ import pypto
 
 from . import pypto_impl
 from ._build_online import BuildOnlineCalculatorManager
-from .converter import _gen_pto_tensor, from_torch
+from .converter import _PACKED_FP4_DTYPES, _gen_pto_tensor, from_torch
 from .error import PyptoRtError
 
 __all__ = [
@@ -84,6 +84,14 @@ def _pto_to_tensor_data(tensors: List[pypto.Tensor]) -> List[pypto_impl.DeviceTe
         )
         datas.append(data)
     return datas
+
+
+def _copy_src_tensor_data(t: pypto.Tensor) -> pypto_impl.DeviceTensorData:
+    # 拷贝源用逻辑形状: GetDataSize按numel*bits/8计字节, FP4的ori_shape是打包形状会被少算一半
+    shape = list(t.ori_shape)
+    if t.dtype in _PACKED_FP4_DTYPES and shape:
+        shape[-1] *= 2
+    return pypto_impl.DeviceTensorData(t.dtype, t.data_ptr, shape)
 
 
 def _device_run_once_data_from_host(*args):
@@ -226,8 +234,8 @@ def setup_verify_data(pto_tensors: Sequence) -> None:
     # non-ND PTO formats, or NPU NZ source tensors): explicit staging + CopyToHost.
     host_pto_tensors, staging = _gen_pto_tensor(pto_tensors)
     host_pto_t_datas = _pto_to_tensor_data(host_pto_tensors)
-    for i, dev_tensor in enumerate(_pto_to_tensor_data(pto_tensors)):
-        pypto_impl.CopyToHost(dev_tensor, host_pto_t_datas[i])
+    for i, dev_tensor in enumerate(pto_tensors):
+        pypto_impl.CopyToHost(_copy_src_tensor_data(dev_tensor), host_pto_t_datas[i])
     _pto_verify_datas.set_keepalive_data(staging)
     pypto_impl.SetVerifyData(
         _pto_to_tensor_data(host_pto_tensors),

@@ -556,12 +556,6 @@ torch::Tensor Float32ToFp8(const torch::Tensor& self, DataType actualType)
     }
 }
 
-static constexpr std::array<float, 16> kFp4E2M1DecodeTable = {
-    0.0f, 0.5f, 1.0f, 1.5f, 2.0f, 3.0f, 4.0f, 6.0f, -0.0f, -0.5f, -1.0f, -1.5f, -2.0f, -3.0f, -4.0f, -6.0f,
-};
-
-static float DecodeFp4E2M1Nibble(uint8_t nib) { return kFp4E2M1DecodeTable[static_cast<size_t>(nib & 0x0F)]; }
-
 static uint8_t EncodeFp4NibbleNearest(float v, float (*decodeFn)(uint8_t))
 {
     if (std::isnan(v) || std::isinf(v)) {
@@ -586,36 +580,9 @@ static uint8_t EncodeFp4NibbleNearest(float v, float (*decodeFn)(uint8_t))
 
 static uint8_t EncodeFp4E2M1Nibble(float v) { return EncodeFp4NibbleNearest(v, DecodeFp4E2M1Nibble); }
 
-static constexpr std::array<float, 16> kFp4E1M2DecodeTable = {
-    0.0f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, -0.0f, -0.25f, -0.5f, -0.75f, -1.0f, -1.25f, -1.5f, -1.75f,
-};
-
-static float DecodeFp4E1M2Nibble(uint8_t nib) { return kFp4E1M2DecodeTable[static_cast<size_t>(nib & 0x0F)]; }
-
 static uint8_t EncodeFp4E1M2Nibble(float v) { return EncodeFp4NibbleNearest(v, DecodeFp4E1M2Nibble); }
 
-// HF4 nibble = [S][I][F1][F2], value = (-1)^S * (I + F1/2 + F2/4), range [-1.75, 1.75] in steps of 0.25.
-static constexpr std::array<float, 16> kHf4DecodeTable = {
-    0.0f, 0.25f, 0.5f, 0.75f, 1.0f, 1.25f, 1.5f, 1.75f, -0.0f, -0.25f, -0.5f, -0.75f, -1.0f, -1.25f, -1.5f, -1.75f,
-};
-
-static float DecodeHf4Nibble(uint8_t nib) { return kHf4DecodeTable[static_cast<size_t>(nib & 0x0F)]; }
-
 static uint8_t EncodeHf4Nibble(float v) { return EncodeFp4NibbleNearest(v, DecodeHf4Nibble); }
-
-static float DecodeNibble(uint8_t nib, DataType actualType)
-{
-    switch (actualType) {
-        case DT_FP4_E2M1:
-            return DecodeFp4E2M1Nibble(nib);
-        case DT_FP4_E1M2:
-            return DecodeFp4E1M2Nibble(nib);
-        case DT_HF4:
-            return DecodeHf4Nibble(nib);
-        default:
-            return static_cast<float>(nib);
-    }
-}
 
 static uint8_t EncodeNibble(float v, DataType actualType)
 {
@@ -656,8 +623,8 @@ torch::Tensor Fp4PackedToFloat32(const torch::Tensor& packed, DataType actualTyp
             uint8_t hi = static_cast<uint8_t>((b >> 0x4) & 0x0F);
             uint8_t lo = static_cast<uint8_t>(b & 0x0F);
             // High nibble first: [e0, e1] -> byte = (e0 << 4) | e1
-            outPtr[i * (lastPacked * 2) + j * 2] = DecodeNibble(hi, actualType);
-            outPtr[i * (lastPacked * 2) + j * 2 + 1] = DecodeNibble(lo, actualType);
+            outPtr[i * (lastPacked * 2) + j * 2] = DecodeFp4Nibble(hi, actualType);
+            outPtr[i * (lastPacked * 2) + j * 2 + 1] = DecodeFp4Nibble(lo, actualType);
         }
     }
     return out;

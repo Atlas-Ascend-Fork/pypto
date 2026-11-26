@@ -58,7 +58,7 @@ _data_type_full_mapping = {
     6: ("FP16", np.float16),
     7: ("FP32", np.float32),
     8: ("BF16", np.uint16),
-    9: ("HF4", None),  # 暂不支持解析
+    9: ("HF4", np.uint8),
     10: ("HF8", np.uint8),
     11: ("UINT8", np.uint8),
     12: ("UINT16", np.uint16),
@@ -68,13 +68,18 @@ _data_type_full_mapping = {
     16: ("DOUBLE", np.float64),
     17: ("FP8E4M3", np.uint8),
     18: ("FP8E5M2", np.uint8),
-    24: ("BOTTOM", None),
+    19: ("FP8E8M0", np.uint8),
+    # 20/21为FP4 x2变体, decode端无对应解码语义, 维持SKIP
+    22: ("FP4_E2M1", np.uint8),
+    23: ("FP4_E1M2", np.uint8),
+    24: ("FP8E6M2", np.uint8),
+    25: ("BOTTOM", None),
 }
 
 
 def _get_data_type(data_type: int):
     """Convert data type numeric value to readable string"""
-    return _data_type_full_mapping.get(data_type, f"UNKNOWN({data_type})")
+    return _data_type_full_mapping.get(data_type, (f"UNKNOWN({data_type})", None))
 
 
 def _get_dtype_from_str(dtype_str: str):
@@ -225,7 +230,7 @@ class VerifyRes:
                 verify_data_type = _get_dtype_from_str(verify_dtype_name)
 
                 # 不支持的类型，跳过对比
-                if dtype is None:
+                if dtype is None or verify_data_type is None:
                     tensor_infos[i]["AB>RESULT"] = "SKIP"
                     tensor_infos[i]["AB>RESULT_REASON"] = f"unsupported dtype: {dtype_result[0]}"
                     continue
@@ -668,7 +673,7 @@ class CompactDumpTensorInfoParser:
             result["B>:rawshape"] = result["B>:rawshape"][:dims]
 
         # 衍生字段（可选）
-        result["B>:datatype"] = _get_data_type(result.get("datatype", 24))[0]
+        result["B>:datatype"] = _get_data_type(result.get("datatype", 25))[0]
 
         return result
 

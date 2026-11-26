@@ -61,6 +61,8 @@ TEST_F(CalcCommonTest, ExecuteOpAMulBWith5DMxScaleAndBias)
     auto bias = std::make_shared<LogicalTensor>(*func, DT_FP32, biasShape);
     auto output = std::make_shared<LogicalTensor>(*func, DT_FP32, outputShape);
     auto& matmulOp = func->AddOperation(Opcode::OP_A_MUL_B, {matrixA, matrixB, scaleA, scaleB, bias}, {output});
+    // 手工建图需跟随解释器契约: bias 角色以显式属性为准(正式建图路径 SetTensorGraphAttr 无条件设置)
+    matmulOp.SetAttribute(Matrix::A_MUL_B_BIAS_ATTR, true);
     matmulOp.SetAttribute(Matrix::A_MUL_B_SCALE_A_COPY_IN_MODE, static_cast<int64_t>(Matrix::CopyInMode::DN2NZ));
     matmulOp.SetAttribute(Matrix::A_MUL_B_SCALE_B_COPY_IN_MODE, static_cast<int64_t>(Matrix::CopyInMode::DN2NZ));
     matmulOp.GetTileShapeForSetting().GetCubeTile().k = {0, 0, 0};
@@ -1494,5 +1496,109 @@ TEST_F(CalcCommonTest, ExecuteOpViewToDynValidShapeNotExceedInputValidShape)
 TEST_F(CalcCommonTest, ExecuteOpViewSkipToDynValidShapeCheckOnPassVerify)
 {
     EXPECT_NO_THROW(RunExecuteOpView({4, 8}, {2, 8}, {4, 8}, VerifyType::PASS, true));
+}
+
+namespace {
+std::shared_ptr<RawTensorData> RunExecuteOpViewType(
+    const std::vector<int64_t>& inRawShape, const std::vector<int64_t>& inViewShape,
+    const std::vector<int64_t>& inValidShape, const std::vector<int64_t>& inOffset,
+    const std::vector<int64_t>& outRawShape, const std::vector<int64_t>& outViewShape,
+    const std::vector<int64_t>& outValidShape, const std::vector<int64_t>& outOffset)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "TestViewType", "TestViewType", nullptr);
+    auto inputTensor = std::make_shared<LogicalTensor>(*func, DT_INT8, inRawShape);
+    auto outputTensor = std::make_shared<LogicalTensor>(*func, DT_FP32, outRawShape);
+    auto& viewTypeOp = func->AddOperation(Opcode::OP_VIEW_TYPE, {inputTensor}, {outputTensor});
+
+    // 输入按位置填入可区分的非零字节，保证错位/欠拷贝可被检出
+    int64_t inTotal = 1;
+    for (auto dim : inRawShape) {
+        inTotal *= dim;
+    }
+    std::vector<uint8_t> inBytes;
+    inBytes.reserve(inTotal);
+    for (int64_t i = 0; i < inTotal; i++) {
+        inBytes.push_back(static_cast<uint8_t>((i % 0xFB) + 1));
+    }
+    Tensor inputTensorData(DT_INT8, inRawShape);
+    auto inputData = RawTensorData::CreateTensor<uint8_t>(inputTensorData, inBytes);
+    Tensor outputTensorData(DT_FP32, outRawShape);
+    auto outputData = RawTensorData::CreateConstantTensor<float>(outputTensorData, 0.0f);
+    auto inputView = std::make_shared<LogicalTensorData>(inputData, inViewShape, inValidShape, inOffset);
+    auto outputView = std::make_shared<LogicalTensorData>(outputData, outViewShape, outValidShape, outOffset);
+
+    auto inoutDataPair = std::make_shared<FunctionIODataPair>();
+    FunctionFrame frame(func.get(), nullptr, nullptr, inoutDataPair, 0);
+    frame.verifyType = VerifyType::TENSOR_GRAPH;
+    OperationInterpreter opInter;
+    std::vector<LogicalTensorDataPtr> ioperandDataViewList = {inputView};
+    std::vector<LogicalTensorDataPtr> ooperandInplaceDataViewList = {outputView};
+    ExecuteOperationContext ctx = {
+        &frame, &opInter, &viewTypeOp, &ioperandDataViewList, nullptr, &ooperandInplaceDataViewList};
+    opInter.ExecuteOperation(&ctx);
+    return outputData;
+}
+
+void ExpectViewTypeValidBytes(const std::shared_ptr<RawTensorData>& outputData, const std::vector<int64_t>& rowOffsets)
+{
+    const uint8_t* outBytes = outputData->data();
+    for (size_t idx = 0; idx < rowOffsets.size(); idx++) {
+        for (int64_t c = 0; c < 16; c++) {
+            int64_t byte = rowOffsets[idx] + c;
+            EXPECT_EQ(outBytes[byte], static_cast<uint8_t>((byte % 0xFB) + 1)) << "row " << idx << " col " << c;
+        }
+    }
+}
+} // namespace
+
+// valid 列宽(16B)小于 raw 行距(32B)时 valid 区在内存中不连续，整块平坦拷贝会欠拷贝尾部行
+TEST_F(CalcCommonTest, ExecuteOpViewTypeStridedValidRegionCopiesAllRows)
+{
+    constexpr int64_t rows = 8;
+    auto outputData = RunExecuteOpViewType({rows, 32}, {rows, 32}, {rows, 16}, {0, 0}, {rows, 8}, {rows, 8}, {rows, 4},
+                                           {0, 0});
+    std::vector<int64_t> rowOffsets;
+    for (int64_t r = 0; r < rows; r++) {
+        rowOffsets.push_back(r * 32);
+    }
+    ExpectViewTypeValidBytes(outputData, rowOffsets);
+}
+
+// valid 区各尾维占满整行时保持原有整块平坦拷贝路径
+TEST_F(CalcCommonTest, ExecuteOpViewTypeContiguousValidRegionKeepsFlatCopy)
+{
+    constexpr int64_t rows = 8;
+    auto outputData = RunExecuteOpViewType({rows, 32}, {rows, 32}, {rows, 32}, {0, 0}, {rows, 8}, {rows, 8}, {rows, 8},
+                                           {0, 0});
+    const uint8_t* outBytes = outputData->data();
+    for (int64_t i = 0; i < rows * 32; i++) {
+        EXPECT_EQ(outBytes[i], static_cast<uint8_t>((i % 0xFB) + 1));
+    }
+}
+
+// 平铺分块场景输入输出视图带非零偏移（outputOffset[last] = inputOffset[last] * 字节比）
+TEST_F(CalcCommonTest, ExecuteOpViewTypeStridedValidRegionWithOffset)
+{
+    constexpr int64_t rows = 8;
+    constexpr int64_t tileRows = 6;
+    auto outputData = RunExecuteOpViewType({rows, 32}, {tileRows, 16}, {tileRows, 16}, {1, 8}, {rows, 8}, {tileRows, 4},
+                                           {tileRows, 4}, {1, 2});
+    std::vector<int64_t> rowOffsets;
+    for (int64_t r = 0; r < tileRows; r++) {
+        rowOffsets.push_back((1 + r) * 32 + 8);
+    }
+    ExpectViewTypeValidBytes(outputData, rowOffsets);
+}
+
+// 两侧 valid 字节数不一致时守恒校验须显式失败（防 copy_ 广播兼容时静默写错）
+TEST_F(CalcCommonTest, ExecuteOpViewTypeBytesMismatchThrows)
+{
+    try {
+        RunExecuteOpViewType({8, 32}, {8, 32}, {8, 16}, {0, 0}, {8, 8}, {8, 8}, {8, 3},
+                             {0, 0}); // 输入 valid 128B，输出 valid 96B
+        FAIL() << "Expected view type with mismatched valid bytes to throw";
+    } catch (const std::runtime_error& e) {
+        EXPECT_NE(std::string(e.what()).find("VIEWTYPE_BYTES_MISMATCH"), std::string::npos) << e.what();
+    }
 }
 } // namespace npu::tile_fwk
