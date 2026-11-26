@@ -8,6 +8,8 @@
 # INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT, MERCHANTABILITY, OR FITNESS FOR A PARTICULAR PURPOSE.
 # See LICENSE in the root of the software repository for the full text of the License.
 __all__ = [
+    "normalize_ir_text",
+    "text_equal",
     "IRBuilder",
     "IRNode",
     "InsertPoint",
@@ -251,6 +253,44 @@ from .pypto_impl.ir import (
     YieldStmt,
     type_equal,
 )
+
+
+def normalize_ir_text(text):
+    """Fold history-dependent labels so two text dumps can be compared.
+
+    Only ids/opids, derived-name numeric suffixes and #memId are canonicalised;
+    structure and attribute values are left untouched.
+    """
+    import re as _re
+
+    id_map = {}
+    op_map = {}
+    var_names = {}
+    func_names = {}
+
+    def _remap(mapping, prefix, value):
+        if value not in mapping:
+            mapping[value] = f"{prefix}{len(mapping)}"
+        return mapping[value]
+
+    def _name(names, name):
+        base = _re.sub(r"(_\d+)+$", "", name)
+        if _re.fullmatch(r"[0-9_]+", base):
+            base = "auto"
+        mapping = names.setdefault(base, {})
+        return _remap(mapping, base + "#", name)
+
+    text = _re.sub(r"@(\d+)", lambda m: _remap(id_map, "@", m.group(1)), text)
+    text = _re.sub(r"!(\d+)", lambda m: _remap(op_map, "!", m.group(1)), text)
+    text = _re.sub(r"#memId\(\d+\)", "#memId(*)", text)
+    text = _re.sub(r"%([A-Za-z0-9_][A-Za-z0-9_.]*)", lambda m: "%" + _name(var_names, m.group(1)), text)
+    text = _re.sub(r"function ([A-Za-z_][A-Za-z0-9_.]*)", lambda m: "function " + _name(func_names, m.group(1)), text)
+    return text
+
+
+def text_equal(lhs, rhs):
+    """Compare two io_text dumps while ignoring history-dependent labels."""
+    return normalize_ir_text(lhs) == normalize_ir_text(rhs)
 
 
 def tuple_get_item(value, index, span):

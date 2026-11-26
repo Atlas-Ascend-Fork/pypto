@@ -175,6 +175,39 @@ def test_dump_load_keeps_op_vec_tile():
     assert reloaded == text
 
 
+def _dump_and_load(tmp_path, name, names, func_name):
+    span = ir.Span.unknown()
+    scalar = ir.ScalarType(ir.INT32)
+    vars_ = [ir.Var(var_name, scalar, span) for var_name in names]
+    stmts = [ir.AssignStmt([var], ir.ConstInt(1, ir.INT32, span), span) for var in vars_]
+    body = ir.SeqStmts(stmts, span) if len(stmts) > 1 else stmts[0]
+    func = ir.Function(func_name, vars_, [scalar], body, span)
+    program = ir.IRBuilder().create_program([func], "main", span)
+    path = tmp_path / f"{name}.pypto"
+    path.write_text(str(program))
+    loaded = pypto.pypto_impl.ir.text_load_program(path.read_text())
+    return str(loaded)
+
+
+def test_ir_text_equal_ignores_history_labels(tmp_path):
+    lhs = _dump_and_load(tmp_path, "lhs", ["x"], "f_1")
+    rhs = _dump_and_load(tmp_path, "rhs", ["x"], "f_9")
+    assert ir.text_equal(lhs, rhs)
+    assert ir.normalize_ir_text(lhs) == ir.normalize_ir_text(rhs)
+    assert not ir.text_equal(lhs, rhs + " #shape([1, 3])")
+
+
+def test_ir_text_equal_keeps_tensor_identity(tmp_path):
+    repeated = _dump_and_load(tmp_path, "repeated", ["x", "x"], "f")
+    distinct = _dump_and_load(tmp_path, "distinct", ["x", "y"], "f")
+    assert not ir.text_equal(repeated, distinct)
+
+
+def test_ir_text_equal_handles_digit_names(tmp_path):
+    lhs = _dump_and_load(tmp_path, "digit_lhs", ["0"], "f")
+    rhs = _dump_and_load(tmp_path, "digit_rhs", ["5"], "f")
+    assert ir.text_equal(lhs, rhs)
+
 def _assemble_ssa_kernel(a, b, out):
     tile = 16
     pypto.set_vec_tile_shapes(tile, tile)

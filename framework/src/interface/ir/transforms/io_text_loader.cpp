@@ -74,7 +74,8 @@ public:
               std::regex(R"(%([A-Za-z0-9_][A-Za-z0-9_.]*)(@([A-Za-z0-9_][A-Za-z0-9_.]*))?)")},
             R{IRTextLexerTokenKind::TokAttrName, std::regex(R"(#[A-Za-z_][A-Za-z0-9_.]*)")},
             R{IRTextLexerTokenKind::TokV0OpMagic, std::regex(R"(!\d+)")},
-            R{IRTextLexerTokenKind::TokFloat, std::regex(R"(-?\d+\.\d+(?:[eE][+-]?\d+)?|-?\d+[eE][-+]?\d+)")},
+            R{IRTextLexerTokenKind::TokFloat,
+              std::regex(R"([-+]?(?:inf|nan)(?![A-Za-z0-9_.])|-?\d+\.\d+(?:[eE][+-]?\d+)?|-?\d+[eE][-+]?\d+)")},
             R{IRTextLexerTokenKind::TokInt, std::regex(R"(-?\d+)")},
             R{IRTextLexerTokenKind::TokIdent, std::regex(R"([A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*)")},
         };
@@ -1190,8 +1191,10 @@ StmtPtr IRTextParser::ParseStmtV0TensorOp(const VarDefList& defVarList)
             std::dynamic_pointer_cast<npu::tile_fwk::LogicalTensor>(std::const_pointer_cast<ir::Var>(res)));
     }
 
-    auto op = std::make_shared<npu::tile_fwk::Operation>(*hostFunc_, npu::tile_fwk::FindOpcode(opcode->data), iOperands,
-                                                         oOperands, static_cast<int>(opmagic->data));
+    auto& opRef = hostFunc_->AddRawOperation(npu::tile_fwk::FindOpcode(opcode->data), iOperands, oOperands,
+                                             Span::Unknown());
+    opRef.SetOpMagic(static_cast<int>(opmagic->data));
+    auto op = std::static_pointer_cast<npu::tile_fwk::Operation>(opRef.shared_from_this());
     op->result_token_ = defVarList.tokenList;
     op->tokens_ = tokenList;
     if (!SetOperationAttrDict(op, attrDict->data)) {

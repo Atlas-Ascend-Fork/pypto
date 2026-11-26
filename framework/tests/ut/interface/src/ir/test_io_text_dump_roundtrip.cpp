@@ -15,6 +15,10 @@
 
 #include <any>
 #include <cstdint>
+#include <filesystem>
+#include <fstream>
+#include <limits>
+#include <sstream>
 #include <memory>
 #include <string>
 #include <typeinfo>
@@ -854,6 +858,40 @@ TEST_F(IoTextDumpRoundTripTest, ValidShapeAttrKeepsSymbolicList)
     auto program = TextLoadProgram(text, error);
     ASSERT_NE(program, nullptr) << error;
     EXPECT_EQ(TextDump(program), text);
+}
+
+// Non-finite float literals (inf/nan) must survive text round-trip.
+TEST_F(IoTextDumpRoundTripTest, NonFiniteScalarAttrRoundTrip)
+{
+    std::vector<std::pair<std::string, std::any>> attrs{{"probe", -std::numeric_limits<double>::infinity()},
+                                                        {"probe2", std::numeric_limits<double>::quiet_NaN()}};
+    auto stmt = std::make_shared<TensorOpStmt>(std::vector<VarPtr>{}, std::vector<VarPtr>{}, "OP_CONFIG",
+                                               std::vector<ExprPtr>{}, std::vector<VarPtr>{}, attrs, Sp());
+    const auto dump = TextDump(stmt);
+    EXPECT_NE(dump.find("#probe(-inf)"), std::string::npos) << dump;
+    EXPECT_NE(dump.find("#probe2(nan)"), std::string::npos) << dump;
+    EXPECT_EQ(dump.find("-inf.0"), std::string::npos) << dump;
+
+    const auto path = std::filesystem::temp_directory_path() / "pypto_nonfinite_scalar.pypto";
+    {
+        std::ofstream out(path);
+        ASSERT_TRUE(out.good()) << path;
+        out << dump;
+    }
+    std::string fromFile;
+    {
+        std::ifstream in(path);
+        ASSERT_TRUE(in.good()) << path;
+        std::stringstream buffer;
+        buffer << in.rdbuf();
+        fromFile = buffer.str();
+    }
+    std::filesystem::remove(path);
+
+    std::string error;
+    auto reloaded = TextLoadStmt(fromFile, error);
+    ASSERT_NE(reloaded, nullptr) << error;
+    EXPECT_EQ(TextDump(reloaded), fromFile);
 }
 
 } // namespace ir
