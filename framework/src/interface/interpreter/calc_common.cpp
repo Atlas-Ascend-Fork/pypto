@@ -132,26 +132,11 @@ void ExecuteOpViewType(ExecuteOperationContext* ctx)
         return;
     }
 
-    // OP_VIEW_TYPE 专属：要求输入输出底层 RawTensorData 都存在
-    ASSERT(ExecuteOperationScene::VIEWTYPE_BYTES_MISMATCH, inData != nullptr && outData != nullptr);
-
-    const int64_t inElemSize = inData->GetElementSize();
-    const int64_t outElemSize = outData->GetElementSize();
-    const int64_t inRegionElems = iop->GetSize();
-    const int64_t outRegionElems = oop->GetSize();
-
-    // VIEW_TYPE 语义：保持底层字节数一致，只改变逻辑数据类型和 shape。
-    const int64_t srcBytes = inRegionElems * inElemSize;
-    const int64_t dstBytes = outRegionElems * outElemSize;
+    // VIEW_TYPE 语义：保持底层字节数一致，只改变逻辑数据类型和 shape；交由 calculator 按两侧 stride 拷贝 valid 区
+    const int64_t srcBytes = static_cast<int64_t>(iop->GetSize()) * inData->GetElementSize();
+    const int64_t dstBytes = static_cast<int64_t>(oop->GetSize()) * outData->GetElementSize();
     ASSERT(ExecuteOperationScene::VIEWTYPE_BYTES_MISMATCH, srcBytes == dstBytes);
-
-    const int64_t srcOffsetBytes = static_cast<int64_t>(iop->GetStorageOffset()) * inElemSize;
-    const int64_t dstOffsetBytes = static_cast<int64_t>(oop->GetStorageOffset()) * outElemSize;
-
-    uint8_t* srcPtr = inData->data() + srcOffsetBytes;
-    uint8_t* dstPtr = outData->data() + dstOffsetBytes;
-
-    StringUtils::DataCopy(dstPtr, dstBytes, srcPtr, srcBytes);
+    calc::ViewType(oop, iop);
 }
 REGISTER_CALC_OP(OP_VIEW_TYPE, Opcode::OP_VIEW_TYPE, ExecuteOpViewType);
 

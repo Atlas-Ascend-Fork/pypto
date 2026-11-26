@@ -67,6 +67,11 @@ inline void Cast(LogicalTensorDataPtr out, LogicalTensorDataPtr self, CastMode m
 {
     GetCalcOps()->Cast(Trans(out), Trans(self), mode);
 }
+
+inline void ViewType(LogicalTensorDataPtr out, LogicalTensorDataPtr self)
+{
+    GetCalcOps()->ViewType(Trans(out), Trans(self));
+}
 inline void QuantPreCompute(LogicalTensorDataPtr out, LogicalTensorDataPtr self, LogicalTensorDataPtr scalePtr,
                             uint64_t scale, int relu)
 {

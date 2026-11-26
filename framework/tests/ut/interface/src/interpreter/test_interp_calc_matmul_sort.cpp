@@ -1332,4 +1332,109 @@ TEST_F(TorchAdaptorTest, Erfc)
     calc::Erfc(out, self);
     ASSERT_ALLCLOSE(out, golden);
 }
+
+namespace {
+std::shared_ptr<LogicalTensorData> MakeViewTypeView(const LogicalTensorDataPtr& base,
+                                                    const std::vector<int64_t>& validShape,
+                                                    const std::vector<int64_t>& offset)
+{
+    return std::make_shared<LogicalTensorData>(base->GetData(), validShape, validShape, offset);
+}
+
+std::vector<uint8_t> MakeViewTypeBytes(int64_t total)
+{
+    std::vector<uint8_t> bytes;
+    bytes.reserve(total);
+    for (int64_t i = 0; i < total; i++) {
+        bytes.push_back(static_cast<uint8_t>((i % 251) + 1));
+    }
+    return bytes;
+}
+} // namespace
+
+// valid 列宽(16B)小于 raw 行距(32B)时 valid 区不连续，VIEW_TYPE 须按行跨 stride 拷贝全部 valid 行
+TEST_F(TorchAdaptorTest, ViewTypeStridedValidRegionCopiesAllRows)
+{
+    constexpr int64_t rows = 8;
+    auto selfBase = makeTensorData(DT_INT8, {rows, 32}, MakeViewTypeBytes(rows * 32));
+    // dst raw 行距 64B 与 src 32B 刻意不同，独立校验目标侧 stride；哨兵填充以便检出有效区外过拷贝
+    auto outBase = makeTensorData(DT_FP32, {rows, 16}, 0.0f);
+    uint8_t* outRaw = outBase->GetData()->data();
+    for (int64_t i = 0; i < rows * 64; i++) {
+        outRaw[i] = static_cast<uint8_t>(0xEE);
+    }
+    auto self = MakeViewTypeView(selfBase, {rows, 16}, {0, 0});
+    auto out = MakeViewTypeView(outBase, {rows, 4}, {0, 0});
+    // 前置确认两侧视图带 stride 且行距不同（src 32B vs dst 64B），防 stride 串用类错误漏检
+    EXPECT_EQ(self->GetData()->GetStride(), (std::vector<int64_t>{32, 1}));
+    EXPECT_EQ(out->GetData()->GetStride(), (std::vector<int64_t>{16, 1}));
+    calc::ViewType(out, self);
+    const uint8_t* outBytes = out->GetData()->data();
+    // 有效区：dst 行 r 的前 16B 等于 src 行 r 的前 16B（确定性模式，不用输入缓冲当 golden）
+    for (int64_t r = 0; r < rows; r++) {
+        for (int64_t c = 0; c < 16; c++) {
+            EXPECT_EQ(outBytes[r * 64 + c], static_cast<uint8_t>((r * 32 + c) % 251 + 1))
+                << "row " << r << " col " << c;
+        }
+    }
+    // 有效区之外（每行 16~63B）须保持哨兵值未被覆写，防整块平坦过拷贝回归
+    for (int64_t r = 0; r < rows; r++) {
+        for (int64_t c = 16; c < 64; c++) {
+            EXPECT_EQ(outBytes[r * 64 + c], static_cast<uint8_t>(0xEE)) << "row " << r << " col " << c;
+        }
+    }
+}
+
+// valid 各尾维占满 raw 整行时 valid 区连续，整块拷贝语义回归；满行宽 valid 即整缓冲，无哨兵区可校验
+TEST_F(TorchAdaptorTest, ViewTypeContiguousValidRegion)
+{
+    constexpr int64_t rows = 8;
+    auto selfBase = makeTensorData(DT_INT8, {rows, 32}, MakeViewTypeBytes(rows * 32));
+    auto outBase = makeTensorData(DT_FP32, {rows, 8}, 0.0f);
+    auto self = MakeViewTypeView(selfBase, {rows, 32}, {0, 0});
+    auto out = MakeViewTypeView(outBase, {rows, 8}, {0, 0});
+    calc::ViewType(out, self);
+    const uint8_t* outBytes = out->GetData()->data();
+    for (int64_t i = 0; i < rows * 32; i++) {
+        EXPECT_EQ(outBytes[i], static_cast<uint8_t>((i % 251) + 1));
+    }
+}
+
+// 平铺分块场景两侧视图带非零偏移（outOffset[last] = inOffset[last] * 字节比），dst 字节偏移与 src 刻意不同
+TEST_F(TorchAdaptorTest, ViewTypeStridedValidRegionWithOffset)
+{
+    constexpr int64_t rows = 8;
+    constexpr int64_t tileRows = 6;
+    auto selfBase = makeTensorData(DT_INT8, {rows, 32}, MakeViewTypeBytes(rows * 32));
+    auto outBase = makeTensorData(DT_FP32, {rows, 16}, 0.0f);
+    uint8_t* outRaw = outBase->GetData()->data();
+    for (int64_t i = 0; i < rows * 64; i++) {
+        outRaw[i] = static_cast<uint8_t>(0xEE);
+    }
+    auto self = MakeViewTypeView(selfBase, {tileRows, 16}, {1, 8});
+    auto out = MakeViewTypeView(outBase, {tileRows, 4}, {1, 4});
+    // 前置确认带 stride 且两侧字节偏移不同（src 40B vs dst 80B），防 offset 串用类错误漏检
+    EXPECT_EQ(self->GetData()->GetStride(), (std::vector<int64_t>{32, 1}));
+    EXPECT_EQ(out->GetData()->GetStride(), (std::vector<int64_t>{16, 1}));
+    EXPECT_EQ(self->GetStorageOffset(), 1 * 32 + 8);
+    EXPECT_EQ(out->GetStorageOffset(), 1 * 16 + 4);
+    calc::ViewType(out, self);
+    const uint8_t* outBytes = out->GetData()->data();
+    for (int64_t r = 0; r < tileRows; r++) {
+        for (int64_t c = 0; c < 16; c++) {
+            EXPECT_EQ(outBytes[(1 + r) * 64 + 16 + c], static_cast<uint8_t>(((1 + r) * 32 + 8 + c) % 251 + 1))
+                << "row " << r << " col " << c;
+        }
+    }
+    // 其余字节（含 dst 行 0/7 与各行有效区之外）须保持哨兵值未被覆写
+    for (int64_t r = 0; r < rows; r++) {
+        for (int64_t c = 0; c < 64; c++) {
+            bool inValidRegion = (r >= 1) && (r < 1 + tileRows) && (c >= 16) && (c < 32);
+            if (inValidRegion) {
+                continue;
+            }
+            EXPECT_EQ(outBytes[r * 64 + c], static_cast<uint8_t>(0xEE)) << "row " << r << " col " << c;
+        }
+    }
+}
 } // namespace npu::tile_fwk

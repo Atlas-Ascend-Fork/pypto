@@ -1323,6 +1323,14 @@ static void Cast(const TensorData& out, const TensorData& self, CastMode mode)
     }
 }
 
+static void ViewType(const TensorData& out, const TensorData& self)
+{
+    auto tout = From(out);
+    auto tself = From(self);
+    // 字节级重解释拷贝：两侧统一转 uint8 视图（valid 字节数一致），torch 按各自 stride 完成跨行拷贝
+    tout.first.view(torch::kUInt8).copy_(tself.first.view(torch::kUInt8));
+}
+
 static void Min(const TensorData& out, const TensorData& self, const TensorData& other)
 {
     auto tself = From(self);
@@ -4563,6 +4571,7 @@ static struct CalcOps calcOps = {
     .NanScalar = NanScalar,
     .NanReduce = NanReduce,
     .NanPairArg = NanPairArg,
+    .ViewType = ViewType,
 };
 
 extern "C" struct CalcOps* GetCalcOps() { return &calcOps; }
