@@ -59,30 +59,8 @@ TypePtr DeduceAddPtrType([[maybe_unused]] const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, offsetType->dtype_.IsInt())
         << "ptr.addptr offset must have an integer dtype, but got " << offsetType->dtype_.ToString();
 
-    // Return the same PtrType (pointer is advanced but still points to same element type),
-    // with base_ptr/offset annotations for codegen indirect-select support.
-    ExprPtr newBasePtr;
-    ExprPtr newOffset;
-
-    if (ptrType->base_ptr.has_value()) {
-        // Chained addptr: propagate base from the input ptr, fold offsets if possible.
-        newBasePtr = *ptrType->base_ptr;
-        if (auto c1 = As<ConstInt>(*ptrType->offset)) {
-            if (auto c2 = As<ConstInt>(args[1])) {
-                newOffset = std::make_shared<ConstInt>(c1->value_ + c2->value_, DataType::INT64, args[1]->span_);
-            } else {
-                newOffset = std::make_shared<Add>(*ptrType->offset, args[1], DataType::INT64, args[1]->span_);
-            }
-        } else {
-            newOffset = std::make_shared<Add>(*ptrType->offset, args[1], DataType::INT64, args[1]->span_);
-        }
-    } else {
-        // Direct addptr on a function parameter — record base and offset directly.
-        newBasePtr = args[0];
-        newOffset = args[1];
-    }
-
-    return std::make_shared<PtrType>(ptrType->dtype_, newBasePtr, newOffset);
+    // Return the same PtrType (pointer is advanced but still points to same element type).
+    return std::make_shared<PtrType>(ptrType->type_);
 }
 
 REGISTER_OP("ptr.addptr")
@@ -113,14 +91,9 @@ TypePtr DeduceMakePtrType([[maybe_unused]] const std::vector<ExprPtr>& args,
 
     // The new element dtype: explicit 'dtype' kwarg if given, otherwise keep the source dtype
     // (an identity reinterpret / address extraction).
-    DataType sourceDtype = ptrType ? ptrType->dtype_ : tensorType->dtype_;
+    DataType sourceDtype = ptrType ? ExtractPtrElemDataType(ptrType) : tensorType->dtype_;
     DataType resultDtype = GetOpKwarg<DataType>(kwargs, "dtype", std::optional<DataType>(sourceDtype));
 
-    // Preserve the base_ptr/offset codegen annotations from a PtrType source so that a
-    // make_ptr derived from an addptr chain still carries its indirect-select metadata.
-    if (ptrType && ptrType->base_ptr.has_value() && ptrType->offset.has_value()) {
-        return std::make_shared<PtrType>(resultDtype, *ptrType->base_ptr, *ptrType->offset);
-    }
     return std::make_shared<PtrType>(resultDtype);
 }
 
@@ -150,7 +123,7 @@ TypePtr DeduceMakeTensorType([[maybe_unused]] const std::vector<ExprPtr>& args,
     //     source expr; the CCE codegen resolves the tensor's base pointer from it.
     DataType sourceDtype;
     if (auto ptrType = As<PtrType>(args[0]->GetType())) {
-        sourceDtype = ptrType->dtype_;
+        sourceDtype = ExtractPtrElemDataType(ptrType);
     } else if (auto srcTensorType = As<TensorType>(args[0]->GetType())) {
         sourceDtype = srcTensorType->dtype_;
     } else {

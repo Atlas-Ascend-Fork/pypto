@@ -605,7 +605,9 @@ def _extract_param_specs(
             direction = declared_directions.get(parameter_index, TensorDirection.INPUT)
             specs.append(ParamSpec(var.name, ParamKind.TENSOR, t.dtype, shape, direction))
         elif isinstance(t, PtrType):
-            specs.append(ParamSpec(var.name, ParamKind.PTR, t.dtype, None))
+            if not isinstance(t.type, ScalarType):
+                raise InvalidType(f"Pointer parameter '{var.name}' must point at a scalar type, got {t.type}")
+            specs.append(ParamSpec(var.name, ParamKind.PTR, t.type.dtype, None))
         elif isinstance(t, TupleType):
             # Tiling struct param: passed as a single uint8 device buffer pointer.
             specs.append(ParamSpec(var.name, ParamKind.TILING, None, None))

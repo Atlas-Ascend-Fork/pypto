@@ -349,7 +349,8 @@ StructuralHasher::ResultType StructuralHasher::HashType(const TypePtr& type)
             h = HashCombine(h, static_cast<ResultType>(0));
         }
     } else if (auto ptrType = As<PtrType>(type)) {
-        h = HashCombine(h, static_cast<ResultType>(std::hash<uint8_t>{}(ptrType->dtype_.Code())));
+        INTERNAL_CHECK(ptrType->type_) << "structural_hash encountered null PtrType element type";
+        h = HashCombine(h, HashType(ptrType->type_));
     } else if (auto tupleType = As<TupleType>(type)) {
         h = HashCombine(h, static_cast<ResultType>(tupleType->types_.size()));
         for (const auto& t : tupleType->types_) {

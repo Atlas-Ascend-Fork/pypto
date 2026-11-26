@@ -202,7 +202,9 @@ void IRTextDumper::VisitType_(const MemRefTypePtr&) { stream_ << IR_KW_MEMREF_TY
 
 void IRTextDumper::VisitType_(const PtrTypePtr& op)
 {
-    stream_ << IR_KW_PTR << IR_PUN_LT << op->dtype_.ToCTypeString() << IR_PUN_GT;
+    stream_ << IR_KW_PTR << IR_PUN_LT;
+    VisitType(op->type_);
+    stream_ << IR_PUN_GT;
 }
 
 void IRTextDumper::VisitType_(const TokenTypePtr&) { stream_ << IR_KW_TOKEN; }

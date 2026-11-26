@@ -434,10 +434,11 @@ class ExpressionParserMixin:
                 # Sub-byte element types (INT4/UINT4/FP4/FP4E2M1/FP4E1M2/HF4) pack two elements per
                 # byte, so an element offset cannot address a half-byte and there is
                 # no valid C element type to lower to. Forbid `ptr + offset` on them.
-                if left.type.dtype.get_bit() < 8:
+                elem_type = left.type.type
+                if isinstance(elem_type, ir.ScalarType) and elem_type.dtype.get_bit() < 8:
                     raise NotSupported(
                         f"Pointer arithmetic ('ptr + offset') is not supported on the "
-                        f"sub-byte element type '{left.type.dtype.to_string()}'",
+                        f"sub-byte element type '{elem_type.dtype.to_string()}'",
                         span=span,
                         hint="Offsetting by elements cannot address a half-byte. "
                         "Reinterpret the pointer as a byte-addressable dtype via "

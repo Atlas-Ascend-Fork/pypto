@@ -692,45 +692,32 @@ inline WindowTypePtr GetWindowType()
  * Represents a raw pointer to global memory of a specific element type.
  * Corresponds to `!pto.ptr<dtype>` in PTO MLIR.
  * Used as the base-pointer argument for `pl.make_tensor` body ops.
- *
- * `base_ptr` and `offset` are codegen-level annotations (excluded from
- * structural equality) that track the decomposition of chained addptr calls.
  */
 class PtrType : public Type {
 public:
-    DataType dtype_; ///< Element type pointed to
-
-    /// Original ptr function param expr (codegen-level, excluded from reflection)
-    std::optional<ExprPtr> base_ptr;
-    /// Accumulated element offset expr (codegen-level, excluded from reflection)
-    std::optional<ExprPtr> offset;
+    TypePtr type_; ///< Element type pointed to
 
     /**
      * \brief Create a pointer type
      *
-     * \param dtype Element data type
+     * \param type Element type
      */
-    explicit PtrType(DataType dtype) : dtype_(dtype) {}
+    explicit PtrType(TypePtr type) : type_(std::move(type)) {}
 
     /**
-     * \brief Create a pointer type with addptr decomposition
+     * \brief Create a pointer type from an element data type
      *
      * \param dtype Element data type
-     * \param base Original pointer parameter expression
-     * \param off  Accumulated element offset expression
      */
-    PtrType(DataType dtype, ExprPtr base, ExprPtr off)
-        : dtype_(dtype), base_ptr(std::move(base)), offset(std::move(off))
-    {}
+    explicit PtrType(DataType dtype) : type_(std::make_shared<ScalarType>(dtype)) {}
 
     [[nodiscard]] ObjectKind GetKind() const override { return ObjectKind::PtrType; }
     [[nodiscard]] std::string TypeName() const override { return "PtrType"; }
 
-    // Only dtype_ participates in structural equality; base_ptr/offset are codegen annotations.
     static constexpr auto GetFieldDescriptors()
     {
         return std::tuple_cat(Type::GetFieldDescriptors(),
-                              std::make_tuple(reflection::UsualField(&PtrType::dtype_, "dtype")));
+                              std::make_tuple(reflection::UsualField(&PtrType::type_, "type")));
     }
 };
 

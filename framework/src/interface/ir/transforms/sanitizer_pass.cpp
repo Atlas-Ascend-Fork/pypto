@@ -25,6 +25,7 @@
 #include "ir/transforms/base/visitor.h"
 #include "ir/transforms/passes.h"
 #include "ir/transforms/sanitizer_layout.h"
+#include "ir/type_inference.h"
 #include "pypto_pro/error.h"
 
 namespace pypto {
@@ -833,7 +834,7 @@ StmtPtr SanitizerInstrumenter::CollectMakeTensor(const CallPtr& call)
         auto srcPtr = As<PtrType>(call->args_[0]->GetType());
         PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, srcPtr != nullptr)
             << "sanitizer: ptr.make_tensor source must be a Ptr or Tensor";
-        viewDtype = srcPtr->dtype_;
+        viewDtype = ExtractPtrElemDataType(srcPtr);
     }
     int64_t elemBytes = std::max<int64_t>(1, static_cast<int64_t>(viewDtype.GetBit()) / 8);
     auto strideOf = [&](size_t i) -> ExprPtr {

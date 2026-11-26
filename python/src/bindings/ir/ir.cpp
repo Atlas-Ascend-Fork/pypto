@@ -379,7 +379,8 @@ void BindTypeClass(py::module_& ir)
     // PtrType - const shared_ptr
     auto ptrTypeClass = py::class_<PtrType, Type, std::shared_ptr<PtrType>>(
         ir, "PtrType", "Pointer type representation (!pto.ptr<dtype>)");
-    ptrTypeClass.def(py::init<DataType>(), py::arg("dtype"), "Create a pointer type");
+    ptrTypeClass.def(py::init<DataType>(), py::arg("dtype"), "Create a pointer type from an element data type");
+    ptrTypeClass.def(py::init<TypePtr>(), py::arg("dtype"), "Create a pointer type from an element type");
     ptrTypeClass.def(py::init([]() { return GetOuterCompatPtrType(); }),
                      "Create the outer-IR compatibility pointer type (INT8-based)");
     ptrTypeClass.def_static("get", &GetOuterCompatPtrType, "Get the outer-IR compatibility pointer type singleton");

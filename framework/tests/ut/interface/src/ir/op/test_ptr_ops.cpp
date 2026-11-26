@@ -29,6 +29,7 @@
 #include "ir/op_registry.h"
 #include "ir/scalar_expr.h"
 #include "ir/type.h"
+#include "ir/type_inference.h"
 #include "test_op_helpers.h"
 #include "tilefwk/error.h"
 
@@ -51,32 +52,13 @@ TEST_F(PtrOpsTest, MakePtr_TensorSourceUsesSourceOrExplicitDtype)
     auto default_call = reg.Create("ptr.make_ptr", {tensor}, Sp());
     auto default_type = As<PtrType>(default_call->GetType());
     ASSERT_NE(default_type, nullptr);
-    EXPECT_EQ(default_type->dtype_, DataType::FP32);
+    EXPECT_EQ(ExtractPtrElemDataType(default_type), DataType::FP32);
 
     std::vector<std::pair<std::string, std::any>> kwargs = {{"dtype", DataType::FP16}};
     auto cast_call = reg.Create("ptr.make_ptr", {tensor}, kwargs, Sp());
     auto cast_type = As<PtrType>(cast_call->GetType());
     ASSERT_NE(cast_type, nullptr);
-    EXPECT_EQ(cast_type->dtype_, DataType::FP16);
-}
-
-TEST_F(PtrOpsTest, MakePtr_AnnotatedPtrPreservesBaseAndOffset)
-{
-    auto& reg = OpRegistry::GetInstance();
-    auto base = MakePtrVar("base", DataType::UINT8);
-    auto offset = MakeScalarVar("offset", DataType::INT64);
-    auto annotated_type = std::make_shared<PtrType>(DataType::UINT8, base, offset);
-    auto annotated_ptr = std::make_shared<Var>("annotated", annotated_type, Sp());
-    std::vector<std::pair<std::string, std::any>> kwargs = {{"dtype", DataType::FP16}};
-
-    auto call = reg.Create("ptr.make_ptr", {annotated_ptr}, kwargs, Sp());
-    auto result_type = As<PtrType>(call->GetType());
-    ASSERT_NE(result_type, nullptr);
-    EXPECT_EQ(result_type->dtype_, DataType::FP16);
-    ASSERT_TRUE(result_type->base_ptr.has_value());
-    ASSERT_TRUE(result_type->offset.has_value());
-    EXPECT_EQ(*result_type->base_ptr, base);
-    EXPECT_EQ(*result_type->offset, offset);
+    EXPECT_EQ(ExtractPtrElemDataType(cast_type), DataType::FP16);
 }
 
 TEST_F(PtrOpsTest, MakePtr_NonPtrOrTensor_Throws)
@@ -98,7 +80,7 @@ TEST_F(PtrOpsTest, AddPtr_PtrAndOffset_ReturnsPtrType)
     auto call = reg.Create("ptr.addptr", {ptr, offset}, Sp());
     auto rt = As<PtrType>(call->GetType());
     ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_EQ(ExtractPtrElemDataType(rt), DataType::FP16);
 }
 
 TEST_F(PtrOpsTest, AddPtr_ChainedAddPtr_ReturnsPtrType)
@@ -113,7 +95,7 @@ TEST_F(PtrOpsTest, AddPtr_ChainedAddPtr_ReturnsPtrType)
     auto call2 = reg.Create("ptr.addptr", {call1, off2}, Sp());
     auto rt = As<PtrType>(call2->GetType());
     ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP32);
+    EXPECT_EQ(ExtractPtrElemDataType(rt), DataType::FP32);
 }
 
 TEST_F(PtrOpsTest, AddPtr_WrongArgCount_Throws)

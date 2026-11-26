@@ -460,7 +460,10 @@ def _ptr_dtype(ptr, api):
     ptr_type = getattr(ptr, "type", None)
     if not isinstance(ptr_type, _ir_core.PtrType):
         raise InvalidType(f"{api} pointer operand must have PtrType")
-    return ptr_type.dtype
+    elem_type = ptr_type.type
+    if not isinstance(elem_type, _ir_core.ScalarType):
+        raise InvalidType(f"{api} pointer operand must point at a scalar type, got {elem_type}")
+    return elem_type.dtype
 
 
 def _build_channel_remote_ptr(parser, call, channel):

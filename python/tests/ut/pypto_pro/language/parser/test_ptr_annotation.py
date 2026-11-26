@@ -40,7 +40,7 @@ def test_ptr_basic_annotation():
     result = resolver.resolve_type(node)
 
     assert isinstance(result, ir.PtrType)
-    assert result.dtype == DataType.FP32
+    assert result.type.dtype == DataType.FP32
 
 
 def test_ptr_int_dtype():
@@ -50,7 +50,7 @@ def test_ptr_int_dtype():
     result = resolver.resolve_type(node)
 
     assert isinstance(result, ir.PtrType)
-    assert result.dtype == DataType.INT8
+    assert result.type.dtype == DataType.INT8
 
 
 def test_ptr_via_pl_function():
@@ -64,4 +64,4 @@ def test_ptr_via_pl_function():
     func = func_program.get_function(func.__name__)
 
     assert isinstance(func.params[0].type, ir.PtrType)
-    assert func.params[0].type.dtype == DataType.FP32
+    assert func.params[0].type.type.dtype == DataType.FP32

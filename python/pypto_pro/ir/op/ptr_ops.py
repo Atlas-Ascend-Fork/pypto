@@ -214,10 +214,13 @@ def _check_addptr_dtype(ptr: Expr) -> None:
     yields ``"unknown"``). Forbid it with a clear error instead of miscompiling.
     """
     ptr_type = ptr.type
-    if isinstance(ptr_type, _ir_core.PtrType) and ptr_type.dtype.get_bit() < 8:
+    if not isinstance(ptr_type, _ir_core.PtrType):
+        return
+    elem_type = ptr_type.type
+    if isinstance(elem_type, _ir_core.ScalarType) and elem_type.dtype.get_bit() < 8:
         raise InvalidType(
             f"pl.addptr / pointer arithmetic is not supported on sub-byte element type "
-            f"'{ptr_type.dtype.to_string()}': offsetting by elements cannot address a "
+            f"'{elem_type.dtype.to_string()}': offsetting by elements cannot address a "
             f"half-byte. Reinterpret the pointer as a byte-addressable dtype via "
             f"pl.make_ptr (e.g. pl.DT_UINT8) before doing pointer arithmetic."
         )

@@ -1045,12 +1045,12 @@ class FunctionType(enum.IntEnum):
 
 
 class PtrType(Type):
-    """Pointer type with element dtype."""
+    """Pointer type with element type."""
 
-    dtype: Final[DataType]
-    """Element data type pointed to."""
+    type: Final[Type]
+    """Element type pointed to."""
 
-    def __init__(self, dtype: DataType = DataType.INT8) -> None: ...
+    def __init__(self, dtype: DataType | Type = DataType.INT8) -> None: ...
 
 
 class TokenKind(enum.IntEnum):

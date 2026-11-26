@@ -238,12 +238,12 @@ REGISTER_OP("block.sanitizer_log_region")
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, args.size() == 2)
             << "block.sanitizer_log_region requires (log, capacity)";
         auto ptr = As<PtrType>(args[0]->GetType());
-        PRO_IR_CHECK(ExternalError::INVALID_TYPE, ptr && ptr->dtype_ == DataType(DataType::INT8))
+        PRO_IR_CHECK(ExternalError::INVALID_TYPE, ptr && ExtractPtrElemDataType(ptr) == DataType(DataType::INT8))
             << "block.sanitizer_log_region requires an int8 log pointer";
         auto capacity = As<ScalarType>(args[1]->GetType());
         PRO_IR_CHECK(ExternalError::INVALID_TYPE, capacity && capacity->dtype_.IsInt())
             << "block.sanitizer_log_region capacity must be an integer scalar";
-        return std::make_shared<PtrType>(ptr->dtype_);
+        return std::make_shared<PtrType>(ptr->type_);
     });
 
 // The variadic record payload is checked against the shared wire contract.
@@ -331,7 +331,7 @@ TypePtr DeduceBlockDynamicInputPtrType(const std::vector<ExprPtr>& args, const s
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, descType != nullptr)
         << "The operator " << opName << " requires a PtrType as its first argument, got "
         << (args[0] ? args[0]->GetType()->TypeName() : std::string("null"));
-    return std::make_shared<PtrType>(descType->dtype_);
+    return std::make_shared<PtrType>(descType->type_);
 }
 
 REGISTER_OP("dynamic_input_ptr")

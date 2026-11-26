@@ -162,6 +162,15 @@ bool CheckTypeCompatibility(const TypePtr& type1, const TypePtr& type2)
     return false;
 }
 
+DataType ExtractPtrElemDataType(const PtrTypePtr& ptr)
+{
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, ptr != nullptr) << "Pointer type is null";
+    auto scalar = As<ScalarType>(ptr->type_);
+    PRO_IR_CHECK(ExternalError::INVALID_TYPE, scalar != nullptr)
+        << "Pointer element type must be a ScalarType, but got " << ptr->type_->TypeName();
+    return scalar->dtype_;
+}
+
 std::optional<DataType> ExtractDataType(const TypePtr& type)
 {
     // Try ScalarType

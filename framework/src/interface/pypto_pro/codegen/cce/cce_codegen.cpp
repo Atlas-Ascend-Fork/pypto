@@ -43,6 +43,7 @@
 #include "ir/transforms/base/visitor.h"
 #include "ir/transforms/structural_comparison.h"
 #include "ir/type.h"
+#include "ir/type_inference.h"
 #include "pypto_pro/error.h"
 #include "tilefwk/error.h"
 
@@ -922,7 +923,7 @@ std::string CCECodegen::GenerateSimdTileFunction(const ir::FunctionPtr& func, np
                 signature << ", ";
             }
             first = false;
-            signature << "__gm__ " << ptr->dtype_.ToCTypeString() << "* " << name;
+            signature << "__gm__ " << ir::ExtractPtrElemDataType(ptr).ToCTypeString() << "* " << name;
             context_.RegisterVar(param, name);
         } else {
             PRO_CODEGEN_CHECK(npu::tile_fwk::ExternalError::NOT_IMPLEMENTED_ERROR, false)
@@ -1527,7 +1528,7 @@ std::string CCECodegen::GetGeneratedType(const ir::TypePtr& type) const
         }
     }
     if (auto ptrType = ir::As<ir::PtrType>(type)) {
-        return GlobalMemoryQualifier() + ptrType->dtype_.ToCTypeString() + "*";
+        return GlobalMemoryQualifier() + ir::ExtractPtrElemDataType(ptrType).ToCTypeString() + "*";
     }
     if (auto tensorType = ir::As<ir::TensorType>(type)) {
         return GlobalMemoryQualifier() + tensorType->dtype_.ToCTypeString() + "*";

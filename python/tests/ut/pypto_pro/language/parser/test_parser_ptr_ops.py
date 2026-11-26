@@ -69,7 +69,7 @@ def test_make_ptr_result_type_is_ptr_with_changed_dtype():
     assert found is not None, "expected a ptr.make_ptr assignment"
     ptr_type = found.targets[0].type
     assert isinstance(ptr_type, ir.PtrType)
-    assert ptr_type.dtype == pl.DT_FP16
+    assert ptr_type.type.dtype == pl.DT_FP16
 
 
 def test_make_ptr_identity_keeps_source_dtype():
@@ -77,7 +77,7 @@ def test_make_ptr_identity_keeps_source_dtype():
     found = _find_assign_by_call(prog.get_function(prog_first_name(prog)).body, "ptr.make_ptr")
     assert found is not None
     assert isinstance(found.targets[0].type, ir.PtrType)
-    assert found.targets[0].type.dtype == pl.DT_FP16
+    assert found.targets[0].type.type.dtype == pl.DT_FP16
 
 
 def test_make_ptr_then_addptr_ir():
@@ -105,7 +105,7 @@ def test_ptr_plus_offset_result_type_is_ptr():
     found = _find_assign_by_call(prog.get_function(prog_first_name(prog)).body, "ptr.addptr")
     assert found is not None, "expected `ptr + offset` to emit a ptr.addptr assignment"
     assert isinstance(found.targets[0].type, ir.PtrType)
-    assert found.targets[0].type.dtype == pl.DT_FP16
+    assert found.targets[0].type.type.dtype == pl.DT_FP16
 
 
 @pl.jit
@@ -229,7 +229,7 @@ def test_make_ptr_accepts_tensor_argument():
     found = _find_assign_by_call(prog.get_function(prog_first_name(prog)).body, "ptr.make_ptr")
     assert found is not None
     assert isinstance(found.targets[0].type, ir.PtrType)
-    assert found.targets[0].type.dtype == pl.DT_FP32
+    assert found.targets[0].type.type.dtype == pl.DT_FP32
 
 
 @pl.jit

@@ -189,6 +189,11 @@ def test_basic_types():
     pt = ir.PtrType()
     assert str(pt) == "ptr<int8_t>"
 
+    pt_fp32 = ir.PtrType(ir.ScalarType(ir.FP32))
+    assert isinstance(pt_fp32.type, ir.ScalarType)
+    assert pt_fp32.type.dtype == ir.FP32
+    assert str(pt_fp32) == "ptr<float>"
+
     # TokenType
     tt3 = ir.TokenType()
     assert str(tt3) == "token"

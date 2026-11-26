@@ -134,6 +134,14 @@ bool CheckTypeCompatibility(const TypePtr& type1, const TypePtr& type2);
 std::optional<DataType> ExtractDataType(const TypePtr& type);
 
 /**
+ * \brief Extract the scalar element data type of a pointer type
+ *
+ * \param ptr Pointer type whose element type must be a ScalarType
+ * \return Element data type
+ */
+DataType ExtractPtrElemDataType(const PtrTypePtr& ptr);
+
+/**
  * \brief Extract shape from a tensor or tile type
  *
  * \param type Type pointer

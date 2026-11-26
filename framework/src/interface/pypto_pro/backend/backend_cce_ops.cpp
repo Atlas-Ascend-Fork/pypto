@@ -395,11 +395,11 @@ static std::string MakeBlockDynamicInputPtrCodegenCCE(const ir::CallPtr& op, cod
     std::string i = cg.GetExprAsCode(op->args_[1]);
     auto ptrType = ir::As<ir::PtrType>(op->GetType());
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, ptrType != nullptr) << "dynamic_input_ptr result must be a PtrType";
-    std::string ctype = ptrType->dtype_.ToCTypeString();
+    std::string ctype = ir::ExtractPtrElemDataType(ptrType).ToCTypeString();
     // Unmapped dtypes (DT_INT4/DT_UINT4/DT_FP4/DT_HF4) would fall back to "unknown"; fail loudly
     // instead of emitting a broken `__gm__ unknown*`.
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, ctype != "unknown")
-        << "dynamic_input_ptr: descriptor dtype " << ptrType->dtype_.ToString()
+        << "dynamic_input_ptr: descriptor dtype " << ir::ExtractPtrElemDataType(ptrType).ToString()
         << " has no C type mapping (DT_INT4/DT_UINT4/DT_FP4/DT_HF4 are not usable here)";
     std::string word0 = "*reinterpret_cast<__gm__ uint64_t*>(" + x + ")";
     return "(reinterpret_cast<__gm__ " + ctype + "*>(*(reinterpret_cast<__gm__ uint64_t*>(" +
@@ -503,7 +503,7 @@ static std::string MakeBlockMakeTensorCodegenCCE(const ir::CallPtr& op, codegen:
     ir::DataType sourceDtype;
     if (auto ptrType = ir::As<ir::PtrType>(op->args_[0]->GetType())) {
         ptrCode = cce::GetOperandAsCode(cg, op->args_[0]);
-        sourceDtype = ptrType->dtype_;
+        sourceDtype = ir::ExtractPtrElemDataType(ptrType);
     } else if (auto srcTensorType = ir::As<ir::TensorType>(op->args_[0]->GetType())) {
         // Re-view of an existing tensor: reuse its already-registered base pointer (a function
         // parameter's "<name>_ptr" or an earlier make_tensor view's pointer).
@@ -567,7 +567,8 @@ static std::string MakePtrMakePtrCodegenCCE(const ir::CallPtr& op, codegen::Code
     }
     auto resultPtrType = ir::As<ir::PtrType>(op->GetType());
     PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, resultPtrType != nullptr) << "ptr.make_ptr result must be a PtrType";
-    return "((" + codegen.GlobalMemoryQualifier() + resultPtrType->dtype_.ToCTypeString() + "*)(" + ptr + "))";
+    return "((" + codegen.GlobalMemoryQualifier() + ir::ExtractPtrElemDataType(resultPtrType).ToCTypeString() + "*)(" +
+           ptr + "))";
 }
 
 static std::string MakeBlockReinterpretCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& base)
@@ -1888,7 +1889,7 @@ static std::string MakeDistBufferChannelWriteValueCodegenCCE(const ir::CallPtr& 
     auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
         << "buffer_channel.write_value destination must be a pointer";
-    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
+    const std::string dtypeStr = codegen.GetTypeString(ir::ExtractPtrElemDataType(dstPtrType));
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
     const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
@@ -1958,7 +1959,7 @@ static std::string MakeDistBufferChannelWriteReduceCodegenCCE(const ir::CallPtr&
     auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
         << "buffer_channel.write_reduce destination must be a pointer";
-    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
+    const std::string dtypeStr = codegen.GetTypeString(ir::ExtractPtrElemDataType(dstPtrType));
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
     const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
@@ -2020,7 +2021,7 @@ static std::string MakeDistBufferChannelAtomicFetchAddCodegenCCE(const ir::CallP
     auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
         << "buffer_channel.atomic_fetch_add destination must be a pointer";
-    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
+    const std::string dtypeStr = codegen.GetTypeString(ir::ExtractPtrElemDataType(dstPtrType));
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
     const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
@@ -2052,7 +2053,7 @@ static std::string MakeDistBufferChannelAtomicCasCodegenCCE(const ir::CallPtr& o
     auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
         << "buffer_channel.atomic_cas destination must be a pointer";
-    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
+    const std::string dtypeStr = codegen.GetTypeString(ir::ExtractPtrElemDataType(dstPtrType));
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
     const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
@@ -2107,7 +2108,7 @@ static std::string MakeDistChannelWriteValueCodegenCCE(const ir::CallPtr& op, co
     auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
         << "channel.write_value destination must be a pointer";
-    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
+    const std::string dtypeStr = codegen.GetTypeString(ir::ExtractPtrElemDataType(dstPtrType));
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
     const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
@@ -2170,7 +2171,7 @@ static std::string MakeDistChannelWriteReduceCodegenCCE(const ir::CallPtr& op, c
     auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
         << "channel.write_reduce destination must be a pointer";
-    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
+    const std::string dtypeStr = codegen.GetTypeString(ir::ExtractPtrElemDataType(dstPtrType));
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
     const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
@@ -2238,7 +2239,7 @@ static std::string MakeDistChannelAtomicFetchAddCodegenCCE(const ir::CallPtr& op
     auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
         << "channel.atomic_fetch_add destination must be a pointer";
-    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
+    const std::string dtypeStr = codegen.GetTypeString(ir::ExtractPtrElemDataType(dstPtrType));
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
     const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
@@ -2274,7 +2275,7 @@ static std::string MakeDistChannelAtomicCasCodegenCCE(const ir::CallPtr& op, cod
     auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
         << "channel.atomic_cas destination must be a pointer";
-    const std::string dtypeStr = codegen.GetTypeString(dstPtrType->dtype_);
+    const std::string dtypeStr = codegen.GetTypeString(ir::ExtractPtrElemDataType(dstPtrType));
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
     const std::string dstPtr = cce::GetOperandAsCode(codegen, op->args_[1]);
@@ -2499,7 +2500,7 @@ static std::string MakeDistRemotePtrCodegenCCE(const ir::CallPtr& op, codegen::C
     auto ptrType = ir::As<ir::PtrType>(op->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, ptrType != nullptr)
         << "dist.remote_ptr must produce a PtrType";
-    const std::string dtypeStr = ptrType->dtype_.ToCTypeString();
+    const std::string dtypeStr = ir::ExtractPtrElemDataType(ptrType).ToCTypeString();
 
     const std::string windowPtr = codegen.GetPointer(codegen.GetVarName(windowVar));
     const std::string window = "reinterpret_cast<__gm__ pypto::dist::Window*>(" + windowPtr + ")";
@@ -2528,7 +2529,7 @@ static std::string MakeDistChannelRemotePtrCodegenCCE(const ir::CallPtr& op, cod
     auto ptrType = ir::As<ir::PtrType>(op->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, ptrType != nullptr)
         << "channel.remote_ptr must produce a PtrType";
-    const std::string dtypeStr = ptrType->dtype_.ToCTypeString();
+    const std::string dtypeStr = ir::ExtractPtrElemDataType(ptrType).ToCTypeString();
 
     return codegen.GetExprAsCode(op->args_[0]) + ".RemoteAddr<" + dtypeStr + ">(reinterpret_cast<int64_t>(" +
            cce::GetOperandAsCode(codegen, op->args_[1]) + "))";

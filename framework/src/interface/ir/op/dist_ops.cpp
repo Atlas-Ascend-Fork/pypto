@@ -119,10 +119,11 @@ bool IsIntScalar(const ExprPtr& expr)
 bool IsAtomicIntPtr(const ExprPtr& expr, bool allow_32 = true)
 {
     auto ptr = As<PtrType>(expr->GetType());
-    if (ptr == nullptr || !IsAtomicDType(ptr->dtype_)) {
+    auto elemType = ptr ? As<ScalarType>(ptr->type_) : nullptr;
+    if (elemType == nullptr || !IsAtomicDType(elemType->dtype_)) {
         return false;
     }
-    return allow_32 || ptr->dtype_ == DataType::INT64 || ptr->dtype_ == DataType::UINT64;
+    return allow_32 || elemType->dtype_ == DataType::INT64 || elemType->dtype_ == DataType::UINT64;
 }
 
 } // namespace
@@ -240,7 +241,7 @@ DataType ChannelDstPtrDType(const std::vector<ExprPtr>& args, size_t index, cons
     auto ptrType = As<PtrType>(args[index]->GetType());
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, ptrType != nullptr)
         << opName << " destination must be a pointer (PtrType), but got " << args[index]->GetType()->TypeName();
-    return ptrType->dtype_;
+    return ExtractPtrElemDataType(ptrType);
 }
 
 TypePtr DeduceDistChannelWriteType(const std::vector<ExprPtr>& args,
@@ -588,7 +589,7 @@ TypePtr DeduceDistRemotePtrType(const std::vector<ExprPtr>& args,
     PRO_IR_CHECK(ExternalError::INVALID_TYPE, IsIntScalar(args[2]))
         << "dist.remote_ptr peer must be an integer scalar, but got " << args[2]->GetType()->TypeName();
     PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, kwargs.empty()) << "dist.remote_ptr accepts no keyword arguments";
-    return std::make_shared<PtrType>(As<PtrType>(args[1]->GetType())->dtype_);
+    return std::make_shared<PtrType>(As<PtrType>(args[1]->GetType())->type_);
 }
 
 TypePtr DeduceDistChannelRemotePtrType(const std::vector<ExprPtr>& args,

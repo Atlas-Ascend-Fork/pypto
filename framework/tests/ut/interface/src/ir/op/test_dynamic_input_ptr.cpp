@@ -27,6 +27,7 @@
 #include "ir/op_registry.h"
 #include "ir/scalar_expr.h"
 #include "ir/type.h"
+#include "ir/type_inference.h"
 #include "test_op_helpers.h"
 #include "tilefwk/error.h"
 
@@ -48,7 +49,7 @@ TEST_F(DynamicInputPtrTest, DefaultDtypeFollowsDescriptor)
     ASSERT_NE(call, nullptr);
     auto rt = As<PtrType>(call->GetType());
     ASSERT_NE(rt, nullptr);
-    EXPECT_EQ(rt->dtype_, DataType::FP16);
+    EXPECT_EQ(ExtractPtrElemDataType(rt), DataType::FP16);
 }
 
 // Exactly two arguments are required.

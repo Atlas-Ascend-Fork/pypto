@@ -470,9 +470,9 @@ TypePtr IRTextParser::ParseTypePtr()
 {
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::KwPtr));
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunLt));
-    MUST_VALID(dt, ParseDType());
+    MUST_VALID(elemType, ParseType());
     MUST_MATCH(ParseToken(IRTextLexerTokenKind::PunGt));
-    return std::make_shared<PtrType>(dt->data);
+    return std::make_shared<PtrType>(elemType);
 }
 
 TypePtr IRTextParser::ParseTypeSimtGroup()

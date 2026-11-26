@@ -771,11 +771,7 @@ bool StructuralEqualImpl<AssertMode>::EqualType(const TypePtr& lhs, const TypePt
         if (!rhsPtr) {
             return IRAssert({}, "Type cast failed for PtrType");
         }
-        if (lhsPtr->dtype_ != rhsPtr->dtype_) {
-            return IRAssert({}, "PtrType dtype mismatch (", lhsPtr->dtype_.ToString(),
-                            " != ", rhsPtr->dtype_.ToString(), ")");
-        }
-        return true;
+        return EqualType(lhsPtr->type_, rhsPtr->type_);
     } else if (auto lhsTuple = As<TupleType>(lhs)) {
         auto rhsTuple = As<TupleType>(rhs);
         if (!rhsTuple) {
