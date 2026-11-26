@@ -458,7 +458,7 @@ def test_helper_same_width_astype_returns_merge():
             total += get_seq_size(seqused, cu, is_tnd, b, max_seqlen)
         pl.setval(out, 0, total)
 
-    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Aicpu)
     func = program.get_function(kernel.__name__)
     # The carrier merged to one INT64 scalar: the setval value operand is that
     # scalar (every helper return path astype'd to INT64 before the merge).

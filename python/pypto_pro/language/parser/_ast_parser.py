@@ -211,9 +211,9 @@ class ASTParser(
                 This is intentionally separate from void_return_only: @pl.jit
                 are void-only but allow early/multiple returns, while @pl.vector_function
                 and @pl.pipeline.stage are void-only and still require a single tail return.
-            target: Required Cube/Vector target for target-specific parsing.
+            target: Required Cube/Vector/Aicpu target for target-specific parsing.
         """
-        if target not in (ir.SectionKind.Cube, ir.SectionKind.Vector):
+        if target not in (ir.SectionKind.Cube, ir.SectionKind.Vector, ir.SectionKind.Aicpu):
             raise NotSupported(f"Unsupported parser target: {target}")
         self._target = target
         self.mark_stamp_ids: set[int] = set()
@@ -590,7 +590,7 @@ class ASTParser(
 
         attrs = dict(result.attrs)
         attrs.update(func_attrs or {})
-        if func_type == ir.FunctionType.AicpuKernel and inferred:
+        if self._target == ir.SectionKind.Aicpu and inferred:
             # AICPU status ABI: `return <int>` carries a KERNEL_STATUS code for
             # the entry wrappers to propagate, not a data value -- the kernel's
             # IR signature stays void.

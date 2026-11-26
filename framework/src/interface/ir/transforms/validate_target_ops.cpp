@@ -32,8 +32,12 @@ const char* CoreName(CoreMask cores)
             return "Cube";
         case CoreMask::Vector:
             return "Vector";
-        case CoreMask::Both:
+        case CoreMask::CV:
             return "Cube and Vector";
+        case CoreMask::Aicpu:
+            return "AICPU";
+        case CoreMask::All:
+            return "Cube, Vector and AICPU";
         default:
             return "neither core";
     }
@@ -54,9 +58,6 @@ std::optional<CoreMask> LocalTileCore(const CallPtr& call, size_t localTile)
     auto memory = TileMemory(call->args_[localTile]->GetType());
     if (memory == MemorySpace::Vec)
         return CoreMask::Vector;
-    if (memory == MemorySpace::Mat || memory == MemorySpace::Acc || memory == MemorySpace::Bias ||
-        memory == MemorySpace::Scaling)
-        return CoreMask::Cube;
     return std::nullopt;
 }
 
@@ -77,15 +78,28 @@ std::optional<CoreMask> ExclusivePipeCore(PipeType pipe)
 CoreMask SyncPipeCores(const CallPtr& call, const char* key)
 {
     auto pipe = static_cast<PipeType>(call->GetKwarg<int>(key, -1));
-    return ExclusivePipeCore(pipe).value_or(CoreMask::Both);
+    return ExclusivePipeCore(pipe).value_or(CoreMask::CV);
 }
 
 std::optional<CoreMask> ScalarAccessCores(const CallPtr& call)
 {
     const auto& type = call->args_[0]->GetType();
     if (As<TensorType>(type))
-        return CoreMask::Both;
+        return CoreMask::CV;
     if (TileMemory(type) == MemorySpace::Vec)
+        return CoreMask::Vector;
+    return std::nullopt;
+}
+
+// GM scalar reads/writes (block.getval/block.setval on a GM Tensor) are the one
+// scalar surface the AICPU kernel shares with the AI cores.
+std::optional<CoreMask> GmScalarAccessCores(const CallPtr& call)
+{
+    const auto& type = call->args_[0]->GetType();
+    if (As<TensorType>(type))
+        return CoreMask::All;
+    auto memory = TileMemory(type);
+    if (memory == MemorySpace::Vec)
         return CoreMask::Vector;
     return std::nullopt;
 }
@@ -108,7 +122,7 @@ std::optional<CoreMask> SyncOpCores(const CallPtr& call)
             case SyncCoreType::AIV_ONLY:
                 return CoreMask::Vector;
             case SyncCoreType::MIX:
-                return CoreMask::Both;
+                return CoreMask::CV;
             default:
                 return std::nullopt;
         }
@@ -160,6 +174,13 @@ std::optional<CoreMask> OpSpecificCores(const CallPtr& call)
         // TCI fills a UB tile even though its registered scheduling pipe is S.
         {"block.fill_index", CoreMask::Vector},
 
+        // AICPU kernel surface: pointer construction and struct creation/writes
+        // are target-independent IR bookkeeping that also holds on the control CPU.
+        {"ptr.make_ptr", CoreMask::All},
+        {"ptr.make_tensor", CoreMask::All},
+        {"struct.create", CoreMask::All},
+        {"struct.set", CoreMask::All},
+
         // Barrier placement follows the pipe being fenced.
         {"system.bar_fix", CoreMask::Cube},
         {"system.bar_m", CoreMask::Cube},
@@ -180,7 +201,9 @@ std::optional<CoreMask> OpSpecificCores(const CallPtr& call)
         return LocalTileCore(call, 0);
     if (name == "block.store" || name == "block.move" || name == "block.insert")
         return LocalTileCore(call, 1);
-    if (name == "block.getval" || name == "block.setval" || name == "system.dcci")
+    if (name == "block.getval" || name == "block.setval")
+        return GmScalarAccessCores(call);
+    if (name == "system.dcci")
         return ScalarAccessCores(call);
     if (name.rfind("simt.", 0) == 0)
         return CoreMask::Vector;
@@ -194,7 +217,7 @@ CoreMask GetAllowedCores(const CallPtr& call)
         return *cores;
     if (auto cores = OpSpecificCores(call))
         return *cores;
-    return CoreMask::Both;
+    return CoreMask::CV;
 }
 
 void ValidateCorePlacement(const CallPtr& call, CoreMask allowed, CoreMask required)
@@ -210,13 +233,19 @@ void ValidateCorePlacement(const CallPtr& call, CoreMask allowed, CoreMask requi
 
 Pass pass::ValidateTargetOps(SectionKind target)
 {
-    if (target != SectionKind::Cube && target != SectionKind::Vector) {
+    if (target != SectionKind::Cube && target != SectionKind::Vector && target != SectionKind::Aicpu) {
         PRO_IR_THROW(ValueError, ExternalError::INVALID_ARGUMENT)
-            << "ValidateTargetOps requires a Cube or Vector target";
+            << "ValidateTargetOps requires a Cube, Vector or Aicpu target";
     }
     return CreateProgramPass(
         [target](const ProgramPtr& program) {
-            TargetValidator validator(target == SectionKind::Cube ? CoreMask::Cube : CoreMask::Vector);
+            CoreMask required = CoreMask::Cube;
+            if (target == SectionKind::Vector) {
+                required = CoreMask::Vector;
+            } else if (target == SectionKind::Aicpu) {
+                required = CoreMask::Aicpu;
+            }
+            TargetValidator validator(required);
             validator.VisitProgram(program);
             return program;
         },

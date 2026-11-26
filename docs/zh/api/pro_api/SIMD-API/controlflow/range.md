@@ -48,7 +48,7 @@ pypto_pro.language.range(
         - VF域外：step取值范围为[1, 9223372036854775807]。
     - 循环变量在最后一次自增（i += step）后的取值不能超过其所在执行域的上界（VF域内为65535，VF域外为int64上界），否则会发生回绕或溢出，导致循环结果错误。
 - 支持嵌套循环，也支持在for循环中使用break和continue。break只退出其所在的最内层循环，continue跳过当前迭代。
-- pypto_pro.language.range可在JIT函数的公共函数体、pypto_pro.language.section_vector或pypto_pro.language.section_cube内部使用。循环体中的具体操作仍需满足相应执行域的使用约束。
+- pypto_pro.language.range可在JIT函数的公共函数体、pypto_pro.language.section_vector、pypto_pro.language.section_cube、AI CPU KERNEL(即pl.jit(mode="aicpu_kernel"))内部使用。循环体中的具体操作仍需满足相应执行域的使用约束。
 
 ## 返回值说明
 

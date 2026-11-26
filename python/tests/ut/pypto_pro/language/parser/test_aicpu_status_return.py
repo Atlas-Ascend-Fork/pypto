@@ -27,7 +27,12 @@ import pytest
 
 def _parse_aicpu(kernel):
     kdef = kernel.to_kernel_def()
-    kdef.parse_target_program(ir.SectionKind.Vector)
+    target = (
+        ir.SectionKind.Aicpu
+        if getattr(kernel, "_func_type", None) == ir.FunctionType.AicpuKernel
+        else ir.SectionKind.Vector
+    )
+    kdef.parse_target_program(target)
 
 
 def test_aicpu_kernel_accepts_integer_status_return():

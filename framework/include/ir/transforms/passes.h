@@ -287,7 +287,7 @@ Pass InsertSync();
 /** Allocate AUTO mutex placeholders from declarations in one target Program. */
 Pass AllocateMutexIds();
 
-/// Validate operations in a projected Cube or Vector program.
+/// Validate operations in a projected Cube, Vector or Aicpu program.
 Pass ValidateTargetOps(SectionKind target);
 } // namespace pass
 

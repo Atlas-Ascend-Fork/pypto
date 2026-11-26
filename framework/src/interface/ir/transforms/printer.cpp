@@ -1030,6 +1030,7 @@ void IRPrinter::VisitStmt_(const SectionStmtPtr& op)
         {SectionKind::Vector, "section_vector"},
         {SectionKind::Cube, "section_cube"},
         {SectionKind::VF, "section_vf"},
+        {SectionKind::Aicpu, "section_aicpu"},
     };
 
     auto it = sectionKindToName.find(op->sectionKind_);

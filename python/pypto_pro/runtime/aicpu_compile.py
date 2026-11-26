@@ -52,7 +52,7 @@ from pypto.pypto_impl import ir
 from pypto.pypto_impl.codegen import CCECodegen
 from pypto_pro.runtime.platform import NpuArch
 
-from .._errors import InvalidOperation, RuntimeFailure
+from .._errors import InvalidOperation, InvalidVal, RuntimeFailure
 from .entry_params import entry_params_from_param_specs
 
 __all__ = [
@@ -97,14 +97,14 @@ def generate_aicpu_bare_body(program, arch, op_name: str) -> str:
     and the impl function only), then enforces the contract. The caller wraps the
     body in its own entry + compatibility header.
     """
-    body = CCECodegen(ir.SectionKind.Vector).generate_single(program, arch)
+    body = CCECodegen(ir.SectionKind.Aicpu).generate_single(program, arch)
     _validate_bare_body(body, op_name)
     return body
 
 
 def _impl_name(op_name: str) -> str:
-    """Bare impl symbol: CCE emits <name>_impl_<section> and AICPU bare mode is Vector-only."""
-    return f"{op_name}_impl_vector"
+    """Bare impl symbol: CCE emits <name>_impl_<section>; AICPU owns its target."""
+    return f"{op_name}_impl_aicpu"
 
 
 def generate_aicpu_sources(cce_body: str, param_specs, op_name: str) -> dict[str, str]:
@@ -305,20 +305,31 @@ def build_aicpu_jit_so(out_dir: str, op_name: str, cpp_path: Path, host_path: Pa
 
 
 def _parse_aicpu_program(kernel, concrete_key=None, datatype_consts=None, bound_signature=None):
-    """Parse an AICPU kernel to its Vector KernelDef, program and ParamSpec list.
+    """Parse an AICPU kernel to its Aicpu KernelDef, program and ParamSpec list.
 
     Shared front-end chain for both deliveries (fast-launch and offline CpuKernel):
-    KernelDef -> Vector program -> param specs. The fast-launch path passes its
-    variant key, dtype consts and bound signature; the offline path keeps the
-    defaults (single specialization, no tiling key).
+    KernelDef -> Aicpu program (section_aicpu projected, target ops validated)
+    -> param specs. The fast-launch path passes its variant key, dtype consts
+    and bound signature; the offline path keeps the defaults (single
+    specialization, no tiling key).
     """
     # jit imports this module at load time; resolve its spec extractor lazily.
     from .jit import _extract_param_specs
+    from .kernel import targets_for_func_type, validate_target_ops_or_raise
 
     kernel_def = kernel.to_kernel_def(concrete_key, datatype_consts=datatype_consts)
-    program, _ = kernel_def.parse_target_program(
-        ir.SectionKind.Vector, bound_signature=bound_signature
-    )
+    # The routing table owns the target choice; the AICPU chain is single-target
+    # by construction, so anything else means a non-aicpu kernel reached it.
+    targets = targets_for_func_type(kernel_def.func_type)
+    if targets != (ir.SectionKind.Aicpu,):
+        raise InvalidVal(
+            f"the AICPU chain requires @pl.jit(mode='aicpu_kernel') "
+            f"(got func_type={kernel_def.func_type})"
+        )
+    program, _ = kernel_def.parse_target_program(targets[0], bound_signature=bound_signature)
+    # The backend half of the aicpu target validation: reject any AI-Core op
+    # that slipped past the frontend surface (CoreMask Aicpu allow-list).
+    validate_target_ops_or_raise(targets[0], program)
     param_specs = _extract_param_specs(program, kernel_def.last_param_directions)
     return kernel_def, program, param_specs
 

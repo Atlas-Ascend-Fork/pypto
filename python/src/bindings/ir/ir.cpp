@@ -1420,6 +1420,7 @@ void BindStmt(py::module_& ir)
         .value("Vector", SectionKind::Vector, "Vector section for vector operations")
         .value("Cube", SectionKind::Cube, "Cube section for cube operations")
         .value("VF", SectionKind::VF, "VF section for A5 VF API code (__VEC_SCOPE__)")
+        .value("Aicpu", SectionKind::Aicpu, "Aicpu section for control-CPU (aicpu kernel) operations")
         .export_values();
 
     // SectionStmt - const shared_ptr

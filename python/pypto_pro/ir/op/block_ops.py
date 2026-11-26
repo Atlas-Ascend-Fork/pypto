@@ -756,7 +756,7 @@ def _build_numel(self, tensor: Expr, *, span: Span | None = None) -> Expr:
     the rejection is the standard op-channel message regardless of syntax.
     """
     from ..._errors import InvalidType, NotSupported
-    if self._current_func_type != _ir_core.FunctionType.AicpuKernel:
+    if self._target != _ir_core.SectionKind.Aicpu:
         raise NotSupported(
             "pl.numel() is only supported in aicpu kernels",
             span=span,

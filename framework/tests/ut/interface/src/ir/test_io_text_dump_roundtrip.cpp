@@ -331,8 +331,25 @@ TEST_F(IoTextDumpRoundTripTest, TestTypeRoundTrip)
     EXPECT_EQ(TextDumpType(TextLoadType("reg<unalign_reg,uint32_t>", error)), "reg<unalign_reg,uint32_t>");
     EXPECT_TRUE(error.empty());
 }
-
 // ---- Statement round-trip ----
+
+TEST_F(IoTextDumpRoundTripTest, TestSectionStmtAicpuRoundTrip)
+{
+    std::string error;
+    auto body = std::make_shared<SeqStmts>(std::vector<StmtPtr>{std::make_shared<ReturnStmt>(Sp())}, Sp());
+    auto section = std::make_shared<SectionStmt>(SectionKind::Aicpu, body, Sp());
+    std::string dumped = TextDump(section);
+    EXPECT_NE(dumped.find("section Aicpu"), std::string::npos);
+
+    auto loaded = TextLoadStmt(dumped, error);
+    EXPECT_TRUE(error.empty());
+    ASSERT_NE(loaded, nullptr);
+    auto loadedSection = std::dynamic_pointer_cast<const SectionStmt>(loaded);
+    ASSERT_NE(loadedSection, nullptr);
+    EXPECT_EQ(loadedSection->sectionKind_, SectionKind::Aicpu);
+    EXPECT_EQ(TextDump(loaded), dumped);
+}
+
 TEST_F(IoTextDumpRoundTripTest, TestStmtRoundTrip)
 {
     std::string error;

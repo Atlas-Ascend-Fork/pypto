@@ -319,7 +319,7 @@ def sparse_lightning_indexer_kl_loss_grad_pypto_metadata(
         # KERNEL_STATUS_PARAM_INVALID: the explicit status return is the only
         # failure channel -- a bare return means KERNEL_STATUS_OK.
         return 1
-    # KERNEL_STATUS_OK (implicit bare-return/fall-through)
+# KERNEL_STATUS_OK (implicit bare-return/fall-through)
 
 
 kernel = sparse_lightning_indexer_kl_loss_grad_pypto_metadata

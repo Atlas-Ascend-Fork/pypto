@@ -135,8 +135,7 @@ def test_shared_pipeline_barriers_pass_on_both_targets():
 
 @pytest.mark.parametrize(
     "memory,target,allowed",
-    [(pl.MemorySpace.Vec, "Cube", "Vector"), (pl.MemorySpace.Bias, "Vector", "Cube"),
-     (pl.MemorySpace.Scaling, "Vector", "Cube")],
+    [(pl.MemorySpace.Vec, "Cube", "Vector")],
 )
 def test_dump_tile_placement(memory, target, allowed):
     @pl.jit(auto_mutex=False)
@@ -152,9 +151,24 @@ def test_dump_tile_placement(memory, target, allowed):
         ir.Pass.validate_target_ops(kind)(program)
 
 
+@pytest.mark.parametrize("memory", [pl.MemorySpace.Bias, pl.MemorySpace.Scaling])
+def test_dump_tile_special_buffers_fall_to_cv_default(memory):
+    # Bias/Scaling tile dump no longer maps to Cube: the unclassified CV
+    # default admits it on both AI cores.
+    @pl.jit(auto_mutex=False)
+    def kernel():
+        tt = pl.TileType(shape=[1, 32], dtype=pl.DT_FP32, target_memory=memory)
+        tile = pl.make_tile(tt, addr=0)
+        pl.dump_data(tile)
+
+    for kind in (ir.SectionKind.Cube, ir.SectionKind.Vector):
+        program, _ = kernel.to_kernel_def().parse_target_program(kind)
+        ir.Pass.validate_target_ops(kind)(program)
+
+
 @pytest.mark.parametrize(
     "memory,layout,allowed",
-    [(pl.MemorySpace.Vec, pl.ND, "Vector"), (pl.MemorySpace.Mat, pl.NZ, "Cube")],
+    [(pl.MemorySpace.Vec, pl.ND, "Vector")],
 )
 @pytest.mark.parametrize("target", ["Cube", "Vector"])
 def test_fillpad_placement(memory, layout, allowed, target):
@@ -175,6 +189,24 @@ def test_fillpad_placement(memory, layout, allowed, target):
     else:
         with pytest.raises(ValueError, match=_placement_error(target, allowed)):
             ir.Pass.validate_target_ops(kind)(program)
+
+
+def test_fillpad_mat_tile_falls_to_cv_default():
+    # Mat/NZ fillpad no longer maps to Cube: the unclassified CV default
+    # admits it on both AI cores.
+    @pl.jit(auto_mutex=False)
+    def kernel():
+        tt = pl.TileType(
+            shape=[16, 32], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat,
+            layout=pl.NZ, pad=pl.TilePad.zero,
+        )
+        dst = pl.make_tile(tt, addr=0)
+        src = pl.make_tile(tt, addr=1024)
+        pl.fillpad(dst, src)
+
+    for kind in (ir.SectionKind.Cube, ir.SectionKind.Vector):
+        program, _ = kernel.to_kernel_def().parse_target_program(kind)
+        ir.Pass.validate_target_ops(kind)(program)
 
 
 def test_sectionless_cube_barrier_rejected_on_vector(tmp_path):

@@ -758,6 +758,26 @@ TEST_F(IRBuilderTest, TestSectionCube)
     b.EndFunction(sp);
 }
 
+TEST_F(IRBuilderTest, TestSectionAicpu)
+{
+    IRBuilder b;
+    auto sp = Sp();
+    auto st = Scalar(DataType::INT32);
+
+    b.BeginFunction("f", sp);
+    auto x = b.FuncArg("x", st, sp);
+
+    b.BeginSection(SectionKind::Aicpu, sp);
+    b.Assign({x}, std::make_shared<ConstInt>(3, DataType::INT32, sp), sp);
+    auto sectionStmtBase = b.EndSection(sp);
+
+    ASSERT_NE(sectionStmtBase, nullptr);
+    ASSERT_EQ(sectionStmtBase->GetKind(), ObjectKind::SectionStmt);
+    auto sectionStmt = std::dynamic_pointer_cast<const SectionStmt>(sectionStmtBase);
+    ASSERT_EQ(sectionStmt->sectionKind_, SectionKind::Aicpu);
+    b.EndFunction(sp);
+}
+
 TEST_F(IRBuilderTest, TestSectionEmpty)
 {
     IRBuilder b;

@@ -29,7 +29,7 @@ from .test_inline_helper_return import _walk_statements
 def _parse(kernel):
     """Parse one jit kernel's target program and return (program, kernel_def)."""
     kdef = kernel.to_kernel_def()
-    program, _ = kdef.parse_target_program(ir.SectionKind.Vector)
+    program, _ = kdef.parse_target_program(ir.SectionKind.Aicpu)
     return program, kdef
 
 

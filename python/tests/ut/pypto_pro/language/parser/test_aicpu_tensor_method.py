@@ -34,7 +34,16 @@ from .test_inline_helper_return import _walk_statements
 def _parse(kernel):
     """Parse one jit kernel's target program and return (program, kernel_def)."""
     kdef = kernel.to_kernel_def()
-    program, _ = kdef.parse_target_program(ir.SectionKind.Vector)
+    target = (
+        ir.SectionKind.Aicpu
+        if getattr(kernel, "_func_type", None) == ir.FunctionType.AicpuKernel
+        else ir.SectionKind.Vector
+    )
+    program, _ = kdef.parse_target_program(target)
+    if target == ir.SectionKind.Aicpu:
+        from pypto_pro.runtime.kernel import validate_target_ops_or_raise
+
+        validate_target_ops_or_raise(ir.SectionKind.Aicpu, program)
     return program, kdef
 
 
@@ -80,10 +89,11 @@ def test_is_none_merges_descriptor_guards():
 
 
 def test_tile_rejected_on_surface_ops():
-    # A Tile reaches the surface ops via make_tile (its argument is a Python
-    # TileType, so the reverse surface rule never sees a Tensor); the surface
-    # check must reject it before the impl emits AI-Core flavored IR.
-    with pytest.raises(NotSupported, match="on a Tile is not supported in aicpu kernels"):
+    # Tiles are AI-Core-only: make_tile reaches the IR and the Aicpu CoreMask
+    # rejects it (S-pipe op classified CV), still before the bisheng compile.
+    from pypto_pro._errors import InvalidOperation
+
+    with pytest.raises(InvalidOperation, match="cannot execute on AICPU"):
         @pl.jit(mode="aicpu_kernel")
         def kernel(t: pl.Tensor[[pl.DYNAMIC], pl.DT_INT32]):
             tf = pl.TileType(shape=[16, 16], dtype=pl.DT_INT32, target_memory=pl.MemorySpace.Vec)
@@ -147,7 +157,7 @@ def test_numel_of_zero_dim_tensor_is_one():
         n = pl.numel(t)
         pl.setval(t, 0, n)
 
-    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Aicpu)
     func = program.get_function(kernel.__name__)
     stmts = list(_walk_statements(func.body))
     setval_call = next(

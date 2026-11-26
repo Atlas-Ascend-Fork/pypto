@@ -10,15 +10,14 @@ AI CPU Kernel适合控制流密集、串行依赖强、计算量小的任务（�
 
 **表1** Metadata算子设计规格
 
-| name                        | shape             | data type | format |
-| --------------------------- | ----------------- | --------- | ------ |
+| name                              | shape             | data type | format |
+| --------------------------------- | ----------------- | --------- | ------ |
 | **inputs（输入）** seq_lens | (batch,) 动态     | int32     | ND     |
 | **outputs（输出）** plan    | (2 * batch,) 动态 | int32     | ND     |
 
 * 计算逻辑
 
   对每个批次b：`plan[2 * b] = sum(seq_lens[0:b])`（行偏移），`plan[2 * b + 1] = seq_lens[b]`（行数）。
-
 * 使用的主要接口
 
   Tensor声明与标量读写接口：pypto_pro.language.Tensor、pypto_pro.language.DYNAMIC、pypto_pro.language.numel、pypto_pro.language.getval、pypto_pro.language.setval
