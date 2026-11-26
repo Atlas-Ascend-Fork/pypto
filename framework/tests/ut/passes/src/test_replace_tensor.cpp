@@ -2024,6 +2024,89 @@ TEST_F(ReplaceTensorTest, TestTokenProducerAndConsumerMove)
     CheckTokenDependencies(*graph.function);
 }
 
+TEST_F(ReplaceTensorTest, ForwardAssembleReachesSiblingPartialWriter)
+{
+    Function function(Program::GetInstance(), "SiblingPartialWriter", "SiblingPartialWriter", nullptr);
+    IRBuilder builder;
+    const Shape shape = {kNumEight, kNumEight};
+    const Offset zero = {kNumZero, kNumZero};
+    const Offset writeOffset = {kNumTwo, kNumZero};
+    auto makeTensor = [&](const Shape& tileShape, MemoryType memory = MEM_UB, std::shared_ptr<RawTensor> raw = {}) {
+        auto tensor = builder.CreateTensorVar(raw ? raw : builder.CreateRawTensor(DT_FP32, tileShape), zero, tileShape,
+                                              CreateTestConstIntVector(tileShape));
+        tensor->SetMemoryTypeBoth(memory, true);
+        return tensor;
+    };
+
+    auto input = makeTensor(shape, MEM_DEVICE_DDR);
+    function.inCasts_ = {input};
+    auto& copy = PassOperationUtils::AddOperation(function, Opcode::OP_COPY_IN, {input}, {makeTensor(shape)});
+    const auto dims = OpImmediate::Specified(shape);
+    copy.SetOpAttribute(std::make_shared<CopyOpAttribute>(OpImmediate::Specified(zero), MEM_UB, dims, dims));
+    auto original = makeTensor(shape);
+    PassOperationUtils::AddOperation(function, Opcode::OP_ASSEMBLE, copy.GetOOperands(), {original})
+        .SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UB, zero));
+    auto& view = PassOperationUtils::AddOperation(function, Opcode::OP_VIEW, {original}, {makeTensor(shape)});
+    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(zero));
+    auto& priorRead = PassOperationUtils::AddOperation(function, Opcode::OP_EXP, view.GetOOperands(),
+                                                       {makeTensor(shape)});
+    // The partial ASSEMBLE writes a separate logical tensor on the original storage.
+    auto patch = makeTensor({kNumFour, kNumEight});
+    auto& writer = PassOperationUtils::AddOperation(function, Opcode::OP_VEC_DUP, {}, {patch});
+    auto updated = makeTensor(shape, MEM_UB, original->GetRawTensor());
+    auto& assemble = PassOperationUtils::AddOperation(function, Opcode::OP_ASSEMBLE, {patch}, {updated});
+    assemble.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UB, writeOffset));
+    auto& laterRead = PassOperationUtils::AddOperation(function, Opcode::OP_EXP, {updated}, {makeTensor(shape)});
+
+    auto token = builder.CreateTokenVar(ir::Span::Unknown());
+    view.result_token_ = {token};
+    assemble.tokens_ = {token};
+    auto& dependency = function.GetVarDependency();
+    dependency.AddProducer(token, ToStmt(view));
+    dependency.AddConsumer(token, ToStmt(assemble));
+
+    ASSERT_EQ(ReplaceTensor().RunOnFunction(function), SUCCESS);
+    EXPECT_EQ(patch->GetRawTensor(), priorRead.GetInputOperand(0)->GetRawTensor());
+    EXPECT_EQ(patch->GetRawTensor(), laterRead.GetInputOperand(0)->GetRawTensor());
+    EXPECT_EQ(patch->GetOffset(), writeOffset);
+    EXPECT_EQ(writer.ProducerOpsByToken(), (std::unordered_set<Operation*>{&priorRead}));
+    EXPECT_FALSE(dependency.HasDependency(token));
+    EXPECT_NO_THROW(function.GetSortedOperations());
+    CheckTokenDependencies(function);
+}
+
+TEST_F(ReplaceTensorTest, ForwardAssembleDoesNotRevisitSameRawWriter)
+{
+    Function function(Program::GetInstance(), "SameRawWriter", "SameRawWriter", nullptr);
+    IRBuilder builder;
+    const Shape shape = {kNumEight, kNumEight};
+    const Shape patchShape = {kNumFour, kNumEight};
+    const Offset zero = {kNumZero, kNumZero};
+    const Offset writeOffset = {kNumTwo, kNumZero};
+    auto makeTensor = [&](const Shape& tileShape, const std::shared_ptr<RawTensor>& raw) {
+        auto tensor = builder.CreateTensorVar(raw, zero, tileShape, CreateTestConstIntVector(tileShape));
+        tensor->SetMemoryTypeBoth(MEM_UB, true);
+        return tensor;
+    };
+
+    // The larger raw starts traversal before either shared-raw ASSEMBLE output is visited.
+    auto initial = makeTensor(shape, builder.CreateRawTensor(DT_FP32, Shape{kNumEight * kNumTwo, kNumEight}));
+    auto sharedRaw = builder.CreateRawTensor(DT_FP32, shape);
+    auto original = makeTensor(shape, sharedRaw);
+    auto patch = makeTensor(patchShape, sharedRaw);
+    auto updated = makeTensor(shape, sharedRaw);
+    builder.CreateTensorOpStmt(function, Opcode::OP_VEC_DUP, {}, {initial});
+    builder.CreateTensorOpStmt(function, Opcode::OP_ASSEMBLE, {initial}, {original})
+        .SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UB, zero));
+    builder.CreateTensorOpStmt(function, Opcode::OP_VEC_DUP, {}, {patch});
+    builder.CreateTensorOpStmt(function, Opcode::OP_ASSEMBLE, {patch}, {updated})
+        .SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_UB, writeOffset));
+
+    ASSERT_EQ(ReplaceTensor().RunOnFunction(function), SUCCESS);
+    EXPECT_EQ(patch->GetRawTensor(), updated->GetRawTensor());
+    EXPECT_EQ(patch->GetOffset(), writeOffset);
+}
+
 TEST_F(ReplaceTensorTest, MovesSharedAssembleTokenToActualWrites)
 {
     Function function(Program::GetInstance(), "SharedAssembleWriteToken", "SharedAssembleWriteToken", nullptr);

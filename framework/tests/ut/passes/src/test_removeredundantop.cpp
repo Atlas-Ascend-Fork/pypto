@@ -4196,8 +4196,51 @@ TEST_F(TestRemoveRedundantOpPass, ReadCompletionViewKeepsSnapshot)
                 EXPECT_TRUE(HasToken(nextWrite, token));
             } else {
                 EXPECT_FALSE(HasToken(nextWrite, token));
+                EXPECT_EQ(nextWrite.ProducerOpsByToken(), (std::unordered_set<Operation*>{&read}));
             }
         }
+    }
+}
+
+TEST_F(TestRemoveRedundantOpPass, ReadCompletionViewKeepsSnapshotWhenMigrationWouldCreateCycle)
+{
+    for (auto opcode : {Opcode::OP_VIEW, Opcode::OP_SLICE}) {
+        SCOPED_TRACE(static_cast<int>(opcode));
+        Function function(Program::GetInstance(), "ReadCompletionCycle", "ReadCompletionCycle", nullptr);
+        IRBuilder builder;
+        const Shape shape = {kNumFour, kNumExpFour};
+        const Offset zero = {kNumZero, kNumZero};
+        auto makeTensor = [&]() {
+            return builder.CreateTensorVar(function, DT_FP32, shape, CreateTestConstIntVector(shape));
+        };
+        auto initial = makeTensor();
+        auto input = makeTensor();
+        auto snapshot = makeTensor();
+        auto patch = makeTensor();
+        auto updated = builder.CreateTensorVar(function, input->GetRawTensor(), zero, shape);
+        auto output = makeTensor();
+        auto& init = builder.CreateTensorOpStmt(function, Opcode::OP_ASSEMBLE, {initial}, {input});
+        init.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zero));
+        auto& view = builder.CreateTensorOpStmt(function, opcode, {input}, {snapshot});
+        view.SetOpAttribute(std::make_shared<ViewOpAttribute>(zero));
+        auto viewStmt = view.shared_from_this();
+        auto& write = builder.CreateTensorOpStmt(function, Opcode::OP_ASSEMBLE, {patch}, {updated});
+        write.SetOpAttribute(std::make_shared<AssembleOpAttribute>(zero));
+        auto& bridge = builder.CreateTensorOpStmt(function, Opcode::OP_EXP, {updated}, {makeTensor()});
+        auto& reader = builder.CreateTensorOpStmt(function, Opcode::OP_ABS, {snapshot}, {output});
+        auto warToken = AddTokenEdge(function, view, write);
+        // The write reaches the reader through a data edge followed by a token edge.
+        auto bridgeToken = AddTokenEdge(function, bridge, reader);
+        function.inCasts_ = {initial, patch};
+        function.outCasts_ = {output};
+
+        ASSERT_EQ(RemoveRedundantOp().RemoveDummyOp(function), SUCCESS);
+        EXPECT_TRUE(function.Operations().Contains(view));
+        EXPECT_EQ(reader.GetInputOperand(0), snapshot);
+        EXPECT_TRUE(function.GetVarDependency().HasProducer(warToken, ToStmtPtr(view)));
+        EXPECT_TRUE(function.GetVarDependency().HasConsumer(warToken, ToStmtPtr(write)));
+        EXPECT_TRUE(HasToken(write, warToken));
+        EXPECT_TRUE(HasToken(reader, bridgeToken));
     }
 }
 
