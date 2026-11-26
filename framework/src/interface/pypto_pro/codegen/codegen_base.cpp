@@ -37,6 +37,10 @@ std::string FormatIntCLiteral(int64_t value, const ir::DataType& dtype)
         // Folded uint64 payload: the plain signed spelling would be out of range for long long.
         return std::to_string(static_cast<uint64_t>(value)) + "uLL";
     }
+    if (value == std::numeric_limits<int64_t>::min()) {
+        // The positive magnitude of INT64_MIN is not a signed C++ integer literal.
+        return "(-9223372036854775807LL - 1LL)";
+    }
     return std::to_string(value);
 }
 

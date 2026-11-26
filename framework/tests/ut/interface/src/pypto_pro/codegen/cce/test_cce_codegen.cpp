@@ -12,6 +12,7 @@
 
 #include <any>
 #include <exception>
+#include <limits>
 #include <memory>
 #include <optional>
 #include <string>
@@ -20,6 +21,7 @@
 
 #include "backend/backend_cce.h"
 #include "codegen/cce/cce_codegen.h"
+#include "codegen/codegen_base.h"
 #include "ir/debug_info.h"
 #include "ir/function.h"
 #include "ir/program.h"
@@ -256,6 +258,18 @@ TEST(CCECodegenHeaderTest, GeneratesStandaloneTilingHeader)
 TEST(CCECodegenHeaderTest, RejectsNonCubeOrVectorTarget)
 {
     EXPECT_THROW((void)CCECodegen(ir::SectionKind::VF), npu::tile_fwk::Error);
+}
+
+TEST(CCECodegenTest, FormatsInt64BoundaryLiterals)
+{
+    const auto minimum = std::numeric_limits<int64_t>::min();
+    EXPECT_EQ(FormatIntCLiteral(minimum, ir::DataType::INT64), "(-9223372036854775807LL - 1LL)");
+    EXPECT_EQ(FormatIntCLiteral(minimum + 1, ir::DataType::INT64), "-9223372036854775807");
+    EXPECT_EQ(FormatIntCLiteral(std::numeric_limits<int64_t>::max(), ir::DataType::INT64), "9223372036854775807");
+    EXPECT_EQ(FormatIntCLiteral(0, ir::DataType::INT64), "0");
+    EXPECT_EQ(FormatIntCLiteral(-1, ir::DataType::INT64), "-1");
+    EXPECT_EQ(FormatIntCLiteral(minimum, ir::DataType::UINT64), "9223372036854775808uLL");
+    EXPECT_EQ(FormatIntCLiteral(-1, ir::DataType::UINT64), "18446744073709551615uLL");
 }
 
 TEST(CCECodegenTest, RejectsUnsupportedArchitecturesBeforeGeneratingCode)

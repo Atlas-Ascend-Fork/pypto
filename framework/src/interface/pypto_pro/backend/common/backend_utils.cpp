@@ -17,6 +17,7 @@
 
 #include "core/error.h"
 #include "codegen/cce/cce_codegen.h"
+#include "codegen/codegen_base.h"
 #include "core/logging.h"
 #include "ir/kind_traits.h"
 #include "ir/memref.h"
@@ -274,7 +275,7 @@ std::string CoerceScalarToInt(const ir::ExprPtr& scalarExpr, const ir::DataType&
     }
     // Sign-extend back out of the truncated width.
     const uint64_t signBit = static_cast<uint64_t>(1) << (bits - 1);
-    return std::to_string(static_cast<int64_t>((truncated ^ signBit) - signBit));
+    return codegen::FormatIntCLiteral(static_cast<int64_t>((truncated ^ signBit) - signBit), srcDt);
 }
 
 } // namespace cce

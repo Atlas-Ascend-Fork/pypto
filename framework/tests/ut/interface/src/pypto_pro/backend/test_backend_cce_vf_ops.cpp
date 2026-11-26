@@ -20,6 +20,7 @@
 #include <vector>
 
 #include "backend/backend_cce.h"
+#include "backend/common/backend_utils.h"
 #include "codegen/cce/cce_codegen.h"
 #include "ir/expr.h"
 #include "ir/kind_traits.h"
@@ -1947,6 +1948,15 @@ TEST(BackendCCEVFOpsTest, StoreAlignRejectsTooFewArgs)
 // ============================================================================
 // CoerceScalarToInt: float-constant scalar coerced to int literal for int src
 // ============================================================================
+
+TEST(BackendCCEVFOpsTest, CoercesFloatScalarToInt64Minimum)
+{
+    // -2^63 is exactly representable as a double and is a valid int64 value.
+    auto minimum = Float(-9223372036854775808.0);
+    EXPECT_EQ(cce::CoerceScalarToInt(minimum, ir::DataType::INT64, "unused"), "(-9223372036854775807LL - 1LL)");
+    EXPECT_EQ(cce::CoerceScalarToInt(Float(-3.5), ir::DataType::INT64, "unused"), "-3");
+    EXPECT_EQ(cce::CoerceScalarToInt(minimum, ir::DataType::UINT64, "unused"), "9223372036854775808u");
+}
 
 TEST(BackendCCEVFOpsTest, CoercesFloatScalarToIntForInt32Src)
 {
