@@ -95,16 +95,175 @@ def test_tile_slice_rejects_non_integer_static_bound():
         _parse_vector_kernel(kernel)
 
 
-def test_tile_slice_rejects_empty_static_range():
+@pytest.mark.parametrize("start,valid_rows", [(0, None), (4, None), (8, None), (4, 4)])
+def test_tile_slice_accepts_empty_static_range(start, valid_rows):
+    valid_shape = None if valid_rows is None else [valid_rows, 64]
+
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[8, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec,
+                                valid_shape=valid_shape)
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            _sub = tile[start:start, 0:32]
+
+    _parse_vector_kernel(kernel)
+
+
+def test_tile_slice_accepts_empty_static_tail():
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[8, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec,
+                                valid_shape=[4, 64])
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            _row_empty = tile[4:, 0:32]
+            _col_empty = tile[0:4, 64:]
+            _both_empty = tile[4:, 64:]
+
+    _parse_vector_kernel(kernel)
+
+
+def test_tile_slice_rejects_reversed_static_range():
     @pl.jit(auto_mutex=False)
     def kernel(_jit_entry: pl.DT_INT64):
         tile_type = pl.TileType(shape=[8, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
         tile = pl.make_tile(tile_type, addr=0)
         with pl.section_vector():
-            _sub = tile[4:4, 0:32]
+            _sub = tile[6:4, 0:32]
 
-    with pytest.raises(InvalidOperation, match=r"axis 0 must satisfy start < min\(end, shape\)"):
+    with pytest.raises(InvalidShape, match="axis 0 must satisfy start <= end"):
         _parse_vector_kernel(kernel)
+
+
+def test_tile_slice_rejects_static_end_beyond_physical_shape():
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[8, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            _sub = tile[0:9, 0:32]
+
+    with pytest.raises(InvalidShape, match=r"slice end \(9\) exceeds physical shape dim 0 \(8\)"):
+        _parse_vector_kernel(kernel)
+
+
+def test_tile_slice_rejects_static_end_beyond_static_valid_shape():
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[8, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, valid_shape=[4, 64]
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            _sub = tile[0:5, 0:32]
+
+    with pytest.raises(InvalidShape, match=r"slice end \(5\) exceeds valid_shape dim 0 \(4\)"):
+        _parse_vector_kernel(kernel)
+
+
+def test_tile_slice_does_not_infer_set_validshape_bounds():
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[8, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1]
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            pl.set_validshape(tile, [4, 64])
+            _sub = tile[0:5, 0:32]
+
+    _parse_vector_kernel(kernel)
+
+
+def test_tile_slice_omitted_end_uses_known_valid_shape():
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(
+            shape=[8, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, valid_shape=[4, 64]
+        )
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            _sub_exact = tile[0:4, 0:64]
+            _sub = tile[0:, :]
+
+    _parse_vector_kernel(kernel)
+
+
+@pytest.mark.parametrize("inline", [False, True])
+@pytest.mark.parametrize("row_end,col_end", [(6, 24), (4, 40)])
+def test_nested_tile_slice_does_not_infer_parent_valid_shape_bounds(inline, row_end, col_end):
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[8, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            pl.set_validshape(tile, [6, 40])
+            if inline:
+                _sub = tile[2:6, 16:40][2:row_end, 16:col_end]
+            else:
+                sub = tile[2:6, 16:40]
+                alias = sub
+                _sub = alias[2:row_end, 16:col_end]
+
+    _parse_vector_kernel(kernel)
+
+
+def test_nested_tile_slice_accepts_valid_window():
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[8, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            sub = tile[2:6, 16:40]
+            _sub = sub[2:4, 16:24]
+            _inline = tile[2:6, 16:40][2:4, 16:24]
+
+    _parse_vector_kernel(kernel)
+
+
+def test_nested_tile_slice_omitted_end_preserves_valid_shape():
+    @pl.jit(auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[8, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            sub = tile[2:6, 16:40]
+            tail = sub[2:, :]
+            _sub = tail[:, :]
+
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    subviews = [
+        stmt for stmt in program.get_function(kernel.__name__).body.stmts
+        if isinstance(stmt, ir.AssignStmt)
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.subview"
+    ]
+    assert len(subviews) == 3
+    tail_shape = subviews[1].value.args[2].elements
+    assert isinstance(tail_shape[0], ir.Sub)
+    assert isinstance(tail_shape[0].left, ir.Call)
+    assert tail_shape[0].left.name == "block.tile_valid_shape"
+    assert tail_shape[0].left.kwargs["axis"] == 0
+    assert tail_shape[0].right.value == 2
+    assert ir.structural_equal(tail_shape[0].left.args[0], subviews[0].targets[0], enable_auto_mapping=False)
+    for axis, dim in enumerate(subviews[2].value.args[2].elements):
+        assert isinstance(dim, ir.Call)
+        assert dim.name == "block.tile_valid_shape"
+        assert dim.kwargs["axis"] == axis
+        assert ir.structural_equal(dim.args[0], subviews[1].targets[0], enable_auto_mapping=False)
+
+
+def test_nested_tile_slice_accepts_dynamic_valid_shape():
+    @pl.jit(auto_mutex=False)
+    def kernel(col_end: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[8, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_vector():
+            sub = tile[2:6, 16:col_end]
+            _sub = sub[0:4, 0:16]
+
+    _parse_vector_kernel(kernel)
 
 
 def test_tile_slice_rejects_non_unit_step():
@@ -133,7 +292,24 @@ def test_tile_slice_with_dynamic_valid_shape():
             pl.set_validshape(tile, [rows, cols])
             _sub = tile[1:, :]
 
-    _parse_vector_kernel(kernel)
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    subview = next(
+        stmt.value for stmt in program.get_function(kernel.__name__).body.stmts
+        if isinstance(stmt, ir.AssignStmt)
+        and isinstance(stmt.value, ir.Call)
+        and stmt.value.name == "block.subview"
+    )
+    rows, cols = subview.args[2].elements
+    assert isinstance(rows, ir.Sub)
+    assert isinstance(rows.left, ir.Call)
+    assert rows.left.name == "block.tile_valid_shape"
+    assert rows.left.kwargs["axis"] == 0
+    assert rows.right.value == 1
+    assert isinstance(cols, ir.Call)
+    assert cols.name == "block.tile_valid_shape"
+    assert cols.kwargs["axis"] == 1
+    assert ir.structural_equal(rows.left.args[0], subview.args[0], enable_auto_mapping=False)
+    assert ir.structural_equal(cols.args[0], subview.args[0], enable_auto_mapping=False)
 
 
 @pytest.mark.parametrize(
@@ -201,6 +377,28 @@ def test_nz_tile_slice_accepts_fractal_aligned_start():
             _sub = tile[16:32, 16:32]
 
     _parse_vector_kernel(kernel)
+
+
+@pytest.mark.parametrize("memory,layout,fractal,row,col,alignment", [
+    (pl.MemorySpace.Acc, pl.NZ, 512, 16, 8, None),
+    (pl.MemorySpace.Acc, pl.NZ, 1024, 16, 8, (16, 16)),
+    (pl.MemorySpace.Mat, pl.ZN, 512, 8, 16, None),
+    (pl.MemorySpace.Mat, pl.ZN, 1024, 8, 16, (16, 16)),
+])
+def test_tile_slice_alignment_follows_fractal(memory, layout, fractal, row, col, alignment):
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(_jit_entry: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=memory,
+                                layout=layout, fractal=fractal)
+        tile = pl.make_tile(tile_type, addr=0)
+        with pl.section_cube():
+            _sub = tile[row:32, col:32]
+
+    if alignment is None:
+        _parse_cube_kernel(kernel)
+    else:
+        with pytest.raises(InvalidShape, match=rf"slice start must align to \[{alignment[0]}, {alignment[1]}\]"):
+            _parse_cube_kernel(kernel)
 
 
 def test_zn_tile_slice_accepts_fractal_aligned_start():

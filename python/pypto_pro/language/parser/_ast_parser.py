@@ -306,11 +306,6 @@ class ASTParser(
         # GetItemExpr alias semantics; every other MakeTuple is immutable.
         self._struct_array_tuples: set[ir.MakeTuple] = set()
 
-        # Maps tile expressions to parser-tracked [row, col] valid shapes from
-        # explicit set_validshape calls. This metadata is used to clamp subviews;
-        # public tile.valid_shape reads are represented by block.tile_valid_shape.
-        self._tile_valid_shape: dict[ir.Expr, list] = {}
-
         # MakeTuples that already have an emitted assignment anchor. Keeping the
         # Expr objects themselves alive is required: a Python wrapper's id() can
         # be reused while parsing, which would otherwise suppress an unrelated
@@ -377,13 +372,6 @@ class ASTParser(
         )
         tv.ptr = ptr_var
         return ir.TensorType(param_type.shape, param_type.dtype, param_type.memref, tv)
-
-    def record_tile_valid_shape(self, tile_expr: ir.Expr, valid_shape) -> None:
-        elements = valid_shape.elements if isinstance(valid_shape, ir.MakeTuple) else valid_shape
-        self._tile_valid_shape[tile_expr] = list(elements)
-
-    def get_tile_valid_shape(self, tile_expr: ir.Expr):
-        return self._tile_valid_shape.get(tile_expr)
 
     def set_auto_mutex_enabled(self, enabled: bool) -> None:
         """Set automatic mutex emission for helper parsing."""

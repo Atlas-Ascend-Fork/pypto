@@ -5403,11 +5403,7 @@ def _build_set_validshape(self, tile: Expr, shape: Expr, *, span: Span) -> Expr:
 
         return ConstInt(0, DataType.INT64, span)
 
-    result = _ir_set_validshape(tile, shape, span=span)
-
-    if hasattr(self, 'record_tile_valid_shape'):
-        self.record_tile_valid_shape(tile, shape)
-    return result
+    return _ir_set_validshape(tile, shape, span=span)
 
 
 def _check_tile_memory_space(
@@ -5433,7 +5429,7 @@ def _ir_matmul(
     _check_tile_memory_space("matmul", "lhs_tile", lhs, MemorySpace.Left, "L0A (Left)")
     _check_tile_memory_space("matmul", "rhs_tile", rhs, MemorySpace.Right, "L0B (Right)")
     if bias is not None:
-        _check_tile_memory_space("matmul", "bias_tile", bias, MemorySpace.Bias, "L0B (Bias)")
+        _check_tile_memory_space("matmul", "bias_tile", bias, MemorySpace.Bias, "BiasTable (Bias)")
     _check_matmul_dtype("matmul", dst, lhs, rhs, bias=bias)
     kwargs: dict[str, Any] = {}
     if phase is not None:

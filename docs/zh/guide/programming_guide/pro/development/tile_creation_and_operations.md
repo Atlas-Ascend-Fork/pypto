@@ -228,7 +228,7 @@ slice必须为二维，step仅支持1，起止位置不支持负数。各内存�
 |:---|:---|:---|
 | UB | ND、DN、NZ | ND/DN：子视图起始地址须按32字节对齐；NZ：行16、列C0 |
 | L1 Buffer | ND、DN、NZ、ZN | ND/DN：子视图起始地址须按32字节对齐；NZ：行16、列C0；ZN：行C0、列16 |
-| L0C Buffer | NZ | 行列均16 |
+| L0C Buffer | NZ | fractal=1024：行列均16；fractal=512：行16、列C0 |
 
 子视图起点须按上表对齐，C0由dtype决定。前端仅检查编译期常量，运行时起点由调用方保证对齐。
 
@@ -249,7 +249,7 @@ tail_type = pl.TileType(
 )
 ```
 
-只有TileType省略valid_shape或将各维均指定为-1时，才能在取得具体Tile后使用pypto_pro.language.set_validshape设置本次访问的有效范围；每一维必须大于0且不能超过Tile对应维度：
+只有TileType省略valid_shape或将各维均指定为-1时，才能在取得具体Tile后使用pypto_pro.language.set_validshape设置本次访问的有效范围；有效形状各维须为非负整数，且不超过对应的物理维度：
 
 ```python
 import pypto_pro.language as pl

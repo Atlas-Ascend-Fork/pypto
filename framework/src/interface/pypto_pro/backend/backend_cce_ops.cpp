@@ -2584,8 +2584,7 @@ static std::string MakeBlockSubviewCodegenCCE(const ir::CallPtr& op, codegen::Co
 
     const std::string baseAddr = "(uint64_t)" + baseTile + ".data()";
 
-    // Sub-window valid_shape from args[2] (computed by parser as the intersection
-    // of slice size and original valid_shape - start).
+    // Sub-window valid_shape from args[2], as computed by the parser.
     auto shapeTuple = ir::As<ir::MakeTuple>(op->args_[2]);
     std::string vsRow = cce::GetOperandAsCode(codegen, shapeTuple->elements_[0]);
     std::string vsCol = cce::GetOperandAsCode(codegen, shapeTuple->elements_[1]);

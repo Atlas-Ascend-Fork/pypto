@@ -1359,14 +1359,14 @@ class ExpressionParserMixin:
 
         Result tile preserves the original shape (row_stride unchanged);
         codegen auto-emits SetValidShape with the sub-window dimensions.
-        - If slice start reaches/exceeds tile shape → error.
-        - If slice end exceeds tile shape → clamp to the tile shape.
-        - If slice exceeds tile valid_shape → clamp to (valid_shape - start).
+        - If slice start exceeds tile shape → error; an empty window at the boundary is allowed.
+        - If an explicit static slice end exceeds tile shape or declared valid_shape → error.
+        - An omitted end reads the current valid_shape when it is not statically declared.
         """
         from pypto_pro.ir.op.block_ops import _tile_layout, block_ir_op
 
         container_type = container_expr.type
-        shape = container_type.shape
+        physical_shape_exprs = container_type.shape
 
         if isinstance(container_type, ir.TensorType):
             raise NotSupported(
@@ -1422,25 +1422,19 @@ class ExpressionParserMixin:
             )
 
         slices = slice_node.elts
-        if len(slices) != len(shape):
+        if len(slices) != len(physical_shape_exprs):
             raise InvalidShape(
-                f"Slice subscript has {len(slices)} dimensions but tile has rank {len(shape)}",
+                f"Slice subscript has {len(slices)} dimensions but tile has rank {len(physical_shape_exprs)}",
                 span=span,
-                hint=f"Use {len(shape)} indices to match the tile shape",
+                hint=f"Use {len(physical_shape_exprs)} indices to match the tile shape",
                 parser_retry=True,
             )
 
-        # valid_shape for clamping: compile-time (TileType.tile_view) or runtime
-        # (set_validshape, tracked by tile var name).
-        ct_valid = None
-        tile_view = getattr(container_type, 'tile_view', None)
-        if tile_view is not None:
-            ct_valid = getattr(tile_view, 'valid_shape', None)
-        rt_valid = None
-        if isinstance(container_expr, ir.Var):
-            rt_valid = self.get_tile_valid_shape(container_expr)
-        dim_starts = []
-        new_shape_exprs = []
+        valid_shape_exprs = getattr(getattr(container_type, "tile_view", None), "valid_shape", None)
+        offset_exprs = []
+        shape_exprs = []
+        offset_vals = []
+        physical_shape_vals = [_const_int_value(dim) for dim in physical_shape_exprs]
 
         for i, s in enumerate(slices):
             if not isinstance(s, ast.Slice):
@@ -1449,83 +1443,64 @@ class ExpressionParserMixin:
                     span=span,
                     hint="Tile slices must use ':' for all dimensions",
                 )
-            if s.step is not None:
-                step = self.parse_expression(s.step)
-                if _const_int_value(step) != 1:
-                    raise InvalidShape(
-                        f"Tile slice step for axis {i} must be the compile-time integer 1",
-                        span=span,
-                        hint="Omit the step or use a contiguous slice with step 1",
-                    )
-            start = ir.ConstInt(0, DataType.INT64, span) if s.lower is None else self.parse_expression(s.lower)
-            dim_starts.append(start)
-            start_val = self._validate_subscript_value(start, "Tile slice start", i)
+            # Build bound expressions, resolving an omitted end from declared or runtime valid_shape.
+            step_expr = ir.ConstInt(1, DataType.INT64, span) if s.step is None else self.parse_expression(s.step)
+            start_expr = ir.ConstInt(0, DataType.INT64, span) if s.lower is None else self.parse_expression(s.lower)
+            vs_expr = valid_shape_exprs[i] if valid_shape_exprs is not None and i < len(valid_shape_exprs) else None
+            vs_val = _const_int_value(vs_expr) if vs_expr is not None else None
+            if s.upper is not None:
+                upper_expr = self.parse_expression(s.upper)
+            elif vs_val is not None and vs_val >= 0:
+                upper_expr = vs_expr
+            else:
+                upper_expr = ir.create_op_call("block.tile_valid_shape", [container_expr], {"axis": i}, span)
 
-            # Compute slice size: upper - start (upper defaults to shape[i]).
-            # Clamp upper to shape[i] (Python slice semantics): a[16:77] on a
-            # length-64 dim becomes a[16:64], not an error.
-            upper = shape[i] if s.upper is None else self.parse_expression(s.upper)
-            shape_val = _const_int_value(shape[i])
-            upper_val = self._validate_subscript_value(upper, "Tile slice end", i)
-            effective_upper_val = upper_val
-            if shape_val is not None:
-                effective_upper_val = (
-                    shape_val if effective_upper_val is None else min(effective_upper_val, shape_val)
-                )
-            if shape_val is not None and upper_val is not None and upper_val > shape_val:
-                upper = ir.ConstInt(shape_val, DataType.INT64, span)
-                upper_val = shape_val
-            if (
-                start_val is not None
-                and effective_upper_val is not None
-                and start_val >= effective_upper_val
-            ):
-                raise InvalidOperation(
-                    f"Tile slice for axis {i} must satisfy start < min(end, shape), "
-                    f"got start={start_val}, end={upper_val}, shape={shape_val}",
+            # Validate types and each bound whose value is statically known.
+            start_val = self._validate_subscript_value(start_expr, "Tile slice start", i)
+            upper_val = (
+                self._validate_subscript_value(upper_expr, "Tile slice end", i) if s.upper is not None else None
+            )
+            shape_val = physical_shape_vals[i]
+            if _const_int_value(step_expr) != 1:
+                raise InvalidShape(
+                    f"Tile slice step for axis {i} must be the compile-time integer 1",
                     span=span,
-                    hint="Tile slices cannot be empty, reversed, or start outside the Tile shape",
+                    hint="Omit the step or use a contiguous slice with step 1",
                 )
-            size = upper if start_val == 0 else upper - start
-            size_val = _const_int_value(size)
-
-            for vs in (
-                ct_valid[i] if ct_valid is not None and i < len(ct_valid) else None,
-                rt_valid[i] if rt_valid is not None and i < len(rt_valid) else None,
-            ):
-                if vs is None:
+            for bound_name, bound_val in (("physical shape", shape_val), ("valid_shape", vs_val)):
+                if bound_val is None or bound_val < 0:
                     continue
-                vs_val = _const_int_value(vs)
-                if vs_val is not None and vs_val >= 0 and start_val is not None:
-                    remaining = vs_val - start_val
-                    if remaining <= 0:
-                        raise InvalidShape(
-                            f"Tile slice start ({start_val}) must be less than valid_shape dim {i} ({vs_val})",
-                            span=span,
-                            hint=f"Use a slice start in [0, valid_shape[{i}])",
-                        )
-                    if size_val is not None:
-                        if size_val > remaining:
-                            size = ir.ConstInt(remaining, DataType.INT64, span)
-                            size_val = remaining
-                    else:
-                        size = _make_binary("min_", size, ir.ConstInt(remaining, DataType.INT64, span), span)
-                elif vs_val is None and start_val is not None:
-                    # Dynamic valid_shape: emit runtime clamp min(size, vs - start)
-                    remaining_expr = vs - start
-                    size = _make_binary("min_", size, remaining_expr, span)
+                if upper_val is not None and upper_val > bound_val:
+                    raise InvalidShape(
+                        f"Tile slice end ({upper_val}) exceeds {bound_name} dim {i} ({bound_val})",
+                        span=span,
+                    )
+                if start_val is not None and start_val > bound_val:
+                    raise InvalidShape(
+                        f"Tile slice start ({start_val}) must not exceed {bound_name} dim {i} ({bound_val})",
+                        span=span,
+                        hint=f"Use a slice start in [0, {bound_name}[{i}]]",
+                    )
+            if start_val is not None and upper_val is not None and start_val > upper_val:
+                raise InvalidShape(
+                    f"Tile slice for axis {i} must satisfy start <= end, "
+                    f"got start={start_val}, end={upper_val}",
+                    span=span,
+                    hint="Tile slices cannot be reversed",
+                )
+            dim_expr = upper_expr if start_val == 0 else upper_expr - start_expr
+            offset_exprs.append(start_expr)
+            offset_vals.append(start_val)
+            shape_exprs.append(dim_expr)
 
-            new_shape_exprs.append(size)
-
-        start_values = [_const_int_value(start) for start in dim_starts]
         dtype_bits = int(container_type.dtype.get_bit())
 
         # Match pto::GetTileOffset: plain layouts use row/column strides,
         # while boxed layouts must start at an inner-fractal boundary.
         if layout in (ir.Layout.ND, ir.Layout.DN):
-            static_values = [*start_values, *(_const_int_value(dim) for dim in shape)]
-            if None not in static_values:
-                row_start, col_start, rows, cols = static_values
+            static_vals = [*offset_vals, *physical_shape_vals]
+            if None not in static_vals:
+                row_start, col_start, rows, cols = static_vals
                 if layout == ir.Layout.ND:
                     element_offset = row_start * cols + col_start
                 else:
@@ -1540,14 +1515,14 @@ class ExpressionParserMixin:
         elif layout in (ir.Layout.NZ, ir.Layout.ZN):
             c0 = 256 // dtype_bits
             fractal = hw_info.fractal
-            if mem_space == ir.MemorySpace.Acc or fractal == 1024:
+            if fractal == 1024:
                 inner_rows, inner_cols = 16, 16
             elif layout == ir.Layout.NZ:
                 inner_rows, inner_cols = 16, c0
             else:
                 inner_rows, inner_cols = c0, 16
 
-            row_start, col_start = start_values
+            row_start, col_start = offset_vals
             row_unaligned = row_start is not None and row_start % inner_rows != 0
             col_unaligned = col_start is not None and col_start % inner_cols != 0
             if row_unaligned or col_unaligned:
@@ -1559,8 +1534,8 @@ class ExpressionParserMixin:
 
         # Pass [row_start, col_start] as a tuple; codegen computes the byte offset
         # according to the tile's layout (ND row-major, DN col-major, NZ fractal).
-        shape_tuple = ir.MakeTuple(new_shape_exprs, span)
-        offset_tuple = ir.MakeTuple([dim_starts[0], dim_starts[1]], span)
+        shape_tuple = ir.MakeTuple(shape_exprs, span)
+        offset_tuple = ir.MakeTuple(offset_exprs, span)
         view_expr = ir.create_op_call(
             block_ir_op("subview"),
             [container_expr, offset_tuple, shape_tuple],
