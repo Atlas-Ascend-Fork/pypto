@@ -893,4 +893,15 @@ TEST_F(PassTest, InferMemoryConflictNzMultiDynamicIncastStillFails)
     graph.function->inCasts_.push_back(nzIncast);
     EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "NzMultiDynamicStrategy"), FAILED);
 }
+
+/*
+incast(-1,8,3,3) -> VIEW(80,8,3,3) -> RESHAPE(-1,72) -> ASSEMBLE -> outcast(-1,72)
+动态 RESHAPE 输出触发 post REGISTER_COPY, RunOnFunction 的 shape 检查应返回 FAILED
+*/
+TEST_F(PassTest, InferMemoryConflictRunOnFunctionRejectsDynamicPostRegisterCopyShape)
+{
+    auto graph = BuildViewReshapeGraph("DynamicPostCopyShape", {-1, 8, 3, 3}, {80, 8, 3, 3}, {-1, 72},
+                                       Offset{0, 0, 0, 0}, {16, 8, 3, 3}, {}, {}, false);
+    EXPECT_EQ(RunInferMemoryConflictPass(*graph.function, "DynamicPostCopyShapeStrategy"), FAILED);
+}
 } // namespace npu::tile_fwk

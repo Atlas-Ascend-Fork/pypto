@@ -22,6 +22,7 @@
 #include "passes/pass_utils/dead_operation_eliminate.h"
 #include "passes/pass_utils/infer_shape_utils.h"
 #include "passes/pass_utils/merge_view_assemble_utils.h"
+#include "passes/pass_utils/pass_attr_defs.h"
 #include "passes/pass_utils/pass_operation_utils.h"
 #include "passes/pass_utils/pass_utils.h"
 #include "passes/pass_utils/remove_redundant_op_internal.h"
@@ -35,6 +36,55 @@ namespace npu {
 namespace tile_fwk {
 namespace {
 bool IsAssembleLikeOpcode(Opcode opcode) { return opcode == Opcode::OP_ASSEMBLE || opcode == Opcode::OP_CONTRACT; }
+
+bool IsMemoryTransfer(const Operation& op, MemoryType from, MemoryType to)
+{
+    if (op.GetOpcode() != Opcode::OP_CONTRACT || op.GetIOperands().empty() || op.GetOOperands().empty() ||
+        op.GetIOperands().front() == nullptr || op.GetOOperands().front() == nullptr) {
+        return false;
+    }
+    return op.GetIOperands().front()->GetMemoryTypeOriginal() == from &&
+           op.GetOOperands().front()->GetMemoryTypeOriginal() == to;
+}
+
+bool HasL0CToUbPathToUbToDdrContract(const Operation& view)
+{
+    const auto& viewInput = view.GetIOperands().front();
+    const auto& viewOutput = view.GetOOperands().front();
+    const auto& producers = viewInput->GetProducers();
+    const bool hasL0CToUbProducer = std::any_of(producers.begin(), producers.end(), [&viewInput](Operation* producer) {
+        return producer != nullptr && !producer->IsDeleted() &&
+               IsMemoryTransfer(*producer, MemoryType::MEM_L0C, MemoryType::MEM_UB) &&
+               producer->GetOOperands().front() == viewInput;
+    });
+    if (!hasL0CToUbProducer) {
+        return false;
+    }
+
+    std::vector<Operation*> pending(viewOutput->GetConsumers().begin(), viewOutput->GetConsumers().end());
+    std::unordered_set<Operation*> visited;
+    while (!pending.empty()) {
+        Operation* consumer = pending.back();
+        pending.pop_back();
+        if (consumer == nullptr || consumer->IsDeleted() || !visited.insert(consumer).second) {
+            continue;
+        }
+        if (IsMemoryTransfer(*consumer, MemoryType::MEM_UB, MemoryType::MEM_DEVICE_DDR)) {
+            return true;
+        }
+        if (consumer->GetOpcode() != Opcode::OP_REGISTER_COPY && consumer->GetOpcode() != Opcode::OP_ASSEMBLE) {
+            continue;
+        }
+        for (const auto& output : consumer->GetOOperands()) {
+            if (output == nullptr) {
+                continue;
+            }
+            const auto& nextConsumers = output->GetConsumers();
+            pending.insert(pending.end(), nextConsumers.begin(), nextConsumers.end());
+        }
+    }
+    return false;
+}
 
 bool ProtectsPartialWriteSnapshot(const Operation& op)
 {
@@ -313,6 +363,10 @@ Status RemoveRedundantOp::RemoveDummyOp(Function& function)
     // removal.
     const auto rawAssembleIndex = remove_redundant_op_internal::CollectAssembleOutputRawIndex(function);
     for (auto& op : function.Operations()) {
+        if (op.GetOpcode() == Opcode::OP_VIEW && HasL0CToUbPathToUbToDdrContract(op)) {
+            op.SetAttribute(SKIP_REMOVE_REDUNDANT_OP_VIEW_CHECK_ATTR, true);
+            continue;
+        }
         // Keep the snapshot read before a partial overwrite of the same raw tensor.
         if ((op.GetOpcode() == Opcode::OP_VIEW || op.GetOpcode() == Opcode::OP_SLICE) &&
             ProtectsPartialWriteSnapshot(op)) {

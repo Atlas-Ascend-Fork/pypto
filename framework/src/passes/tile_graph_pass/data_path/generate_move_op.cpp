@@ -12,6 +12,7 @@
  * \file generate_move_op.cpp
  * \brief
  */
+#include <memory>
 
 #include "passes/tile_graph_pass/data_path/generate_move_op.h"
 #include "interface/configs/config_manager_ng.h"
@@ -21,12 +22,14 @@
 #include "interface/operation/operation_impl.h"
 #include "interface/tensor/irbuilder.h"
 #include "interface/tensor/logical_tensor.h"
+#include "interface/utils/common.h"
 #include "tilefwk/tilefwk.h"
 #include "interface/inner/tilefwk.h"
 #include "interface/program/program.h"
 #include "passes/pass_check/generate_move_op_checker.h"
 #include "passes/pass_utils/dead_operation_eliminate.h"
 #include "passes/pass_log/pass_log.h"
+#include "passes/pass_utils/pass_utils.h"
 #include "tilefwk/error_code.h"
 
 #define MODULE_NAME "GenerateMoveOp"
@@ -74,12 +77,39 @@ bool GenerateMoveOp::HasConvProducer(const Operation& op)
     return false;
 }
 
+Status GenerateMoveOp::CheckCopyShape(Function& function)
+{
+    for (const auto& operation : function.Operations()) {
+        const auto opcode = operation.GetOpcode();
+        if (!IsCopyIn(opcode) && !IsCopyOut(opcode)) {
+            continue;
+        }
+        auto copyOpAttr = std::dynamic_pointer_cast<CopyOpAttribute>(operation.GetOpAttribute());
+        if (copyOpAttr == nullptr) {
+            continue;
+        }
+        auto specifiedShape = copyOpAttr->GetSpecifiedShape(1);
+        if (HasNegativeNum<int64_t>(specifiedShape)) {
+            APASS_LOG_ERROR_C(TensorErr::TENSOR_SHAPE_MISMATCH, Elements::Operation,
+                              "CheckCopyShape failed, specified shape %s of copy op[%d] in function[%d] "
+                              "contains a negative dimension.",
+                              CommonUtils::ContainerToStr(specifiedShape).c_str(), operation.GetOpMagic(),
+                              function.GetFuncMagic());
+            return FAILED;
+        }
+    }
+    return SUCCESS;
+}
+
 Status GenerateMoveOp::RunOnFunction(Function& function)
 {
     APASS_LOG_INFO_F(Elements::Operation, "===> Start GenerateMoveOp");
     Status status = CreateMoveOp(function);
     if (status != SUCCESS) {
         return status;
+    }
+    if (CheckCopyShape(function) != SUCCESS) {
+        return FAILED;
     }
     APASS_LOG_INFO_F(Elements::Operation, "===> End GenerateMoveOp");
     return SUCCESS;

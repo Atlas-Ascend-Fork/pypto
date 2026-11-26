@@ -2691,5 +2691,34 @@ TEST_F(GraphPartitionTest, TestUbToUbTransposeNotMergeWithCube)
     EXPECT_NE(transposeOp->GetSubgraphID(), matmulOp->GetSubgraphID());
 }
 
+/*
+incast(DDR) -> slice1(L1) -> slice2(L0A) -+
+                         \-> slice3(L0B) -+-> AMULB -> contractUb(UB) -> contract -> outcast(DDR)
+*/
+TEST_F(GraphPartitionTest, RejectsConsecutiveContractOps)
+{
+    ComputationalGraphBuilder G;
+    const std::vector<std::string> tensorNames{"incast",    "slice1L1",   "slice2L0A", "slice3L0B",
+                                               "mulOutL0C", "contractUb", "outcast"};
+    const std::vector<MemoryType> memoryTypes{MemoryType::MEM_DEVICE_DDR, MemoryType::MEM_L1,  MemoryType::MEM_L0A,
+                                              MemoryType::MEM_L0B,        MemoryType::MEM_L0C, MemoryType::MEM_UB,
+                                              MemoryType::MEM_DEVICE_DDR};
+    ASSERT_TRUE(G.AddTensors(DataType::DT_FP32, {16, 16}, memoryTypes, tensorNames));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_SLICE, {"incast"}, {"slice1L1"}, "slice1"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_SLICE, {"slice1L1"}, {"slice2L0A"}, "slice2"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_SLICE, {"slice1L1"}, {"slice3L0B"}, "slice3"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_A_MUL_B, {"slice2L0A", "slice3L0B"}, {"mulOutL0C"}, "amulb"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"mulOutL0C"}, {"contractUb"}, "contractUb"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_CONTRACT, {"contractUb"}, {"outcast"}, "contract"));
+    ASSERT_TRUE(G.SetInCast({"incast"}));
+    ASSERT_TRUE(G.SetOutCast({"outcast"}));
+
+    auto* function = G.GetFunction();
+    function->paramConfigs_.sgPartitionAlgorithm = "Iso";
+
+    GraphPartition pass;
+    EXPECT_EQ(pass.RunOnFunction(*function), FAILED);
+}
+
 } // namespace tile_fwk
 } // namespace npu

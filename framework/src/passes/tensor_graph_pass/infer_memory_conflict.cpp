@@ -648,6 +648,18 @@ Status InferMemoryConflict::RunOnFunction(Function& function)
         APASS_LOG_ERROR_F(Elements::Operation, "InferOutcastWriteConflict failed.");
         return FAILED;
     }
+    auto ops = function.Operations();
+    if (CheckPreRegCopyShapes(ops, function) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Operation, "CheckPreRegCopyShapes failed.");
+
+        return FAILED;
+    }
+    if (CheckPostRegCopyShapes(ops, function) != SUCCESS) {
+        APASS_LOG_ERROR_F(Elements::Operation, "CheckPostRegCopyShapes failed.");
+
+        return FAILED;
+    }
+
     APASS_LOG_INFO_F(Elements::Operation, "End InferMemoryConflict for function [%s].", function.GetRawName().c_str());
     return SUCCESS;
 }
@@ -692,6 +704,81 @@ Status InferMemoryConflict::InsertInputOutputAliasCopys(Function& function)
     for (const auto& [consumer, tensor] : copies) {
         if (InsertPrecededCopy(function, *consumer, tensor) != SUCCESS) {
             return FAILED;
+        }
+    }
+    return SUCCESS;
+}
+
+bool InferMemoryConflict::CheckRegisterCopyShape(const OperationsViewer& operations, const Operation* copyOp,
+                                                 const Function& function)
+{
+    if (copyOp == nullptr || !operations.Contains(*copyOp)) {
+        return true;
+    }
+    if (!copyOp->GetIOperands().empty() && copyOp->GetIOperands().front() != nullptr) {
+        const auto& input = copyOp->GetIOperands().front();
+        const auto& incasts = function.GetIncast();
+        if (std::find(incasts.begin(), incasts.end(), input) != incasts.end()) {
+            return true;
+        }
+    }
+    const auto checkOperands = [copyOp](const LogicalTensors& tensors, const char* operandType) {
+        for (size_t i = 0; i < tensors.size(); ++i) {
+            const auto& tensor = tensors[i];
+            if (tensor == nullptr) {
+                continue;
+            }
+            const auto& shape = tensor->GetShape();
+            if (std::find(shape.begin(), shape.end(), -1) != shape.end()) {
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "InferMemoryConflict check failed: REGISTER_COPY[%d] %s tensor[%zu] shape "
+                                  "contains -1: [%s].",
+                                  copyOp->GetOpMagic(), operandType, i, CommonUtils::ContainerToStr(shape).c_str());
+                return false;
+            }
+        }
+        return true;
+    };
+    return checkOperands(copyOp->GetIOperands(), "input") && checkOperands(copyOp->GetOOperands(), "output");
+}
+
+Status InferMemoryConflict::CheckPreRegCopyShapes(const OperationsViewer& operations, const Function& function)
+{
+    for (const auto* sourceOp : preregcopys) {
+        if (sourceOp == nullptr || !operations.Contains(*sourceOp)) {
+            continue;
+        }
+        for (const auto& input : sourceOp->GetIOperands()) {
+            if (!CanTransmitInput(sourceOp, input)) {
+                continue;
+            }
+            for (const auto* producer : input->GetProducers()) {
+                if (producer != nullptr && producer->GetOpcode() == Opcode::OP_REGISTER_COPY &&
+                    !CheckRegisterCopyShape(operations, producer, function)) {
+                    return FAILED;
+                }
+            }
+            break;
+        }
+    }
+    return SUCCESS;
+}
+
+Status InferMemoryConflict::CheckPostRegCopyShapes(const OperationsViewer& operations, const Function& function)
+{
+    for (const auto* sourceOp : postregcopys) {
+        if (sourceOp == nullptr || !operations.Contains(*sourceOp) || sourceOp->GetOOperands().empty()) {
+            continue;
+        }
+        const auto& output = sourceOp->GetOOperands().front();
+        if (output == nullptr) {
+            continue;
+        }
+        for (const auto* consumer : output->GetConsumers()) {
+            if (consumer != nullptr && consumer->GetOpcode() == Opcode::OP_REGISTER_COPY &&
+                !CheckRegisterCopyShape(operations, consumer, function)) {
+                return FAILED;
+            }
         }
     }
     return SUCCESS;
