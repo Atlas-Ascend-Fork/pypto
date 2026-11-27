@@ -404,8 +404,9 @@ def img2col(
         dst_tile: Destination Tile in ``Left`` (L0A) memory, dtype matching src (fp16/bf16)
         src_tile: Source conv-layout TileType in ``Mat`` (L1) memory — ``pl.NC1HWC0``
             shape ``[1, C1, H, W, C0]`` or ``pl.NDC1HWC0`` shape ``[1, 1, C1, H, W, C0]``
-        config: ``pl.Img2ColConfig`` window geometry (kernel/stride/dilation/padding/pad_value),
-            all compile-time constants
+        config: ``pl.Img2ColConfig`` window geometry — kernel/stride/dilation/pad_value
+            are compile-time constants; padding entries are constants or runtime
+            integer scalars
         pos_m: Element offset of the first generated row in the (H, W) enumeration
         pos_k: Element offset of the first generated column in the K enumeration
     """
@@ -2170,15 +2171,17 @@ def Img2ColConfig(  # noqa: N802 -- the user writes pl.Img2ColConfig(...), a cla
 ) -> Any:
     """Describe the img2col window geometry for ``pl.img2col``.
 
-    Every field is a compile-time constant baked into the img2col call; the
-    config cannot depend on runtime values.
+    kernel/stride/dilation/pad_value are compile-time constants baked into the
+    img2col call. padding entries are constant ints or runtime integer scalars
+    (list length stays 4); runtime entries reach the fmatrix pad registers at
+    run time, so their values cannot be range-checked while building the IR.
 
     Args:
         kernel: Convolution window ``[kernel_h, kernel_w]``, each in [1, 255]
         stride: Window slide ``[stride_h, stride_w]``, each in [1, 63]
         dilation: Window dilation ``[dilation_h, dilation_w]``, each in [1, 63]
         padding: Feature-map border fill ``[pad_top, pad_bottom, pad_left, pad_right]``,
-            each in [0, 255]
+            each a constant in [0, 255] or a runtime integer scalar
         pad_value: Optional fill value written outside the feature map, an
             integer (default 0)
     """

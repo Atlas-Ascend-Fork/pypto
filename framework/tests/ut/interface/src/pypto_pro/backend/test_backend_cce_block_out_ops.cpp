@@ -874,6 +874,95 @@ TEST(BackendCCEBlockOutOps, ConvLoadNcdhwWeightEmitsFractalZ3DDestination)
     EXPECT_CONTAINS(code, "TLOAD(tile.tile, ");
 }
 
+TEST(BackendCCEBlockOutOps, ConvLoadClampsWindowCWithRuntimeChannelOffset)
+{
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    // C_in=3 fmap loaded into a 16-channel NC1HWC0 block with a runtime channel
+    // offset: the GM view's C extent is min(16, 3 - offset), evaluated per load,
+    // so the read never passes the tensor end. setValidShape is untouched.
+    auto tensor = MakeTensorVar("x", {1, 3, 8, 8}, ir::DataType::FP16, ir::Layout::ND);
+    auto tile = MakeConvTileVar("tile", {1, 1, 8, 8, 16}, ir::Layout::NC1HWC0);
+    codegen.RegisterPointer("x", "x_ptr");
+    auto offsets = std::make_shared<const ir::MakeTuple>(
+        std::vector<ir::ExprPtr>{MakeConstInt(0), MakeVar("c_off", MakeScalarType()), MakeConstInt(0), MakeConstInt(0)},
+        ir::Span::Unknown());
+    auto call = MakeCall("block.load", {tile, tensor, offsets});
+    auto* info = BackendCCE::Instance().GetOpInfo("block.load");
+    ASSERT_NE(info, nullptr);
+    info->codegenFunc(call, codegen);
+    auto code = codegen.GetEmittedCode();
+    EXPECT_CONTAINS(code, "__conv_gt0Shape(1, (16 < (3 - c_off) ? 16 : (3 - c_off)), 8, 8)");
+    EXPECT_NOT_CONTAINS(code, "SetValidShape");
+    EXPECT_CONTAINS(code, "TLOAD(tile.tile, ");
+}
+
+TEST(BackendCCEBlockOutOps, ConvLoadNchwWeightClampsWindowCWhenCinTails)
+{
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    // Weight [Cout=16, Cin=3, Kh, Kw] into FZ [C1HW=9, Cout/16=1, 16, C0=16]:
+    // the window's Cin extent is min(16, 3 - 0) as an all-constant ternary that
+    // the compiler folds to 3.
+    auto tensor = MakeTensorVar("w", {16, 3, 3, 3}, ir::DataType::FP16, ir::Layout::ND);
+    auto tile = MakeConvTileVar("tile", {9, 1, 16, 16}, ir::Layout::FRACTAL_Z);
+    codegen.RegisterPointer("w", "w_ptr");
+    auto call = MakeCall("block.load", {tile, tensor, MakeOffsetsList({0, 0, 0, 0})});
+    auto* info = BackendCCE::Instance().GetOpInfo("block.load");
+    ASSERT_NE(info, nullptr);
+    info->codegenFunc(call, codegen);
+    auto code = codegen.GetEmittedCode();
+    EXPECT_CONTAINS(code, "__conv_gt0Shape(16, (16 < (3 - 0) ? 16 : (3 - 0)), 3, 3)");
+    EXPECT_NOT_CONTAINS(code, "SetValidShape");
+    EXPECT_CONTAINS(code, "TLOAD(tile.tile, ");
+}
+
+TEST(BackendCCEBlockOutOps, ConvLoadNchwWeightClampsWindowNWhenCoutTails)
+{
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    // Weight [Cout=50, Cin=16, Kh, Kw] into FZ [C1HW=9, Cout/16=1, 16, C0=16] with
+    // a runtime Cout offset: the window's N extent is min(16, 50 - offset), so the
+    // last output-channel block reads only the 2 channels that remain.
+    auto tensor = MakeTensorVar("w", {50, 16, 3, 3}, ir::DataType::FP16, ir::Layout::ND);
+    auto tile = MakeConvTileVar("tile", {9, 1, 16, 16}, ir::Layout::FRACTAL_Z);
+    codegen.RegisterPointer("w", "w_ptr");
+    auto offsets = std::make_shared<const ir::MakeTuple>(
+        std::vector<ir::ExprPtr>{MakeVar("cout_off", MakeScalarType()), MakeConstInt(0), MakeConstInt(0),
+                                 MakeConstInt(0)},
+        ir::Span::Unknown());
+    auto call = MakeCall("block.load", {tile, tensor, offsets});
+    auto* info = BackendCCE::Instance().GetOpInfo("block.load");
+    ASSERT_NE(info, nullptr);
+    info->codegenFunc(call, codegen);
+    auto code = codegen.GetEmittedCode();
+    EXPECT_CONTAINS(code, "__conv_gt0Shape((16 < (50 - cout_off) ? 16 : (50 - cout_off)), 16, 3, 3)");
+    EXPECT_NOT_CONTAINS(code, "SetValidShape");
+    EXPECT_CONTAINS(code, "TLOAD(tile.tile, ");
+}
+
+TEST(BackendCCEBlockOutOps, ConvLoadClampsWindowCWithDynamicTensorCin)
+{
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    // Fully dynamic fmap (pl.DYNAMIC signature dims): the tensor's cin is a
+    // runtime dim, so the clamp can only be decided per load -- the GM view's C
+    // extent is a runtime min over the dim and the channel offset.
+    auto tensor = MakeVar("x", std::make_shared<const ir::TensorType>(
+                                   std::vector<ir::ExprPtr>{MakeConstInt(1), MakeVar("cin", MakeScalarType()),
+                                                            MakeConstInt(8), MakeConstInt(8)},
+                                   ir::DataType::FP16, std::optional<ir::MemRefPtr>(std::nullopt)));
+    auto tile = MakeConvTileVar("tile", {1, 1, 8, 8, 16}, ir::Layout::NC1HWC0);
+    codegen.RegisterPointer("x", "x_ptr");
+    auto offsets = std::make_shared<const ir::MakeTuple>(
+        std::vector<ir::ExprPtr>{MakeConstInt(0), MakeVar("c_off", MakeScalarType()), MakeConstInt(0), MakeConstInt(0)},
+        ir::Span::Unknown());
+    auto call = MakeCall("block.load", {tile, tensor, offsets});
+    auto* info = BackendCCE::Instance().GetOpInfo("block.load");
+    ASSERT_NE(info, nullptr);
+    info->codegenFunc(call, codegen);
+    auto code = codegen.GetEmittedCode();
+    EXPECT_CONTAINS(code, "__conv_gt0Shape(1, (16 < (cin - c_off) ? 16 : (cin - c_off)), 8, 8)");
+    EXPECT_NOT_CONTAINS(code, "SetValidShape");
+    EXPECT_CONTAINS(code, "TLOAD(tile.tile, ");
+}
+
 TEST(BackendCCEBlockOutOps, ConvMoveEmitsTextract)
 {
     TestableCCECodegen codegen(ir::SectionKind::Cube);
@@ -897,17 +986,15 @@ TEST(BackendCCEBlockOutOps, ConvImg2ColEmitsTimg2col)
     auto src = MakeConvTileVar("src", {1, 1, 8, 8, 16}, ir::Layout::NC1HWC0);
     auto dst = MakeVar("dst",
                        MakeTileType({64, 144}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Left), std::nullopt));
-    auto call = MakeCallWithKwargs("block.img2col", {dst, src, MakeConstInt(0), MakeConstInt(0)},
+    auto call = MakeCallWithKwargs("block.img2col",
+                                   {dst, src, MakeConstInt(0), MakeConstInt(0), MakeConstInt(1), MakeConstInt(1),
+                                    MakeConstInt(1), MakeConstInt(1)},
                                    {{"kernel_h", 3},
                                     {"kernel_w", 3},
                                     {"stride_h", 1},
                                     {"stride_w", 1},
                                     {"dilation_h", 1},
                                     {"dilation_w", 1},
-                                    {"pad_top", 1},
-                                    {"pad_bottom", 1},
-                                    {"pad_left", 1},
-                                    {"pad_right", 1},
                                     {"pad_value", 0},
                                     {"fmap_h", 8},
                                     {"fmap_w", 8},
@@ -921,7 +1008,40 @@ TEST(BackendCCEBlockOutOps, ConvImg2ColEmitsTimg2col)
     EXPECT_CONTAINS(code, "SetFilterH(3)");
     EXPECT_CONTAINS(code, "SetChannelSize(16)");
     // pto pads are packed {left, right, top, bottom} regardless of the user order.
-    EXPECT_CONTAINS(code, "{1, 1, 1, 1}");
+    EXPECT_CONTAINS(code, "{static_cast<uint8_t>(1), static_cast<uint8_t>(1), static_cast<uint8_t>(1), "
+                          "static_cast<uint8_t>(1)}");
+}
+
+TEST(BackendCCEBlockOutOps, ConvImg2ColRuntimePaddingEmitsScalarOperands)
+{
+    TestableCCECodegen codegen(ir::SectionKind::Cube);
+    // Runtime padding scalars ride as operands and reach the pad registers as
+    // kernel-time expressions, one cast per fmatrix padList entry.
+    auto src = MakeConvTileVar("src", {1, 1, 8, 8, 16}, ir::Layout::NC1HWC0);
+    auto dst = MakeVar("dst",
+                       MakeTileType({64, 144}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Left), std::nullopt));
+    auto call = MakeCallWithKwargs("block.img2col",
+                                   {dst, src, MakeConstInt(0), MakeConstInt(0), MakeVar("pad_top", MakeScalarType()),
+                                    MakeVar("pad_bottom", MakeScalarType()), MakeVar("pad_left", MakeScalarType()),
+                                    MakeVar("pad_right", MakeScalarType())},
+                                   {{"kernel_h", 3},
+                                    {"kernel_w", 3},
+                                    {"stride_h", 1},
+                                    {"stride_w", 1},
+                                    {"dilation_h", 1},
+                                    {"dilation_w", 1},
+                                    {"pad_value", 0},
+                                    {"fmap_h", 8},
+                                    {"fmap_w", 8},
+                                    {"channel_size", 16}});
+    auto* info = BackendCCE::Instance().GetOpInfo("block.img2col");
+    ASSERT_NE(info, nullptr);
+    info->codegenFunc(call, codegen);
+    auto code = codegen.GetEmittedCode();
+    EXPECT_CONTAINS(code, "TIMG2COL<");
+    // pto padList order is {left, right, top, bottom} (fmatrix register packing).
+    EXPECT_CONTAINS(code, "{static_cast<uint8_t>(pad_left), static_cast<uint8_t>(pad_right), "
+                          "static_cast<uint8_t>(pad_top), static_cast<uint8_t>(pad_bottom)}");
 }
 
 TEST(BackendCCEBlockOutOps, ConvImg2ColRejectsNonConvSource)
@@ -931,17 +1051,15 @@ TEST(BackendCCEBlockOutOps, ConvImg2ColRejectsNonConvSource)
                          MakeTileType({8, 8}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Mat), std::nullopt));
     auto dst = MakeVar("dst",
                        MakeTileType({64, 144}, ir::DataType::FP16, MakeMemRef(ir::MemorySpace::Left), std::nullopt));
-    auto call = MakeCallWithKwargs("block.img2col", {dst, plain, MakeConstInt(0), MakeConstInt(0)},
+    auto call = MakeCallWithKwargs("block.img2col",
+                                   {dst, plain, MakeConstInt(0), MakeConstInt(0), MakeConstInt(1), MakeConstInt(1),
+                                    MakeConstInt(1), MakeConstInt(1)},
                                    {{"kernel_h", 3},
                                     {"kernel_w", 3},
                                     {"stride_h", 1},
                                     {"stride_w", 1},
                                     {"dilation_h", 1},
                                     {"dilation_w", 1},
-                                    {"pad_top", 1},
-                                    {"pad_bottom", 1},
-                                    {"pad_left", 1},
-                                    {"pad_right", 1},
                                     {"pad_value", 0},
                                     {"fmap_h", 8},
                                     {"fmap_w", 8},

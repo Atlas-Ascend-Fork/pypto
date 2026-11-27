@@ -250,3 +250,23 @@ def test_conv_set_validshape_emits_one_value_per_dim():
     src = _source_golden(_fmap_set_validshape_kernel, "fmap_set_validshape")
     assert re.search(r"\.SetValidShape\(\n?\s*static_cast<int64_t>\(1\), ", src) is not None
     assert re.search(r"static_cast<int64_t>\(16\)\n?\s*\);", src) is not None
+
+
+def test_conv_load_clamps_window_c_when_cin_tails():
+    # C_in=3 fmap loaded into a 16-channel NC1HWC0 window: the GM view's C extent
+    # becomes min(16, 3 - 0) as an all-constant ternary the compiler folds, so
+    # the read never passes the tensor end. Only the view is clamped --
+    # setValidShape stays the caller's own decision.
+    @pl.jit(auto_mutex=True)
+    def k(x: pl.Tensor[[1, 3, 8, 8], pl.DT_FP16]):
+        tt = pl.TileType(
+            shape=[1, 1, 8, 8, 16], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Mat, layout=pl.Layout.NC1HWC0
+        )
+        g = pl.make_tile_group(type=tt, addrs=0, depth=1, mutex_ids=[0])
+        with pl.section_cube():
+            window = g.next()
+            pl.load(window, x, [0, 0, 0, 0])
+
+    src = _compile_to_cce(k)
+    assert re.search(r"__conv_gt0Shape\(1, \(16 < \(3 - 0\) \? 16 : \(3 - 0\)\), 8, 8\)", src) is not None
+    assert "SetValidShape" not in src
