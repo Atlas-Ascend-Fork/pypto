@@ -311,6 +311,9 @@ public:
             if (lhsVal.type() == typeid(int)) {
                 valuesEqual = (AnyCast<int>(lhsVal, "comparing kwarg: " + lhs[i].first) ==
                                AnyCast<int>(rhsVal, "comparing kwarg: " + lhs[i].first));
+            } else if (lhsVal.type() == typeid(int64_t)) {
+                valuesEqual = (AnyCast<int64_t>(lhsVal, "comparing kwarg: " + lhs[i].first) ==
+                               AnyCast<int64_t>(rhsVal, "comparing kwarg: " + lhs[i].first));
             } else if (lhsVal.type() == typeid(bool)) {
                 valuesEqual = (AnyCast<bool>(lhsVal, "comparing kwarg: " + lhs[i].first) ==
                                AnyCast<bool>(rhsVal, "comparing kwarg: " + lhs[i].first));
@@ -326,6 +329,9 @@ public:
             } else if (lhsVal.type() == typeid(std::vector<int>)) {
                 valuesEqual = (AnyCast<std::vector<int>>(lhsVal, "comparing kwarg: " + lhs[i].first) ==
                                AnyCast<std::vector<int>>(rhsVal, "comparing kwarg: " + lhs[i].first));
+            } else if (lhsVal.type() == typeid(std::vector<int64_t>)) {
+                valuesEqual = (AnyCast<std::vector<int64_t>>(lhsVal, "comparing kwarg: " + lhs[i].first) ==
+                               AnyCast<std::vector<int64_t>>(rhsVal, "comparing kwarg: " + lhs[i].first));
             }
             if (!valuesEqual) {
                 return IRAssert({}, "Kwargs value mismatch for key '", lhs[i].first, "'");
