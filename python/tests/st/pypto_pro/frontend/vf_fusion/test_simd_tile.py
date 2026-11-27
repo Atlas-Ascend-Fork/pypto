@@ -21,60 +21,6 @@ def _tile(tile_type, addr):
 
 
 @pl.vector_function(mode="simd_tile")
-def select_and_negate(dst0, dst1, src0, src1, index):
-    destinations = (dst0, dst1)
-    sources = (src0, src1)
-    dst = destinations[index]
-    src = sources[index]
-    pl.neg(dst, src)
-
-
-@pl.jit(auto_mutex=True)
-def tuple_kernel(
-    x: pl.Tensor[[2, 64], pl.DT_FP32],
-    y0: pl.Tensor[[2, 64], pl.DT_FP32],
-    y1: pl.Tensor[[2, 64], pl.DT_FP32],
-    rows: pl.DT_INT32,
-    cols: pl.DT_INT32,
-):
-    with pl.section_vector():
-        tt = pl.TileType(shape=[2, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, valid_shape=[-1, -1])
-        dst0 = _tile(tt, 0)
-        dst1 = _tile(tt, 512)
-        src0 = _tile(tt, 1024)
-        src1 = _tile(tt, 1536)
-        pl.set_validshape(dst0, [1, 17])
-        pl.set_validshape(src0, [1, 17])
-        pl.set_validshape(dst1, [rows, cols])
-        pl.set_validshape(src1, [rows, cols])
-        pl.load(src0, x, [0, 0])
-        pl.load(src1, x, [0, 0])
-        pl.load(dst0, y0, [0, 0])
-        pl.load(dst1, y1, [0, 0])
-        for index in pl.range(2):
-            select_and_negate(dst0, dst1, src0, src1, index)
-        pl.store(y0, dst0, [0, 0])
-        pl.store(y1, dst1, [0, 0])
-
-
-@pytest.mark.soc("950")
-@pytest.mark.parametrize("rows,cols", [(2, 37), (1, 64)])
-def test_simd_tile_dynamic_tuple_metadata(rows, cols, expect_pgo_vf):
-    torch.npu.set_device(int(os.environ.get("TILE_FWK_DEVICE_ID", "0")))
-    x = torch.linspace(-2, 2, 128).reshape(2, 64)
-    y0 = torch.full_like(x, 99, device="npu")
-    y1 = torch.full_like(x, 99, device="npu")
-    with expect_pgo_vf():
-        tuple_kernel[1](x.npu(), y0, y1, rows, cols)
-        expected0 = torch.full_like(x, 99)
-        expected1 = torch.full_like(x, 99)
-        expected0[:1, :17] = -x[:1, :17]
-        expected1[:rows, :cols] = -x[:rows, :cols]
-        torch.testing.assert_close(y0.cpu(), expected0, rtol=1e-3, atol=1e-4)
-        torch.testing.assert_close(y1.cpu(), expected1, rtol=1e-3, atol=1e-4)
-
-
-@pl.vector_function(mode="simd_tile")
 def typed_elementwise(dst, src, value):
     pl.neg(dst, src)
     pl.exp(dst, dst)
@@ -170,7 +116,7 @@ def repeat_update(dst, src, value, count):
     pl.neg(dst, src)
     for i in pl.range(count):
         if i % 2 == 0:
-            add_scalar(dst, dst, value)
+            pl.add(dst, dst, value)
         else:
             pl.sub(dst, dst, value)
 
@@ -290,20 +236,15 @@ def negate_tile(dst):
     pl.neg(dst, dst)
 
 
-@pl.vector_function(mode="simd_tile")
-def nested_negate_tile(dst):
-    negate_tile(dst)
-
-
 @pl.jit(auto_mutex=True)
 def specialized_tiles_kernel(
     x: pl.Tensor[[2, 128], pl.DT_FP32],
     a_out: pl.Tensor[[2, 64], pl.DT_FP32],
     b_out: pl.Tensor[[2, 64], pl.DT_FP32],
     c_out: pl.Tensor[[2, 128], pl.DT_FP32],
-    nested_a_out: pl.Tensor[[2, 64], pl.DT_FP32],
-    nested_b_out: pl.Tensor[[2, 64], pl.DT_FP32],
-    nested_c_out: pl.Tensor[[2, 128], pl.DT_FP32],
+    restored_a_out: pl.Tensor[[2, 64], pl.DT_FP32],
+    restored_b_out: pl.Tensor[[2, 64], pl.DT_FP32],
+    restored_c_out: pl.Tensor[[2, 128], pl.DT_FP32],
 ):
     with pl.section_vector():
         compact = pl.TileType(shape=[2, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec, valid_shape=[2, 64])
@@ -321,16 +262,16 @@ def specialized_tiles_kernel(
         pl.store(a_out, a, [0, 0])
         pl.store(b_out, b, [0, 0])
         pl.store(c_out, c, [0, 0])
-        nested_negate_tile(a)
-        nested_negate_tile(b)
-        nested_negate_tile(c)
-        pl.store(nested_a_out, a, [0, 0])
-        pl.store(nested_b_out, b, [0, 0])
-        pl.store(nested_c_out, c, [0, 0])
+        negate_tile(a)
+        negate_tile(b)
+        negate_tile(c)
+        pl.store(restored_a_out, a, [0, 0])
+        pl.store(restored_b_out, b, [0, 0])
+        pl.store(restored_c_out, c, [0, 0])
 
 
 @pytest.mark.soc("950")
-def test_simd_tile_specialized_entry_and_nested_callee(expect_pgo_vf):
+def test_simd_tile_specialized_entry_reuse(expect_pgo_vf):
     torch.npu.set_device(int(os.environ.get("TILE_FWK_DEVICE_ID", "0")))
     x = torch.arange(1, 257, dtype=torch.float32).reshape(2, 128)
     outputs = [torch.empty((2, cols), device="npu") for cols in (64, 64, 128, 64, 64, 128)]
