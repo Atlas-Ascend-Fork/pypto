@@ -750,7 +750,7 @@ program #entry() {
     function vf_create_addr_reg_api incast(mutex_tile<tile<1 x 64, uint32_t, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 0> %counter_0) outcast() #entry(false) #type(SimdVF) {
         vf_counter_inc(%counter_0);
         for %___iterator_0 inrange 0, 1, 1 iter { } {
-            int64_t %__0 = %___iterator_0;
+            uint16_t %__0 = %___iterator_0;
             reg<addr_reg,uint32_t> %ar_0 = vf.create_addr_reg(0, 0, 0, 0, dtype=uint32_t);
             continue;
         }

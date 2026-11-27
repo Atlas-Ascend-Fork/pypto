@@ -19,8 +19,8 @@ program #entry() {
     function probe_vf incast(mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %src_0, mutex_tile<tile<1 x 128, float, tile_view<-1 x -1>, hw_info<row_major, none_box, 512, null, normal>>, 1> %dst_0, int64_t %count_0) outcast() #entry(false) #type(SimdVF) {
         tuple<int64_t, int64_t> %closure_allowed_0 = tuple(5, 6);
         for %offset__iterator_0 inrange 0, %count_0, 64 iter { } {
-            int64_t %offset_0 = %offset__iterator_0;
-            bool %_expr_tmp_0_0 = (%offset_0 eq 0);
+            uint16_t %offset_0 = %offset__iterator_0;
+            bool %_expr_tmp_0_0 = ((cast int64_t %offset_0) eq 0);
             int64_t %_ifexpr_tmp_0_2 = if %_expr_tmp_0_0 then {
                 int64_t %_ifexpr_tmp_0_0 = 64;
                 yield 64;

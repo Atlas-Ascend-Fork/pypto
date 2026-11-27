@@ -26,8 +26,9 @@ IR statement the scalar landed in, which is what says the accepted value was car
 than quietly wrapped, folded or dropped.
 """
 from pypto_pro import ir
-from pypto_pro._errors import OutOfRange
+from pypto_pro._errors import InvalidType, InvalidVal, OutOfRange
 from pypto_pro.ir._limits import INT64_MAX, INT64_MIN, UINT64_MAX
+from pypto_pro.ir.op.vf_ops import _is_vf_scalar_dtype_convertible
 import pypto_pro.language as pl
 from pypto_pro.language import Vf as vf  # noqa: N813
 import pytest
@@ -54,6 +55,100 @@ def _adds_body(dtype, scalar):
         reg_a = vf.load_align(in_a, 0)
         reg_out = vf.adds(reg_a, scalar, preg)
         vf.store_align(t_out, reg_out, preg)
+
+    return vf_body
+
+
+def _adds_loop_body(dtype):
+    @pl.vector_function
+    def vf_body(in_a, t_out):
+        preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=dtype)
+        reg_a = vf.load_align(in_a, 0)
+        for i in pl.range(0, 4):
+            reg_a = vf.adds(reg_a, i, preg)
+        vf.store_align(t_out, reg_a, preg)
+
+    return vf_body
+
+
+def _adds_loop_expr_body(dtype):
+    @pl.vector_function
+    def vf_body(in_a, t_out):
+        preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=dtype)
+        reg_a = vf.load_align(in_a, 0)
+        for i in pl.range(0, 4):
+            reg_a = vf.adds(reg_a, i + 1, preg)
+        vf.store_align(t_out, reg_a, preg)
+
+    return vf_body
+
+
+def _adds_loop_alias_body(dtype):
+    @pl.vector_function
+    def vf_body(in_a, t_out):
+        preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=dtype)
+        reg_a = vf.load_align(in_a, 0)
+        for i in pl.range(0, 4):
+            a = i + 1
+            reg_a = vf.adds(reg_a, a, preg)
+        vf.store_align(t_out, reg_a, preg)
+
+    return vf_body
+
+
+def _nested_carry_body(dtype):
+    @pl.vector_function
+    def vf_body(in_a, t_out):
+        preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=dtype)
+        reg_a = vf.load_align(in_a, 0)
+        total = 0
+        for i in pl.range(0, 2):
+            total = i
+            for _ in pl.range(0, 2):
+                total = total + 1
+        vf.store_align(t_out, reg_a, preg)
+
+    return vf_body
+
+
+def _carry_from_loop_var_body(dtype):
+    @pl.vector_function
+    def vf_body(in_a, t_out):
+        preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=dtype)
+        reg_a = vf.load_align(in_a, 0)
+        total = 0
+        for i in pl.range(0, 4):
+            total = i
+        _test_total = total
+        vf.store_align(t_out, reg_a, preg)
+
+    return vf_body
+
+
+def _carry_const_from_loop_body(dtype):
+    @pl.vector_function
+    def vf_body(in_a, t_out):
+        preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=dtype)
+        reg_a = vf.load_align(in_a, 0)
+        total = 0
+        for _ in pl.range(0, 2):
+            total = pl.const(1, pl.DT_UINT16)
+        _test_total = total
+        vf.store_align(t_out, reg_a, preg)
+
+    return vf_body
+
+
+def _signed_body_into_unsigned_slot_body(dtype):
+    @pl.vector_function
+    def vf_body(in_a, t_out):
+        preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=dtype)
+        reg_a = vf.load_align(in_a, 0)
+        value = pl.const(0, pl.DT_UINT16)
+        for _ in pl.range(0, 2):
+            value = pl.const(1, pl.DT_INT16)
+        _test_value = value
+        vf.store_align(t_out, reg_a, preg)
 
     return vf_body
 
@@ -152,8 +247,28 @@ def _walk_stmts(stmt):
             yield from _walk_stmts(child)
     elif isinstance(stmt, ir.SectionStmt):
         yield from _walk_stmts(stmt.body)
+    elif isinstance(stmt, (ir.ForStmt, ir.WhileStmt)):
+        yield stmt
+        yield from _walk_stmts(stmt.body)
+    elif isinstance(stmt, ir.IfStmt):
+        yield stmt
+        yield from _walk_stmts(stmt.then_body)
+        if stmt.else_body is not None:
+            yield from _walk_stmts(stmt.else_body)
     else:
         yield stmt
+
+
+def _find_call(program, op_name):
+    """Return the single call statement named ``op_name`` in ``program``."""
+    calls = [
+        stmt.value
+        for func in program.functions.values()
+        for stmt in _walk_stmts(func.body)
+        if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call) and stmt.value.name == op_name
+    ]
+    assert len(calls) == 1
+    return calls[0]
 
 
 def _assert_scalar_operand(program, op_name, value, index=1):
@@ -162,20 +277,108 @@ def _assert_scalar_operand(program, op_name, value, index=1):
     Default index=1 matches value form (src=0, scalar=1).
     Block ops and ops whose scalar is not the second operand pass index explicitly.
     """
-    calls = []
-    for func in program.functions.values():
-        for stmt in _walk_stmts(func.body):
-            expr = None
-            if isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call):
-                expr = stmt.value
-            if expr is not None and expr.name == op_name:
-                calls.append(expr)
-    assert len(calls) == 1
-    call = calls[0]
+    call = _find_call(program, op_name)
     scalar = call.args[index]
     assert isinstance(scalar, ir.ConstFloat if isinstance(value, float) else ir.ConstInt)
     assert scalar.value == value
     return call
+
+
+@pytest.mark.soc("950")
+def test_loop_variant_scalar_operand_is_rejected():
+    """A VF loop counter is uint16_t in codegen and cannot feed a float operand."""
+    with pytest.raises(InvalidType, match=r"vf\.adds: scalar dtype uint16 cannot be converted to fp32"):
+        _parse_with_body(pl.DT_FP32, _adds_loop_body(pl.DT_FP32))
+
+
+@pytest.mark.soc("950")
+def test_nested_loop_carried_uint16_scalar_is_rejected():
+    """Mixing a uint16 loop-carried value with int64 arithmetic is not supported."""
+    with pytest.raises(InvalidVal, match="Inconsistent types in control flow"):
+        _parse_with_body(pl.DT_FP32, _nested_carry_body(pl.DT_FP32))
+
+
+@pytest.mark.soc("950")
+def test_loop_carried_scalar_accepts_narrower_body():
+    """Validation-only: the slot stays INT64 while the body value keeps its UINT16 dtype."""
+    program, _ = _parse_with_body(pl.DT_FP32, _carry_from_loop_var_body(pl.DT_FP32))
+    for_stmt = next(
+        stmt
+        for func in program.functions.values()
+        for stmt in _walk_stmts(func.body)
+        if isinstance(stmt, ir.ForStmt)
+    )
+    assert for_stmt.iter_args[0].iterVar.type.dtype == pl.DT_INT64
+    assert for_stmt.return_vars[0].type.dtype == pl.DT_INT64
+    continue_stmt = for_stmt.body.stmts[-1]
+    assert isinstance(continue_stmt, ir.ContinueStmt)
+    assert len(continue_stmt.value) == 1
+    continue_value = continue_stmt.value[0]
+    assert not isinstance(continue_value, ir.Cast)
+    assert continue_value.type.dtype == pl.DT_UINT16
+
+
+@pytest.mark.soc("950")
+def test_loop_carried_const_keeps_source_dtype():
+    """Validation-only: a constant body value is not re-typed by the slot."""
+    program, _ = _parse_with_body(pl.DT_FP32, _carry_const_from_loop_body(pl.DT_FP32))
+    for_stmt = next(
+        stmt
+        for func in program.functions.values()
+        for stmt in _walk_stmts(func.body)
+        if isinstance(stmt, ir.ForStmt)
+    )
+    continue_stmt = for_stmt.body.stmts[-1]
+    assert isinstance(continue_stmt, ir.ContinueStmt)
+    const = continue_stmt.value[0]
+    assert isinstance(const, ir.ConstInt)
+    assert const.type.dtype == pl.DT_UINT16
+    assert const.value == 1
+
+
+@pytest.mark.soc("950")
+def test_loop_rejects_signed_body_into_unsigned_slot():
+    """The slot's unsigned range does not contain the signed body's range."""
+    with pytest.raises(InvalidVal, match="Inconsistent types in control flow"):
+        _parse_with_body(pl.DT_FP32, _signed_body_into_unsigned_slot_body(pl.DT_FP32))
+
+
+@pytest.mark.soc("950")
+def test_loop_derived_expression_scalar_promotes_to_int64():
+    """An expression derived from the loop counter keeps its natural int64 type."""
+    program, _ = _parse_with_body(pl.DT_FP32, _adds_loop_expr_body(pl.DT_FP32))
+    assert _find_call(program, "vf.adds").args[1].type.dtype == pl.DT_INT64
+
+
+@pytest.mark.soc("950")
+def test_loop_derived_alias_scalar_promotes_to_int64():
+    """An alias such as ``a = i + 1`` keeps its natural int64 type."""
+    program, _ = _parse_with_body(pl.DT_FP32, _adds_loop_alias_body(pl.DT_FP32))
+    assert _find_call(program, "vf.adds").args[1].type.dtype == pl.DT_INT64
+
+
+# ---------------------------------------------------------------------------
+# Runtime scalar conversion support: unsigned<->float is not convertible
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("dst_dtype", [pl.DT_UINT16, pl.DT_UINT32])
+def test_runtime_float_to_unsigned_scalar_is_rejected(dst_dtype):
+    scalar = ir.Var("s", ir.ScalarType(pl.DT_FP32), ir.Span.unknown())
+    assert not _is_vf_scalar_dtype_convertible(scalar, pl.DT_FP32, dst_dtype)
+
+
+@pytest.mark.parametrize("src_dtype", [pl.DT_UINT16, pl.DT_UINT32])
+def test_runtime_unsigned_to_float_scalar_is_rejected(src_dtype):
+    scalar = ir.Var("s", ir.ScalarType(src_dtype), ir.Span.unknown())
+    assert not _is_vf_scalar_dtype_convertible(scalar, src_dtype, pl.DT_FP32)
+
+
+@pytest.mark.parametrize(
+    ("src_dtype", "dst_dtype"),
+    [(pl.DT_INT32, pl.DT_FP32), (pl.DT_FP32, pl.DT_INT32)],
+)
+def test_runtime_signed_scalar_conversion_stays_convertible(src_dtype, dst_dtype):
+    scalar = ir.Var("s", ir.ScalarType(src_dtype), ir.Span.unknown())
+    assert _is_vf_scalar_dtype_convertible(scalar, src_dtype, dst_dtype)
 
 
 # ---------------------------------------------------------------------------

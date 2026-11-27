@@ -22,18 +22,48 @@ from ..._errors import InvalidType
 from ._op_registry import op_impl
 
 
-def _check_vf_scalar_operands(op_name: str, args: list, dtype: _ir_core.DataType | None) -> None:
-    """Reject a literal scalar operand of ``vf.<op_name>`` that ``dtype`` cannot represent.
+def _is_vf_scalar_dtype_convertible(arg: Any, src_dtype: _ir_core.DataType, dst_dtype: _ir_core.DataType) -> bool:
+    """Whether a scalar operand can be consumed by the VF operand dtype."""
+    if src_dtype == dst_dtype:
+        return True
+    src_numeric = src_dtype.is_int() or src_dtype.is_float()
+    dst_numeric = dst_dtype.is_int() or dst_dtype.is_float()
+    if not (src_numeric and dst_numeric):
+        return False
+    if isinstance(arg, (_ir_core.ConstInt, _ir_core.ConstFloat)):
+        return True
+    # A VF loop counter is uint16_t in the generated body; an unsigned integer
+    # cannot feed a float operand, and a float cannot feed a uint16/uint32
+    # operand. Signed int-to-float and int-to-int stay convertible.
+    if src_dtype.is_unsigned_int() and dst_dtype.is_float():
+        return False
+    if src_dtype.is_float() and dst_dtype in (_ir_core.DataType.UINT16, _ir_core.DataType.UINT32):
+        return False
+    return True
 
-    Non-constant operands carry no value to check and are skipped. Only the
-    builder of the scalar-value family (and the muls_cast implementation with
-    ``_infer_src_dtype``) calls in here; no registry flag is consulted.
+
+def _check_vf_scalar_operands(op_name: str, args: list, dtype: _ir_core.DataType | None) -> None:
+    """Reject a scalar operand of ``vf.<op_name>`` that ``dtype`` cannot consume.
+
+    Literals are range-checked against ``dtype`` and may be coerced by the
+    backend. For runtime scalars, an unsigned integer cannot feed a float
+    operand, and a float cannot feed a uint16/uint32 operand. A VF loop counter
+    carries UINT16 in the IR, the dtype bisheng emits for it. Non-scalar
+    operands are skipped.
     """
     if dtype is None:
         return
     from ...language.parser.diagnostics import check_const_expr_fits_dtype
 
     for arg in args:
+        arg_type = getattr(arg, "type", None)
+        if not isinstance(arg_type, _ir_core.ScalarType):
+            continue
+        if not _is_vf_scalar_dtype_convertible(arg, arg_type.dtype, dtype):
+            raise InvalidType(
+                f"vf.{op_name}: scalar dtype {arg_type.dtype} cannot be converted to {dtype}",
+                hint="Pass a scalar value of the operand dtype",
+            )
         check_const_expr_fits_dtype(arg, dtype, api=f"vf.{op_name}")
 
 

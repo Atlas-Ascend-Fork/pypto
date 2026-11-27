@@ -204,7 +204,7 @@ def test_dynamic_if_type_mismatch_is_deferred_until_use():
         if flag:
             value = pl.const(1, pl.DT_INT32)
         else:
-            value = pl.const(2, pl.DT_INT64)  # noqa: F841
+            value = pl.const(2.0, pl.DT_FP32)  # noqa: F841
 
     unused_program, _ = unused_mismatch.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
     unused_mismatch = unused_program.get_function(unused_mismatch.__name__)
@@ -218,11 +218,97 @@ def test_dynamic_if_type_mismatch_is_deferred_until_use():
             if flag:
                 value = pl.const(1, pl.DT_INT32)
             else:
-                value = pl.const(2, pl.DT_INT64)
+                value = pl.const(2.0, pl.DT_FP32)
             result = value + 1
             _test_result = result
 
         used_mismatch.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+def test_if_accepts_narrower_branch_value():
+    @pl.jit(auto_mutex=False)
+    def func(flag: pl.DT_BOOL):
+        if flag:
+            value = pl.const(1, pl.DT_INT32)
+        else:
+            value = pl.const(2, pl.DT_INT16)
+        _test_result = value
+
+    program, _ = func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    if_stmt = next(
+        stmt
+        for stmt in program.get_function(func.__name__).body.stmts
+        if isinstance(stmt, ir.IfStmt)
+    )
+
+    assert if_stmt.return_vars[0].type.dtype == ir.DataType.INT32
+    else_yield = if_stmt.else_body.stmts[-1]
+    assert isinstance(else_yield, ir.YieldStmt)
+    assert else_yield.value[0].type.dtype == ir.DataType.INT16
+
+
+@pytest.mark.parametrize(
+    ("outer_dtype", "branch_dtype"),
+    [
+        (pl.DT_INT64, pl.DT_INT16),
+        (pl.DT_INT16, pl.DT_INT64),
+    ],
+)
+def test_if_merges_outer_and_branch_value_types(outer_dtype, branch_dtype):
+    @pl.jit(auto_mutex=False)
+    def func(flag: pl.DT_BOOL):
+        value = pl.const(0, outer_dtype)
+        if flag:
+            value = pl.const(1, branch_dtype)
+        _test_result = value
+
+    program, _ = func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    if_stmt = next(
+        stmt
+        for stmt in program.get_function(func.__name__).body.stmts
+        if isinstance(stmt, ir.IfStmt)
+    )
+
+    assert if_stmt.return_vars[0].type.dtype == ir.DataType.INT64
+    then_yield = if_stmt.then_body.stmts[-1]
+    else_yield = if_stmt.else_body.stmts[-1]
+    assert isinstance(then_yield, ir.YieldStmt)
+    assert isinstance(else_yield, ir.YieldStmt)
+    assert then_yield.value[0].type.dtype == branch_dtype
+    assert else_yield.value[0].type.dtype == outer_dtype
+
+
+@pytest.mark.parametrize(
+    ("then_dtype", "else_dtype", "merged_dtype"),
+    [
+        (pl.DT_INT16, pl.DT_INT32, ir.DataType.INT32),
+        (pl.DT_INT32, pl.DT_INT64, ir.DataType.INT64),
+        (pl.DT_INT32, pl.DT_UINT32, ir.DataType.INT64),
+    ],
+)
+def test_if_merges_to_common_int_type(then_dtype, else_dtype, merged_dtype):
+    @pl.jit(auto_mutex=False)
+    def func(flag: pl.DT_BOOL):
+        if flag:
+            value = pl.const(1, then_dtype)
+        else:
+            value = pl.const(2, else_dtype)
+        _test_result = value
+
+    program, _ = func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    if_stmt = next(
+        stmt
+        for stmt in program.get_function(func.__name__).body.stmts
+        if isinstance(stmt, ir.IfStmt)
+    )
+
+    assert if_stmt.return_vars[0].type.dtype == merged_dtype
+    then_yield = if_stmt.then_body.stmts[-1]
+    else_yield = if_stmt.else_body.stmts[-1]
+    assert isinstance(then_yield, ir.YieldStmt)
+    assert isinstance(else_yield, ir.YieldStmt)
+    assert then_yield.value[0].type.dtype == then_dtype
+    assert else_yield.value[0].type.dtype == else_dtype
 
 
 def test_dynamic_if_parser_only_merge_is_deferred_until_use():
@@ -533,6 +619,29 @@ def test_while_body_and_result_types_are_independent():
 
     assert while_stmt.iter_args[0].iterVar.type.dtype == ir.DataType.INT32
     assert while_stmt.return_vars[0].type.dtype == ir.DataType.INT64
+
+
+def test_while_narrow_break_result_stays_narrow():
+    @pl.jit(auto_mutex=False)
+    def func(flag: pl.DT_BOOL):
+        value = pl.const(0, pl.DT_INT64)
+        while True:
+            if flag:
+                value = pl.const(1, pl.DT_INT32)
+                break
+            value = pl.const(2, pl.DT_INT64)
+            continue
+        _test_result = value
+
+    program, _ = func.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    while_stmt = next(
+        stmt
+        for stmt in program.get_function(func.__name__).body.stmts
+        if isinstance(stmt, ir.WhileStmt)
+    )
+
+    assert while_stmt.iter_args[0].iterVar.type.dtype == ir.DataType.INT64
+    assert while_stmt.return_vars[0].type.dtype == ir.DataType.INT32
 
 
 def test_while_body_type_conflict_fails_eagerly_after_valid_iter_use():

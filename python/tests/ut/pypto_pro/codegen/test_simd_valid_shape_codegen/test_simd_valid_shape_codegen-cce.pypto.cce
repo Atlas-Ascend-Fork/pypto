@@ -19,10 +19,10 @@ __simd_callee__ inline void copy_valid(__ubuf__ float* dst_0, __ubuf__ float* sr
         MaskReg mask_0;
         uint32_t _vf_mask_scalar_0 = (uint32_t)_expr_tmp_1_0;
         mask_0 = plt_b32(_vf_mask_scalar_0, POST_UPDATE);
-        auto _expr_tmp_2_0 = (row__iterator_0 * 64);
+        auto _expr_tmp_2_0 = (((int64_t)row__iterator_0) * 64);
         RtWrap<float> value_0;
         vlds(value_0, src_0, _expr_tmp_2_0, NORM);
-        auto _expr_tmp_3_0 = (row__iterator_0 * 64);
+        auto _expr_tmp_3_0 = (((int64_t)row__iterator_0) * 64);
         vsts(value_0, dst_0, _expr_tmp_3_0, NORM_B32, mask_0);
         continue;
     }

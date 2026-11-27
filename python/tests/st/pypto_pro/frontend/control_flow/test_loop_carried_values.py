@@ -7,11 +7,18 @@
 # See LICENSE in the root of the software repository for the full text of the License.
 # -----------------------------------------------------------------------------------------------------------
 
-"""Device regressions for simultaneous loop-carried assignments."""
+"""Device regressions for simultaneous loop-carried assignments.
+
+Also covers narrow integer values (INT8/INT16/UINT16) carried in wider
+INT32/INT64 ``for`` slots: the slot keeps its initial dtype while the body,
+break, and continue values keep their source dtype.
+"""
 
 import math
 import os
 
+from pypto_pro import ir
+from pypto_pro._errors import InvalidVal
 import pypto_pro.language as pl
 import pytest
 import torch
@@ -92,3 +99,144 @@ def test_loop_swap_carry(kernel, expected):
     kernel[None, 1](7, out)
     torch.npu.synchronize()
     assert out.cpu().tolist() == [expected]
+
+
+def _walk_stmts(stmt):
+    if isinstance(stmt, ir.SeqStmts):
+        for child in stmt.stmts:
+            yield from _walk_stmts(child)
+    elif isinstance(stmt, ir.SectionStmt):
+        yield from _walk_stmts(stmt.body)
+    elif isinstance(stmt, (ir.ForStmt, ir.WhileStmt)):
+        yield stmt
+        yield from _walk_stmts(stmt.body)
+    elif isinstance(stmt, ir.IfStmt):
+        yield stmt
+        yield from _walk_stmts(stmt.then_body)
+        if stmt.else_body is not None:
+            yield from _walk_stmts(stmt.else_body)
+    else:
+        yield stmt
+
+
+@pl.jit
+def _for_integer_promotion_kernel(
+    s8: pl.DT_INT8,
+    s16: pl.DT_INT16,
+    u16: pl.DT_UINT16,
+    u8: pl.DT_UINT8,
+    out: pl.Tensor[[1, 9], pl.DT_INT64],
+):
+    with pl.section_vector():
+        total0 = pl.const(0, pl.DT_INT64)
+        for _ in pl.range(3):
+            total0 = pl.const(7, pl.DT_INT16)
+        pl.setval(out, 0, total0)
+
+        total1 = pl.const(0, pl.DT_INT64)
+        for _ in pl.range(3):
+            total1 = s16
+        pl.setval(out, 1, total1)
+
+        total2 = pl.const(0, pl.DT_INT32)
+        for _ in pl.range(3):
+            total2 = s16
+        pl.setval(out, 2, total2)
+
+        total3 = pl.const(0, pl.DT_INT64)
+        for offset in pl.range(3):
+            total3 = u16
+            if offset == 1:
+                break
+        pl.setval(out, 3, total3)
+
+        total4 = pl.const(0, pl.DT_INT64)
+        for offset in pl.range(3):
+            total4 = s16
+            if offset == 1:
+                continue
+        pl.setval(out, 4, total4)
+
+        total5 = pl.const(0, pl.DT_INT64)
+        for offset in pl.range(3):
+            total5 = s8
+            if offset == 0:
+                continue
+            break
+        pl.setval(out, 5, total5)
+
+        outer_total = pl.const(0, pl.DT_INT64)
+        for i in pl.range(2):
+            inner_total = pl.const(0, pl.DT_INT64)
+            for j in pl.range(2):
+                inner_total = s16
+            outer_total = inner_total
+        pl.setval(out, 6, outer_total)
+
+        total6 = pl.const(0, pl.DT_INT32)
+        for _ in pl.range(2):
+            total6 = u16
+        pl.setval(out, 7, total6)
+
+        u8_count = pl.const(0, pl.DT_INT64)
+        for _ in pl.range(2):
+            u8_count = u8
+        accum = pl.const(0, pl.DT_INT64)
+        for _ in pl.range(u8_count):
+            accum = accum + pl.const(1, pl.DT_INT64)
+        pl.setval(out, 8, accum)
+
+
+@pl.jit
+def _for_rejects_wider_body_kernel(out: pl.Tensor[[1, 1], pl.DT_INT64]):
+    with pl.section_vector():
+        total = pl.const(0, pl.DT_INT32)
+        for offset in pl.range(2):
+            total = offset
+        pl.setval(out, 0, total)
+
+
+@pytest.mark.soc("950", "960")
+def test_for_integer_promotion_rejects_wider_body_value():
+    with pytest.raises(InvalidVal, match="Inconsistent types in control flow"):
+        _for_rejects_wider_body_kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+
+
+@pytest.mark.soc("950", "960")
+def test_for_integer_promotion_ir_types():
+    program, matched = _for_integer_promotion_kernel.to_kernel_def().parse_target_program(
+        ir.SectionKind.Vector
+    )
+    assert matched
+    func = program.get_function(_for_integer_promotion_kernel.__name__)
+    loop_types = [
+        (
+            stmt.iter_args[0].iterVar.type.dtype,
+            stmt.return_vars[0].type.dtype,
+        )
+        for stmt in _walk_stmts(func.body)
+        if isinstance(stmt, ir.ForStmt)
+    ]
+    assert loop_types == [
+        (ir.DataType.INT64, ir.DataType.INT64),
+        (ir.DataType.INT64, ir.DataType.INT64),
+        (ir.DataType.INT32, ir.DataType.INT32),
+        (ir.DataType.INT64, ir.DataType.INT64),
+        (ir.DataType.INT64, ir.DataType.INT64),
+        (ir.DataType.INT64, ir.DataType.INT64),
+        (ir.DataType.INT64, ir.DataType.INT64),
+        (ir.DataType.INT64, ir.DataType.INT64),
+        (ir.DataType.INT32, ir.DataType.INT32),
+        (ir.DataType.INT64, ir.DataType.INT64),
+        (ir.DataType.INT64, ir.DataType.INT64),
+    ]
+
+
+@pytest.mark.soc("950", "960")
+def test_for_integer_promotion_runs_on_device():
+    device = int(os.environ.get("TILE_FWK_DEVICE_ID", 0))
+    torch.npu.set_device(device)
+    out = torch.zeros((1, 9), dtype=torch.int64, device=f"npu:{device}")
+    _for_integer_promotion_kernel[None, 1](-5, -29, 65530, 3, out)
+    torch.npu.synchronize()
+    assert out.cpu().tolist() == [[7, -29, -29, 65530, -29, -5, -29, 65530, 3]]
