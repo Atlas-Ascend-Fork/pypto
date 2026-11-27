@@ -17,6 +17,7 @@
 #define __LOGICALTENSOR_TILE_OP_IMPL__
 
 #include "aicore_runtime.h"
+#include "tilefwk/aikernel_profile.h"
 #ifndef __LITE_NPU
 #include "mte.h"
 #include "dynamic/mte_dyn.h"

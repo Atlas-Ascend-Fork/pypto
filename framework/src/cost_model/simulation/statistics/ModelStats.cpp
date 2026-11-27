@@ -24,6 +24,7 @@ void ModelStats::Reset()
     hostMachineNum = 0;
     deviceMachineNum = 0;
     aicpuMachineNum = 0;
+    hostSchedulerMachineNum = 0;
     coreMachineNum = 0;
     cubeMachineNum = 0;
     vecMachineNum = 0;
@@ -45,6 +46,7 @@ void ModelStats::Report(std::string& name)
     rpt->ReportVal("Host Machine Count", hostMachineNum);
     rpt->ReportVal("Device Machine Count", deviceMachineNum);
     rpt->ReportVal("AICPU Machine Count", aicpuMachineNum);
+    rpt->ReportVal("Host Scheduler Machine Count", hostSchedulerMachineNum);
     rpt->ReportVal("Core Machine Count", coreMachineNum);
     rpt->ReportVal("|--Cube Count", cubeMachineNum);
     rpt->ReportVal("|--Vector Count", vecMachineNum);

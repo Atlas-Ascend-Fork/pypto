@@ -22,6 +22,7 @@
 #include "cost_model/simulation/base/Machine.h"
 #include "cost_model/simulation/common/Packet.h"
 #include "cost_model/simulation/tools/visualizer.h"
+#include "cost_model/simulation/arch/ArchRegistry.h"
 #include "cost_model/simulation/arch/PipeFactory.h"
 #include "cost_model/simulation/pv/PvModelFactory.h"
 #include "tilefwk/error_code.h"
@@ -228,6 +229,13 @@ SimSys::SimSys()
 }
 std::shared_ptr<SimSys> SimSys::GetShared() { return shared_from_this(); }
 
+static uint64_t GetSchedulerMachineNumber(const ModelConfig& config)
+{
+    // AICPU is a hardware concept. When it is 0, CM still needs one logical
+    // scheduler to dispatch tasks; reuse the existing scheduler implementation.
+    return config.aicpuMachineNumber == 0 ? 1 : config.aicpuMachineNumber;
+}
+
 bool SimSys::IsQueue(CostModel::Tid tid)
 {
     if (tid <= machines[0]->coreTid || tid >= machines[0]->reversedTidNum) {
@@ -253,14 +261,13 @@ bool SimSys::IsWorkPipe(CostModel::Pid pid, CostModel::Tid tid, std::string& nam
 
 void SimSys::InitMachineStartSeq()
 {
+    const uint64_t schedulerNum = GetSchedulerMachineNumber(config);
     machineTypeSeq[MachineType::AIC] = 0;
-    machineTypeSeq[MachineType::AIV] = config.deviceMachineNumber * config.aicpuMachineNumber *
-                                       config.cubeMachineNumberPerAICPU;
+    machineTypeSeq[MachineType::AIV] = config.deviceMachineNumber * schedulerNum * config.cubeMachineNumberPerAICPU;
     machineTypeSeq[MachineType::MIXAICORE] = 0;
-    machineTypeSeq[MachineType::DEVICE] = config.deviceMachineNumber * config.aicpuMachineNumber *
-                                          config.coreMachineNumberPerAICPU;
+    machineTypeSeq[MachineType::DEVICE] = config.deviceMachineNumber * schedulerNum * config.coreMachineNumberPerAICPU;
     machineTypeSeq[MachineType::CPU] = machineTypeSeq[MachineType::DEVICE] + config.deviceMachineNumber;
-    machineTypeSeq[MachineType::HUB] = machineTypeSeq[MachineType::CPU] + config.aicpuMachineNumber;
+    machineTypeSeq[MachineType::HUB] = machineTypeSeq[MachineType::CPU] + schedulerNum;
     machineTypeSeq[MachineType::PIPE] = 0;
 }
 
@@ -269,14 +276,16 @@ void SimSys::BuildCaches()
     functionCache.SetSim(GetShared());
     functionCache.SetMaxCacheSize(config.functionCacheSize);
 
-    // Create the L2 cache.
-    auto l2BankId = 0;
-    l2Cache = std::make_shared<CacheMachine>(CacheType::L2CACHE, config.deviceArch);
-    l2Cache->machineType = MachineType::CACHE;
-    l2Cache->machineId = GetProcessID(MachineType::CACHE, l2BankId);
-    l2Cache->sim = GetShared();
-    AddMachine(l2Cache);
-    l2Cache->Build();
+    // Kirin9050 has no L2; only build it when the model uses it.
+    if (config.mteUseL2Cache) {
+        auto l2BankId = 0;
+        l2Cache = std::make_shared<CacheMachine>(CacheType::L2CACHE, config.deviceArch);
+        l2Cache->machineType = MachineType::CACHE;
+        l2Cache->machineId = GetProcessID(MachineType::CACHE, l2BankId);
+        l2Cache->sim = GetShared();
+        AddMachine(l2Cache);
+        l2Cache->Build();
+    }
 }
 
 UnifiedPipeMachinePtr SimSys::GetPipeImpl(CorePipeType pType)
@@ -479,8 +488,9 @@ void SimSys::BuildDevice()
         pipeMachineIndex.resize(static_cast<int>(CorePipeType::TOTAL_CORE_PIPE_TYPE));
         numTileopSentToPipe.resize(static_cast<int>(CorePipeType::TOTAL_CORE_PIPE_TYPE));
 
-        for (size_t aicpuId = 0; aicpuId < config.aicpuMachineNumber; aicpuId++) {
-            BuildAICPU(deviceMachine, aicpuId);
+        const uint64_t schedulerNum = GetSchedulerMachineNumber(config);
+        for (size_t schedulerId = 0; schedulerId < schedulerNum; schedulerId++) {
+            BuildAICPU(deviceMachine, schedulerId);
         }
         BuildHUBCore();
     }
@@ -494,7 +504,10 @@ void SimSys::BuildSystemStat()
         InitBufferThreshold(pipePtr->config);
     }
     stats->deviceMachineNum = uint64_t(machineGroup[int(MachineType::DEVICE)].size());
-    stats->aicpuMachineNum = uint64_t(machineGroup[int(MachineType::CPU)].size());
+    const uint64_t schedulerCount = uint64_t(machineGroup[int(MachineType::CPU)].size());
+    const bool hasAicpu = config.aicpuMachineNumber > 0;
+    stats->aicpuMachineNum = hasAicpu ? schedulerCount : 0;
+    stats->hostSchedulerMachineNum = hasAicpu ? 0 : schedulerCount;
     stats->coreMachineNum = uint64_t(machineGroup[int(MachineType::AIC)].size() +
                                      machineGroup[int(MachineType::AIV)].size());
     stats->cubeMachineNum = uint64_t(machineGroup[int(MachineType::AIC)].size());

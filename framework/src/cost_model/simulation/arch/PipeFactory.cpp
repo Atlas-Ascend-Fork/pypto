@@ -1,5 +1,5 @@
 /**
- * Copyright (c) 2025 Huawei Technologies Co., Ltd.
+ * Copyright (c) 2025-2026 Huawei Technologies Co., Ltd.
  * This program is free software, you can redistribute it and/or modify it under the terms and conditions of
  * CANN Open Software License Agreement Version 2.0 (the "License").
  * Please refer to the License for details. You may not use this file except in compliance with the License.
@@ -10,33 +10,19 @@
 
 /*!
  * \file PipeFactory.cpp
- * \brief
+ * \brief Pipe/cache dispatch; arch-specific implementation selection lives in ArchRegistry.
  */
 
 #include "PipeFactory.h"
 
-#include <dlfcn.h>
+#include <stdexcept>
+#include <string>
 
-#include "TileAllocPipeImpl.h"
 #include "CallPipeImpl.h"
-#include "PipeSimulatorFast.h"
-#include "cost_model/simulation/arch/A2A3/L2CacheImplA2A3.h"
-#include "cost_model/simulation/arch/A2A3/PostSimulatorA2A3.h"
-#include "cost_model/simulation/arch/A5/L2CacheImplA5.h"
-#include "cost_model/simulation/arch/A5/PostSimulatorA5.h"
+#include "TileAllocPipeImpl.h"
+#include "cost_model/simulation/arch/ArchRegistry.h"
 
 namespace CostModel {
-UnifiedPipeMachinePtr CreateSimulator(const std::string& archType)
-{
-    if (archType == "A2A3") {
-        return CreatePipeSimulatorFast<PostSimulatorA2A3>();
-    } else if (archType == "A5") {
-        return CreatePipeSimulatorFast<PostSimulatorA5>();
-    } else {
-        throw std::invalid_argument("unknown arch type " + archType);
-    }
-}
-
 UnifiedPipeMachinePtr PipeFactory::Create(CorePipeType pipeType, std::string archType)
 {
     switch (pipeType) {
@@ -51,7 +37,7 @@ UnifiedPipeMachinePtr PipeFactory::Create(CorePipeType pipeType, std::string arc
         case CorePipeType::PIPE_VECTOR_ALU:
         case CorePipeType::PIPE_S:
         case CorePipeType::PIPE_CUBE:
-            return CreateSimulator(archType);
+            return ArchRegistry::CreateSimulator(archType);
         default:
             throw std::invalid_argument("unknown pipe type " + CorePipeName(pipeType));
     }
@@ -61,15 +47,8 @@ UnifiedPipeMachinePtr PipeFactory::Create(CorePipeType pipeType, std::string arc
 std::unique_ptr<CacheMachineImpl> PipeFactory::CreateCache(CostModel::CacheType type, std::string archType)
 {
     if (type == CacheType::L2CACHE) {
-        if (archType == "A2A3") {
-            return std::make_unique<L2CacheImplA2A3>();
-        } else if (archType == "A5") {
-            return std::make_unique<L2CacheImplA5>();
-        } else {
-            throw std::invalid_argument("unknown arch type " + archType);
-        }
-    } else {
-        throw std::invalid_argument("unknown pipe type " + CacheName(type));
+        return ArchRegistry::CreateCache(archType);
     }
+    throw std::invalid_argument("unknown cache type " + CacheName(type));
 }
 } // namespace CostModel

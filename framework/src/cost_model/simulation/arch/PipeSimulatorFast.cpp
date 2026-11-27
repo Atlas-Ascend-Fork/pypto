@@ -17,16 +17,23 @@
 
 #include <cassert>
 #include <climits>
+#include <cmath>
+#include <cstdlib>
 #include <algorithm>
+#include <mutex>
 #include <unordered_map>
 #include <unordered_set>
-#include "PipeFactory.h"
+#include "cost_model/simulation/arch/ArchRegistry.h"
 #include "cost_model/simulation/arch/A2A3/PostSimulatorA2A3.h"
 #include "cost_model/simulation/arch/A5/PostSimulatorA5.h"
+#include "cost_model/simulation/expr/CostExprEval.h"
+#include "cost_model/simulation/arch/Kirin9050/PostSimulatorKirin9050.h"
+#include "tilefwk/pypto_fwk_log.h"
 
 namespace CostModel {
 template class PipeSimulatorFast<PostSimulatorA2A3>;
 template class PipeSimulatorFast<PostSimulatorA5>;
+template class PipeSimulatorFast<PostSimulatorKirin9050>;
 static const std::unordered_map<std::string, std::unordered_map<DataType, int>> INHERENT_LATENCY_IN_OP{
     // Vector
     {"UB_ADD",
@@ -256,8 +263,8 @@ static int GetMinShapeSize(const std::vector<std::vector<int>>& shape)
     int minTotalSize = INT_MAX;
     for (const auto& shapeVal : shape) {
         int totalSize = 1;
-        unsigned int beginVal = shapeVal.size() - CORNER_DIM_VAL;
-        for (unsigned int j = beginVal; j < shapeVal.size(); j++) {
+        const size_t beginVal = shapeVal.size() >= CORNER_DIM_VAL ? shapeVal.size() - CORNER_DIM_VAL : 0;
+        for (size_t j = beginVal; j < shapeVal.size(); ++j) {
             totalSize *= shapeVal[j] > 0 ? shapeVal[j] : DEFAULT_SHAPE;
         }
         minTotalSize = std::min(minTotalSize, totalSize);
@@ -271,7 +278,7 @@ static int GetShapeCntSize(const std::vector<std::vector<int>>& shape)
     for (const auto& shapeVal : shape) {
         int totalSize = 1;
         if (shapeVal.size() > CORNER_DIM_VAL) {
-            for (unsigned int j = 0; j < shapeVal.size() - CORNER_DIM_VAL; j++) {
+            for (size_t j = 0; j < shapeVal.size() - CORNER_DIM_VAL; ++j) {
                 totalSize *= shapeVal[j] > 0 ? shapeVal[j] : DEFAULT_SHAPE;
             }
         }
@@ -312,8 +319,8 @@ uint64_t PipeSimulatorFast<PostSimulator>::Simulate(const TileOpPtr& tileOp)
     ASSERT(CostModel::ForwardSimErrorScene::SHAPE_INVALID, !shape.empty() && !shape[0].empty()) << "[SIMULATION]: "
                                                                                                 << "shape is invalid";
 
-    int shapeSize = GetMinShapeSize(shape);
-    int shapeCnt = GetShapeCntSize(shape);
+    const int shapeSize = GetMinShapeSize(shape);
+    const int shapeCnt = GetShapeCntSize(shape);
     int cycle = CalcCyclesCommon(op, shapeSize * shapeCnt, dtype);
     return cycle;
 }
@@ -353,15 +360,87 @@ std::string GetOpCode(const TileOpPtr& tileOp)
     return tileOp->opcode;
 }
 
+struct ExprTileCostResult {
+    bool ok = false;
+    uint64_t cycles = 0;
+    std::string ruleKey;
+};
+
+template <typename PostSimulator>
+static ExprTileCostResult EvaluateExprTileCost(const TileOpPtr& tileOp)
+{
+    ExprTileCostResult result;
+    if (tileOp == nullptr) {
+        return result;
+    }
+    std::string op = GetOpCode(tileOp);
+    const CostRule* rule = PostSimulator::FindTileOpRule(op);
+    if (rule == nullptr) {
+        return result;
+    }
+    result.ruleKey = op;
+    if (rule->setupCtx == nullptr) {
+        return result;
+    }
+    std::vector<std::vector<int>> inShapes;
+    std::vector<std::vector<int>> outShapes;
+    std::vector<DataType> inDtypes;
+    std::vector<DataType> outDtypes;
+    inShapes.reserve(tileOp->iOperand.size());
+    outShapes.reserve(tileOp->oOperand.size());
+    inDtypes.reserve(tileOp->iOperand.size());
+    outDtypes.reserve(tileOp->oOperand.size());
+    for (const auto& tile : tileOp->iOperand) {
+        if (tile == nullptr) {
+            return result;
+        }
+        inShapes.emplace_back(tile->shape);
+        inDtypes.emplace_back(tile->dataType);
+    }
+    for (const auto& tile : tileOp->oOperand) {
+        if (tile == nullptr) {
+            return result;
+        }
+        outShapes.emplace_back(tile->shape);
+        outDtypes.emplace_back(tile->dataType);
+    }
+    FeatureContext ctx;
+    RuleInput input{&tileOp, &inShapes, &outShapes, std::move(inDtypes), std::move(outDtypes)};
+    if (!rule->setupCtx(ctx, input)) {
+        return result;
+    }
+    const EvalResult eval = EvaluateCostExpr(rule->expr, rule->coeffs, std::move(ctx));
+    if (eval.ok) {
+        result.ok = true;
+        result.cycles = eval.cycles;
+    }
+    return result;
+}
+
+template <typename PostSimulator>
+static uint64_t PostSimulateLegacy(PipeSimulatorFast<PostSimulator>& self, const TileOpPtr& tileOp);
+
 template <typename PostSimulator>
 uint64_t PipeSimulatorFast<PostSimulator>::PostSimulate(const TileOpPtr& tileOp)
 {
+    if constexpr (PostSimulator::kUseExprCostEngine) {
+        const ExprTileCostResult result = EvaluateExprTileCost<PostSimulator>(tileOp);
+        if (result.ok) {
+            tileOp->costRuleKey = result.ruleKey;
+            return result.cycles;
+        }
+        tileOp->costRuleKey = "legacy";
+        return Simulate(tileOp);
+    } else {
+        return PostSimulateLegacy(*this, tileOp);
+    }
+}
+
+template <typename PostSimulator>
+static uint64_t PostSimulateLegacy(PipeSimulatorFast<PostSimulator>& self, const TileOpPtr& tileOp)
+{
     std::string op = GetOpCode(tileOp);
     PostSimulator psm;
-    auto opLatency = psm.GetOpLatency();
-    if (opLatency.find(op) == opLatency.end()) {
-        return Simulate(tileOp);
-    }
     std::vector<std::vector<int>> shape;
     for (auto& srcTile : tileOp->iOperand) {
         shape.emplace_back(srcTile->shape);
@@ -369,14 +448,21 @@ uint64_t PipeSimulatorFast<PostSimulator>::PostSimulate(const TileOpPtr& tileOp)
     for (auto& dstTile : tileOp->oOperand) {
         shape.emplace_back(dstTile->shape);
     }
-    int shapeSize = GetMinShapeSize(shape);
-    int shapeCnt = GetShapeCntSize(shape);
+    if (shape.empty()) {
+        return 1;
+    }
+    auto opLatency = psm.GetOpLatency();
+    if (opLatency.find(op) == opLatency.end()) {
+        return self.Simulate(tileOp);
+    }
+    const int shapeSize = GetMinShapeSize(shape);
+    const int shapeCnt = GetShapeCntSize(shape);
     auto dataType = tileOp->iOperand.size() > 0 ? tileOp->iOperand[0]->dataType : tileOp->oOperand[0]->dataType;
     uint64_t size = BytesOf(dataType) * shapeSize;
     uint64_t parallelRatio = GetParrelRatio(dataType, op);
     auto r = opLatency.at(op);
-    const int rGmLatency = 1400;
-    const int wGmLatency = 300;
+    const int rGmLatency = psm.GetReadGmLatency();
+    const int wGmLatency = psm.GetWriteGmLatency();
     int freqTrans = 2000;
     int latency = shapeCnt * (uint64_t((r[0] * size * parallelRatio * 1E-6 + r[1]) * freqTrans) + 1);
     if (tileOp->opcode == "COPY_IN") {
@@ -388,55 +474,103 @@ uint64_t PipeSimulatorFast<PostSimulator>::PostSimulate(const TileOpPtr& tileOp)
 }
 
 template <typename PostSimulator>
-uint64_t PipeSimulatorFast<PostSimulator>::SimulateForPass(const std::string& op,
-                                                           const std::vector<std::vector<int>>& shape, DataType dtype)
+uint64_t PipeSimulatorFast<PostSimulator>::PostSimulateForPass(
+    const std::string& opcode, const std::vector<std::vector<int>>& inShapes,
+    const std::vector<std::vector<int>>& outShapes, const std::vector<DataType>& inDtypes,
+    const std::vector<DataType>& outDtypes, uint32_t opModeFlag, const std::vector<std::vector<int>>& inValidShapes,
+    const std::vector<std::vector<int>>& outValidShapes)
 {
-    ASSERT(CostModel::ForwardSimErrorScene::SHAPE_INVALID, !shape.empty() && !shape[0].empty()) << "[SIMULATION]: "
-                                                                                                << "shape is invalid";
-    int shapeSize = GetMinShapeSize(shape);
-    int shapeCnt = GetShapeCntSize(shape);
-    int cycle = CalcCyclesCommon(op, shapeSize * shapeCnt, dtype);
-    return cycle;
+    if (opcode.empty() || outShapes.empty() || inDtypes.size() != inShapes.size() ||
+        outDtypes.size() != outShapes.size()) {
+        return 0;
+    }
+    auto tileOp = std::make_shared<TileOp>();
+    tileOp->opcode = opcode;
+    tileOp->opModeFlag = opModeFlag;
+    for (size_t i = 0; i < inShapes.size(); ++i) {
+        auto tile = std::make_shared<Tile>();
+        tile->shape = inShapes[i];
+        if (i < inValidShapes.size() && inValidShapes[i].size() == inShapes[i].size()) {
+            tile->validShape = inValidShapes[i];
+        }
+        tile->dataType = inDtypes[i];
+        tileOp->iOperand.push_back(tile);
+    }
+    for (size_t i = 0; i < outShapes.size(); ++i) {
+        auto tile = std::make_shared<Tile>();
+        tile->shape = outShapes[i];
+        if (i < outValidShapes.size() && outValidShapes[i].size() == outShapes[i].size()) {
+            tile->validShape = outValidShapes[i];
+        }
+        tile->dataType = outDtypes[i];
+        tileOp->oOperand.push_back(tile);
+    }
+    tileOp->GetPipeType();
+    return PostSimulate(tileOp);
 }
 
-template <typename PostSimulator>
-uint64_t PipeSimulatorFast<PostSimulator>::PostSimulateForPass(const std::string& op,
-                                                               const std::vector<std::vector<int>>& shape,
-                                                               DataType dtype)
+__attribute__((visibility("default"))) int64_t GetCyclesForPassCPP(
+    const std::string& opcode, const std::vector<std::vector<int>>& inShapes,
+    const std::vector<std::vector<int>>& outShapes, const std::vector<DataType>& inDtypes,
+    const std::vector<DataType>& outDtypes, uint32_t opModeFlag, const std::vector<std::vector<int>>& inValidShapes,
+    const std::vector<std::vector<int>>& outValidShapes)
 {
-    PostSimulator psm;
-    auto opLatency = psm.GetOpLatency();
-    if (opLatency.find(op) == opLatency.end()) {
-        return SimulateForPass(op, shape, dtype);
-    }
-    int shapeSize = GetMinShapeSize(shape);
-    int shapeCnt = GetShapeCntSize(shape);
-    uint64_t size = BytesOf(dtype) * shapeSize;
-    uint64_t parallelRatio = GetParrelRatio(dtype, op);
-    auto r = opLatency.at(op);
-    const int rGmLatency = 1400;
-    const int wGmLatency = 300;
-    int freqTrans = 2000;
-    int latency = shapeCnt * (uint64_t((r[0] * size * parallelRatio * 1E-6 + r[1]) * freqTrans) + 1);
-    if (op == "COPY_IN") {
-        latency += rGmLatency;
-    } else if (op == "COPY_OUT") {
-        latency += wGmLatency;
-    }
-    return latency;
+    auto simPtr = ArchRegistry::CreateSimulator(ArchRegistry::ResolveArchName());
+    return simPtr->PostSimulateForPass(opcode, inShapes, outShapes, inDtypes, outDtypes, opModeFlag, inValidShapes,
+                                       outValidShapes);
 }
 
-extern "C" __attribute__((visibility("default"))) int64_t GetCyclesForPass(const std::string& op,
-                                                                           const std::vector<std::vector<int>>& shape,
-                                                                           DataType dtype)
+extern "C" __attribute__((visibility("default"))) int64_t GetCyclesForPass(const OpCostRequestC* request)
 {
-    // Select the pipe simulator by the NPU_ARCH of the configured soc_version (not by machine type):
-    // NpuArch 3510 (Ascend950 series) -> "A5", NpuArch 2201/3113/3003 -> "A2A3" (cost model internal arch types).
-    // Both standard ("Ascend950PR_9579") and deprecated ("ASCEND_950PR_9579") device_platform formats are accepted.
-    std::string socVersion = config::GetPlatformConfig("device_platform", "Ascend910B2");
-    NPUArch npuArch = DPlatformToNPUArch(StringToDPlatform(socVersion));
-    std::string archType = npuArch == NPUArch::DAV_3510 ? "A5" : "A2A3";
-    auto simPtr = CreateSimulator(archType);
-    return simPtr->PostSimulateForPass(op, shape, dtype);
+    if (request == nullptr || request->opcode == nullptr || request->inCount < 0 || request->outCount <= 0 ||
+        request->outShapeData == nullptr || request->outShapeDims == nullptr || request->outDtypes == nullptr ||
+        (request->inCount > 0 &&
+         (request->inShapeData == nullptr || request->inShapeDims == nullptr || request->inDtypes == nullptr))) {
+        return 0;
+    }
+    auto collectShapes = [](const int* data, const int* dims, int32_t count) {
+        std::vector<std::vector<int>> shapes;
+        if (data == nullptr || dims == nullptr) {
+            return shapes;
+        }
+        shapes.reserve(static_cast<size_t>(count));
+        size_t offset = 0;
+        for (int32_t i = 0; i < count; ++i) {
+            if (dims[i] < 0) {
+                return std::vector<std::vector<int>>();
+            }
+            const size_t rank = static_cast<size_t>(dims[i]);
+            shapes.emplace_back(data + offset, data + offset + rank);
+            offset += rank;
+        }
+        return shapes;
+    };
+    auto collectDtypes = [](const int32_t* data, int32_t count) {
+        std::vector<DataType> dtypes;
+        if (data == nullptr) {
+            return dtypes;
+        }
+        dtypes.reserve(static_cast<size_t>(count));
+        for (int32_t i = 0; i < count; ++i) {
+            dtypes.push_back(static_cast<DataType>(data[i]));
+        }
+        return dtypes;
+    };
+    const auto inShapes = collectShapes(request->inShapeData, request->inShapeDims, request->inCount);
+    const auto outShapes = collectShapes(request->outShapeData, request->outShapeDims, request->outCount);
+    const auto inDtypes = collectDtypes(request->inDtypes, request->inCount);
+    const auto outDtypes = collectDtypes(request->outDtypes, request->outCount);
+    if (inShapes.size() != static_cast<size_t>(request->inCount) ||
+        outShapes.size() != static_cast<size_t>(request->outCount) ||
+        inDtypes.size() != static_cast<size_t>(request->inCount) ||
+        outDtypes.size() != static_cast<size_t>(request->outCount)) {
+        return 0;
+    }
+    const auto inValidShapes = collectShapes(request->inValidShapeData, request->inValidShapeDims, request->inCount);
+    const auto outValidShapes = collectShapes(request->outValidShapeData, request->outValidShapeDims,
+                                              request->outCount);
+    auto simPtr = ArchRegistry::CreateSimulator(ArchRegistry::ResolveArchName());
+    return simPtr->PostSimulateForPass(request->opcode, inShapes, outShapes, inDtypes, outDtypes, request->opModeFlag,
+                                       inValidShapes, outValidShapes);
 }
 } // namespace CostModel

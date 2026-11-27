@@ -16,6 +16,7 @@
 #include "cost_model/simulation/common/ISA.h"
 #include "nlohmann/json.hpp"
 #include "interface/operation/opcode.h"
+#include "tilefwk/platform.h"
 #include "tilefwk/pypto_fwk_log.h"
 #include "tilefwk/error_code.h"
 
@@ -114,17 +115,24 @@ int Tile::SizeinBytes()
 
 void TileOp::GetPipeType()
 {
-    auto coreTypeQuery = SCHED_CORE_PIPE_TYPE.find(opcode);
     if (IsCall()) {
         pipeType = CorePipeType::PIPE_CALL;
-    } else if (coreTypeQuery != SCHED_CORE_PIPE_TYPE.end()) {
-        pipeType = coreTypeQuery->second;
+        return;
+    }
+
+    CorePipeType defaultType = CorePipeType::PIPE_VECTOR_ALU;
+    auto coreTypeQuery = SCHED_CORE_PIPE_TYPE.find(opcode);
+    if (coreTypeQuery != SCHED_CORE_PIPE_TYPE.end()) {
+        defaultType = coreTypeQuery->second;
     } else {
         SIMULATION_LOGW("[SIMULATION]: No pipe type corresponding to opcode is found, "
                         "fallback to PIPE_VECTOR_ALU. opcode=%s",
                         opcode.c_str());
-        pipeType = CorePipeType::PIPE_VECTOR_ALU;
     }
+
+    const auto arch = npu::tile_fwk::Platform::Instance().GetSoc().GetNPUArch();
+    pipeType = (arch == npu::tile_fwk::NPUArch::DAV_5101 && opcode == "INDEX_PUT") ? CorePipeType::PIPE_MTE_OUT :
+                                                                                     defaultType;
 }
 
 uint64_t TileOp::GetAddress()

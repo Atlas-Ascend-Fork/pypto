@@ -20,6 +20,7 @@
 #include "tilefwk/error_code.h"
 #include "tilefwk/pypto_fwk_log.h"
 #include "tilefwk/platform.h"
+#include "interface/configs/config_manager.h"
 
 namespace npu::tile_fwk {
 
@@ -27,7 +28,9 @@ ExprBatchGenerator::ExprBatchGenerator(const std::string& outputDir, int devRoot
     : outputDir_(outputDir),
       devRootKey_(devRootKey),
       totalExprs_(totalExprs),
-      dumpEnabled_(!IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch()))
+      dumpEnabled_(!IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch()) ||
+                   (config::GetRuntimeOption<int64_t>(CFG_RUN_MODE) == CFG_RUN_MODE_SIM &&
+                    config::GetSimConfig(KEY_ACCURACY_LEVEL, 2) <= 1))
 {
     CalculateBatches();
 }

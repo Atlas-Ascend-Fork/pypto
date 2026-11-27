@@ -16,6 +16,7 @@
 #include "simulation/backend.h"
 
 #include <cctype>
+#include "cost_model/simulation/arch/ArchRegistry.h"
 #include "interface/configs/config_manager.h"
 #include "interface/cache/function_cache.h"
 #include "interface/machine/host/machine_task.h"
@@ -31,9 +32,9 @@ namespace npu::tile_fwk {
 void CostModelAgent::BuildCostModel()
 {
     SIMULATION_LOGI("Init CostModel Simulation.");
-    SIMULATION_LOGI("Using Config A2A3.");
     costModel = std::make_shared<CostModel::CostModelInterface>();
     std::vector<std::string> inputArgs = config::GetSimConfig(KEY_ARGS, inputArgs);
+    CostModel::ArchRegistry::ApplyCurrentArchDefaults(inputArgs);
     int mode = config::GetSimConfig(KEY_SIM_MODE, 0);
     int accLevel = config::GetSimConfig(KEY_ACCURACY_LEVEL, 2);
     int logLevel = config::GetSimConfig(KEY_LOG_LEVEL, 3);

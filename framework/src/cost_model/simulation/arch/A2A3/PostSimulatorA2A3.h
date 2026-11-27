@@ -19,6 +19,9 @@
 
 namespace CostModel {
 class PostSimulatorA2A3 {
+public:
+    static constexpr bool kUseExprCostEngine = false;
+
 private:
     const std::unordered_map<std::string, std::vector<float>> opLatencyA2A3_{
         {"COPY_IN", {2.613, 0.00240884}},
@@ -65,5 +68,8 @@ private:
 
 public:
     const std::unordered_map<std::string, std::vector<float>>& GetOpLatency() { return opLatencyA2A3_; }
+
+    int GetReadGmLatency() { return 1400; }
+    int GetWriteGmLatency() { return 300; }
 };
 } // namespace CostModel

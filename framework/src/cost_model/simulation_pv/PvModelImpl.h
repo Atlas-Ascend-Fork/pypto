@@ -27,6 +27,8 @@
 #include "cost_model/simulation/pv/PvModel.h"
 #include "cost_model/simulation/common/CommonTools.h"
 #include "codegen/npu/cloudnpu/codegen_cloudnpu.h"
+#include "codegen/npu/litenpu/codegen_litenpu.h"
+#include <memory>
 #include "tilefwk/core_func_data.h"
 #include "interface/configs/config_manager.h"
 #include "interface/utils/common.h"
@@ -356,13 +358,18 @@ public:
 
         auto objPath = srcPath.substr(0, srcPath.length() - Len3) + "o";
         npu::tile_fwk::CodeGenCtx ctx;
-        npu::tile_fwk::CodeGenCloudNPU cga(ctx);
+        std::unique_ptr<npu::tile_fwk::CodeGenNPU> cga;
+        if (npu::tile_fwk::IsLiteNPU(npu::tile_fwk::Platform::Instance().GetSoc().GetNPUArch())) {
+            cga = std::make_unique<npu::tile_fwk::CodeGenLiteNPU>(ctx);
+        } else {
+            cga = std::make_unique<npu::tile_fwk::CodeGenCloudNPU>(ctx);
+        }
         auto coreType = leafFuncAttr == nullptr ? npu::tile_fwk::CoreType::INVALID : leafFuncAttr->coreType;
         bool isCube = coreType == npu::tile_fwk::CoreType::AIC;
         npu::tile_fwk::CompileInfo compileInfo(*func, ctx, {leaf->GetProgramId(), leaf}, isCube);
         compileInfo.SetCCEAbsPath(srcPath);
         compileInfo.SetBinAbsPath(objPath);
-        cga.CompileCode(cga.PrepareCmd(compileInfo, ""));
+        cga->CompileCode(cga->PrepareCmd(compileInfo, ""));
 
         binPath = srcPath.substr(0, srcPath.length() - Len3) + "bin";
         constexpr int cmdLen = 2048;

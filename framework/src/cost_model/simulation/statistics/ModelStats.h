@@ -26,6 +26,7 @@ public:
     uint64_t hostMachineNum;
     uint64_t deviceMachineNum;
     uint64_t aicpuMachineNum;
+    uint64_t hostSchedulerMachineNum;
     uint64_t coreMachineNum;
     uint64_t cubeMachineNum;
     uint64_t vecMachineNum;

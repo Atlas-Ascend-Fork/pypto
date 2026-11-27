@@ -190,6 +190,12 @@ const std::map<std::string, CorePipeType> SCHED_CORE_PIPE_TYPE{// Unary Vector
                                                                {"QUANT_MX", CorePipeType::PIPE_VECTOR_ALU},
                                                                // Cube
                                                                {"A_MUL_B", CorePipeType::PIPE_CUBE},
+                                                               {"A_MUL_B_EPILOGUE", CorePipeType::PIPE_CUBE},
+                                                               {"A_MULACC_B_EPILOGUE", CorePipeType::PIPE_CUBE},
+                                                               {"A_MUL_Bt_EPILOGUE", CorePipeType::PIPE_CUBE},
+                                                               {"A_MULACC_Bt_EPILOGUE", CorePipeType::PIPE_CUBE},
+                                                               {"At_MUL_B_EPILOGUE", CorePipeType::PIPE_CUBE},
+                                                               {"At_MUL_Bt_EPILOGUE", CorePipeType::PIPE_CUBE},
                                                                {"A_MULACC_B", CorePipeType::PIPE_CUBE},
                                                                {"A_MUL_Bt", CorePipeType::PIPE_CUBE},
                                                                {"A_MULACC_Bt", CorePipeType::PIPE_CUBE},
@@ -416,6 +422,7 @@ public:
 
     std::vector<int> offset;
     std::vector<int> shape;
+    std::vector<int> validShape;
 
     int rawMagic = -1;
     std::vector<int> rawShape;
@@ -464,8 +471,12 @@ public:
 
     bool scalarVld = false;
     Element scalarVal;
+    uint32_t opModeFlag = 0;
     std::vector<TilePtr> iOperand;
     std::vector<TilePtr> oOperand;
+
+    // Cost rule actually used by the per-tile evaluator (trace/diagnostics).
+    std::string costRuleKey;
 
     npu::tile_fwk::Operation* operation{};
     FunctionPtr funcPtr = nullptr;

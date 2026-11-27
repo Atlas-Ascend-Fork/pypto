@@ -177,6 +177,12 @@ void ParseInput::BuildTile(npu::tile_fwk::Function& func, std::shared_ptr<npu::t
     for (auto& s : logicalTensor->shape) {
         tile->shape.emplace_back(s);
     }
+    for (auto& s : logicalTensor->GetDynValidShape()) {
+        const auto raw = s.Raw();
+        if (raw != nullptr && raw->IsImmediate()) {
+            tile->validShape.emplace_back(static_cast<int>(raw->GetImmediateValue()));
+        }
+    }
     for (auto& o : logicalTensor->offset) {
         tile->offset.emplace_back(o);
     }

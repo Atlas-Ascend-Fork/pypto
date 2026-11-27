@@ -919,6 +919,9 @@ static void RunCompileControlFlowStage(Function* function, const std::shared_ptr
     AlignUpTo(attr->hostControlFlowBinary, 0x8, 0);
     std::string funcName = function->GetMagicName() + function->GetFunctionHash().Data();
     CompileControlFlow(aicpuDirPath, funcName, controlFlowSource, expressionSource);
+    if (IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch())) {
+        return;
+    }
     if (hasArm64DevCompile) {
         static const std::string BISHENG_LD_CMD = "ld.lld";
         std::string controlFlowDevFilePath = aicpuDirPath + "/controlFlow_dev_" + funcHash + ".cpp";
@@ -1111,10 +1114,13 @@ static void CompileDyndevFunction(Function* function, FunctionCache& cache, [[ma
                                                             encodeStepCount);
     uint64_t tilingKey = OpInfoManager::GetInstance().GetOpTilingKey();
     const bool isLiteNPU = IsLiteNPU(Platform::Instance().GetSoc().GetNPUArch());
+    const bool costModelMode = config::GetRuntimeOption<int64_t>(CFG_RUN_MODE) == CFG_RUN_MODE_SIM &&
+                               config::GetSimConfig(KEY_ACCURACY_LEVEL, 2) <= 1;
+    const bool needControlFlow = !isLiteNPU || costModelMode;
     std::string aicpuDirPath = config::GetEmitPath("kernel_aicpu");
-    // LiteNPU (Kirin) is a static kernel without an AICPU: the host/device control-flow binary is neither
-    // needed nor executed, so skip generating and compiling it entirely.
-    if (!isLiteNPU) {
+    // LiteNPU (Kirin) static kernels have no device AICPU. Cost Model still
+    // needs the host control-flow machine, so generate host-only CF for it.
+    if (needControlFlow) {
         npu::tile_fwk::CreateDir(aicpuDirPath, true);
     }
     const std::string expName = "expression_" + std::to_string(tilingKey) + ".h";
@@ -1127,7 +1133,7 @@ static void CompileDyndevFunction(Function* function, FunctionCache& cache, [[ma
     RunBuildControlFlowStage(irBackendCtx, cache, linker, function, attr, expName, exprSrcFiles, valDependTensorMeta,
                              controlFlowSource, expressionSource);
 
-    if (!isLiteNPU) {
+    if (needControlFlow) {
         std::string expressionFilePath = aicpuDirPath + "/" + expName;
         if (IsNeedDumpAicpuKernel(expressionFilePath)) {
             SaveFile(expressionFilePath, expressionSource);

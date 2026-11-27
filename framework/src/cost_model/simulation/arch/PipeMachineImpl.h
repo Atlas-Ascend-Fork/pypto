@@ -15,6 +15,11 @@
 
 #pragma once
 
+#include <cstdint>
+#include <memory>
+#include <string>
+#include <vector>
+
 #include "cost_model/simulation/common/CommonType.h"
 #include "cost_model/simulation/common/ISA.h"
 
@@ -24,26 +29,22 @@ public:
     virtual ~PipeMachineImpl() = default;
     virtual uint64_t Simulate(const TileOpPtr& tileOp) = 0;
     virtual uint64_t PostSimulate(const TileOpPtr& tileOp) = 0;
-    virtual uint64_t SimulateForPass(const std::string& op, const std::vector<std::vector<int>>& shape, DataType dtype)
+    virtual uint64_t PostSimulateForPass(const std::string& opcode, const std::vector<std::vector<int>>& inShapes,
+                                         const std::vector<std::vector<int>>& outShapes,
+                                         const std::vector<DataType>& inDtypes, const std::vector<DataType>& outDtypes,
+                                         uint32_t opModeFlag = 0,
+                                         const std::vector<std::vector<int>>& inValidShapes = {},
+                                         const std::vector<std::vector<int>>& outValidShapes = {})
     {
-        if (ValidateInput(op, shape, dtype)) {
-            return 0;
-        }
+        (void)opcode;
+        (void)inShapes;
+        (void)outShapes;
+        (void)inDtypes;
+        (void)outDtypes;
+        (void)opModeFlag;
+        (void)inValidShapes;
+        (void)outValidShapes;
         return 0;
-    };
-    virtual uint64_t PostSimulateForPass(const std::string& op, const std::vector<std::vector<int>>& shape,
-                                         DataType dtype)
-    {
-        if (ValidateInput(op, shape, dtype)) {
-            return 0;
-        }
-        return 0;
-    };
-
-private:
-    bool ValidateInput(const std::string& op, const std::vector<std::vector<int>>& shape, DataType dtype) const
-    {
-        return op.empty() || shape.empty() || !dtype;
     }
 };
 

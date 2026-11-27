@@ -14,6 +14,7 @@
  */
 
 #include "gtest/gtest.h"
+#include <algorithm>
 #include <dlfcn.h>
 
 #include "cost_model/simulation/backend.h"
@@ -23,6 +24,7 @@
 #include "interface/inner/tilefwk.h"
 #include "cost_model/simulation/pv/PvModelFactory.h"
 #include "interface/configs/config_manager.h"
+#include "cost_model/simulation/arch/ArchRegistry.h"
 #include "cost_model/simulation/arch/PipeFactory.h"
 #include "cost_model/simulation/arch/CacheMachineImpl.h"
 #include "cost_model/simulation/machine/CoreMachine.h"
@@ -46,6 +48,7 @@ public:
         config::SetPlatformConfig(KEY_ENABLE_COST_MODEL, true);
         config::SetSimConfig(KEY_BUILD_TASK_BASED_TOPO, true);
         config::SetHostOption(COMPILE_STAGE, CS_EXECUTE_GRAPH);
+        Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
         Program::GetInstance().Reset();
     }
 
@@ -692,14 +695,64 @@ TEST_F(CostModelTest, TestJsonFErrororFormat)
     }
 }
 
+TEST_F(CostModelTest, TestGetCyclesForPassC)
+{
+    const char* opCode = "ADD";
+    std::vector<int> inShape = {1, 1, 1, 1};
+    std::vector<int> outShape = {1, 1, 1, 1};
+    int dims[] = {4};
+    int32_t dtypes[] = {static_cast<int32_t>(DataType::DT_FP32)};
+    CostModel::OpCostRequestC request{};
+    request.opcode = opCode;
+    request.inShapeData = inShape.data();
+    request.inShapeDims = dims;
+    request.inCount = 1;
+    request.inDtypes = dtypes;
+    request.outShapeData = outShape.data();
+    request.outShapeDims = dims;
+    request.outCount = 1;
+    request.outDtypes = dtypes;
+    EXPECT_GT(CostModel::GetCyclesForPass(&request), 0);
+}
+
+TEST_F(CostModelTest, TestGetCyclesForPassCPPVecDupNoInput)
+{
+    const std::vector<std::vector<int>> outShape = {{1, 1, 32, 64}};
+    int64_t cycle = CostModel::GetCyclesForPassCPP("VEC_DUP", {}, outShape, {}, {npu::tile_fwk::DataType::DT_FP16});
+    EXPECT_GT(cycle, 0);
+}
+
+TEST_F(CostModelTest, TestGetCyclesForPassCVecDupNoInput)
+{
+    std::vector<int> outShape = {1, 1, 32, 64};
+    int dims[] = {4};
+    int32_t dtypes[] = {static_cast<int32_t>(npu::tile_fwk::DataType::DT_FP16)};
+    CostModel::OpCostRequestC request{};
+    request.opcode = "VEC_DUP";
+    request.inCount = 0;
+    request.outShapeData = outShape.data();
+    request.outShapeDims = dims;
+    request.outCount = 1;
+    request.outDtypes = dtypes;
+    EXPECT_GT(CostModel::GetCyclesForPass(&request), 0);
+}
+
 TEST_F(CostModelTest, TestGetCyclesForPassA2A3)
 {
     const std::string opCode = "ADD";
     std::vector<std::vector<int>> shape = {{1, 1, 1, 1}};
     DataType dtype = DataType::DT_INT4;
     config::SetSimConfig(KEY_ACCURACY_LEVEL, 1);
-    int64_t cycle = CostModel::GetCyclesForPass(opCode, shape, dtype);
+    int64_t cycle = CostModel::GetCyclesForPassCPP(opCode, shape, shape, {dtype}, {dtype});
     EXPECT_GT(cycle, 0);
+}
+
+TEST_F(CostModelTest, TestApplyCurrentArchDefaultsUsesPlatform)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_5101);
+    std::vector<std::string> args = {"Model.deviceArch=A2A3"};
+    CostModel::ArchRegistry::ApplyCurrentArchDefaults(args);
+    EXPECT_NE(std::find(args.begin(), args.end(), "Model.deviceArch=Kirin9050"), args.end());
 }
 
 TEST_F(CostModelTest, TestGetCyclesForPassA5)
@@ -707,9 +760,9 @@ TEST_F(CostModelTest, TestGetCyclesForPassA5)
     const std::string opCode = "CAST";
     std::vector<std::vector<int>> shape = {{1, 1, 1, 1}};
     DataType dtype = DataType::DT_INT4;
-    config::SetPlatformConfig("device_platform", "Ascend950PR_9579");
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     config::SetSimConfig(KEY_ACCURACY_LEVEL, 1);
-    int64_t cycle = CostModel::GetCyclesForPass(opCode, shape, dtype);
+    int64_t cycle = CostModel::GetCyclesForPassCPP(opCode, shape, shape, {dtype}, {dtype});
     EXPECT_GT(cycle, 0);
 }
 
@@ -718,9 +771,9 @@ TEST_F(CostModelTest, TestGetCyclesForPassCopyIn)
     const std::string opCode = "COPY_IN";
     std::vector<std::vector<int>> shape = {{1, 1, 1, 1}};
     DataType dtype = DataType::DT_INT4;
-    config::SetPlatformConfig("device_platform", "Ascend950PR_9579");
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     config::SetSimConfig(KEY_ACCURACY_LEVEL, 1);
-    int64_t cycle = CostModel::GetCyclesForPass(opCode, shape, dtype);
+    int64_t cycle = CostModel::GetCyclesForPassCPP(opCode, shape, shape, {dtype}, {dtype});
     EXPECT_GT(cycle, 0);
 }
 
@@ -729,9 +782,9 @@ TEST_F(CostModelTest, TestGetCyclesForPassCopyOut)
     const std::string opCode = "COPY_OUT";
     std::vector<std::vector<int>> shape = {{1, 1, 1, 1}};
     DataType dtype = DataType::DT_INT4;
-    config::SetPlatformConfig("device_platform", "Ascend950PR_9579");
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     config::SetSimConfig(KEY_ACCURACY_LEVEL, 1);
-    int64_t cycle = CostModel::GetCyclesForPass(opCode, shape, dtype);
+    int64_t cycle = CostModel::GetCyclesForPassCPP(opCode, shape, shape, {dtype}, {dtype});
     EXPECT_GT(cycle, 0);
 }
 
@@ -740,21 +793,32 @@ TEST_F(CostModelTest, TestGetCyclesForPassSimulate)
     const std::string opCode = "WHERE_TT";
     std::vector<std::vector<int>> shape = {{1, 1, 1, 1}};
     DataType dtype = DataType::DT_INT4;
-    config::SetPlatformConfig("device_platform", "Ascend950PR_9579");
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     config::SetSimConfig(KEY_ACCURACY_LEVEL, 1);
-    int64_t cycle = CostModel::GetCyclesForPass(opCode, shape, dtype);
+    int64_t cycle = CostModel::GetCyclesForPassCPP(opCode, shape, shape, {dtype}, {dtype});
     EXPECT_GT(cycle, 0);
 }
 
 TEST_F(CostModelTest, TestGetCyclesForPassSo)
 {
-    typedef int64_t (*GetCyclesForPassFunc)(const std::string& op, const std::vector<std::vector<int>>& shape,
-                                            DataType dtype);
-    const std::string opCode = "L1_TO_L0A";
-    std::vector<std::vector<int>> shape = {{1, 1, 1, 1}};
-    DataType dtype = DataType::DT_INT4;
-    config::SetPlatformConfig("device_platform", "Ascend950PR_9579");
+    typedef int64_t (*GetCyclesForPassFunc)(const CostModel::OpCostRequestC*);
+    const char* opCode = "L1_TO_L0A";
+    std::vector<int> inShape = {1, 1, 1, 1};
+    std::vector<int> outShape = {1, 1, 1, 1};
+    int dims[] = {4};
+    int32_t dtypes[] = {static_cast<int32_t>(DataType::DT_INT4)};
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_3510);
     config::SetSimConfig(KEY_ACCURACY_LEVEL, 1);
+    CostModel::OpCostRequestC request{};
+    request.opcode = opCode;
+    request.inShapeData = inShape.data();
+    request.inShapeDims = dims;
+    request.inCount = 1;
+    request.inDtypes = dtypes;
+    request.outShapeData = outShape.data();
+    request.outShapeDims = dims;
+    request.outCount = 1;
+    request.outDtypes = dtypes;
     std::string soPath = "libtile_fwk_simulation.so";
     void* handle = dlopen(soPath.c_str(), RTLD_LAZY);
     EXPECT_NO_THROW(if (!handle) { throw std::runtime_error("can not load library: " + std::string(dlerror())); });
@@ -763,7 +827,7 @@ TEST_F(CostModelTest, TestGetCyclesForPassSo)
     EXPECT_NO_THROW(if (!get_cycles_func) {
         throw std::runtime_error("Failed to find symbol GetCyclesForPass: " + std::string(dlerror()));
     });
-    int64_t cycle = get_cycles_func(opCode, shape, dtype);
+    int64_t cycle = get_cycles_func(&request);
     EXPECT_GT(cycle, 0);
 }
 
@@ -1132,8 +1196,9 @@ TEST_F(CostModelTest, TestPipeMachineImplSimulateForPass)
         uint64_t PostSimulate(const CostModel::TileOpPtr&) override { return 0; }
     };
     TestPipeImpl impl;
-    EXPECT_EQ(impl.SimulateForPass("ADD", {{1, 1}}, npu::tile_fwk::DataType::DT_FP32), 0);
-    EXPECT_EQ(impl.PostSimulateForPass("ADD", {{1, 1}}, npu::tile_fwk::DataType::DT_FP32), 0);
+    EXPECT_EQ(impl.PostSimulateForPass("ADD", {{1, 1}}, {{1, 1}}, {npu::tile_fwk::DataType::DT_FP32},
+                                       {npu::tile_fwk::DataType::DT_FP32}),
+              0);
 }
 
 class MockCacheMachineImpl : public CostModel::CacheMachineImpl {
