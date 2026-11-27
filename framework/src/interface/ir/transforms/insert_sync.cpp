@@ -205,7 +205,8 @@ private:
             return false;
         pro::SpanScope spanScope(span);
         PRO_IR_IRCHECK(ExternalError::INVALID_TYPE, into.size() == from.size())
-            << "Inconsistent mutex ID counts in control flow or dynamic tuple selection";
+            << "Inconsistent mutex ID counts in control flow or dynamic tuple selection, into count: " << into.size()
+            << ", from count: " << from.size();
         bool changed = false;
         for (size_t i = 0; i < into.size(); ++i) {
             auto size = into[i].size();

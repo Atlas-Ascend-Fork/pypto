@@ -37,8 +37,8 @@ void TaskSplitter::BuildSameLayerConnectionWithBack()
             continue;
         }
         ScheduleCoreType srcCoreType = opCoreTypes_[i];
-        APASS_LOG_DEBUG_F(Elements::Operation, "Found alloc op %s[%d].", opList_[i]->GetOpcodeStr().c_str(),
-                          opList_[i]->GetOpMagic());
+        APASS_LOG_DEBUG_F(Elements::Operation, "Found alloc op %s[%d] in BuildSameLayerConnectionWithBack.",
+                          opList_[i]->GetOpcodeStr().c_str(), opList_[i]->GetOpMagic());
         bool withBack = true;
         for (auto& oop : opList_[i]->GetOOperands()) {
             for (auto& sameLayerOpPtr : oop->GetProducers()) {
@@ -50,7 +50,8 @@ void TaskSplitter::BuildSameLayerConnectionWithBack()
                     opList_[i]->GetOpMagic() == sameLayerOpPtr->GetOpMagic()) {
                     continue;
                 }
-                APASS_LOG_DEBUG_F(Elements::Operation, "-- add %s[%d] to same layer connection because of alloc op.",
+                APASS_LOG_DEBUG_F(Elements::Operation,
+                                  "-- add producer op %s[%d] to same layer connection because of alloc op.",
                                   sameLayerOpPtr->GetOpcodeStr().c_str(), sameLayerOpPtr->GetOpMagic());
                 sameLayerConnection_.push_back({i, opMagicToIdx_[sameLayerOpPtr->GetOpMagic()]});
                 withBack = false;
@@ -321,7 +322,7 @@ void TaskSplitter::CombineSCC(std::vector<int>& clusterIds, std::vector<Schedule
     std::unordered_map<int, int> oldClusterToNewCluster;
     int newClusterNum = FlattenSCC(clusterCoreTypes, sccResult, oldClusterIdToSCCId, sccIdToNewClusters,
                                    oldClusterToNewCluster);
-    APASS_LOG_INFO_F(Elements::Operation, "Cluster num after flatten strongly connected components is %d.",
+    APASS_LOG_INFO_F(Elements::Operation, "Cluster num after flattening strongly connected components is %d.",
                      newClusterNum);
     RecordIDMap(oldClusterToNewCluster, clusterCoreTypes);
     std::set<std::pair<int, int>> sccConnection;
@@ -1553,7 +1554,7 @@ Status TaskSplitter::MarkInternalSubgraphID()
     // AIC、AIV0、AIV1 三类核分组全部共存时，AIV1 需要独立的 subgraph ID。
     constexpr size_t ALL_CORE_GROUP_COUNT = 3;
     if (targetTypes.size() <= 1) {
-        APASS_LOG_ERROR_F(Elements::Operation, "task coreType must more than 1");
+        APASS_LOG_ERROR_F(Elements::Operation, "task coreType count %zu must be more than 1", targetTypes.size());
         return FAILED;
     } else if (targetTypes.size() == ALL_CORE_GROUP_COUNT) {
         subGraphIdMap[TargetCoreType::AIV1]++;

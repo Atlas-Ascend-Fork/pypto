@@ -487,15 +487,16 @@ void ReplaceTensor::UniteTensor(Function& function, UnionFind& uf)
             if (inplaceOpMap.find(op.GetOpcode()) != inplaceOpMap.end()) {
                 for (const auto& pair : inplaceOpMap.at(op.GetOpcode())) {
                     uf.Unite(op.GetInputOperand(pair.first), op.GetOutputOperand(pair.second));
-                    APASS_LOG_INFO_F(Elements::Operation, "Unite %s op[%d] iOperand %d and oOperand %d.",
-                                     op.GetOpcodeStr().c_str(), op.GetOpMagic(), op.GetIOperands()[0]->GetMagic(),
-                                     op.GetOOperands()[0]->GetMagic());
+                    APASS_LOG_DEBUG_F(
+                        Elements::Operation, "Unite %s op[%d] iOperand %d and oOperand %d by inplace map.",
+                        op.GetOpcodeStr().c_str(), op.GetOpMagic(), op.GetInputOperand(pair.first)->GetMagic(),
+                        op.GetOutputOperand(pair.second)->GetMagic());
                 }
             } else {
                 uf.Unite(op.GetIOperands().front(), op.GetOOperands().front());
-                APASS_LOG_INFO_F(Elements::Operation, "Unite %s op[%d] iOperand %d and oOperand %d.",
-                                 op.GetOpcodeStr().c_str(), op.GetOpMagic(), op.GetIOperands()[0]->GetMagic(),
-                                 op.GetOOperands()[0]->GetMagic());
+                APASS_LOG_DEBUG_F(Elements::Operation, "Unite %s op[%d] iOperand %d and oOperand %d by front operands.",
+                                  op.GetOpcodeStr().c_str(), op.GetOpMagic(), op.GetIOperands()[0]->GetMagic(),
+                                  op.GetOOperands()[0]->GetMagic());
             }
         }
         // 新图表达下, 多个assemble写入不同logical tensor但共享同一rawMagic(同一地址)。
@@ -526,12 +527,12 @@ Status ReplaceTensor::FindBaseTensor(Function& function,
             } else if (baseTensor->Symbol() != curTensor->Symbol() &&
                        baseTensor->GetRawTensor()->memoryId != curTensor->GetRawTensor()->memoryId &&
                        baseTensor->tensor->actualRawmagic != curTensor->tensor->actualRawmagic) {
-                APASS_LOG_ERROR_F(Elements::Tensor, "baseTensor %d and curTensor %d has conflict.",
+                APASS_LOG_ERROR_F(Elements::Tensor, "baseTensor %d and curTensor %d have a conflict.",
                                   baseTensor->GetMagic(), curTensor->GetMagic());
                 return FAILED;
             } else if (function.IsFromInCast(curTensor)) {
                 baseTensor = curTensor;
-                APASS_LOG_INFO_F(Elements::Tensor, "Set base Tensor %d", curTensor->GetMagic());
+                APASS_LOG_INFO_F(Elements::Tensor, "Set base Tensor %d for in cast", curTensor->GetMagic());
             }
         }
     }
@@ -552,14 +553,14 @@ Status ReplaceTensor::FindBaseTensor(Function& function,
     for (auto& curTensor : baseGroup) {
         int64_t curShape = abs(curTensor->tensor->GetRawDataSize());
         if (curShape > baseShape) {
-            APASS_LOG_INFO_F(Elements::Tensor, "Replace curTensor %d size %ld to baseTensor %d size %ld.",
-                             curTensor->GetMagic(), curShape, baseTensor->GetMagic(), baseShape);
+            APASS_LOG_DEBUG_F(Elements::Tensor, "Replace curTensor %d size %ld B to baseTensor %d size %ld B.",
+                              curTensor->GetMagic(), curShape, baseTensor->GetMagic(), baseShape);
             baseTensor = curTensor;
             baseShape = curShape;
         } else if (curShape == baseShape && tensorToOrderIndex.at(curTensor) < tensorToOrderIndex.at(baseTensor)) {
-            APASS_LOG_INFO_F(Elements::Tensor, "Replace curTensor %d idx %d to baseTensor %d idx %d.",
-                             curTensor->GetMagic(), tensorToOrderIndex.at(curTensor), baseTensor->GetMagic(),
-                             tensorToOrderIndex.at(baseTensor));
+            APASS_LOG_DEBUG_F(Elements::Tensor, "Replace curTensor %d idx %d to baseTensor %d idx %d.",
+                              curTensor->GetMagic(), tensorToOrderIndex.at(curTensor), baseTensor->GetMagic(),
+                              tensorToOrderIndex.at(baseTensor));
             baseTensor = curTensor;
         }
     }
@@ -712,7 +713,7 @@ Status ReplaceTensor::ForwardAssemble(Operation* op, LogicalTensorPtr& rootTenso
     auto assembleIn = op->GetIOperands()[0];
     auto assembleOut = op->GetOOperands()[0];
     if (assembleIn != rootTensor) {
-        APASS_LOG_ERROR_F(Elements::Operation, "OP_ASSEMBLE %d rootTensor %d is not same as viewTypeIn %d.",
+        APASS_LOG_ERROR_F(Elements::Operation, "OP_ASSEMBLE %d rootTensor %d is not same as assembleIn %d.",
                           op->GetOpMagic(), rootTensor->GetMagic(), assembleIn->GetMagic());
         return FAILED;
     }
@@ -747,7 +748,8 @@ Status ReplaceTensor::ForwardCopyOut(Operation* op, LogicalTensorPtr& rootTensor
     auto inTensor = op->GetIOperands()[index];
     auto outTensor = op->GetOOperands().front();
     if (inTensor != rootTensor) {
-        APASS_LOG_INFO_F(Elements::Operation, "OP %s[%d] tensorIn %d is not same as rootTensor %d.",
+        APASS_LOG_INFO_F(Elements::Operation,
+                         "ReplaceTensor::ForwardCopyOut: OP %s[%d] tensorIn %d is not same as rootTensor %d.",
                          op->GetOpcodeStr().c_str(), op->GetOpMagic(), inTensor->GetMagic(), rootTensor->GetMagic());
         return SUCCESS;
     }
@@ -772,7 +774,8 @@ Status ReplaceTensor::ForwardInputIdx(Operation* op, LogicalTensorPtr& rootTenso
     auto inTensor = op->GetIOperands()[index];
     auto outTensor = op->GetOOperands().front();
     if (inTensor != rootTensor) {
-        APASS_LOG_INFO_F(Elements::Operation, "op %s[%d] tensorIn %d is not same as rootTensor %d.",
+        APASS_LOG_INFO_F(Elements::Operation,
+                         "ReplaceTensor::ForwardInputIdx: op %s[%d] tensorIn %d is not same as rootTensor %d.",
                          op->GetOpcodeStr().c_str(), op->GetOpMagic(), inTensor->GetMagic(), rootTensor->GetMagic());
         return SUCCESS;
     }
@@ -832,9 +835,9 @@ Status ReplaceTensor::BackwardInplaceOp(Operation* op, LogicalTensorPtr& rootTen
         auto tensorIn = op->GetIOperands()[inputIdx];
         auto tensorOut = op->GetOOperands()[outputIdx];
         if (tensorOut != rootTensor) {
-            APASS_LOG_INFO_F(Elements::Operation, "OP %s[%d] tensorIn %d is not same as rootTensor %d.",
-                             op->GetOpcodeStr().c_str(), op->GetOpMagic(), tensorIn->GetMagic(),
-                             rootTensor->GetMagic());
+            APASS_LOG_INFO_F(Elements::Operation, "OP %s[%d] tensorOut %d is not same as rootTensor %d, tensorIn: %d.",
+                             op->GetOpcodeStr().c_str(), op->GetOpMagic(), tensorOut->GetMagic(),
+                             rootTensor->GetMagic(), tensorIn->GetMagic());
             return SUCCESS;
         }
         processedOp.insert(op->GetOpMagic());
@@ -927,8 +930,9 @@ Status ReplaceTensor::BackwardInputIdx(Operation* op, LogicalTensorPtr& rootTens
     auto inTensor = op->GetIOperands()[index];
     auto outTensor = op->GetOOperands().front();
     if (outTensor != rootTensor) {
-        APASS_LOG_INFO_F(Elements::Operation, "op %s[%d] tensorIn %d is not same as rootTensor %d.",
-                         op->GetOpcodeStr().c_str(), op->GetOpMagic(), inTensor->GetMagic(), rootTensor->GetMagic());
+        APASS_LOG_INFO_F(Elements::Operation, "op %s[%d] tensorOut %d is not same as rootTensor %d, tensorIn: %d.",
+                         op->GetOpcodeStr().c_str(), op->GetOpMagic(), outTensor->GetMagic(), rootTensor->GetMagic(),
+                         inTensor->GetMagic());
         return SUCCESS;
     }
     processedOp.insert(op->GetOpMagic());
@@ -1097,7 +1101,7 @@ LogicalTensorPtr ReplaceTensor::FindReplaceSource(Function& function, Operation&
 
 Status ReplaceTensor::RefactorViewConnectForReplace(Function& function)
 {
-    APASS_LOG_INFO_F(Elements::Operation, "===> Start RefactorViewConnectForInplace.");
+    APASS_LOG_INFO_F(Elements::Operation, "===> Start RefactorViewConnectForReplace.");
     for (auto& op : function.Operations()) {
         if (op.GetOpcode() != Opcode::OP_VIEW) {
             continue;
@@ -1152,7 +1156,7 @@ Status ReplaceTensor::RefactorViewConnectForReplace(Function& function)
             consumer->ReplaceIOperand(consumer->GetIntAttribute(OpAttributeKey::inplaceIdx), nopOutput);
         }
     }
-    APASS_LOG_INFO_F(Elements::Operation, "===> End RefactorViewConnectForInplace.");
+    APASS_LOG_INFO_F(Elements::Operation, "===> End RefactorViewConnectForReplace.");
     return SUCCESS;
 }
 
@@ -1975,7 +1979,9 @@ Status ReplaceTensor::AdjustOffsetAndRawShape(LogicalTensorPtr& fromView, Logica
     auto outEntry = viewTypeTable.find(toType);
     if (inEntry == viewTypeTable.end() || outEntry == viewTypeTable.end()) {
         APASS_LOG_ERROR_F(Elements::Operation,
-                          "ViewType Input Tensor OR Output Tensor DataType is not in viewType, Please check it!");
+                          "ViewType Input Tensor OR Output Tensor DataType is not in viewType, fromType: %d, "
+                          "toType: %d, Please check it!",
+                          static_cast<int>(fromType), static_cast<int>(toType));
         return FAILED;
     }
     int inSize = inEntry->second;
@@ -1997,7 +2003,9 @@ Status ReplaceTensor::AdjustOffsetAndRawShape(LogicalTensorPtr& fromView, Logica
             outShape[i] = inShape[i] * ratio;
         } else {
             if (fromOffset[i] % ratio != 0 || inShape[i] % ratio != 0) {
-                APASS_LOG_ERROR_F(Elements::Operation, "ViewType Offset is not Even.");
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "ViewType Offset is not Even, dim: %zu, fromOffset: %ld, inShape: %ld, ratio: %d.", i,
+                                  fromOffset[i], inShape[i], ratio);
                 return FAILED;
             }
             toOffset[i] = fromOffset[i] / ratio;

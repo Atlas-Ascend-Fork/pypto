@@ -903,9 +903,9 @@ void CoreScheduler::HLFSchedule(TaskGraph& taskGraph)
     });
 
     for (int i = 0; i < n; i++) {
-        APASS_LOG_INFO_F(Elements::Operation, "HLF order[%d] = task %d, revDepth=%d, coreType=%s.", i, order[i],
-                         revDepth[order[i]],
-                         taskGraph.tasks[order[i]].coreType == ScheduleCoreType::AIC ? "AIC" : "AIV");
+        APASS_LOG_DEBUG_F(Elements::Operation, "HLF order[%d] = task %d, revDepth=%d, coreType=%s.", i, order[i],
+                          revDepth[order[i]],
+                          taskGraph.tasks[order[i]].coreType == ScheduleCoreType::AIC ? "AIC" : "AIV");
     }
 
     // 亲和 dualdst：复用 HLF 的 order（反向深度排序），在调度前给 per-branch 计算候选核提示。

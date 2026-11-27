@@ -63,7 +63,7 @@ Status SubGraphToFuncChecker::CheckSubGraphTopo(Function& function) const
     int totalSubGraphNum = function.GetTotalSubGraphCount();
     if (operations.size() > 0 && totalSubGraphNum <= 0) {
         APASS_LOG_ERROR_C(FunctionErr::FUNCTION_GRAPH_STRUCTURE, Elements::Function,
-                          "input totalSubGraphNum %d is invalid", totalSubGraphNum);
+                          "input totalSubGraphNum %d is invalid, expected greater than 0", totalSubGraphNum);
         return FAILED;
     }
     std::vector<bool> hitSubgraph = std::vector<bool>(totalSubGraphNum, false);
@@ -145,7 +145,7 @@ Status SubGraphToFuncChecker::BuildInGraph(Function& function)
                 auto [parentSeqNo, found] = operationViewer.FindOpPosition(*parentOp);
                 if (EdgeIndexCheck(found, parentSeqNo, inGraph_.size()) != SUCCESS) {
                     APASS_LOG_ERROR_C(FunctionErr::FUNCTION_GRAPH_CONNECTION, Elements::Function,
-                                      "error inserting op magic %d in function %d %s to inGraph. %s",
+                                      "Error inserting producer op magic %d in function %d %s to inGraph. %s",
                                       parentOp->GetOpMagic(), function.GetFuncMagic(), function.GetRawName().c_str(),
                                       GetFormatBacktrace(parentOp).c_str());
                     return FAILED;
@@ -161,7 +161,7 @@ Status SubGraphToFuncChecker::BuildInGraph(Function& function)
             auto [parentSeqNo, found] = operationViewer.FindOpPosition(*inControlOp);
             if (EdgeIndexCheck(found, parentSeqNo, inGraph_.size()) != SUCCESS) {
                 APASS_LOG_ERROR_C(FunctionErr::FUNCTION_GRAPH_CONNECTION, Elements::Function,
-                                  "Error inserting op magic %d in function %d %s to inGraph. %s",
+                                  "Error inserting control op magic %d in function %d %s to inGraph. %s",
                                   inControlOp->GetOpMagic(), function.GetFuncMagic(), function.GetRawName().c_str(),
                                   GetFormatBacktrace(inControlOp).c_str());
                 return FAILED;
@@ -185,7 +185,7 @@ Status SubGraphToFuncChecker::BuildOutGraph(Function& function)
                 auto [childSeqNo, found] = operationViewer.FindOpPosition(*childOp);
                 if (EdgeIndexCheck(found, childSeqNo, inGraph_.size()) != SUCCESS) {
                     APASS_LOG_ERROR_C(FunctionErr::FUNCTION_GRAPH_CONNECTION, Elements::Function,
-                                      "Error inserting op magic %d in function %d %s to outGraph_. %s",
+                                      "Error inserting consumer op magic %d in function %d %s to outGraph_. %s",
                                       childOp->GetOpMagic(), function.GetFuncMagic(), function.GetRawName().c_str(),
                                       GetFormatBacktrace(childOp).c_str());
                     return FAILED;
@@ -201,7 +201,7 @@ Status SubGraphToFuncChecker::BuildOutGraph(Function& function)
             auto [childSeqNo, found] = operationViewer.FindOpPosition(*outControlOp);
             if (EdgeIndexCheck(found, childSeqNo, inGraph_.size()) != SUCCESS) {
                 APASS_LOG_ERROR_C(FunctionErr::FUNCTION_GRAPH_CONNECTION, Elements::Function,
-                                  "Error inserting op magic %d in function %d %s to outGraph_. %s",
+                                  "Error inserting control op magic %d in function %d %s to outGraph_. %s",
                                   outControlOp->GetOpMagic(), function.GetFuncMagic(), function.GetRawName().c_str(),
                                   GetFormatBacktrace(outControlOp).c_str());
                 return FAILED;
@@ -232,8 +232,9 @@ Status SubGraphToFuncChecker::InAndOutGraphConsistencyCheck(const std::vector<st
             size_t parentSeqNo = static_cast<size_t>(inEdgeGraph[i][j]);
             if (nodeColIdx[parentSeqNo] >= outEdgeGraph[parentSeqNo].size()) {
                 APASS_LOG_ERROR_C(GraphErr::GRAPH_EDGE_CONSISTENCY, Elements::Graph,
-                                  "node %zu, %zu th parentSeqNo %zu exceeds outgraph[%zu] size %zu", i, j, parentSeqNo,
-                                  parentSeqNo, outEdgeGraph[parentSeqNo].size());
+                                  "node %zu, %zu th parentSeqNo %zu nodeColIdx %zu exceeds outgraph[%zu] size %zu", i,
+                                  j, parentSeqNo, nodeColIdx[parentSeqNo], parentSeqNo,
+                                  outEdgeGraph[parentSeqNo].size());
                 return FAILED;
             }
             // inEdgeGraph和outEdgeGraph都是按顺序排列的
@@ -572,7 +573,7 @@ Status SubGraphToFuncChecker::VerifySingleOpTopology(Function& function, size_t 
         }
     }
     if (consumersNoSelf.size() < topoInfo.outGraph.size()) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Call %zu %d consumers size are %zu and %zu. %s", opIdx,
+        APASS_LOG_ERROR_F(Elements::Operation, "Call %zu %d has consumer size %zu, outGraph size %zu. %s", opIdx,
                           currentOp->opmagic, consumersNoSelf.size(), topoInfo.outGraph.size(),
                           GetFormatBacktrace(currentOp).c_str());
         return FAILED;

@@ -70,7 +70,8 @@ Status DuplicateOpChecker::PostCheckGatherIn(const Operation& op)
         if (oOperand == nullptr) {
             APASS_LOG_ERROR_F(
                 Elements::Operation,
-                "Null output operand detected while iterating over the output operands of the operation [%d].%s",
+                "Null output operand detected in PostCheckGatherIn while iterating over the output operands of the "
+                "operation [%d].%s",
                 op.opmagic, GetFormatBacktrace(op).c_str());
             return FAILED;
         }
@@ -95,7 +96,8 @@ Status DuplicateOpChecker::PostCheckView(const Operation& op)
         if (oOperand == nullptr) {
             APASS_LOG_ERROR_F(
                 Elements::Operation,
-                "Null output operand detected while iterating over the output operands of the operation [%d].%s",
+                "Null output operand detected in PostCheckView while iterating over the output operands of the "
+                "operation [%d].%s",
                 op.opmagic, GetFormatBacktrace(op).c_str());
             return FAILED;
         }

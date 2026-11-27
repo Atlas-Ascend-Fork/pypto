@@ -30,11 +30,13 @@
 #undef private
 #include "passes/tile_graph_pass/graph_partition/graph_partition_token_dependency.h"
 #include "tilefwk/tilefwk.h"
+#include "tilefwk/error_manager.h"
 #include "interface/inner/tilefwk.h"
 #include "passes/pass_mgr/pass_manager.h"
 #include "interface/configs/config_manager.h"
 #include "computational_graph_builder.h"
 #include "passes/pass_check/iso_partitioner_checker.h"
+#include "passes/algorithms/osp/bsp/model/bsp_instance.h"
 
 namespace npu {
 namespace tile_fwk {
@@ -2718,6 +2720,283 @@ TEST_F(GraphPartitionTest, RejectsConsecutiveContractOps)
 
     GraphPartition pass;
     EXPECT_EQ(pass.RunOnFunction(*function), FAILED);
+}
+
+namespace {
+// Error messages are queued; pop the head until one of them contains expectedText.
+bool ExpectErrorMessageContaining(const std::string& expectedText, size_t maxPopped = 4)
+{
+    for (size_t i = 0; i < maxPopped; i++) {
+        std::string errMsg;
+        if (!ErrorManager::Instance().GetFirstErrorMessage(errMsg)) {
+            return false;
+        }
+        if (errMsg.find(expectedText) != std::string::npos) {
+            return true;
+        }
+        ErrorManager::Instance().OutputErrorMessage(false);
+    }
+    return false;
+}
+
+// Temporarily override the SoC core counts used by the OSP BSP architecture, restoring them on destruction.
+class ScopedCoreCountGuard {
+public:
+    ScopedCoreCountGuard(size_t cube, size_t vector, size_t aiCpu)
+    {
+        auto& soc = Platform::Instance().GetSoc();
+        originCube_ = soc.GetAICCoreNum();
+        originVector_ = soc.GetAIVCoreNum();
+        originAiCpu_ = soc.GetAICPUNum();
+        soc.SetAICCoreNum(cube);
+        soc.SetAIVCoreNum(vector);
+        soc.SetAICPUNum(aiCpu);
+    }
+    ~ScopedCoreCountGuard()
+    {
+        auto& soc = Platform::Instance().GetSoc();
+        soc.SetAICCoreNum(originCube_);
+        soc.SetAIVCoreNum(originVector_);
+        soc.SetAICPUNum(originAiCpu_);
+    }
+
+private:
+    size_t originCube_;
+    size_t originVector_;
+    size_t originAiCpu_;
+};
+
+// One real op plus a single super node whose core type is HUB (neither cube, vector nor ai-scalar), so the
+// OSP DAG construction must reject the node via the illegal-core-type log.
+Operation* BuildGraphWithIllegalCoreTypeSuperNode(OspPartitioner& partitioner)
+{
+    ComputationalGraphBuilder G;
+    EXPECT_TRUE(G.AddTensors(DataType::DT_FP32, {16, 16}, {"in", "out"}));
+    EXPECT_TRUE(G.AddOp(Opcode::OP_ABS, {"in"}, {"out"}, "abs"));
+    Operation* op = G.GetOp("abs");
+    auto operationInfo = std::make_shared<OperationGraphInfo>();
+    operationInfo->opList_ = {op};
+    operationInfo->opCoreType_ = {OpCoreType::AIV};
+    partitioner.operationInfo_ = operationInfo;
+    auto superNodeInfo = std::make_shared<NodeGraphInfo>();
+    superNodeInfo->nodeOutGraphList_ = {{}};
+    superNodeInfo->nodeInGraphList_ = {{}};
+    superNodeInfo->nodeCycles_ = {10};
+    superNodeInfo->node2Op_ = {{0}};
+    superNodeInfo->nodeCoreType_ = {OpCoreType::HUB};
+    partitioner.superNodeInfo_ = superNodeInfo;
+    return op;
+}
+} // namespace
+
+// GraphPartition must reject a negative sgParallelNum and log the IsoPartitioner parameter failure.
+TEST_F(GraphPartitionTest, IsoPartitionRejectsNegativeSgParallelNum)
+{
+    ComputationalGraphBuilder G;
+    Function* function = G.GetFunction();
+    function->paramConfigs_.sgPartitionAlgorithm = "Iso";
+    function->paramConfigs_.sgParallelNum = -1;
+    function->paramConfigs_.sgPgLowerBound = 1;
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    GraphPartition pass;
+    EXPECT_EQ(pass.RunOnFunction(*function), FAILED);
+    // IsoPartitioner::SetParameter reports "Illegal parallelNum" first; the partition-level
+    // failure text is queued right after it.
+    EXPECT_TRUE(ExpectErrorMessageContaining("Set parameters of IsoPartitioner failed"));
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// GraphPartition must reject a negative sgPgLowerBound and log the OspPartitioner parameter failure.
+TEST_F(GraphPartitionTest, OspPartitionRejectsNegativePgLowerBound)
+{
+    ComputationalGraphBuilder G;
+    Function* function = G.GetFunction();
+    function->paramConfigs_.sgPartitionAlgorithm = "OspSarkar";
+    function->paramConfigs_.sgParallelNum = 1;
+    function->paramConfigs_.sgPgLowerBound = -1;
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    GraphPartition pass;
+    EXPECT_EQ(pass.RunOnFunction(*function), FAILED);
+    // OspPartitioner::SetParameter reports "Illegal pgLowerBound" first; the partition-level
+    // failure text is queued right after it.
+    EXPECT_TRUE(ExpectErrorMessageContaining("Set parameters of OspPartitioner failed"));
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// InLinkCountDelete rejects a consumer index outside the in-link count array.
+TEST_F(GraphPartitionTest, InLinkCountDeleteRejectsOutOfRangeConsumer)
+{
+    IsomorphismGraphGroup group;
+    auto superNodeInfo = std::make_shared<NodeGraphInfo>();
+    superNodeInfo->nodeOutGraphList_ = {{5}}; // consumer 5 is outside idxInLinkNum below
+    group.superNodeInfo_ = superNodeInfo;
+    std::vector<int32_t> idxInLinkNum{1};
+    std::deque<int32_t> zeroInQueue;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(group.InLinkCountDelete(0, idxInLinkNum, zeroInQueue), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Consumer index(5) illegal in InLinkCountDelete"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// InLinkCountDelete rejects a decrement that drives the in-link count negative.
+TEST_F(GraphPartitionTest, InLinkCountDeleteRejectsNegativeInLinkCount)
+{
+    IsomorphismGraphGroup group;
+    auto superNodeInfo = std::make_shared<NodeGraphInfo>();
+    superNodeInfo->nodeOutGraphList_ = {{0}};
+    group.superNodeInfo_ = superNodeInfo;
+    std::vector<int32_t> idxInLinkNum{0}; // already at zero: any decrement goes negative
+    std::deque<int32_t> zeroInQueue;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(group.InLinkCountDelete(0, idxInLinkNum, zeroInQueue), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Negative in-link count(-1) in InLinkCountDelete"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+namespace {
+// Single iso group with one sub-graph holding the given node list, on top of the given super node info.
+std::shared_ptr<IsomorphismGraphGroup> MakeIsoGroupWithNodeList(std::shared_ptr<NodeGraphInfo> superNodeInfo,
+                                                                const std::vector<int32_t>& nodeList)
+{
+    auto group = std::make_shared<IsomorphismGraphGroup>();
+    auto subGraph = std::make_shared<SubGraph>(nullptr, superNodeInfo);
+    subGraph->nodeList_ = nodeList;
+    subGraph->nodeSet_ = std::unordered_set<int32_t>(nodeList.begin(), nodeList.end());
+    group->isoGraphs_.push_back(subGraph);
+    return group;
+}
+
+Status RunMergePrepare(IsoPartitioner& partitioner)
+{
+    std::vector<std::pair<int32_t, int32_t>> isoSubIdxs;
+    std::vector<std::unordered_set<int32_t>> isoInGraph;
+    std::vector<std::unordered_set<int32_t>> isoOutGraph;
+    std::vector<std::vector<int32_t>> isoNodeList;
+    std::vector<int32_t> isoIdx2color;
+    return partitioner.IsomorphismGroupMergePrepare(isoSubIdxs, isoInGraph, isoOutGraph, isoNodeList, isoIdx2color);
+}
+} // namespace
+
+// IsomorphismGroupMergePrepare rejects a node list entry outside the super node index range.
+TEST_F(GraphPartitionTest, MergePrepareRejectsIllegalNodeListIdx)
+{
+    IsoPartitioner partitioner;
+    partitioner.superNodeInfo_ = std::make_shared<NodeGraphInfo>();
+    partitioner.superNodeInfo_->nodeInGraphList_ = {}; // empty range: every node index is illegal
+    partitioner.superNodeInfo_->nodeOutGraphList_ = {};
+    partitioner.isoSubGroups_.push_back(MakeIsoGroupWithNodeList(partitioner.superNodeInfo_, {3}));
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(RunMergePrepare(partitioner), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("NodeIdx(3) in GetNodeList illegal in IsomorphismGroupMergePrepare"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// IsomorphismGroupMergePrepare rejects an in-node resolved from an out-of-range producer entry.
+TEST_F(GraphPartitionTest, MergePrepareRejectsIllegalInNodeIdx)
+{
+    IsoPartitioner partitioner;
+    partitioner.superNodeInfo_ = std::make_shared<NodeGraphInfo>();
+    partitioner.superNodeInfo_->nodeInGraphList_ = {{5}}; // node 0 has out-of-range producer 5
+    partitioner.superNodeInfo_->nodeOutGraphList_ = {{}};
+    partitioner.isoSubGroups_.push_back(MakeIsoGroupWithNodeList(partitioner.superNodeInfo_, {0}));
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(RunMergePrepare(partitioner), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("NodeIdx(5) in inNodes_ illegal in IsomorphismGroupMergePrepare"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// IsomorphismGroupMergePrepare rejects an out-node resolved from an out-of-range consumer entry.
+TEST_F(GraphPartitionTest, MergePrepareRejectsIllegalOutNodeIdx)
+{
+    IsoPartitioner partitioner;
+    partitioner.superNodeInfo_ = std::make_shared<NodeGraphInfo>();
+    partitioner.superNodeInfo_->nodeInGraphList_ = {{}};
+    partitioner.superNodeInfo_->nodeOutGraphList_ = {{7}}; // node 0 has out-of-range consumer 7
+    partitioner.isoSubGroups_.push_back(MakeIsoGroupWithNodeList(partitioner.superNodeInfo_, {0}));
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(RunMergePrepare(partitioner), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("NodeIdx(7) in outNodes_ illegal in IsomorphismGroupMergePrepare"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// ConstructDag with CV mix must fail when a super node has an illegal core type.
+TEST_F(GraphPartitionTest, ConstructDagFailsOnIllegalCoreTypeCVMix)
+{
+    OspPartitioner partitioner(OspMode::SARKAR, true);
+    BuildGraphWithIllegalCoreTypeSuperNode(partitioner);
+    OspPartitioner::GraphType graph;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(partitioner.ConstructDag(graph), FAILED);
+    EXPECT_TRUE(ExpectErrorMessageContaining("OSP failed to generate graph with CV mix in ConstructDag."));
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// ConstructDag with CV split must fail when a super node has an illegal core type.
+TEST_F(GraphPartitionTest, ConstructDagFailsOnIllegalCoreTypeCVSplit)
+{
+    OspPartitioner partitioner(OspMode::SARKAR, false);
+    BuildGraphWithIllegalCoreTypeSuperNode(partitioner);
+    OspPartitioner::GraphType graph;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(partitioner.ConstructDag(graph), FAILED);
+    EXPECT_TRUE(ExpectErrorMessageContaining("OSP failed to generate graph with CV split in ConstructDag."));
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// ConstructBspInstance with CV mix must fail in the DAG stage when the super node core type is illegal
+// (the BSP architecture stage itself succeeds thanks to the valid 1:N core ratio).
+TEST_F(GraphPartitionTest, ConstructBspInstanceFailsOnIllegalCoreTypeCVMix)
+{
+    OspPartitioner partitioner(OspMode::MERKLEBSP, true);
+    BuildGraphWithIllegalCoreTypeSuperNode(partitioner);
+    ScopedCoreCountGuard coreGuard(20, 40, 10); // 40 % 20 == 0: architecture stage passes
+    osp::BspInstance<OspPartitioner::GraphType> bspInstance;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(partitioner.ConstructBspInstance(bspInstance), FAILED);
+    EXPECT_TRUE(ExpectErrorMessageContaining("OSP failed to generate graph with CV mix in ConstructBspInstance."));
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// ConstructBspInstance with CV split must fail in the DAG stage when the super node core type is illegal.
+TEST_F(GraphPartitionTest, ConstructBspInstanceFailsOnIllegalCoreTypeCVSplit)
+{
+    OspPartitioner partitioner(OspMode::MERKLEBSP, false);
+    BuildGraphWithIllegalCoreTypeSuperNode(partitioner);
+    ScopedCoreCountGuard coreGuard(20, 40, 10);
+    osp::BspInstance<OspPartitioner::GraphType> bspInstance;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(partitioner.ConstructBspInstance(bspInstance), FAILED);
+    EXPECT_TRUE(ExpectErrorMessageContaining("OSP failed to generate graph with CV split in ConstructBspInstance."));
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// ConstructBspArchCVMix rejects a platform whose vector-to-cube core ratio is not an integer.
+TEST_F(GraphPartitionTest, BspArchCVMixRejectsNonIntegerCoreRatio)
+{
+    OspPartitioner partitioner(OspMode::MERKLEBSP, true);
+    ScopedCoreCountGuard coreGuard(3, 4, 10); // 4 % 3 != 0: violates the 1:N cube:vector ratio
+    osp::BspArchitecture<OspPartitioner::GraphType> bspArch;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(partitioner.ConstructBspArchCVMix(bspArch), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("does not satisfy a 1:N ratio of Cube:Vector cores"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
 }
 
 } // namespace tile_fwk

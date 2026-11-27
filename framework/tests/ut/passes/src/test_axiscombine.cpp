@@ -344,3 +344,27 @@ TEST_F(TestAxisCombine, BroadcastPadBaseFollowsDtype)
     runCase(DataType::DT_BF16, K_16);
     runCase(DataType::DT_INT8, K_32);
 }
+
+// axis_combine.cpp 内的自由函数(外部链接), 补充声明后直接验证
+namespace npu {
+namespace tile_fwk {
+Status AlignedIfNeed(int64_t& currentDim, int64_t padValue);
+} // namespace tile_fwk
+} // namespace npu
+
+// padBase为0时报ERROR并返回FAILED, 不修改currentDim
+// (覆盖axis_combine.cpp "invalid pad base %ld, expected a non-zero positive pad base."日志分支)
+TEST_F(TestAxisCombine, AlignedIfNeedRejectsZeroPadBase)
+{
+    int64_t currentDim = K_8;
+    EXPECT_EQ(AlignedIfNeed(currentDim, 0), FAILED);
+    EXPECT_EQ(currentDim, K_8);
+}
+
+// 正常场景: currentDim按padValue向上取整对齐
+TEST_F(TestAxisCombine, AlignedIfNeedPadsCurrentDim)
+{
+    int64_t currentDim = K_8;
+    EXPECT_EQ(AlignedIfNeed(currentDim, K_16), SUCCESS);
+    EXPECT_EQ(currentDim, K_16);
+}

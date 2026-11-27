@@ -149,7 +149,7 @@ Status AutoCast::InsertInt32Fp16Cast(Function& function)
         if (srcTensor->Datatype() != DataType::DT_INT32 || tgtTensor->Datatype() != DataType::DT_FP16) {
             continue;
         }
-        APASS_LOG_INFO_F(Elements::Operation, "Cast[%d] is cast between int32 and fp16.", op->GetOpMagic());
+        APASS_LOG_DEBUG_F(Elements::Operation, "Cast[%d] is cast between int32 and fp16.", op->GetOpMagic());
         auto fp32Tensor = CreateFp32TensorLike(tgtTensor);
         InsertCastOp(function, srcTensor, fp32Tensor, op->GetTileShape(), op->GetScopeInfo());
         op->ReplaceInput(fp32Tensor, srcTensor);
@@ -164,7 +164,7 @@ bool AutoCast::SupportBF16(Operation* op)
             return false;
     } else {
         if (UNSUPPORT_BF16_OPS.count(op->GetOpcode()) > 0) {
-            APASS_LOG_INFO_F(Elements::Operation, "Op[%d] can find in UNSUPPORT_BF16_OPS.", op->GetOpMagic());
+            APASS_LOG_INFO_F(Elements::Operation, "Op[%d] is found in UNSUPPORT_BF16_OPS.", op->GetOpMagic());
             return false;
         }
     }
@@ -178,7 +178,7 @@ bool AutoCast::SupportFP16(Operation* op)
             return false;
     } else {
         if (UNSUPPORT_FP16_OPS.count(op->GetOpcode()) > 0) {
-            APASS_LOG_INFO_F(Elements::Operation, "Op[%d] can find in UNSUPPORT_FP16_OPS.", op->GetOpMagic());
+            APASS_LOG_INFO_F(Elements::Operation, "Op[%d] is found in UNSUPPORT_FP16_OPS.", op->GetOpMagic());
             return false;
         }
     }

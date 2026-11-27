@@ -119,7 +119,7 @@ Status OoOSchedule::ModifyTaskOplist(std::vector<Operation*>& taskList,
         if (taskAllocMap.find(memId) != taskAllocMap.end()) {
             continue;
         }
-        APASS_LOG_INFO_F(Elements::Operation, "The alloc op of memId[%d] in other graph", memId);
+        APASS_LOG_INFO_F(Elements::Operation, "The alloc op of memId[%d] in other graph (ModifyTaskOplist)", memId);
         auto it = allocMap.find(memId);
         if (it != allocMap.end()) {
             taskList.push_back(it->second);
@@ -622,7 +622,8 @@ Status OoOSchedule::CheckAllocOp(std::vector<Operation*> list)
                 }
             }
             if (nonDdrCount != 1) {
-                APASS_LOG_ERROR_F(Elements::Operation, "%s InOutOperand size not equal to 1.", GetOpInfo(op).c_str());
+                APASS_LOG_ERROR_F(Elements::Operation, "%s InOutOperand size is %zu, expected 1.",
+                                  GetOpInfo(op).c_str(), nonDdrCount);
                 return FAILED;
             }
             UpdateAllocMap(op, allocMap);

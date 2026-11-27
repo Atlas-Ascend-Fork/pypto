@@ -48,7 +48,10 @@ Status IsoPartitioner::RunPartitionSteps(Function& function)
         return FAILED;
     }
     if (cycleUB_ == -1 || parallelNum_ == -1 || cycleLB_ == -1) {
-        APASS_LOG_ERROR_F(Elements::Config, "Partition parameters not initialized.");
+        APASS_LOG_ERROR_F(Elements::Config,
+                          "Partition parameters not initialized, cycleUB_: %d, parallelNum_: %d, cycleLB_: %d, "
+                          "expected all of them to be initialized with valid values.",
+                          cycleUB_, parallelNum_, cycleLB_);
         return FAILED;
     }
     if (BuildOpGraph(function.Operations().DuplicatedOpList()) != SUCCESS) {
@@ -181,7 +184,9 @@ Status IsomorphismGraphGroup::InLinkCountDelete(int32_t nodeIdx, std::vector<int
 {
     for (int32_t consumer : superNodeInfo_->nodeOutGraphList_[nodeIdx]) {
         if (consumer < 0 || consumer >= static_cast<int32_t>(idxInLinkNum.size())) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Consumer index(%d) illegal in InLinkCountDelete.", consumer);
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Consumer index(%d) illegal in InLinkCountDelete, valid range is [0, %zu).", consumer,
+                              idxInLinkNum.size());
             return FAILED;
         }
         idxInLinkNum[consumer] -= 1;
@@ -189,7 +194,9 @@ Status IsomorphismGraphGroup::InLinkCountDelete(int32_t nodeIdx, std::vector<int
             zeroInQueue.push_back(consumer);
         }
         if (idxInLinkNum[consumer] < 0) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Negative in-link count in InLinkCountDelete.");
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Negative in-link count(%d) in InLinkCountDelete, expected count >= 0.",
+                              idxInLinkNum[consumer]);
             return FAILED;
         }
     }
@@ -385,7 +392,10 @@ Status IsoPartitioner::IsomorphismGroupMergePrepare(std::vector<std::pair<int32_
         for (size_t j = 0; j < isoSubGroups_[i]->Size(); j++) {
             for (int32_t nodeIdx : isoSubGroups_[i]->GetSubGraph(j)->GetNodeList()) {
                 if (nodeIdx < 0 || static_cast<size_t>(nodeIdx) >= superNodeInfo_->nodeInGraphList_.size()) {
-                    APASS_LOG_ERROR_F(Elements::Operation, "NodeIdx illegal in IsomorphismGroupMergePrepare.");
+                    APASS_LOG_ERROR_F(Elements::Operation,
+                                      "NodeIdx(%d) in GetNodeList illegal in IsomorphismGroupMergePrepare, valid "
+                                      "range is [0, %zu).",
+                                      nodeIdx, superNodeInfo_->nodeInGraphList_.size());
                     return FAILED;
                 }
                 isoSubIdxs[nodeIdx] = std::pair<int32_t, int32_t>{i, j};
@@ -398,7 +408,10 @@ Status IsoPartitioner::IsomorphismGroupMergePrepare(std::vector<std::pair<int32_
             isoSubGroups_[i]->GetSubGraph(j)->mergeHistoryIsoSub_.insert(std::pair<int32_t, int32_t>{i, j});
             for (int32_t nodeIdx : isoSubGroups_[i]->GetSubGraph(j)->inNodes_) {
                 if (nodeIdx < 0 || static_cast<size_t>(nodeIdx) >= superNodeInfo_->nodeInGraphList_.size()) {
-                    APASS_LOG_ERROR_F(Elements::Operation, "NodeIdx illegal in IsomorphismGroupMergePrepare.");
+                    APASS_LOG_ERROR_F(Elements::Operation,
+                                      "NodeIdx(%d) in inNodes_ illegal in IsomorphismGroupMergePrepare, valid range "
+                                      "is [0, %zu).",
+                                      nodeIdx, superNodeInfo_->nodeInGraphList_.size());
                     return FAILED;
                 }
                 if (isoSubIdxs[nodeIdx].first != static_cast<int32_t>(i)) {
@@ -407,7 +420,10 @@ Status IsoPartitioner::IsomorphismGroupMergePrepare(std::vector<std::pair<int32_
             }
             for (int32_t nodeIdx : isoSubGroups_[i]->GetSubGraph(j)->outNodes_) {
                 if (nodeIdx < 0 || static_cast<size_t>(nodeIdx) >= superNodeInfo_->nodeInGraphList_.size()) {
-                    APASS_LOG_ERROR_F(Elements::Operation, "NodeIdx illegal in IsomorphismGroupMergePrepare.");
+                    APASS_LOG_ERROR_F(Elements::Operation,
+                                      "NodeIdx(%d) in outNodes_ illegal in IsomorphismGroupMergePrepare, valid range "
+                                      "is [0, %zu).",
+                                      nodeIdx, superNodeInfo_->nodeInGraphList_.size());
                     return FAILED;
                 }
                 if (isoSubIdxs[nodeIdx].first != static_cast<int32_t>(i)) {
@@ -539,8 +555,9 @@ bool IsoPartitioner::SuitableForMergeCheck(int32_t currColor, int32_t mergeColor
     if (nonIsoGraphsMerge) {
         bool shouldMerge = coreTypeMergable && cycleMergable;
         APASS_LOG_DEBUG_F(Elements::Operation,
-                          "Try merge current group: %d [%s]\n\t with: %d [%s], is suitable for merge: %d.", currColor,
-                          isoSubGroups_[currColor]->GetSubGraph(0)->DumpStr().c_str(), mergeColor,
+                          "Try merge current group: %d [%s] with: %d [%s], is suitable for merge: %d "
+                          "(nonIso merge path).",
+                          currColor, isoSubGroups_[currColor]->GetSubGraph(0)->DumpStr().c_str(), mergeColor,
                           isoSubGroups_[mergeColor]->GetSubGraph(0)->DumpStr().c_str(), shouldMerge);
         return shouldMerge;
     }
@@ -549,8 +566,9 @@ bool IsoPartitioner::SuitableForMergeCheck(int32_t currColor, int32_t mergeColor
                                                          isoSubGroups_[mergeColor]->GetLatency()) <= cycleLB_);
     isSuitableForMerge = coreTypeMergable && isSuitableForMerge && cycleMergable;
     APASS_LOG_DEBUG_F(Elements::Operation,
-                      "Try merge current group: %d [%s]\n\t with: %d [%s], is suitable for merge: %d.", currColor,
-                      isoSubGroups_[currColor]->GetSubGraph(0)->DumpStr().c_str(), mergeColor,
+                      "Try merge current group: %d [%s] with: %d [%s], is suitable for merge: %d "
+                      "(full condition path).",
+                      currColor, isoSubGroups_[currColor]->GetSubGraph(0)->DumpStr().c_str(), mergeColor,
                       isoSubGroups_[mergeColor]->GetSubGraph(0)->DumpStr().c_str(), isSuitableForMerge);
     return isSuitableForMerge;
 }

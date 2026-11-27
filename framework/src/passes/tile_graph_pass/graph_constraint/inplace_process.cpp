@@ -83,10 +83,10 @@ Status InplaceProcess::InplaceProcessAssemble(Function& function, Operation& op)
     const int UB_SIZE = Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB);
     if (assembleOut->GetMemoryTypeOriginal() == MemoryType::MEM_UB &&
         (assembleOut->tensor->GetRawDataSize() > UB_SIZE)) {
-        APASS_LOG_ERROR_F(
-            Elements::Tensor,
-            "Local Buffer Assemble Result Oversized, %d, tensor: %d, size: %ld B; Please check the result size.",
-            op.opmagic, assembleOut->magic, assembleOut->tensor->GetRawDataSize());
+        APASS_LOG_ERROR_F(Elements::Tensor,
+                          "Local Buffer Assemble Result Oversized, %d, tensor: %d, size: %ld B, UB limit: %d B; "
+                          "Please check the result size.",
+                          op.opmagic, assembleOut->magic, assembleOut->tensor->GetRawDataSize(), UB_SIZE);
         return FAILED;
     }
     ProcessAssemble(function, op);
@@ -356,7 +356,9 @@ Status InplaceProcess::AdjustOffsetAndRawShape(LogicalTensorPtr& fromView, Logic
     auto outEntry = viewTypeTable.find(toType);
     if (inEntry == viewTypeTable.end() || outEntry == viewTypeTable.end()) {
         APASS_LOG_ERROR_F(Elements::Operation,
-                          "ViewType Input Tensor OR Output Tensor DataType is not in viewType, Please check it!");
+                          "ViewType Input Tensor OR Output Tensor DataType is not in viewType, input view datatype: "
+                          "%d, output view datatype: %d, Please check it!",
+                          static_cast<int>(fromType), static_cast<int>(toType));
         return FAILED;
     }
     int inSize = inEntry->second;
@@ -378,7 +380,9 @@ Status InplaceProcess::AdjustOffsetAndRawShape(LogicalTensorPtr& fromView, Logic
             outShape[i] = inShape[i] * ratio;
         } else {
             if (fromOffset[i] % ratio != 0 || inShape[i] % ratio != 0) {
-                APASS_LOG_ERROR_F(Elements::Operation, "ViewType Offset is not Even.");
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "ViewType Offset is not Even, dim: %zu, fromOffset: %ld, inShape: %ld, ratio: %d.", i,
+                                  fromOffset[i], inShape[i], ratio);
                 return FAILED;
             }
             toOffset[i] = fromOffset[i] / ratio;
@@ -532,9 +536,8 @@ Status InplaceProcess::ProcessInplaceOp(Function& function, Operation& op) const
             APASS_LOG_ERROR_F(
                 Elements::Operation,
                 "Invalid inplace op info for %s[%d]. Please check op inputs&outputs, supported inplace info "
-                "can be found in inplace_process.h."
-                "\n|----detect input size: %zu, recorded inplace input idx: %zu."
-                "\n|----detect output size: %zu, recorded inplace output idx: %zu. %s",
+                "can be found in inplace_process.h. Detect input size: %zu, recorded inplace input idx: %zu. "
+                "Detect output size: %zu, recorded inplace output idx: %zu. %s",
                 op.GetOpcodeStr().c_str(), op.GetOpMagic(), op.GetIOperands().size(), inputIdx,
                 op.GetOOperands().size(), outputIdx, GetFormatBacktrace(op).c_str());
             return FAILED;
@@ -542,8 +545,12 @@ Status InplaceProcess::ProcessInplaceOp(Function& function, Operation& op) const
         auto tensorIn = op.GetIOperands()[inputIdx];
         auto tensorOut = op.GetOOperands()[outputIdx];
         if (tensorIn == nullptr || tensorOut == nullptr) {
-            APASS_LOG_ERROR_F(Elements::Tensor, "%s[%d] inplace input or output is nullptr.", op.GetOpcodeStr().c_str(),
-                              op.GetOpMagic());
+            APASS_LOG_ERROR_F(Elements::Tensor,
+                              "%s[%d] inplace input or output is nullptr, inputIdx: %zu, tensorIn: %s, outputIdx: "
+                              "%zu, tensorOut: %s.",
+                              op.GetOpcodeStr().c_str(), op.GetOpMagic(), inputIdx,
+                              tensorIn == nullptr ? "nullptr" : "not nullptr", outputIdx,
+                              tensorOut == nullptr ? "nullptr" : "not nullptr");
             return FAILED;
         }
         if (function.IsFromOutCast(tensorOut) && function.IsFromInCast(tensorIn)) {
@@ -561,9 +568,9 @@ Status InplaceProcess::ProcessInplaceOp(Function& function, Operation& op) const
             }
             tensorIn->tensor = tensorOut->tensor;
             tensorIn->UpdateOffset(tensorOut->GetOffset());
-            APASS_LOG_DEBUG_F(Elements::Tensor, "Output magic: %d, raw maigc: %d.", tensorOut->magic,
+            APASS_LOG_DEBUG_F(Elements::Tensor, "OutCast branch, output magic: %d, raw magic: %d.", tensorOut->magic,
                               tensorOut->tensor->GetRawMagic());
-            APASS_LOG_DEBUG_F(Elements::Tensor, "Input magic: %d, raw maigc: %d.", tensorIn->magic,
+            APASS_LOG_DEBUG_F(Elements::Tensor, "OutCast branch, input magic: %d, raw magic: %d.", tensorIn->magic,
                               tensorIn->tensor->GetRawMagic());
             continue;
         }
@@ -573,9 +580,9 @@ Status InplaceProcess::ProcessInplaceOp(Function& function, Operation& op) const
         function.UpdateLinkMap(tensorOut, tensorIn);
         tensorOut->tensor = tensorIn->tensor;
         tensorOut->UpdateOffset(tensorIn->GetOffset());
-        APASS_LOG_DEBUG_F(Elements::Tensor, "Output magic: %d, raw maigc: %d.", tensorOut->magic,
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Non-OutCast branch, output magic: %d, raw magic: %d.", tensorOut->magic,
                           tensorOut->tensor->GetRawMagic());
-        APASS_LOG_DEBUG_F(Elements::Tensor, "Input magic: %d, raw maigc: %d.", tensorIn->magic,
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Non-OutCast branch, input magic: %d, raw magic: %d.", tensorIn->magic,
                           tensorIn->tensor->GetRawMagic());
     }
     return SUCCESS;
@@ -619,7 +626,9 @@ static Status ProcessVisitedViewOps(Function& function, const std::unordered_map
             continue; // 仅重构View连接
         auto inplaceIdx = op->GetIntAttribute(OpAttributeKey::inplaceIdx);
         if (inplaceIdx != 0) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Inconsistent inplaceIdx for operation %d", op->GetOpMagic());
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Inconsistent inplaceIdx for operation %d, actual inplaceIdx: %ld, expected: 0",
+                              op->GetOpMagic(), inplaceIdx);
             return FAILED;
         }
         auto iOperand = op->GetInputOperand(inplaceIdx);
@@ -637,13 +646,17 @@ static Status ProcessVisitedViewOps(Function& function, const std::unordered_map
             continue;
         }
         if (iOperand->GetRawTensor() != srcTensor->GetRawTensor()) {
-            APASS_LOG_ERROR_F(Elements::Operation, "RawTensor mismatch for input operand of operation %d",
-                              op->GetOpMagic());
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "RawTensor mismatch for input operand of operation %d, iOperand raw magic: %d, "
+                              "srcTensor raw magic: %d",
+                              op->GetOpMagic(), iOperand->GetRawMagic(), srcTensor->GetRawMagic());
             return FAILED;
         }
         if (oOperand->GetRawTensor() != srcTensor->GetRawTensor()) {
-            APASS_LOG_ERROR_F(Elements::Operation, "RawTensor mismatch for output operand of operation %d",
-                              op->GetOpMagic());
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "RawTensor mismatch for output operand of operation %d, oOperand raw magic: %d, "
+                              "srcTensor raw magic: %d",
+                              op->GetOpMagic(), oOperand->GetRawMagic(), srcTensor->GetRawMagic());
             return FAILED;
         }
         op->ReplaceIOperand(0, srcTensor);

@@ -2076,3 +2076,64 @@ TEST_F(TestRemoveUnalignedReshapeOp, TestSiblingCopyInCollectorNullAndNonDdrInpu
     removeUnalignedReshapeOpTest.CollectSiblingCopyInConsumersOfDDRReshapeInput(ubInput, reshapeOp, copyInOps);
     EXPECT_TRUE(copyInOps.empty());
 }
+
+// reshape输出未配置dynValidShape时, 变化维下标越界, ForUB路径打WARN并跳过该op(不插入reshape copy)
+// (覆盖remove_unaligned_reshape_op.cpp ReplaceDynUnalignedReshapeOpsForUB的WARN分支)
+TEST_F(TestRemoveUnalignedReshapeOp, TestReplaceDynUnalignedReshapeOpForUBMissingDynValidShapeDim)
+{
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "UBDynValidShapeMissingDim",
+                                                      "UBDynValidShapeMissingDim", nullptr);
+    EXPECT_TRUE(currFunctionPtr != nullptr);
+
+    // 不传validShape, 使输出tensor的dynValidShape保持为空
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, std::vector<int64_t>{8, 16});
+    input->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+    auto output = IRBuilder().CreateTensorVar(DT_FP32, std::vector<int64_t>{8, 4});
+    output->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+    EXPECT_TRUE(output->GetDynValidShape().empty());
+
+    auto& reshapeOp = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_RESHAPE, {input}, {output});
+    reshapeOp.UpdateSubgraphID(0);
+
+    RemoveUnalignedReshape removeUnalignedReshapeOpTest;
+    removeUnalignedReshapeOpTest.ReplaceDynUnalignedReshapeOpsForUB(*currFunctionPtr, reshapeOp);
+
+    // WARN分支直接break, 不应新增reshapeCopyOut/reshapeCopyIn
+    size_t reshapeCopyOpCnt = 0;
+    for (const auto& op : currFunctionPtr->Operations()) {
+        if (op.GetOpcode() == Opcode::OP_RESHAPE_COPY_OUT || op.GetOpcode() == Opcode::OP_RESHAPE_COPY_IN) {
+            ++reshapeCopyOpCnt;
+        }
+    }
+    EXPECT_EQ(reshapeCopyOpCnt, 0U);
+}
+
+// 同场景下ForDDR路径打WARN并break, 不触发InsertReshapeCopy
+// (覆盖remove_unaligned_reshape_op.cpp ReplaceDynUnalignedReshapeOpsForDDR的WARN分支)
+TEST_F(TestRemoveUnalignedReshapeOp, TestReplaceDynUnalignedReshapeOpForDDRMissingDynValidShapeDim)
+{
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "DDRDynValidShapeMissingDim",
+                                                      "DDRDynValidShapeMissingDim", nullptr);
+    EXPECT_TRUE(currFunctionPtr != nullptr);
+
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, std::vector<int64_t>{8, 16});
+    input->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+    auto output = IRBuilder().CreateTensorVar(DT_FP32, std::vector<int64_t>{8, 4});
+    output->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+    EXPECT_TRUE(output->GetDynValidShape().empty());
+
+    auto& reshapeOp = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_RESHAPE, {input}, {output});
+    reshapeOp.UpdateSubgraphID(0);
+
+    RemoveUnalignedReshape removeUnalignedReshapeOpTest;
+    removeUnalignedReshapeOpTest.ReplaceDynUnalignedReshapeOpsForDDR(*currFunctionPtr, reshapeOp);
+
+    // WARN分支break后hasNonImmediate为false, 不插入copy op
+    size_t copyOpCnt = 0;
+    for (const auto& op : currFunctionPtr->Operations()) {
+        if (op.GetOpcode() == Opcode::OP_COPY_IN || op.GetOpcode() == Opcode::OP_COPY_OUT) {
+            ++copyOpCnt;
+        }
+    }
+    EXPECT_EQ(copyOpCnt, 0U);
+}

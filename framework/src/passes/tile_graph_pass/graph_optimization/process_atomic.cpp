@@ -583,7 +583,7 @@ Status ProcessAtomic::EliminateReduceAcc(Function& function)
     bool anyDeleted = false;
     for (auto& op : function.Operations(true, SortOperationsMode::LIGHTWEIGHT)) {
         if (op.GetOpcode() == Opcode::OP_REDUCE_ACC) {
-            APASS_LOG_INFO_F(Elements::Operation, "ATOMIC_ADD, opmagic: %d", op.GetOpMagic());
+            APASS_LOG_DEBUG_F(Elements::Operation, "ATOMIC_ADD, opmagic: %d", op.GetOpMagic());
             std::vector<Operation*> assembleProducers;
             if (CollectReduceAccAssembleProducers(op, assembleProducers) != SUCCESS) {
                 return FAILED;
@@ -674,7 +674,9 @@ Status ProcessAtomic::ProcessSingleAtomicRMW(Function& function, Operation& op)
     int rmwModeValue = op.GetIntAttribute(OpAttributeKey::rmwMode);
     AtomicRMWMode rmwMode = static_cast<AtomicRMWMode>(rmwModeValue);
     if (GetRmwAttrKey(rmwMode).empty()) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Op[%d] has invalid rmwMode value %d.", op.GetOpMagic(), rmwModeValue);
+        APASS_LOG_ERROR_F(Elements::Operation, "Op[%d] has invalid rmwMode value %d; valid range is [%d, %d].",
+                          op.GetOpMagic(), rmwModeValue, static_cast<int>(AtomicRMWMode::ADD),
+                          static_cast<int>(AtomicRMWMode::MIN));
         return FAILED;
     }
     std::vector<Operation*> replacementProducers;
@@ -689,7 +691,8 @@ Status ProcessAtomic::ProcessSingleAtomicRMW(Function& function, Operation& op)
         return FAILED;
     }
     op.SetAsDeleted();
-    APASS_LOG_DEBUG_F(Elements::Operation, "%s[%d] will be deleted.", op.GetOpcodeStr().c_str(), op.GetOpMagic());
+    APASS_LOG_DEBUG_F(Elements::Operation, "%s[%d] will be deleted after AtomicRMW elimination.",
+                      op.GetOpcodeStr().c_str(), op.GetOpMagic());
     return SUCCESS;
 }
 

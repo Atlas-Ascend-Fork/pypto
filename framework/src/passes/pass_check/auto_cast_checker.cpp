@@ -62,13 +62,15 @@ Status AutoCastChecker::DoPostCheck(Function& function)
         auto iOperands = op->GetIOperands();
         for (const auto& iop : iOperands) {
             if (!supportBF16 && iop->Datatype() == DataType::DT_BF16) {
-                APASS_LOG_ERROR_F(Elements::Operation, "Exist unsupported BF16 compute between op %d and tensor %d",
-                                  opMagic, iop->GetMagic());
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "Unsupported BF16 compute exists between op %d and input tensor %d", opMagic,
+                                  iop->GetMagic());
                 return FAILED;
             }
             if (!supportFP16 && iop->Datatype() == DataType::DT_FP16) {
-                APASS_LOG_ERROR_F(Elements::Operation, "Exist unsupported FP16 compute between op %d and tensor %d",
-                                  opMagic, iop->GetMagic());
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "Unsupported FP16 compute exists between op %d and input tensor %d", opMagic,
+                                  iop->GetMagic());
                 return FAILED;
             }
         }
@@ -76,13 +78,15 @@ Status AutoCastChecker::DoPostCheck(Function& function)
         auto oOperands = op->GetOOperands();
         for (const auto& oop : oOperands) {
             if (!supportBF16 && oop->Datatype() == DataType::DT_BF16) {
-                APASS_LOG_ERROR_F(Elements::Operation, "Exist unsupported BF16 compute between op %d and tensor %d",
-                                  opMagic, oop->GetMagic());
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "Unsupported BF16 compute exists between op %d and output tensor %d", opMagic,
+                                  oop->GetMagic());
                 return FAILED;
             }
             if (!supportFP16 && oop->Datatype() == DataType::DT_FP16) {
-                APASS_LOG_ERROR_F(Elements::Operation, "Exist unsupported FP16 compute between op %d and tensor %d",
-                                  opMagic, oop->GetMagic());
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "Unsupported FP16 compute exists between op %d and output tensor %d", opMagic,
+                                  oop->GetMagic());
                 return FAILED;
             }
         }

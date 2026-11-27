@@ -3574,5 +3574,178 @@ TEST_F(SplitLargeFanoutTensorTest, FoldContractSliceAfterMergingPrecedingViews)
     EXPECT_EQ(attr->GetToDynValidShape(), consumerValidShape);
 }
 
+namespace {
+// MtoM-shaped graph (same structure as BuildGraphForMToM) plus one extra view op created FIRST, so it
+// owns the smallest op magic among tiledView_1's producers. FindViewFamilyProducer picks the
+// smallest-magic (or first) producer of a dualOverlap, so the extra leading view is selected inside
+// CreateOpForMtoM:
+//   - leadingViewOnLargeTensor == false: the leading view reads a foreign source tensor whose raw magic
+//     differs from largeTensor, hitting the "input has been replaced in multiple-to-multiple split, skip"
+//     INFO branch.
+//   - leadingViewOnLargeTensor == true: the leading view reads largeTensor but carries no ViewOpAttribute,
+//     hitting the "no valid view-family attribute in multiple-to-multiple split, skip" WARN branch.
+void BuildMtoMGraphWithLeadingDualView(ComputationalGraphBuilder& G, bool leadingViewOnLargeTensor)
+{
+    constexpr int64_t NUM_64 = 64;
+    constexpr int64_t NUM_128 = 128;
+    constexpr int64_t NUM_192 = 192;
+    constexpr int64_t NUM_256 = 256;
+    constexpr int64_t NUM_320 = 320;
+    const std::vector<int64_t> shape1{NUM_256, NUM_256};
+    const std::vector<int64_t> tiledShape1{NUM_64, NUM_256};
+    const std::vector<int64_t> shape2{NUM_256, NUM_64};
+    const std::vector<int64_t> tiledShape2{NUM_64, NUM_64};
+    const std::vector<int64_t> largeShape{NUM_128, NUM_320};
+    const std::vector<int64_t> tiledShape3{NUM_128, NUM_128};
+    const std::vector<int64_t> tiledShape4{NUM_128, NUM_64};
+
+    const std::vector<SymbolicScalar> dynShapeA = {CreateTestScalarVar("a"), NUM_256};
+    const std::vector<SymbolicScalar> dynShapeC = {CreateTestScalarVar("c"), NUM_64};
+
+    G.AddTensor(DataType::DT_FP32, shape1, "a");
+    auto a = G.GetTensor("a");
+    a->UpdateDynValidShape(dynShapeA);
+    a->SetMemoryTypeBoth(MemoryType::MEM_UNKNOWN, true);
+    G.AddTensor(DataType::DT_FP32, shape1, "otherSource");
+    G.GetTensor("otherSource")->SetMemoryTypeBoth(MemoryType::MEM_UNKNOWN, true);
+    G.AddTensor(DataType::DT_FP32, shape2, "c");
+    auto c = G.GetTensor("c");
+    c->UpdateDynValidShape(dynShapeC);
+    c->SetMemoryTypeBoth(MemoryType::MEM_UNKNOWN, true);
+
+    G.AddTensors(DataType::DT_FP32, tiledShape1, {"tiledA", "tiledB"});
+    G.GetTensor("tiledA")->UpdateDynValidShape(dynShapeA);
+    G.GetTensor("tiledA")->SetMemoryTypeBoth(MemoryType::MEM_UNKNOWN, true);
+    G.GetTensor("tiledB")->UpdateDynValidShape(dynShapeA);
+    G.GetTensor("tiledB")->SetMemoryTypeBoth(MemoryType::MEM_UNKNOWN, true);
+    G.AddTensors(DataType::DT_FP32, tiledShape2, {"tiledC", "tiledD"});
+    G.GetTensor("tiledC")->UpdateDynValidShape(dynShapeC);
+    G.GetTensor("tiledC")->SetMemoryTypeBoth(MemoryType::MEM_UNKNOWN, true);
+    G.GetTensor("tiledD")->UpdateDynValidShape(dynShapeC);
+    G.GetTensor("tiledD")->SetMemoryTypeBoth(MemoryType::MEM_UNKNOWN, true);
+
+    G.AddTensor(DataType::DT_FP32, largeShape, "largeTensor");
+    auto largeTensor = G.GetTensor("largeTensor");
+    largeTensor->SetMemoryTypeBoth(MemoryType::MEM_UNKNOWN, true);
+
+    G.AddTensors(DataType::DT_FP32, tiledShape3, {"tiledView_1", "tiledView_2", "add_out", "out1"});
+    for (const auto& name : {"tiledView_1", "tiledView_2", "add_out", "out1"}) {
+        G.GetTensor(name)->SetMemoryTypeBoth(MemoryType::MEM_UNKNOWN, true);
+    }
+    G.AddTensors(DataType::DT_FP32, tiledShape4, {"tiledView_3", "exp_out", "out2"});
+    for (const auto& name : {"tiledView_3", "exp_out", "out2"}) {
+        G.GetTensor(name)->SetMemoryTypeBoth(MemoryType::MEM_UNKNOWN, true);
+    }
+
+    // The leading dual producer on tiledView_1, created before every other op so it gets the smallest magic.
+    if (leadingViewOnLargeTensor) {
+        ASSERT_TRUE(G.AddOp(Opcode::OP_VIEW, {"largeTensor"}, {"tiledView_1"}, "View_First"));
+        // No ViewOpAttribute on purpose: CreateOpForMtoM must reject it with the view-family WARN.
+    } else {
+        ASSERT_TRUE(G.AddOp(Opcode::OP_VIEW, {"otherSource"}, {"tiledView_1"}, "View_First"));
+        G.GetOp("View_First")
+            ->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}, MemoryType::MEM_UNKNOWN));
+    }
+
+    ASSERT_TRUE(G.AddOp(Opcode::OP_VIEW, {"a"}, {"tiledA"}, "View_A"));
+    G.GetOp("View_A")->SetOpAttribute(
+        std::make_shared<ViewOpAttribute>(std::vector<int64_t>{NUM_64, 0}, MemoryType::MEM_UNKNOWN));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_VIEW, {"a"}, {"tiledB"}, "View_B"));
+    G.GetOp("View_B")->SetOpAttribute(
+        std::make_shared<ViewOpAttribute>(std::vector<int64_t>{NUM_192, 0}, MemoryType::MEM_UNKNOWN));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_VIEW, {"c"}, {"tiledC"}, "View_C"));
+    G.GetOp("View_C")->SetOpAttribute(
+        std::make_shared<ViewOpAttribute>(std::vector<int64_t>{NUM_64, 0}, MemoryType::MEM_UNKNOWN));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_VIEW, {"c"}, {"tiledD"}, "View_D"));
+    G.GetOp("View_D")->SetOpAttribute(
+        std::make_shared<ViewOpAttribute>(std::vector<int64_t>{NUM_192, 0}, MemoryType::MEM_UNKNOWN));
+
+    ASSERT_TRUE(G.AddOp(Opcode::OP_ASSEMBLE, {"tiledA"}, {"largeTensor"}, "Assemble_A"));
+    G.GetOp("Assemble_A")
+        ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, 0}));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_ASSEMBLE, {"tiledB"}, {"largeTensor"}, "Assemble_B"));
+    G.GetOp("Assemble_B")
+        ->SetOpAttribute(
+            std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{NUM_64, 0}));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_ASSEMBLE, {"tiledC"}, {"largeTensor"}, "Assemble_C"));
+    G.GetOp("Assemble_C")
+        ->SetOpAttribute(
+            std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, NUM_256}));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_ASSEMBLE, {"tiledD"}, {"largeTensor"}, "Assemble_D"));
+    G.GetOp("Assemble_D")
+        ->SetOpAttribute(
+            std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{NUM_64, NUM_256}));
+
+    ASSERT_TRUE(G.AddOp(Opcode::OP_VIEW, {"largeTensor"}, {"tiledView_1"}, "View_1"));
+    G.GetOp("View_1")->SetOpAttribute(
+        std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}, MemoryType::MEM_UNKNOWN));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_VIEW, {"largeTensor"}, {"tiledView_2"}, "View_2"));
+    G.GetOp("View_2")->SetOpAttribute(
+        std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, NUM_128}, MemoryType::MEM_UNKNOWN));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_VIEW, {"largeTensor"}, {"tiledView_3"}, "View_3"));
+    G.GetOp("View_3")->SetOpAttribute(
+        std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, NUM_256}, MemoryType::MEM_UNKNOWN));
+
+    ASSERT_TRUE(G.AddOp(Opcode::OP_ADD, {"tiledView_1", "tiledView_2"}, {"add_out"}, "Add"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_ASSEMBLE, {"add_out"}, {"out1"}, "Assemble_1"));
+    G.GetOp("Assemble_1")
+        ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, 0}));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_EXP, {"tiledView_3"}, {"exp_out"}, "Exp"));
+    ASSERT_TRUE(G.AddOp(Opcode::OP_ASSEMBLE, {"exp_out"}, {"out2"}, "Assemble_2"));
+    G.GetOp("Assemble_2")
+        ->SetOpAttribute(std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UNKNOWN, std::vector<int64_t>{0, 0}));
+
+    ASSERT_TRUE(G.SetInCast({"a", "c", "otherSource"}));
+    ASSERT_TRUE(G.SetOutCast({"out1", "out2"}));
+}
+} // namespace
+
+// The leading dual view reads a foreign source, so CreateOpForMtoM selects it for tiledView_1, detects the
+// raw-magic mismatch and skips it with the "input has been replaced in multiple-to-multiple split" INFO.
+// The skip path is only selectable when FindViewFamilyProducer does not filter by input, i.e. with
+// ENABLE_SLICE off; with slice enabled the foreign-input producer is filtered out instead.
+TEST_F(SplitLargeFanoutTensorTest, MtoMSkipsDualOverlapViewWithForeignInput)
+{
+    config::SetPassOption(ENABLE_SLICE, false);
+    ComputationalGraphBuilder G;
+    BuildMtoMGraphWithLeadingDualView(G, false);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    auto largeTensor = G.GetTensor("largeTensor");
+    auto otherSource = G.GetTensor("otherSource");
+
+    SplitLargeFanoutTensor splitLargeFanoutTensor;
+    splitLargeFanoutTensor.RunOnFunction(*function);
+
+    // tiledView_1's replacement is skipped through the foreign-input branch: View_1 keeps reading
+    // largeTensor while the untouched dual views are re-pointed to the new split tensors.
+    EXPECT_EQ(G.GetOp("View_1")->GetIOperands().front(), largeTensor);
+    EXPECT_NE(G.GetOp("View_2")->GetIOperands().front(), largeTensor);
+    EXPECT_NE(G.GetOp("View_3")->GetIOperands().front(), largeTensor);
+    EXPECT_EQ(G.GetOp("View_First")->GetIOperands().front(), otherSource);
+}
+
+// The leading dual view reads largeTensor but has no ViewOpAttribute, so CreateOpForMtoM selects it for
+// tiledView_1 and rejects it with the "no valid view-family attribute in multiple-to-multiple split" WARN.
+TEST_F(SplitLargeFanoutTensorTest, MtoMSkipsDualOverlapViewWithoutViewAttribute)
+{
+    config::SetPassOption(ENABLE_SLICE, true);
+    ComputationalGraphBuilder G;
+    BuildMtoMGraphWithLeadingDualView(G, true);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    auto largeTensor = G.GetTensor("largeTensor");
+
+    SplitLargeFanoutTensor splitLargeFanoutTensor;
+    splitLargeFanoutTensor.RunOnFunction(*function);
+
+    // The attribute-less leading view is skipped by the view-family WARN branch, so View_1 keeps reading
+    // largeTensor while the untouched dual views are re-pointed to the new split tensors.
+    EXPECT_EQ(G.GetOp("View_1")->GetIOperands().front(), largeTensor);
+    EXPECT_NE(G.GetOp("View_2")->GetIOperands().front(), largeTensor);
+    EXPECT_NE(G.GetOp("View_3")->GetIOperands().front(), largeTensor);
+    EXPECT_EQ(G.GetOp("View_First")->GetIOperands().front(), largeTensor);
+}
+
 } // namespace tile_fwk
 } // namespace npu

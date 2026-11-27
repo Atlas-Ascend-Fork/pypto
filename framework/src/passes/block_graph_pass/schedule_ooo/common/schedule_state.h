@@ -342,7 +342,9 @@ Status RunSchedulerMainLoop(Scheduler& self)
             self.state_.clock = nextCycle;
         }
         if (self.state_.numTotalIssues > self.state_.originalNumTotalIssues * MAX_NUM_TOTAL_ISSUES_RATIO) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Spill dead-loop.");
+            APASS_LOG_ERROR_F(
+                Elements::Operation, "Spill dead-loop in main loop: numTotalIssues=%lu exceeds threshold=%lu.",
+                self.state_.numTotalIssues, self.state_.originalNumTotalIssues * MAX_NUM_TOTAL_ISSUES_RATIO);
             return FAILED;
         }
     }

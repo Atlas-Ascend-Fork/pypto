@@ -27,7 +27,7 @@ Status LoopUnroll::GetCallee(const Operation* callop, Function*& callFunc)
     auto callopAttr = std::static_pointer_cast<CallOpAttribute>(callop->GetOpAttribute());
     callFunc = Program::GetInstance().GetFunctionByMagicName(callopAttr->GetCalleeMagicName());
     if (callFunc == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Get callee function %s failed.",
+        APASS_LOG_ERROR_F(Elements::Operation, "Get callee function %s failed in LoopUnroll.",
                           callopAttr->GetCalleeMagicName().c_str());
         return FAILED;
     }
@@ -244,8 +244,8 @@ Status LoopUnroll::ExpandDynamicLoop(Operation* callop)
 {
     Function* currFunction = nullptr;
     if (GetCallee(callop, currFunction) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] GetCallee failed.", callop->GetOpcodeStr().c_str(),
-                          callop->GetOpMagic());
+        APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] GetCallee failed in ExpandDynamicLoop.",
+                          callop->GetOpcodeStr().c_str(), callop->GetOpMagic());
         return FAILED;
     }
     auto loop = currFunction->GetDynloopAttribute();
@@ -261,8 +261,8 @@ Status LoopUnroll::ExpandDynamicLoop(Operation* callop)
         }
         UpdateGlobalTensorWAW();
         if (ExpandDynamicFunction(expandCallop) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] ExpandDynamic failed.", expandCallop->GetOpcodeStr().c_str(),
-                              expandCallop->GetOpMagic());
+            APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] ExpandDynamic failed in ExpandDynamicLoop.",
+                              expandCallop->GetOpcodeStr().c_str(), expandCallop->GetOpMagic());
             return FAILED;
         }
     }
@@ -273,8 +273,8 @@ Status LoopUnroll::ExpandDynamicFunction(Operation* callop)
 {
     Function* currFunction = nullptr;
     if (GetCallee(callop, currFunction) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] GetCallee failed.", callop->GetOpcodeStr().c_str(),
-                          callop->GetOpMagic());
+        APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] GetCallee failed in ExpandDynamicFunction.",
+                          callop->GetOpcodeStr().c_str(), callop->GetOpMagic());
         return FAILED;
     }
     if (currFunction->GetFunctionType() == FunctionType::DYNAMIC_LOOP) {
@@ -351,16 +351,16 @@ Status LoopUnroll::CreateLoopUnrollFunc(Function* function)
 {
     std::string funcName = function->GetRawName() + "_Loop_Unroll";
     auto funcMagicName = funcName + "_" + std::to_string(IdGen<IdType::FUNCTION>::Inst().CurId());
-    auto newFunc = std::make_unique<Function>(Program::GetInstance(), funcMagicName, funcName, nullptr);
+    auto newFunc = std::make_shared<Function>(Program::GetInstance(), funcMagicName, funcName, nullptr);
     newFunc->SetFunctionType(FunctionType::DYNAMIC_LOOP_PATH);
     newFunc->SetGraphType(GraphType::TENSOR_GRAPH);
 
-    Program::GetInstance().SetCurrentFunction(newFunc.get());
     if (Program::GetInstance().GetFunctionMap().count(funcMagicName) != 0) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Function[%s] has exist in functionMap.", funcMagicName.c_str());
+        APASS_LOG_ERROR_F(Elements::Operation, "Function[%s] already exists in functionMap.", funcMagicName.c_str());
         return FAILED;
     }
-    Program::GetInstance().InsertFuncToFunctionMap(funcMagicName, std::move(newFunc));
+    Program::GetInstance().InsertFuncToFunctionMap(funcMagicName, newFunc);
+    Program::GetInstance().SetCurrentFunction(newFunc.get());
     Program::GetInstance().GetCurrentFunction()->SetUnderDynamicFunction(true);
 
     auto& paramConfigs = Program::GetInstance().GetCurrentFunction()->paramConfigs_;
@@ -398,8 +398,8 @@ Status LoopUnroll::TopFunctionUnroll(Function* function, std::vector<Operation*>
     }
     for (auto callop : callopList) {
         if (ExpandDynamicFunction(callop) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] ExpandDynamic failed.", callop->GetOpcodeStr().c_str(),
-                              callop->GetOpMagic());
+            APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] ExpandDynamic failed in TopFunctionUnroll.",
+                              callop->GetOpcodeStr().c_str(), callop->GetOpMagic());
             return FAILED;
         }
     }
@@ -482,8 +482,8 @@ Status LoopUnroll::TraverseCallOp(Function* function)
         for (auto callop : callopList) {
             Function* childFunction = nullptr;
             if (GetCallee(callop, childFunction) != SUCCESS) {
-                APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] GetCallee failed.", callop->GetOpcodeStr().c_str(),
-                                  callop->GetOpMagic());
+                APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] GetCallee failed in TraverseCallOp.",
+                                  callop->GetOpcodeStr().c_str(), callop->GetOpMagic());
                 return FAILED;
             }
             if (TraverseCallOp(childFunction) != SUCCESS) {
@@ -513,7 +513,8 @@ Status LoopUnroll::FindOutputGlobalTensor(int slotIdx, std::unordered_map<int, L
     } else if (IsNoOverlapWAW(slotIdx, tensor, opDynOffsetMap)) { // 与上次写入slot的tensor存在无重叠的WAW关系
         tensor2Global[tensor->GetMagic()] = lastWriteMap_[slotIdx].first;
     } else {
-        APASS_LOG_ERROR_F(Elements::Operation, "Illegal case.");
+        APASS_LOG_ERROR_F(Elements::Operation, "Unexpected WAW case for tensor[%d] in slot[%d].", tensor->GetMagic(),
+                          slotIdx);
         return FAILED;
     }
     return SUCCESS;
@@ -524,7 +525,7 @@ Status LoopUnroll::FindInputGlobalTensor(int slotIdx, std::unordered_map<int, Lo
 {
     if (lastWriteMap_.find(slotIdx) != lastWriteMap_.end()) { // 与上次写入slot的tensor存在RAW关系
         if (tensor2Global.find(tensor->GetMagic()) != tensor2Global.end()) {
-            APASS_LOG_ERROR_F(Elements::Tensor, "Tensor[%d] has exist in tensor2Global.", tensor->GetMagic());
+            APASS_LOG_ERROR_F(Elements::Tensor, "Tensor[%d] already exists in tensor2Global.", tensor->GetMagic());
             return FAILED;
         }
         tensor2Global[tensor->GetMagic()] = lastWriteMap_[slotIdx].first;
@@ -564,12 +565,12 @@ Status LoopUnroll::CreateGlobalTensor(std::unordered_map<Operation*, std::vector
             }
         } else if (slots.size() == 0) {
             if (CreateLocal2Global(tensor2Global, inTensor) != SUCCESS) {
-                APASS_LOG_ERROR_F(Elements::Tensor, "Local tensor[%d] create to global tensor failed.",
+                APASS_LOG_ERROR_F(Elements::Tensor, "Local input tensor[%d] create to global tensor failed.",
                                   inTensor->GetMagic());
                 return FAILED;
             }
         } else {
-            APASS_LOG_ERROR_F(Elements::Tensor, "Tensor[%d] has multi slot[%zu], not support now.",
+            APASS_LOG_ERROR_F(Elements::Tensor, "Input tensor[%d] has multi slot[%zu], not support now.",
                               inTensor->GetMagic(), slots.size());
             return FAILED;
         }
@@ -584,12 +585,12 @@ Status LoopUnroll::CreateGlobalTensor(std::unordered_map<Operation*, std::vector
             }
         } else if (slots.size() == 0) {
             if (CreateLocal2Global(tensor2Global, outTensor) != SUCCESS) {
-                APASS_LOG_ERROR_F(Elements::Tensor, "Local tensor[%d] create to global tensor failed.",
+                APASS_LOG_ERROR_F(Elements::Tensor, "Local output tensor[%d] create to global tensor failed.",
                                   outTensor->GetMagic());
                 return FAILED;
             }
         } else {
-            APASS_LOG_ERROR_F(Elements::Tensor, "Tensor[%d] has multi slot[%zu], not support now.",
+            APASS_LOG_ERROR_F(Elements::Tensor, "Output tensor[%d] has multi slot[%zu], not support now.",
                               outTensor->GetMagic(), slots.size());
             return FAILED;
         }
@@ -679,8 +680,8 @@ bool LoopUnroll::IsNoOverlapWAW(int slotIdx, LogicalTensorPtr tensor,
         }
         auto assembleAttr = std::dynamic_pointer_cast<AssembleOpAttribute>(producer->GetOpAttribute());
         if (!assembleAttr) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Cannot get %s[%d] assemble attr.", producer->GetOpcodeStr().c_str(),
-                              producer->GetOpMagic());
+            APASS_LOG_ERROR_F(Elements::Operation, "Cannot get %s[%d] assemble attr from global tensor producer.",
+                              producer->GetOpcodeStr().c_str(), producer->GetOpMagic());
             return false;
         }
         assembleList.push_back({producer->GetInputOperand(0)->GetShape(), assembleAttr->GetToOffset()});

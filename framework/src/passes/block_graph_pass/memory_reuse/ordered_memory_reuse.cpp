@@ -102,8 +102,10 @@ Status OrderedMemoryReuse::Preflight(const Allocator& allocator)
         if (attr->invokeInfo_->GetIncastTensorParamList().size() > op.iOperand.size() ||
             attr->invokeInfo_->GetOutcastTensorParamList().size() > op.oOperand.size()) {
             APASS_LOG_ERROR_F(Elements::Operation,
-                              "Memory allocation aborted: CALL op %d has more incast/outcast parameters than operands.",
-                              op.GetOpMagic());
+                              "Memory allocation aborted: CALL op %d has more incast/outcast parameters than operands: "
+                              "incast %zu, input operands %zu, outcast %zu, output operands %zu.",
+                              op.GetOpMagic(), attr->invokeInfo_->GetIncastTensorParamList().size(), op.iOperand.size(),
+                              attr->invokeInfo_->GetOutcastTensorParamList().size(), op.oOperand.size());
             return FAILED;
         }
     }

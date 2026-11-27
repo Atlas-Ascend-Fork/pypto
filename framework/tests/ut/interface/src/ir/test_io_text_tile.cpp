@@ -15,6 +15,7 @@
 #include <type_traits>
 #include "ir/stmt.h"
 #include "ir/transforms/io_text.h"
+#include "interface/ir/transforms/io_text_loader.h"
 #include <cstdint>
 #include <limits>
 #include <string>
@@ -83,6 +84,15 @@ bool SameCube(const CubeTile& lhs, const CubeTile& rhs)
     return lhs.m == rhs.m && lhs.k == rhs.k && lhs.n == rhs.n && lhs.enableSplitK == rhs.enableSplitK;
 }
 } // namespace
+
+TEST(IoTextTileTest, RejectsStringInSymbolicShapeAttribute)
+{
+    IRTextParser parser("");
+    std::vector<npu::tile_fwk::SymbolicScalar> shape;
+    EXPECT_FALSE(parser.FillSymbolicScalarListAttr("valid_shape", std::string("invalid"), shape));
+    EXPECT_TRUE(shape.empty());
+    EXPECT_EQ(parser.errorMsg_, "invalid symbolic scalar list attr value for #valid_shape");
+}
 
 TEST(IoTextTileTest, CubeKeepsStoredK2Zero)
 {

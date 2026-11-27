@@ -355,7 +355,10 @@ static void HandleGatherVectorOps(Operation* producerOp, Operation* op, size_t o
             vectorTilesOld[0] = FloorPowerOf2(producerOp->GetOOperands()[0]->shape[0]);
             vectorTilesOld[1] = FloorPowerOf2(vectorTilesOldTmp[outputOpDims - 1]);
         } else {
-            APASS_LOG_ERROR_F(Elements::Operation, "Gather first input should be 2D, need to check this case");
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Gather first input should be 2D, got shape %s (dims: %zu) of op [%d], need to check "
+                              "this case.",
+                              producerOp->GetOOperands()[0]->DumpType().c_str(), outputProducerDims, op->GetOpMagic());
         }
     }
     if (magicSecond == magicProducer) {
@@ -367,7 +370,10 @@ static void HandleGatherVectorOps(Operation* producerOp, Operation* op, size_t o
             vectorTilesOld[0] = FloorPowerOf2(vectorTilesOldTmp[0]);
             vectorTilesOld[1] = FloorPowerOf2(vectorTilesOldTmp[1]);
         } else {
-            APASS_LOG_ERROR_F(Elements::Operation, "Gather second input should be 1D or 2D, need to check this case");
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Gather second input should be 1D or 2D, got shape %s (dims: %zu) of op [%d], need to "
+                              "check this case.",
+                              producerOp->GetOOperands()[0]->DumpType().c_str(), outputProducerDims, op->GetOpMagic());
         }
     }
     AdjustTileToUB(op, vectorTilesOld);
@@ -443,7 +449,8 @@ void TransposeTileSetting(Operation* op, const std::vector<int64_t>& vectorTiles
     uint8_t blockSizeForType = BLOCK_SIZE / typeSize;
     auto lastDimAligned = ((inputShape[inputDims - 1] + blockSizeForType - 1) / blockSizeForType) * blockSizeForType;
     if (lastDimAligned > maxTile) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Transpose have row that more than UB, doesn't support");
+        APASS_LOG_ERROR_F(Elements::Operation, "Transpose row size %ld exceeds UB limit %ld, which is not supported.",
+                          lastDimAligned, maxTile);
     }
     vectorTilesNew.resize(vectorTilesOld.size());
     vectorTilesNew = vectorTilesOld;

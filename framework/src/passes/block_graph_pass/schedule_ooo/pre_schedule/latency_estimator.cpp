@@ -40,7 +40,7 @@ Status LatencyEstimator::FreeBuffer(Operation* op)
     for (auto tensor : state_.GetInOutOperandCached(op)) {
         auto memId = tensor->memoryrange.memId;
         if (state_.DelBufRefCount(memId) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Tensor, "DelBufRefCount tensor [%d] failed.", memId);
+            APASS_LOG_ERROR_F(Elements::Tensor, "DelBufRefCount tensor [%d] failed in pre_schedule.", memId);
             return FAILED;
         }
         if (state_.bufRefCount[memId] == 0) {
@@ -110,7 +110,8 @@ Status LatencyEstimator::RetireIssueStage(uint64_t& commitCnt, int& nextCycle)
             pipe.curOp = nullptr;
             APASS_LOG_DEBUG_F(Elements::Operation, "EXECUTE END: %s", state_.GetOpInfo(op).c_str());
             if (RetireOpAndAwakeSucc(op, commitCnt) != SUCCESS) {
-                APASS_LOG_ERROR_F(Elements::Operation, "RetireOpAndAwakeSucc failed! %s", state_.GetOpInfo(op).c_str());
+                APASS_LOG_ERROR_F(Elements::Operation, "RetireOpAndAwakeSucc failed in RetireIssueStage! %s",
+                                  state_.GetOpInfo(op).c_str());
                 return FAILED;
             }
         } else {
@@ -215,7 +216,9 @@ Status LatencyEstimator::SpillOnBlock()
     state_.localMemoryCurrentSize[spillMemType] += static_cast<long int>(needMemSize);
     if (state_.localMemoryCurrentSize[spillMemType] < 0 ||
         state_.localMemoryCurrentSize[spillMemType] > state_.localMemSize[spillMemType]) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Buffer[%d] is invalid. Please check", spillMemType);
+        APASS_LOG_ERROR_F(Elements::Operation, "Buffer[%d] size out of range: current=%ld, valid=[0, %ld].",
+                          spillMemType, static_cast<long>(state_.localMemoryCurrentSize[spillMemType]),
+                          static_cast<long>(state_.localMemSize[spillMemType]));
         return FAILED;
     }
     APASS_LOG_DEBUG_F(Elements::Operation, "SpillOnBlock freeBuffer memType: %d, memId: %d, freeMemSize: %lu.",
@@ -293,7 +296,7 @@ Status LatencyEstimator::PreMainLoop()
 
 Status LatencyEstimator::PostMainLoop()
 {
-    APASS_LOG_DEBUG_F(Elements::Operation, "\n Estimate Latency: %d", state_.clock);
+    APASS_LOG_DEBUG_F(Elements::Operation, "Estimate Latency: %d", state_.clock);
     return SUCCESS;
 }
 } // namespace npu::tile_fwk

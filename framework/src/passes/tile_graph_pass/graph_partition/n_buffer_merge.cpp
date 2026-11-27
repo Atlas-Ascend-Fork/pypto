@@ -49,7 +49,8 @@ void NBufferMerge::AddConsumerBarrier(const std::vector<int>& producerColors, co
 {
     for (int consumerColor : consumerColors) {
         PASS_ASSERT(consumerColor >= 0 && consumerColor < static_cast<int>(pendingBarrierCount.size()))
-            << "Consumer color is out of range: " << consumerColor;
+            << "Consumer color " << consumerColor << " is out of range, expected in [0, " << pendingBarrierCount.size()
+            << ").";
         bool isProducer = std::binary_search(producerColors.begin(), producerColors.end(), consumerColor);
         if (!isProducer) {
             colorDep.nonProducerConsumerColors.emplace_back(consumerColor);
@@ -95,7 +96,7 @@ void NBufferMerge::BuildColorTensorDependencies(const RescheduleUtils::TensorDep
         colorTensorDeps.emplace_back(std::move(colorDep));
         for (int producerColor : producerColors) {
             PASS_ASSERT(producerColor >= 0 && producerColor < colorNum)
-                << "Producer color is out of range: " << producerColor;
+                << "Producer color " << producerColor << " is out of range, expected in [0, " << colorNum << ").";
             producerColorToDeps[producerColor].emplace_back(depIndex);
         }
     }
@@ -692,8 +693,8 @@ Status NBufferMerge::MergeProcess(const OperationsViewer& opOriList, std::map<ui
                 Elements::Operation, "HashOrder %d, HashValue %lu: total %zu groups, subgraphs before grouping: %s.",
                 hashOrder_[colorHashValue], colorHashValue, sortedColors.size(), IntVecToStr(colorValues).c_str());
             for (size_t groupIdx = 0; groupIdx < sortedColors.size(); groupIdx++) {
-                APASS_LOG_INFO_F(Elements::Operation, "  Group %zu: subgraphs %s.", groupIdx,
-                                 IntVecToStr(sortedColors[groupIdx]).c_str());
+                APASS_LOG_DEBUG_F(Elements::Operation, "  Group %zu: subgraphs %s.", groupIdx,
+                                  IntVecToStr(sortedColors[groupIdx]).c_str());
             }
             size_t numDBMerge = (vecNBuffermode_ == autoMerge) ? hashMergeNum[colorHashValue] :
                                                                  hashMergeNum[hashOrder_[colorHashValue]];
@@ -728,7 +729,10 @@ void NBufferMerge::ApplyByFuncNumDB(int currentFuncMagic, std::map<uint64_t, siz
         }
         int funcMagic, localOrder;
         if (!ParseFuncHashOrder(entry.first, funcMagic, localOrder)) {
-            APASS_LOG_WARN_F(Elements::Config, "Invalid func hashOrder format: %s, ignored.", entry.first.c_str());
+            APASS_LOG_WARN_F(
+                Elements::Config,
+                "Invalid func hashOrder format: %s, expected format: func<funcMagic>_<hashOrder>, ignored.",
+                entry.first.c_str());
             continue;
         }
         if (funcMagic == currentFuncMagic) {
@@ -857,8 +861,8 @@ void NBufferMerge::LogHashOverview(const Function& func, const std::map<uint64_t
     for (auto& entry : hashMap) {
         std::string fullHashOrder = "func" + std::to_string(funcMagic) + "_" +
                                     std::to_string(hashOrder_.at(entry.first));
-        APASS_LOG_INFO_F(Elements::Function, "Vec merge hashOrder: %s, Subgraph count: %zu, , Subgraph IDs: %s",
-                         fullHashOrder.c_str(), entry.second.size(), IntVecToStr(entry.second).c_str());
+        APASS_LOG_DEBUG_F(Elements::Function, "Vec merge hashOrder: %s, Subgraph count: %zu, Subgraph IDs: %s",
+                          fullHashOrder.c_str(), entry.second.size(), IntVecToStr(entry.second).c_str());
     }
     APASS_LOG_INFO_F(Elements::Function, "Computation graph [%s] overview end.", func.GetMagicName().c_str());
 }

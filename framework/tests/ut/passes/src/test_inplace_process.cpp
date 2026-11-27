@@ -26,6 +26,7 @@
 #include "passes/tile_graph_pass/graph_constraint/inplace_process.h"
 #include "symbolic_scalar_test_utils.h"
 #include "computational_graph_builder.h"
+#include "tilefwk/error_manager.h"
 
 using namespace npu::tile_fwk;
 
@@ -1230,6 +1231,199 @@ TEST_F(InplaceProcessTest, HubAssembleChainEmptyAssembleOperandsSkipsReuse)
     // 入口判空直接返回，hubInput 的 raw tensor 不得被改写
     EXPECT_EQ(hubInput->GetRawTensor(), hubInputRaw);
     EXPECT_TRUE(inplaceProcess.hubRelatedAssembleOpMagics.empty());
+}
+
+// Assemble 输出驻留 UB 且汇聚结果超过 UB 容量上限：InplaceProcessAssemble 报错并返回 FAILED
+TEST_F(InplaceProcessTest, AssembleUbOutputExceedsUbLimit)
+{
+    ComputationalGraphBuilder G;
+    // 输出 raw size = 8192*8192*2B = 128MB，远超任何形态的 UB 容量
+    std::vector<int64_t> smallShape = {16, 16};
+    std::vector<int64_t> hugeShape = {8192, 8192};
+    G.AddTensor(DataType::DT_FP16, smallShape, MemoryType::MEM_UB, "assemble_in");
+    G.AddTensor(DataType::DT_FP16, hugeShape, MemoryType::MEM_UB, "assemble_out");
+    G.AddOp(Opcode::OP_ASSEMBLE, {"assemble_in"}, {"assemble_out"}, "Assemble_Oversize");
+    auto assembleOp = G.GetOp("Assemble_Oversize");
+    auto attrAssemble = std::make_shared<AssembleOpAttribute>(MemoryType::MEM_UB, std::vector<int64_t>{0, 0});
+    assembleOp->SetOpAttribute(attrAssemble);
+
+    ErrorManager::Instance().OutputErrorMessage(true); // 清空历史错误，保证断言只针对本次构图
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    InplaceProcess passLocal;
+    EXPECT_NE(passLocal.RunOnFunction(*function), SUCCESS);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Local Buffer Assemble Result Oversized"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true); // 清空本次错误，避免影响后续用例
+}
+
+// VIEW_TYPE 收缩场景（FP16 -> FP32，ratio=2）尾维 15 不能被 2 整除：AdjustOffsetAndRawShape 报错
+TEST_F(InplaceProcessTest, ViewTypeShrinkOffsetNotEven)
+{
+    ComputationalGraphBuilder G;
+    // FP16 输入 [3,15] -> FP32 输出 [3,8]，inSize(2) < outSize(4)，尾维 15 % 2 != 0
+    G.AddTensor(DataType::DT_FP16, {3, 15}, MemoryType::MEM_UB, "vt_in");
+    G.AddTensor(DataType::DT_FP32, {3, 8}, MemoryType::MEM_UB, "vt_out");
+    G.AddOp(Opcode::OP_VIEW_TYPE, {"vt_in"}, {"vt_out"}, "ViewType_Shrink");
+    G.SetInCast({"vt_in"});
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    InplaceProcess passLocal;
+    EXPECT_NE(passLocal.RunOnFunction(*function), SUCCESS);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("ViewType Offset is not Even"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// A_MULACC_B 的 inplace 记录输入（index 2）操作数为空：ProcessInplaceOp 报空指针错误
+// （直接调用 ProcessInplaceOp：置空操作数后函数级拓扑排序会解引用空操作数，无法走 RunOnFunction 全链路）
+TEST_F(InplaceProcessTest, InplaceOpNullInputOperandFailed)
+{
+    ComputationalGraphBuilder G;
+    std::vector<int64_t> shape = {16, 16};
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_L0A, "in_a");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_L0B, "in_b");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_L0C, "in_c");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_L0C, "out_d");
+    G.AddOp(Opcode::OP_A_MULACC_B, {"in_a", "in_b", "in_c"}, {"out_d"}, "A_Mulacc_B");
+    // 模拟异常 IR：inplace 复用对（输入 2 -> 输出 0）记录的输入操作数丢失
+    G.GetOp("A_Mulacc_B")->iOperand[2] = nullptr;
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    InplaceProcess passLocal;
+    EXPECT_NE(passLocal.ProcessInplaceOp(*function, *G.GetOp("A_Mulacc_B")), SUCCESS);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("inplace input or output is nullptr"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// inplace 输出为 OutCast：走 OutCast 分支，输入改用输出 raw tensor 并继承输出 offset
+// （该分支内的 "OutCast branch" DEBUG 日志与 raw 替换处于同一无条件直线代码块，行为断言即可证明执行）
+TEST_F(InplaceProcessTest, InplaceOpOutCastBranchReuseOutputRaw)
+{
+    ComputationalGraphBuilder G;
+    std::vector<int64_t> shape = {16, 16};
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_L0A, "in_a");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_L0B, "in_b");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_L0C, "in_c");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_L0C, "out_d");
+    G.AddOp(Opcode::OP_A_MULACC_B, {"in_a", "in_b", "in_c"}, {"out_d"}, "A_Mulacc_B");
+    auto inC = G.GetTensor("in_c");
+    auto outD = G.GetTensor("out_d");
+    auto outRawMagicBefore = outD->GetRawMagic();
+    outD->UpdateOffset(std::vector<int64_t>{4, 4}); // 非零 offset，验证输入 offset 被改写为输出 offset
+    G.SetOutCast({"out_d"});                        // 输出是 OutCast，输入不是 InCast
+
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    InplaceProcess passLocal;
+    EXPECT_EQ(passLocal.RunOnFunction(*function), SUCCESS);
+    // OutCast 分支：tensorIn->tensor = tensorOut->tensor; tensorIn->UpdateOffset(tensorOut->GetOffset())
+    EXPECT_EQ(inC->GetRawMagic(), outRawMagicBefore);
+    EXPECT_EQ(inC->GetOffset(), (std::vector<int64_t>{4, 4}));
+}
+
+// inplace 输出非 OutCast：走 Non-OutCast 分支，输出改用输入 raw tensor
+// （该分支内的 "Non-OutCast branch" DEBUG 日志与 raw 替换处于同一无条件直线代码块）
+TEST_F(InplaceProcessTest, InplaceOpNonOutCastBranchReuseInputRaw)
+{
+    ComputationalGraphBuilder G;
+    std::vector<int64_t> shape = {16, 16};
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_L0A, "in_a");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_L0B, "in_b");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_L0C, "in_c");
+    G.AddTensor(DataType::DT_FP16, shape, MemoryType::MEM_L0C, "out_d");
+    G.AddOp(Opcode::OP_A_MULACC_B, {"in_a", "in_b", "in_c"}, {"out_d"}, "A_Mulacc_B");
+    auto inC = G.GetTensor("in_c");
+    auto outD = G.GetTensor("out_d");
+    auto inRawMagicBefore = inC->GetRawMagic();
+
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    InplaceProcess passLocal;
+    EXPECT_EQ(passLocal.RunOnFunction(*function), SUCCESS);
+    // Non-OutCast 分支：tensorOut->tensor = tensorIn->tensor
+    EXPECT_EQ(outD->GetRawMagic(), inRawMagicBefore);
+}
+
+// VIEW 的 inplaceIdx 非 0：ProcessVisitedViewOps 报 Inconsistent inplaceIdx 错误
+// （VIEW 有两个输入以通过 FindInplaceSource 的下标合法性断言；因不满足单输入校验，直接调用
+// RefactorViewConnectForInplace 而非 RunOnFunction，保证执行到目标代码）
+TEST_F(InplaceProcessTest, RefactorViewConnectRejectsNonZeroInplaceIdx)
+{
+    ComputationalGraphBuilder G;
+    G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_UB, "va");
+    G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_UB, "vb");
+    G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_UB, "vc");
+    G.AddOp(Opcode::OP_VIEW, {"va", "vb"}, {"vc"}, "View_Two_Inputs");
+    G.GetOp("View_Two_Inputs")->SetAttribute(OpAttributeKey::inplaceIdx, static_cast<int64_t>(1));
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    InplaceProcess passLocal;
+    EXPECT_NE(passLocal.RefactorViewConnectForInplace(*function), SUCCESS);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Inconsistent inplaceIdx"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// VIEW 链上输入操作数 raw 与 inplace 起点 raw 不一致：ProcessVisitedViewOps 报 input operand 不匹配
+TEST_F(InplaceProcessTest, RefactorViewConnectInputRawMismatchFailed)
+{
+    ComputationalGraphBuilder G;
+    // x --VIEW(viewOp1)--> t --VIEW(viewOp2)--> y，x/t/y 三个独立 raw tensor，y 无 consumer
+    G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_UB, "vx");
+    G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_UB, "vt");
+    G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_UB, "vy");
+    G.AddOp(Opcode::OP_VIEW, {"vx"}, {"vt"}, "View_One");
+    G.AddOp(Opcode::OP_VIEW, {"vt"}, {"vy"}, "View_Two");
+    // 手动标注 inplace 语义（输入输出 raw 不同，第一阶段不会自动补 inplaceIdx=0）
+    G.GetOp("View_One")->SetAttribute(OpAttributeKey::inplaceIdx, static_cast<int64_t>(0));
+    G.GetOp("View_Two")->SetAttribute(OpAttributeKey::inplaceIdx, static_cast<int64_t>(0));
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    InplaceProcess passLocal;
+    EXPECT_NE(passLocal.RunOnFunction(*function), SUCCESS);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("RawTensor mismatch for input operand"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// VIEW 链上输出操作数 raw 与 inplace 起点 raw 不一致：ProcessVisitedViewOps 报 output operand 不匹配
+TEST_F(InplaceProcessTest, RefactorViewConnectOutputRawMismatchFailed)
+{
+    ComputationalGraphBuilder G;
+    // x --VIEW(viewOp1)--> t(与 x 共享 raw) --VIEW(viewOp2)--> y(独立 raw)，y 无 consumer
+    G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_UB, "vx");
+    G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_UB, "vt");
+    G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_UB, "vy");
+    G.GetTensor("vt")->tensor = G.GetTensor("vx")->tensor; // t 与 x 共享 raw tensor
+    G.AddOp(Opcode::OP_VIEW, {"vx"}, {"vt"}, "View_One");
+    G.AddOp(Opcode::OP_VIEW, {"vt"}, {"vy"}, "View_Two");
+    G.GetOp("View_One")->SetAttribute(OpAttributeKey::inplaceIdx, static_cast<int64_t>(0));
+    G.GetOp("View_Two")->SetAttribute(OpAttributeKey::inplaceIdx, static_cast<int64_t>(0));
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    InplaceProcess passLocal;
+    EXPECT_NE(passLocal.RunOnFunction(*function), SUCCESS);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("RawTensor mismatch for output operand"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
 }
 
 inline void InplaceAssembleAddOp(ComputationalGraphBuilder& G)

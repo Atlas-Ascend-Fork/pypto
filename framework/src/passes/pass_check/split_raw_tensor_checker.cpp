@@ -31,7 +31,7 @@ Status SplitRawTensorChecker::DoPostCheck(Function& function)
             continue;
         }
         if ((logicalTensor->GetShape() != logicalTensor->tensor->GetRawShape())) {
-            APASS_LOG_ERROR_F(Elements::Tensor, "Tensor[%d]'s shape(%s) is differ from its rawShape(%s).",
+            APASS_LOG_ERROR_F(Elements::Tensor, "Tensor[%d]'s shape(%s) differs from its rawShape(%s).",
                               logicalTensor->GetMagic(), CommonUtils::ContainerToStr(logicalTensor->GetShape()).c_str(),
                               CommonUtils::ContainerToStr(logicalTensor->tensor->GetRawShape()).c_str());
             return FAILED;

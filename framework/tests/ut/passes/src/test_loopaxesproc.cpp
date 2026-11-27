@@ -249,6 +249,17 @@ TEST_F(TestLoopaxesProcPass, LoopaxesProcUTest1)
     EXPECT_TRUE(EqualSymShape(sub.GetVectorSymbolicScalarAttribute(OpAttributeKey::dynloopAxes), expectedLoopAxis2));
 }
 
+TEST_F(TestLoopaxesProcPass, RejectsMismatchedOutputValidShapeRank)
+{
+    auto pair = MakeDynLoopFuncPair("bad_rank");
+    auto input = MakeUbTensor(shape2, symShape2);
+    auto output = MakeUbTensor(shape2, symShape2);
+    auto& add = MakeVfOp(*pair.leaf, Opcode::OP_ADD, {input, input}, {output}, kAtomicScopeId);
+    output->UpdateDynValidShape({2});
+    LoopaxesProc pass;
+    EXPECT_EQ(pass.UpdateOpLoopAxes(add, *pair.leaf), FAILED);
+}
+
 TEST_F(TestLoopaxesProcPass, LoopaxesProcSubProgramNullptr)
 {
     auto rootFuncPtr = std::make_shared<Function>(Program::GetInstance(), "LoopaxesProcNullTest",

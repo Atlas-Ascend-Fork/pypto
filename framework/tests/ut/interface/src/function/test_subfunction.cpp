@@ -256,6 +256,34 @@ TEST_F(SubFunctionTest, SubfuncTopologyInfoTy_DumpEachEntryInfo)
     EXPECT_EQ(readyState[3], static_cast<int32_t>(CoreType::AIC));
 }
 
+TEST_F(SubFunctionTest, ConstructInvokeParamRequiresFinishedRecord)
+{
+    SubfuncInvokeInfoTy info;
+    info.RecordTensorArg(0, 123, {0}, {64}, {64}, DT_FP32, false, nullptr, 10);
+    info.ConstructActualInvokeParam(0);
+    EXPECT_TRUE(info.GetTensorParamList().empty());
+    info.DoFinishRecord();
+    info.ConstructActualInvokeParam(0);
+    EXPECT_EQ(info.GetTensorParamList().size(), 1U);
+}
+
+TEST_F(SubFunctionTest, InvalidEntryLocationPreservesDumpBuffers)
+{
+    SubfuncTopologyInfoTy topology;
+    topology.AddEntry(0, 0, {});
+    const std::vector<int64_t> initialEntry(8, 42);
+    const std::vector<int32_t> initialReady(2, 42);
+    auto entry = initialEntry;
+    auto ready = initialReady;
+    for (const auto& [id, offset] : std::vector<std::pair<int, int64_t>>{{-1, 0}, {0, -8}, {0, 1}}) {
+        EXPECT_EQ(topology.DumpEachEntryInfo(id, CoreType::AIC, offset, entry.data(), entry.size() * sizeof(int64_t),
+                                             ready.data(), ready.size()),
+                  FAILED);
+        EXPECT_EQ(entry, initialEntry);
+        EXPECT_EQ(ready, initialReady);
+    }
+}
+
 TEST_F(SubFunctionTest, SubfuncTopologyInfoTy_DumpEachEntryInfoEntryParamOverflow)
 {
     SubfuncTopologyInfoTy subfuncTopoInfo;

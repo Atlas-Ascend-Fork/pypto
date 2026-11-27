@@ -446,7 +446,8 @@ void L1CopyInReuseRunner::HashUpdate(Function& func, int color, const std::vecto
         }
     }
 
-    APASS_LOG_INFO_F(Elements::Function, "Computation graph [%s] overview.", func.GetMagicName().c_str());
+    APASS_LOG_INFO_F(Elements::Function, "Computation graph [%s] cube nbuffer hash overview.",
+                     func.GetMagicName().c_str());
     for (auto& entry : hashOrder_) {
         auto& subgraphIds = hashMap_[entry.first];
         std::string fullHashOrder = "func" + std::to_string(funcMagic) + "_" + std::to_string(entry.second);
@@ -592,7 +593,7 @@ Status L1CopyInReuseRunner::L1MergeProcess(OperationsViewer& opOriList, std::vec
             opOriList[t].UpdateSubgraphID(tmpColor);
             colorNode[tmpColor].push_back(t);
         }
-        APASS_LOG_INFO_F(Elements::Operation, "Subgraph merge: %d, %d.", i, tmpColor);
+        APASS_LOG_INFO_F(Elements::Operation, "Subgraph merge (color reduce): %d, %d.", i, tmpColor);
         colorNode[i].clear();
         colorCopyIn[tmpColor] = colorCopyIn[tmpColor] + colorCopyIn[i];
         mergedNum[i] = 0;
@@ -911,8 +912,9 @@ void L1CopyInReuseRunner::ApplyL1ReuseLabelOverrides(const std::map<int, int>& s
     for (const auto& [colorId, val] : subgraphOverrides) {
         if (colorId < static_cast<int>(numLRList.size())) {
             numLRList[colorId] = val;
-            APASS_LOG_INFO_F(Elements::Config,
-                             "Applied L1 reuse semantic label override: subgraph_color=%d, merge_num=%d", colorId, val);
+            APASS_LOG_DEBUG_F(Elements::Config,
+                              "Applied L1 reuse semantic label override: subgraph_color=%d, merge_num=%d", colorId,
+                              val);
         }
     }
 }
@@ -984,8 +986,8 @@ void L1CopyInReuseRunner::ApplyCubeNBufferLabelOverrides(const std::map<int, int
 {
     for (const auto& [order, val] : labelOverrides) {
         hashMergeNumMap[order] = val;
-        APASS_LOG_INFO_F(Elements::Config, "Applied cube nbuffer semantic label override: hash_order=%d, merge_num=%d",
-                         order, val);
+        APASS_LOG_DEBUG_F(Elements::Config, "Applied cube nbuffer semantic label override: hash_order=%d, merge_num=%d",
+                          order, val);
     }
 }
 
@@ -1066,7 +1068,7 @@ void L1CopyInReuseRunner::CubeMergeProcess(std::vector<std::vector<int>>& colorN
                 opOriList[opIdxMergedDB].UpdateSubgraphID(pingColor);
                 colorNode[pingColor].push_back(opIdxMergedDB);
             }
-            APASS_LOG_INFO_F(Elements::Operation, "Subgraph merge: %d, %d.", pingColor, pongColor);
+            APASS_LOG_INFO_F(Elements::Operation, "Subgraph merge (ping/pong): %d, %d.", pingColor, pongColor);
             colorNode[pongColor].clear();
         }
     }
@@ -1098,12 +1100,12 @@ Status L1CopyInReuseRunner::ConfigureRunSettings(Function& func)
 void L1CopyInReuseRunner::LogL1ReuseHashOverview(const Function& func) const
 {
     int funcMagic = func.GetFuncMagic();
-    APASS_LOG_INFO_F(Elements::Function, "Computation graph [%s] overview.", func.GetMagicName().c_str());
+    APASS_LOG_INFO_F(Elements::Function, "Computation graph [%s] L1 reuse hash overview.", func.GetMagicName().c_str());
     for (auto& entry : hashMap_) {
         std::string fullHashOrder = "func" + std::to_string(funcMagic) + "_" +
                                     std::to_string(hashOrder_.at(entry.first));
-        APASS_LOG_INFO_F(Elements::Function, "L1 reuse hashOrder: %s, Subgraph count: %zu, Subgraph IDs: %s",
-                         fullHashOrder.c_str(), entry.second.size(), IntVecToStr(entry.second).c_str());
+        APASS_LOG_DEBUG_F(Elements::Function, "L1 reuse hashOrder: %s, Subgraph count: %zu, Subgraph IDs: %s",
+                          fullHashOrder.c_str(), entry.second.size(), IntVecToStr(entry.second).c_str());
     }
     APASS_LOG_INFO_F(Elements::Function, "Computation graph [%s] overview end.", func.GetMagicName().c_str());
 }
@@ -1132,7 +1134,8 @@ Status L1CopyInReuseRunner::RunCubeNBufferPhase(const Function& func, int color,
 {
     std::map<int, int> hashMergeNumMap;
     if (SetNumFromConfig(func, numDBMap_, numDBMapByFunc_, hashMergeNumMap, "cubeNBufferSetting") == FAILED) {
-        APASS_LOG_ERROR_F(Elements::Config, "Invalid configuration: %s.", "cubeNBufferSetting");
+        APASS_LOG_ERROR_F(Elements::Config, "Invalid configuration: %s, expected merge count in [1, %d].",
+                          "cubeNBufferSetting", INT_MAX);
         return FAILED;
     }
     if (ApplySemanticLabelSettingsCubeNBuffer(opOriList, hashMergeNumMap, hashColor, color) == FAILED) {
@@ -1150,7 +1153,8 @@ Status L1CopyInReuseRunner::ValidateSubgraphIds(Function& func) const
     auto valOps = func.Operations(false);
     for (size_t i = 0; i < valOps.size(); i++) {
         if (static_cast<size_t>(valOps[i].GetSubgraphID()) > func.GetTotalSubGraphCount()) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Run: op SubGraph ID %d out of range. %s", valOps[i].GetSubgraphID(),
+            APASS_LOG_ERROR_F(Elements::Operation, "Run: op SubGraph ID %d out of range, valid range [0, %zu]. %s",
+                              valOps[i].GetSubgraphID(), func.GetTotalSubGraphCount(),
                               GetFormatBacktrace(valOps[i]).c_str());
             return FAILED;
         }
@@ -1228,7 +1232,7 @@ Status L1CopyInReuseMerge::InitColorNode(Function& func, std::vector<std::vector
                                   GetFormatBacktrace(opOriList[i]).c_str());
                 return FAILED;
             }
-            APASS_LOG_INFO_F(Elements::Operation, "Op %zu feature: %s.", i, IntVecToStr(feature).c_str());
+            APASS_LOG_DEBUG_F(Elements::Operation, "Op %zu feature: %s.", i, IntVecToStr(feature).c_str());
         }
         auto opColor = opOriList[i].GetSubgraphID();
         if (opColor < 0) {

@@ -147,7 +147,8 @@ Status OptimizeSort::RollBack(size_t& startIndex, std::shared_ptr<std::vector<Op
         }
         return SUCCESS;
     }
-    APASS_LOG_ERROR_F(Elements::Operation, "RollBack Failed");
+    APASS_LOG_ERROR_F(Elements::Operation, "RollBack failed at startIndex: %zu, backTraceIndex: %zu.", startIndex,
+                      backTraceIndex);
     return FAILED;
 }
 
@@ -188,7 +189,7 @@ Status OptimizeSort::FindConsumerList(size_t consumerIndex, std::vector<size_t>&
         return FAILED;
     }
     if ((*curOpList)[consumerIndex] == rollBackNodeOp_) {
-        APASS_LOG_WARN_F(Elements::Operation, "rollBackNodeOp_ is one of the predecessor node.");
+        APASS_LOG_WARN_F(Elements::Operation, "rollBackNodeOp_ is one of the predecessor nodes.");
         return FAILED;
     }
     visitedOp_[(*curOpList)[consumerIndex]] = true;
@@ -219,7 +220,8 @@ Status OptimizeSort::UpdateOOperandPreDependence(size_t startIndex, std::shared_
         if (std::find(consumersGroup.begin(), consumersGroup.end(), (*curOpList)[index]) != consumersGroup.end()) {
             APASS_LOG_DEBUG_F(Elements::Operation, "consumer Idx: %zu", index);
             if (FindConsumerList(index, preOpList, curOpList) != SUCCESS) {
-                APASS_LOG_WARN_F(Elements::Operation, "FindConsumerList failed");
+                APASS_LOG_WARN_F(Elements::Operation,
+                                 "FindConsumerList failed in UpdateOOperandPreDependence, index: %zu", index);
                 return FAILED;
             }
         }
@@ -367,12 +369,15 @@ Status OptimizeSort::BacktraceOnMemoryExceeded(size_t& startIndex, std::shared_p
 bool OptimizeSort::IsBufferFull(std::map<MemoryType, int64_t> curMemoryMap, MemoryType memType, int64_t size)
 {
     if (memType != MemoryType::MEM_L0A && memType != MemoryType::MEM_L0B && memType != MemoryType::MEM_L0C) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "MemoryType is not L0A, L0B, or L0C.");
+        APASS_LOG_DEBUG_F(Elements::Operation, "MemoryType is not L0A, L0B, or L0C in IsBufferFull check.");
         return false;
     }
     if (curMemoryMap[memType] + size > state_.localMemSize[memType]) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "The %d-memType memory is full, current memory: %ld, memory to add: %ld",
-                          memType, static_cast<long>(curMemoryMap[memType]), static_cast<long>(size));
+        APASS_LOG_DEBUG_F(
+            Elements::Operation,
+            "The %d-memType memory is full, current memory: %ld bytes, memory to add: %ld bytes, limit: %ld bytes",
+            memType, static_cast<long>(curMemoryMap[memType]), static_cast<long>(size),
+            static_cast<long>(state_.localMemSize[memType]));
         return true;
     }
     return false;
@@ -388,7 +393,11 @@ Status OptimizeSort::ModifyBuffer(std::map<MemoryType, int64_t>& curMemoryMap, M
     }
     if (isAdd) {
         if (curMemoryMap[memType] + size > state_.localMemSize[memType]) {
-            APASS_LOG_ERROR_F(Elements::Tensor, "Failed to increase memory");
+            APASS_LOG_ERROR_F(Elements::Tensor,
+                              "Failed to increase memory, memType: %d, current memory: %ld bytes, size to add: %ld "
+                              "bytes, limit: %ld bytes.",
+                              memType, static_cast<long>(curMemoryMap[memType]), static_cast<long>(size),
+                              static_cast<long>(state_.localMemSize[memType]));
             return FAILED;
         }
         curMemoryMap[memType] = curMemoryMap[memType] + size;
@@ -397,7 +406,10 @@ Status OptimizeSort::ModifyBuffer(std::map<MemoryType, int64_t>& curMemoryMap, M
         return SUCCESS;
     }
     if (curMemoryMap[memType] - size < 0) {
-        APASS_LOG_ERROR_F(Elements::Tensor, "Failed to reduce memory");
+        APASS_LOG_ERROR_F(Elements::Tensor,
+                          "Failed to reduce memory, memType: %d, current memory: %ld bytes, size to reduce: %ld bytes, "
+                          "valid range: current memory >= 0 bytes.",
+                          memType, static_cast<long>(curMemoryMap[memType]), static_cast<long>(size));
         return FAILED;
     }
     curMemoryMap[memType] = curMemoryMap[memType] - size;
@@ -457,7 +469,8 @@ Status OptimizeSort::AllocExecute(Operation* op, std::shared_ptr<std::vector<Ope
         APASS_LOG_DEBUG_F(Elements::Operation, "=====> Need backtrace.");
         if (BacktraceOnMemoryExceeded(startIndex, curOpList, curMemoryMap) != SUCCESS) {
             if (RollBack(startIndex, curOpList, curMemoryMap) != SUCCESS) {
-                APASS_LOG_ERROR_F(Elements::Operation, "AllocExecute failed.");
+                APASS_LOG_ERROR_F(Elements::Operation, "RollBack failed in AllocExecute, op: %s, index: %zu.",
+                                  state_.GetOpInfo(op).c_str(), startIndex);
                 return FAILED;
             }
             isContinue = true;
@@ -483,7 +496,8 @@ Status OptimizeSort::OpListExecute(std::shared_ptr<std::vector<Operation*>>& cur
         if (state_.IsOpAlloc(op)) {
             bool isContinue = false;
             if (AllocExecute(op, curOpList, curMemoryMap, startIndex, isContinue) != SUCCESS) {
-                APASS_LOG_ERROR_F(Elements::Tensor, "AllocExecute failed.");
+                APASS_LOG_ERROR_F(Elements::Tensor, "AllocExecute failed in OpListExecute, op: %s, index: %zu.",
+                                  state_.GetOpInfo(op).c_str(), startIndex);
                 return FAILED;
             }
             if (isContinue) {
@@ -588,7 +602,8 @@ std::unique_ptr<OptimizeSort> OptimizeSort::Create(std::vector<Operation*> ops, 
 {
     auto it = SORT_ALGOS.find(mode);
     if (it == SORT_ALGOS.end()) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Unknown sort mode: %s.", mode.c_str());
+        APASS_LOG_ERROR_F(Elements::Operation, "Unknown sort mode: %s, valid modes: PriorDFS, ClusterList, VfAffinity.",
+                          mode.c_str());
         return nullptr;
     }
     return it->second(ops, func);

@@ -60,15 +60,18 @@ struct CoaInfo {
     Status SToIParamShapeAndOffset(const std::smatch& match)
     {
         if (SToIWrapper(match[INPUT_PARAM_POS_ONE].str(), dim) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Failed to convert dim.");
+            APASS_LOG_ERROR_F(Elements::Operation, "Failed to convert dim from string '%s'.",
+                              match[INPUT_PARAM_POS_ONE].str().c_str());
             return FAILED;
         }
         if (SToIWrapper(match[INPUT_PARAM_POS_TWO].str(), base) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Failed to convert base.");
+            APASS_LOG_ERROR_F(Elements::Operation, "Failed to convert base from string '%s'.",
+                              match[INPUT_PARAM_POS_TWO].str().c_str());
             return FAILED;
         }
         if (SToIWrapper(match[INPUT_PARAM_POS_THREE].str(), idx) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Failed to convert idx.");
+            APASS_LOG_ERROR_F(Elements::Operation, "Failed to convert idx from string '%s'.",
+                              match[INPUT_PARAM_POS_THREE].str().c_str());
             return FAILED;
         }
         return SUCCESS;
@@ -278,7 +281,7 @@ Status DynAttrToStatic::GetCallee(const Operation& callop, Function*& callFunc)
     auto callopAttr = std::static_pointer_cast<CallOpAttribute>(callop.GetOpAttribute());
     callFunc = Program::GetInstance().GetFunctionByMagicName(callopAttr->GetCalleeMagicName());
     if (callFunc == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Get callee function %s failed.",
+        APASS_LOG_ERROR_F(Elements::Operation, "Get callee function %s failed in DynAttrToStatic.",
                           callopAttr->GetCalleeMagicName().c_str());
         return FAILED;
     }
@@ -293,7 +296,8 @@ Status DynAttrToStatic::BuildLeafToCaller(Function* func)
         for (auto callop : func->GetCallopList()) {
             Function* nextFunc = nullptr;
             if (GetCallee(*callop, nextFunc) != SUCCESS) {
-                APASS_LOG_ERROR_F(Elements::Operation, "BuildLeafToCaller at %s, %s[%d] GetCallee failed.%s",
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "BuildLeafToCaller at %s, %s[%d] GetCallee failed in tensor graph.%s",
                                   func->GetRawName().c_str(), callop->GetOpcodeStr().c_str(), callop->GetOpMagic(),
                                   GetFormatBacktrace(callop).c_str());
                 return FAILED;
@@ -312,7 +316,8 @@ Status DynAttrToStatic::BuildLeafToCaller(Function* func)
         for (auto callop : func->GetCallopList()) {
             Function* leafFunc = nullptr;
             if (GetCallee(*callop, leafFunc) != SUCCESS) {
-                APASS_LOG_ERROR_F(Elements::Operation, "BuildLeafToCaller at %s, %s[%d] GetCallee failed.%s",
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "BuildLeafToCaller at %s, %s[%d] GetCallee failed in execute graph.%s",
                                   func->GetRawName().c_str(), callop->GetOpcodeStr().c_str(), callop->GetOpMagic(),
                                   GetFormatBacktrace(callop).c_str());
                 return FAILED;
@@ -432,11 +437,11 @@ void ReplaceCommonSymbol(Function* leafFunc, std::vector<std::vector<SymbolicSca
             if (index2BaseSymbol.find(index2GroupId[coaIdx]) == index2BaseSymbol.end()) {
                 leafFunc->GetMutableDynParam(symbolStr).isBaseParam = true;
                 index2BaseSymbol[index2GroupId[coaIdx]] = symbolStr;
-                APASS_LOG_INFO_F(Elements::Operation, "Mark coaIndex[%d] groupId[%zu] symbolStr[%s] as baseParam",
-                                 coaIdx, index2GroupId[coaIdx], symbolStr.c_str());
+                APASS_LOG_DEBUG_F(Elements::Operation, "Mark coaIndex[%d] groupId[%zu] symbolStr[%s] as baseParam",
+                                  coaIdx, index2GroupId[coaIdx], symbolStr.c_str());
             } else {
                 leafFunc->GetMutableDynParam(symbolStr).replacedSymbol = index2BaseSymbol[index2GroupId[coaIdx]];
-                APASS_LOG_INFO_F(
+                APASS_LOG_DEBUG_F(
                     Elements::Operation, "Replace coaIndex[%d] groupId[%zu] symbolStr[%s] with baseParam[%s]", coaIdx,
                     index2GroupId[coaIdx], symbolStr.c_str(), index2BaseSymbol[index2GroupId[coaIdx]].c_str());
             }

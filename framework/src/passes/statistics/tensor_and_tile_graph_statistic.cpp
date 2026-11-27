@@ -61,7 +61,7 @@ void CalcOperatorInfo(Function& function, json& report)
     // 非静态场景下 无法计算size 直接返回
     if (function.GetFunctionType() != FunctionType::STATIC) {
         APASS_LOG_INFO_F(Elements::Function,
-                         "PeakMemory can't be calculated; because functiontype is not static, name %s, hash %lu.",
+                         "PeakMemory can't be calculated; because function type is not static, name %s, hash %lu.",
                          function.GetMagicName().c_str(), function.GetFunctionHash().GetHash());
         return;
     }
@@ -200,7 +200,7 @@ void CalShapeInt(Operation* copyin, std::vector<OpImmediate>& shape, std::vector
     for (auto s : shape) {
         SymbolicScalar& value = s.GetSpecifiedValue();
         if (value.Raw()->Kind() != SymbolicScalarKind::T_SCALAR_SYMBOLIC_IMMEDIATE) {
-            APASS_LOG_WARN_F(Elements::Operation, "%d COPYIN Shape is dynamic, CalShapeInt not support!",
+            APASS_LOG_WARN_F(Elements::Operation, "%d COPYIN Shape is dynamic, CalShapeInt does not support it!",
                              copyin->GetOpMagic());
             continueFlag = true;
             return;
@@ -215,7 +215,7 @@ void CalOffsetInt(Operation* copyin, std::vector<OpImmediate>& offset, std::vect
     for (auto o : offset) {
         SymbolicScalar& value = o.GetSpecifiedValue();
         if (value.Raw()->Kind() != SymbolicScalarKind::T_SCALAR_SYMBOLIC_IMMEDIATE) {
-            APASS_LOG_WARN_F(Elements::Operation, "%d COPYIN Offset is dynamic, CalOffsetInt not support!",
+            APASS_LOG_WARN_F(Elements::Operation, "%d COPYIN Offset is dynamic, CalOffsetInt does not support it!",
                              copyin->GetOpMagic());
             continueFlag = true;
             return;
@@ -278,11 +278,12 @@ Status CalRedundantCopy(Function& function, json& report)
 void WriteHealthReport(const json& report, const std::string& reportPath, const std::string& filename)
 {
     if (!CreateDir(reportPath, true)) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Failed to create directory for health report");
+        APASS_LOG_ERROR_F(Elements::Operation, "Failed to create health report directory: %s", reportPath.c_str());
     }
     std::ofstream out(reportPath + "/" + filename);
     if (!out.is_open()) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Failed to open health report file for writing");
+        APASS_LOG_ERROR_F(Elements::Operation, "Failed to open health report file for writing: %s",
+                          (reportPath + "/" + filename).c_str());
         return;
     }
     out << report.dump(DUMP_WIDTH);

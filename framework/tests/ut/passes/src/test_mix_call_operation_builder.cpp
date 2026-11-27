@@ -814,6 +814,18 @@ TEST_F(MixCallOperationBuilderTest, TestDifferentWrapIdForDifferentOriginalCallO
 }
 
 // 测试Global Tensor的处理
+TEST_F(MixCallOperationBuilderTest, MissingOriginalAttributesLeaveCallUnchanged)
+{
+    auto scenario = createBasicTestScenario();
+    buildOriginalMixFuncAndCallOp("missing_attrs", scenario);
+    auto* original = scenario.originalCallOp;
+    auto attr = original->GetOpAttribute();
+    CallOpCreationInfo info{};
+    SubgraphToFunction subgraphs;
+    builder->SetCallOpAttribute(*scenario.originalMixFunc, *original, original, nullptr, 0, 0, subgraphs, info);
+    EXPECT_EQ(original->GetOpAttribute(), attr);
+}
+
 TEST_F(MixCallOperationBuilderTest, TestGlobalTensorHandling)
 {
     auto scenario = createBasicTestScenario();

@@ -181,6 +181,35 @@ public:
 
 int CountMemoryPath(Function* originFunction, MemoryType from, MemoryType to);
 
+TEST_F(AssignMemoryTypeTest, LegacyViewInferenceRequiresViewAttributes)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensor(DT_FP32, {16}, MEM_UB, "input"));
+    ASSERT_TRUE(graph.AddTensor(DT_FP32, {16}, MEM_UNKNOWN, "output"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_VIEW, {"input"}, {"output"}, "view"));
+    auto& view = *graph.GetOp("view");
+    AssignMemoryType pass;
+    EXPECT_EQ(pass.InferViewMemoryTypeLegacy(view), FAILED);
+    EXPECT_EQ(pass.InferViewKnownInputOutput(view, graph.GetTensor("input"), MEM_UB, MEM_UB), FAILED);
+    EXPECT_EQ(pass.InferViewKnownInputUnknownOutput(view, graph.GetTensor("input"), graph.GetTensor("output"), MEM_UB),
+              FAILED);
+}
+
+TEST_F(AssignMemoryTypeTest, SingleContractUpgradeRequiresAssembleAttributesOnAllProducers)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {16}, {"first", "second", "middle"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"first"}, {"middle"}, "contract"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"second"}, {"middle"}, "sibling"));
+    auto& contract = *graph.GetOp("contract");
+    AssignMemoryType pass;
+    EXPECT_EQ(pass.ApplySingleContractSliceUpgrade(contract, MEM_UB, MEM_L1, "test"), FAILED);
+    contract.SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{0}));
+    EXPECT_EQ(pass.ApplySingleContractSliceUpgrade(contract, MEM_UB, MEM_L1, "test"), FAILED);
+    graph.GetOp("sibling")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{0}));
+    EXPECT_EQ(pass.ApplySingleContractSliceUpgrade(contract, MEM_UB, MEM_L1, "test"), SUCCESS);
+}
+
 TEST_F(AssignMemoryTypeTest, AddReshape)
 {
     std::vector<int64_t> shape = {16, 32};

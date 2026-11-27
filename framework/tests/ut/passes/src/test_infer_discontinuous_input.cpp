@@ -21,6 +21,7 @@
 #include "interface/inner/tilefwk.h"
 #include "interface/configs/config_manager.h"
 #include "computational_graph_builder.h"
+#include "passes/pass_utils/infer_discontinuous_input_utils.h"
 #include "passes/tile_graph_pass/graph_optimization/infer_discontinuous_input.h"
 
 namespace npu {
@@ -41,6 +42,23 @@ public:
     }
     void TearDown() override {}
 };
+
+TEST_F(TestInferDiscontinuousInput, OverflowingRawShapeRequiresCopiesForAllAssembleInputs)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP16, {1, 2}, {"first", "second", "output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"first"}, {"output"}, "left"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"second"}, {"output"}, "right"));
+    graph.GetOp("left")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{0, 0}));
+    graph.GetOp("right")->SetOpAttribute(std::make_shared<AssembleOpAttribute>(Offset{0, 2}));
+    auto first = graph.GetTensor("first");
+    const std::vector<std::pair<LogicalTensorPtr, Operation*>> inputs{
+        {first, graph.GetOp("left")}, {graph.GetTensor("second"), graph.GetOp("right")}};
+    EXPECT_TRUE(InferDiscontinuousInputUtils::GetInputTileConflict(*graph.GetFunction(), inputs, false).empty());
+    first->GetRawTensor()->rawshape = {INT64_MAX, 2};
+    EXPECT_EQ(InferDiscontinuousInputUtils::GetInputTileConflict(*graph.GetFunction(), inputs, false),
+              (std::vector<size_t>{0, 1}));
+}
 
 void Construct(ComputationalGraphBuilder& G)
 {

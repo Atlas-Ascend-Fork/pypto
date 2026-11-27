@@ -150,7 +150,10 @@ bool SpillEngine::IsBelongSpillBlackList(int memId, Operation* op)
     }
     SpillPlan plan;
     if (PlanSpill(memId, spillTensor, plan) != SUCCESS) {
-        APASS_LOG_DEBUG_F(Elements::Tensor, "Spill: skip tensor[%d], cannot plan a spill for it.", memId);
+        APASS_LOG_DEBUG_F(Elements::Tensor,
+                          "Spill: skip tensor[%d] in blacklist candidate filter, cannot plan a spill "
+                          "for it.",
+                          memId);
         return true;
     }
     if (op->GetAtomicScopeId() >= VF_CLUSTER_ID_START && IsVfTensorSpillBlocked(memId, op->GetAtomicScopeId())) {
@@ -300,7 +303,7 @@ Operation* SpillEngine::CreateCopyinOp(LogicalTensorPtr iOperand, LogicalTensorP
         auto mode = needND2NZ ? Matrix::CopyInMode::ND2NZ : Matrix::CopyInMode::ND2ND;
         copyinOp.SetAttribute(OpAttributeKey::copyInMode, static_cast<int64_t>(mode));
     }
-    APASS_LOG_DEBUG_F(Elements::Operation, "Spill: Create %s", state_.GetOpInfo(&copyinOp).c_str());
+    APASS_LOG_DEBUG_F(Elements::Operation, "Spill: Create copyin op %s", state_.GetOpInfo(&copyinOp).c_str());
     return &copyinOp;
 }
 
@@ -903,7 +906,7 @@ Status SpillEngine::SpillBuffer(int memId, Operation* spillAllocOp, SpillContext
 {
     Operation* spillOp = GetSpillOp(memId);
     if (spillOp == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Tensor, "Cannot find spill Tensor[%d] occupy op.", memId);
+        APASS_LOG_ERROR_F(Elements::Tensor, "Cannot find spill Tensor[%d] occupy op (spill engine side).", memId);
         return FAILED;
     }
     if (state_.IsOpAllocInSchedInfo(spillOp)) {
@@ -920,7 +923,8 @@ Status SpillEngine::SpillBuffer(int memId, Operation* spillAllocOp, SpillContext
     // 兜底 spill-all 走的是全池, 不过候选筛选, 所以这里会收到排不出计划的 buffer。
     // 腾不动就跳过这块、换下一块, 不挂整个调度。
     if (PlanSpill(memId, spillTensor, plan) != SUCCESS) {
-        APASS_LOG_DEBUG_F(Elements::Tensor, "Spill: skip tensor[%d], cannot plan a spill for it.", memId);
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Spill: skip tensor[%d] in spill-all fallback, cannot plan a spill for it.",
+                          memId);
         return SUCCESS;
     }
     if (SaveToDDR(memId, spillTensor, plan, ctx) != SUCCESS ||
@@ -1088,7 +1092,7 @@ Status SpillEngine::ReloadFromDDR(int memId, LogicalTensorPtr spillTensor, Opera
         }
     }
     if (state_.depManager.RefreshDependencies(seeds, state_.tensorAllocMap) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Operation, "RefreshDependencies failed.");
+        APASS_LOG_ERROR_F(Elements::Operation, "RefreshDependencies failed in ReloadFromDDR.");
         return FAILED;
     }
     state_.bufRefCount[memId] = 0;
@@ -1631,7 +1635,7 @@ void SpillEngine::UpdateOpScheduleInfo(Operation* op, std::vector<int> memIds, O
 Status SpillEngine::InsertOps(OpMemIdMap opMemidMap, Operation* spillAllocOp, int memId)
 {
     if (memId == -1) {
-        APASS_LOG_ERROR_F(Elements::Tensor, "MemId: %d illegal.", memId);
+        APASS_LOG_ERROR_F(Elements::Tensor, "MemId: %d is illegal, expected memId >= 0.", memId);
         return FAILED;
     }
     int bufNextUseTime = GetBufNextUseTime(memId);

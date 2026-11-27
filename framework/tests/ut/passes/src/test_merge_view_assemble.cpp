@@ -264,6 +264,26 @@ void ExpectOverlappingProducerWriteOrder(Function& function, const OverlappingPr
 
 } // namespace
 
+TEST_F(MergeViewAssembleTest, RejectsMissingChainEndpoints)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {16}, {"input", "output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ASSEMBLE, {"input"}, {"output"}, "assemble"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_VIEW, {"input"}, {"output"}, "view"));
+    auto* assemble = graph.GetOp("assemble");
+    auto* view = graph.GetOp("view");
+    auto& function = *graph.GetFunction();
+    MergeViewAssembleUtils utils;
+    std::vector<Operation*> assembleChain{assemble};
+    std::vector<Operation*> viewChain{view};
+    assemble->GetOOperands().clear();
+    EXPECT_EQ(utils.ProcessAssembleChainEnd(function, assembleChain, *assemble), FAILED);
+    assemble->GetOOperands().push_back(nullptr);
+    EXPECT_EQ(utils.ProcessAssembleChainEnd(function, assembleChain, *assemble), FAILED);
+    view->GetIOperands().front() = nullptr;
+    EXPECT_EQ(utils.ProcessChainEnd(function, viewChain), FAILED);
+}
+
 TEST_F(MergeViewAssembleTest, LegacyStopperUsesArchitectureDespiteUnrelatedTokenAndMarker)
 {
     for (auto npuArch : {NPUArch::DAV_2201, NPUArch::DAV_3510}) {

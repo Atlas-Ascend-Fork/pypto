@@ -75,7 +75,9 @@ bool ConnectionMatrix::IsConnected(uint64_t indexA, uint64_t indexB) const
 {
     if (indexA >= size_ || indexB >= size_) {
         APASS_LOG_WARN_F(Elements::Function,
-                         "Func ConnectionMatrix::IsConnected invalid index: indexA %lu, indexB, %lu.", indexA, indexB);
+                         "Func ConnectionMatrix::IsConnected invalid index: indexA %lu, indexB %lu, "
+                         "valid range [0, %zu).",
+                         indexA, indexB, size_);
         return false;
     }
     return GetBitMap(indexB).GetBit(static_cast<size_t>(indexA));
@@ -94,7 +96,9 @@ LargeBitmap& ConnectionMatrix::GetMutableBitMap(const Operation& op)
 const LargeBitmap& ConnectionMatrix::GetBitMap(uint64_t index) const
 {
     if (index >= size_) {
-        APASS_LOG_WARN_F(Elements::Function, "Func ConnectionMatrix::GetBitMap invalid index: index %lu.", index);
+        APASS_LOG_WARN_F(Elements::Function,
+                         "Func ConnectionMatrix::GetBitMap invalid index: index %lu, valid range [0, %zu).", index,
+                         size_);
         return invalidBitmap_;
     }
     return bitMaps_[index];

@@ -234,7 +234,7 @@ Platform& Platform::Instance()
 void Platform::SetMemoryLimit(const PlatformParser& parser)
 {
     size_t memoryLimit;
-    PLATFORM_LOGD("Start set memory limit.");
+    PLATFORM_LOGD("Start setting memory limit.");
     if (parser.GetSizeVal(aiCoreSpec, l0aSize, memoryLimit)) {
         GetAICCore().AddMemory(MemoryInfo(MemoryType::MEM_L0A, memoryLimit));
     }
@@ -286,7 +286,7 @@ void Platform::LoadPlatformInfo(const PlatformParser& parser)
     std::string socSeries;
     std::string cvMix;
     std::unordered_map<std::string, std::string> versionInfo;
-    PLATFORM_LOGD("Start load platform info.");
+    PLATFORM_LOGD("Start loading platform info.");
     if (parser.GetStringVal(version, npuArchInfo, archType)) {
         GetSoc().SetNPUArch(archType);
     }

@@ -70,7 +70,8 @@ Status RemoveUndrivenView::RunOnFunction(Function& function)
 {
     APASS_LOG_INFO_F(Elements::Function, "===> Start RemoveUndrivenView.");
     if (Process(function) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Function, "===> Process failed.");
+        APASS_LOG_ERROR_F(Elements::Function, "===> Process failed on function [%s] in RemoveUndrivenView.",
+                          function.GetRawName().c_str());
         return FAILED;
     }
     APASS_LOG_INFO_F(Elements::Function, "===> End RemoveUndrivenView.");

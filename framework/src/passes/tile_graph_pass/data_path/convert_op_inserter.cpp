@@ -102,7 +102,7 @@ std::map<MemoryType, std::set<Operation*, OpMagicComparator>> ConvertInserter::G
     if (tensorTobeMap.count(tensor) == 0) {
         APASS_LOG_INFO_F(Elements::Tensor,
                          "Tensor %d has not been inserted yet; "
-                         "Please make sure tensor in the tobe map.",
+                         "Please make sure the tensor is in the tobe map.",
                          tensor->GetMagic());
         return {};
     }

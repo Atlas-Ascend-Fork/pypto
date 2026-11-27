@@ -2263,5 +2263,33 @@ TEST_F(ReduceCopyTest, RunOnFunction_NoSlotScopeMergesAll)
     EXPECT_EQ(function->GetTotalSubGraphCount(), Num1);
 }
 
+// On a platform whose arch is not DAV_3510, RunOnFunction takes the early skip branch and must leave the
+// subgraph layout untouched (whereas the same graph merges 6 subgraphs into 2 on DAV_3510, cf. TestCase0).
+TEST_F(ReduceCopyTest, SkipsOnNonCVMixPlatform)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
+    ComputationalGraphBuilder G;
+    BuildMatmulAddsGraph(G);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    function->paramConfigs_.autoMixPartition = 1;
+    ReduceCopyMerge merger;
+    EXPECT_EQ(merger.RunOnFunction(*function), SUCCESS);
+    const int Num6 = 6;
+    EXPECT_EQ(function->GetTotalSubGraphCount(), Num6);
+}
+
+// PostCheck takes the same non-DAV_3510 skip branch and returns SUCCESS without inspecting the graph.
+TEST_F(ReduceCopyTest, PostCheckSkipsOnNonCVMixPlatform)
+{
+    Platform::Instance().GetSoc().SetNPUArch(NPUArch::DAV_2201);
+    ComputationalGraphBuilder G;
+    BuildMatmulAddsGraph(G);
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+    ReduceCopyMerge merger;
+    EXPECT_EQ(merger.PostCheck(*function), SUCCESS);
+}
+
 } // namespace tile_fwk
 } // namespace npu

@@ -680,5 +680,24 @@ TEST_F(NBufferMergeTest, GatherMultiInputOutputModesKeepSameReadersTogether)
     }
 }
 
+// A ByFunc key that does not match the func<funcMagic>_<hashOrder> format must be ignored with a warning
+// instead of failing the merge; the remaining valid keys still apply (4 subgraphs merge down to 2).
+TEST_F(NBufferMergeTest, MalformedByFuncKeyIsWarnedAndIgnored)
+{
+    auto function = BuildMultiInputOutputFunction();
+    NBufferMerge pass;
+    const int vecParallelNum = 2;
+    function->paramConfigs_.mgVecParallelLb = vecParallelNum;
+    const auto funcMagic = function->GetFuncMagic();
+    function->paramConfigs_.vecNBufferSettingByFunc = {
+        {"func" + std::to_string(funcMagic) + "_0", vecParallelNum},
+        {"badFormat", vecParallelNum}}; // no "func" prefix: rejected by ParseFuncHashOrder
+    function->SetTotalSubGraphCount(4);
+    EXPECT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    EXPECT_EQ(function->GetTotalSubGraphCount(), 2);
+    EXPECT_EQ(function->inCasts_.size(), 2);
+    EXPECT_EQ(function->outCasts_.size(), 4);
+}
+
 } // namespace tile_fwk
 } // namespace npu

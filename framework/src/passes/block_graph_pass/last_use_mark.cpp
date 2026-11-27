@@ -39,9 +39,9 @@ Status LastUseMark::CollectLastUseInfo(Function& function)
             for (size_t inputIdx = 0; inputIdx < op->GetIOperands().size(); inputIdx++) {
                 auto inTensor = op->GetInputOperand(inputIdx);
                 recordMemMap[{inTensor->memoryrange.start, inTensor->memoryrange.end}] = {inTensor, op};
-                APASS_LOG_INFO_F(Elements::Operation, "Record OP_%s[%d] input Tensor %d Memory Range{%zu, %zu}",
-                                 op->GetOpcodeStr().c_str(), op->GetOpMagic(), inTensor->GetMagic(),
-                                 inTensor->memoryrange.start, inTensor->memoryrange.end);
+                APASS_LOG_DEBUG_F(Elements::Operation, "Record OP_%s[%d] input Tensor %d Memory Range{%zu, %zu}",
+                                  op->GetOpcodeStr().c_str(), op->GetOpMagic(), inTensor->GetMagic(),
+                                  inTensor->memoryrange.start, inTensor->memoryrange.end);
             }
         }
         for (auto& entry : recordMemMap) {
@@ -49,8 +49,8 @@ Status LastUseMark::CollectLastUseInfo(Function& function)
             auto inTensor = value.first;
             auto op = value.second;
             lastUseMap_[inTensor] = op;
-            APASS_LOG_INFO_F(Elements::Operation, "Record lastUseMap Key: inTensor[%d], Value: OP_%s[%d]",
-                             inTensor->GetMagic(), op->GetOpcodeStr().c_str(), op->GetOpMagic());
+            APASS_LOG_DEBUG_F(Elements::Operation, "Record lastUseMap Key: inTensor[%d], Value: OP_%s[%d]",
+                              inTensor->GetMagic(), op->GetOpcodeStr().c_str(), op->GetOpMagic());
         }
     }
     APASS_LOG_INFO_F(Elements::Function, "===> End CollectLastUseInfo.");
@@ -87,8 +87,8 @@ void LastUseMark::SetLastUseAttributes()
     for (auto& entry : opInputIdxMap) {
         auto op = entry.first;
         if (op->HasAttribute(OpAttributeKey::brcOperand) || op->GetOpcode() == Opcode::OP_EXPAND) {
-            APASS_LOG_INFO_F(Elements::Operation, "Skip Process OP_%s[%d] LastUse Attribute",
-                             op->GetOpcodeStr().c_str(), op->GetOpMagic());
+            APASS_LOG_DEBUG_F(Elements::Operation, "Skip Process OP_%s[%d] LastUse Attribute",
+                              op->GetOpcodeStr().c_str(), op->GetOpMagic());
             continue;
         }
         op->SetAttribute(OpAttributeKey::lastUse, opInputIdxMap[op]);

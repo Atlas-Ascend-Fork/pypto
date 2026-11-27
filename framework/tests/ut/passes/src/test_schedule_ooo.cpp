@@ -271,6 +271,123 @@ TEST_F(ScheduleOoOTest, TestTokenDependency)
     EXPECT_EQ(scheduler.state_.depManager.GetSuccessors(producer).count(consumer), 1U);
 }
 
+TEST_F(ScheduleOoOTest, RefreshDependenciesRequiresLocalOutputAllocation)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {16, 16}, {"input", "output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ADDS, {"input"}, {"output"}, "writer"));
+    auto* writer = graph.GetOp("writer");
+    DependencyManager dependencies;
+    dependencies.RegisterOp(writer);
+    graph.GetTensor("output")->SetMemoryTypeOriginal(MEM_DEVICE_DDR);
+    EXPECT_EQ(dependencies.RefreshDependencies({writer}, {}), SUCCESS);
+    graph.GetTensor("output")->SetMemoryTypeOriginal(MEM_UB, true);
+    EXPECT_EQ(dependencies.RefreshDependencies({writer}, {}), FAILED);
+}
+
+TEST_F(ScheduleOoOTest, RetireIssuePropagatesMissingBufferReference)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {16, 16}, {"input", "output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ADDS, {"input"}, {"output"}, "writer"));
+    graph.GetTensor("output")->SetMemoryTypeOriginal(MEM_UB);
+    LatencyEstimator estimator;
+    auto& pipe = estimator.opQueues[PipeType::PIPE_V];
+    pipe.curOp = graph.GetOp("writer");
+    pipe.busy = true;
+    pipe.curOpRetireCycle = estimator.state_.clock = 1;
+    int nextCycle = -1;
+    uint64_t commits = 0;
+    EXPECT_EQ(estimator.RetireIssueStage(commits, nextCycle), FAILED);
+}
+
+TEST_F(ScheduleOoOTest, SpillRejectsUnoccupiedBuffer)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensor(DT_FP32, {16, 16}, MEM_UB, "buffer"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_UB_ALLOC, {}, {"buffer"}, "alloc"));
+    auto* alloc = graph.GetOp("alloc");
+    OoOScheduler scheduler(*graph.GetFunction());
+    std::vector<int> times;
+    std::unordered_map<int, size_t> cache;
+    EXPECT_EQ(scheduler.GetGroupNextUseTime({3}, alloc, times, cache), FAILED);
+    EXPECT_TRUE(times.empty());
+    SpillContext context;
+    EXPECT_EQ(scheduler.spillEngine_.SpillBuffer(3, alloc, context), FAILED);
+    EXPECT_TRUE(context.newAllocOps.empty());
+    EXPECT_EQ(scheduler.spillEngine_.InsertOps({}, alloc, -1), FAILED);
+}
+
+TEST_F(ScheduleOoOTest, AllocationMustHaveExactlyOneLocalOperand)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensor(DT_FP32, {16}, MEM_DEVICE_DDR, "output"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_UB_ALLOC, {}, {"output"}, "alloc"));
+    OoOSchedule pass;
+    EXPECT_EQ(pass.CheckAllocOp({graph.GetOp("alloc")}), FAILED);
+}
+
+TEST_F(ScheduleOoOTest, SpillWithoutLocalBufferRecordSkipsCandidate)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensor(DT_FP32, {16}, MEM_UB, "local"));
+    ASSERT_TRUE(graph.AddTensor(DT_FP32, {16}, MEM_UB, "requested"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_VEC_DUP, {}, {"local"}, "writer"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_UB_ALLOC, {}, {"requested"}, "alloc"));
+    auto* alloc = graph.GetOp("alloc");
+    const int memId = graph.GetTensor("local")->memoryrange.memId;
+    OoOScheduler scheduler(*graph.GetFunction());
+    scheduler.state_.tensorOccupyMap[memId] = graph.GetOp("writer");
+    EXPECT_TRUE(scheduler.spillEngine_.IsBelongSpillBlackList(memId, alloc));
+    SpillContext context;
+    EXPECT_EQ(scheduler.spillEngine_.SpillBuffer(memId, alloc, context), SUCCESS);
+    EXPECT_TRUE(context.newCopyoutOps.empty());
+    EXPECT_TRUE(context.newAllocOps.empty());
+}
+
+TEST_F(ScheduleOoOTest, SpillCapacityCannotExceedLocalMemoryLimit)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensor(DT_FP32, {16}, MEM_UB, "local"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_UB_ALLOC, {}, {"local"}, "alloc"));
+    LatencyEstimator estimator;
+    estimator.allocIssueQueue[MEM_UB].Insert(graph.GetOp("alloc"));
+    estimator.state_.localMemSize[MEM_UB] = 32;
+    estimator.state_.localMemoryCurrentSize[MEM_UB] = 0;
+    EXPECT_EQ(estimator.SpillOnBlock(), FAILED);
+}
+
+TEST_F(ScheduleOoOTest, PostCheckRejectsUnexpectedSpillProducers)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {16, 16}, {"input", "ddr", "local", "out", "reference"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ADDS, {"input"}, {"ddr"}, "write"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_COPY_IN, {"ddr"}, {"local"}, "load"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ADDS, {"local"}, {"out"}, "after"));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ADDS, {"input"}, {"reference"}, "before"));
+    auto* before = graph.GetOp("before");
+    auto* after = graph.GetOp("after");
+    OoOScheduleChecker checker;
+    EXPECT_FALSE(checker.PostCheckNewOpConnection({before}, {after->GetOpMagic()}, after, 0));
+    graph.GetOp("load")->SetOpCode(Opcode::OP_MULS);
+    EXPECT_FALSE(checker.PostCheckNewOpConnection({before}, {after->GetOpMagic()}, after, 0));
+}
+
+TEST_F(ScheduleOoOTest, OptimizeSortRejectsBufferOverflowAndUnderflow)
+{
+    ComputationalGraphBuilder graph;
+    OptimizeSort sorter({}, *graph.GetFunction());
+    sorter.state_.localMemSize[MEM_L0A] = 32;
+    std::map<MemoryType, int64_t> usage{{MEM_L0A, 0}};
+    ASSERT_EQ(sorter.ModifyBuffer(usage, MEM_L0A, 32, true), SUCCESS);
+    EXPECT_EQ(sorter.ModifyBuffer(usage, MEM_L0A, 1, true), FAILED);
+    EXPECT_EQ(usage.at(MEM_L0A), 32);
+    EXPECT_EQ(sorter.ModifyBuffer(usage, MEM_L0A, 33, false), FAILED);
+    EXPECT_EQ(usage.at(MEM_L0A), 32);
+    ASSERT_EQ(sorter.ModifyBuffer(usage, MEM_L0A, 32, false), SUCCESS);
+    EXPECT_EQ(usage.at(MEM_L0A), 0);
+}
+
 TEST_F(ScheduleOoOTest, TokenDependencySkipsUnregisteredProducer)
 {
     ComputationalGraphBuilder graph;
@@ -5546,6 +5663,32 @@ TEST_F(ScheduleOoOTest, InsertSpillCopyoutOpVfScope)
     ASSERT_EQ(scheduler3.Init(orderedFull), SUCCESS);
     scheduler3.state_.newOperations.push_back(scopeAdd);
     EXPECT_EQ(scheduler3.InsertSpillCopyoutOp(ghost), FAILED);
+}
+
+TEST_F(ScheduleOoOTest, SeqScheduleRejectsOutstandingBufferReference)
+{
+    ComputationalGraphBuilder graph;
+    OoOScheduler scheduler(*graph.GetFunction());
+    scheduler.state_.bufRefCount.emplace(1, 1);
+    EXPECT_EQ(scheduler.SeqSchedule(), FAILED);
+}
+
+TEST_F(ScheduleOoOTest, RetiringCoreRejectsMissingBufferReference)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP32, {16, 16}, {"input", "output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_ADDS, {"input"}, {"output"}, "writer"));
+    graph.GetTensor("output")->SetMemoryTypeOriginal(MEM_UB);
+    OoOScheduler scheduler(*graph.GetFunction());
+    const auto core = CoreLocationType::AIV0;
+    scheduler.state_.coreInitConfigs = {core};
+    auto& pipe = scheduler.issueQueues[core][PipeType::PIPE_V];
+    pipe.curOp = graph.GetOp("writer");
+    pipe.busy = true;
+    pipe.curOpRetireCycle = scheduler.state_.clock;
+    int nextCycle = -1;
+    uint64_t commits = 0;
+    EXPECT_EQ(scheduler.RetireIssueStage(commits, nextCycle), FAILED);
 }
 
 TEST_F(ScheduleOoOTest, PrintSpillFailedInfoBasic)

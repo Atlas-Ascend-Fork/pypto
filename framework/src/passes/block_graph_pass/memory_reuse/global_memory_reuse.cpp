@@ -212,7 +212,8 @@ void Allocator::ProcessOutputForGlobalMemoryReuse(
 {
     auto& out = wspInfo.tensor;
     if (wspInfo.count != 1) {
-        APASS_LOG_DEBUG_F(Elements::Tensor, "Tensor magic %d (rawmagic %d) not 1.", out->magic, out->tensor->rawmagic);
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Tensor magic %d (rawmagic %d) count=%ld, expected 1.", out->magic,
+                          out->tensor->rawmagic, wspInfo.count);
         return;
     }
     auto& producers = out->GetProducers();
@@ -1074,7 +1075,7 @@ void Allocator::PreProcessStorageGroups()
 Status Allocator::UpdateStorageId(TensorsDesc& tensorsDesc, std::unordered_map<int64_t, int>& idMap, int& storageId)
 {
     if (tensorsDesc.tensors.empty()) {
-        APASS_LOG_DEBUG_F(Elements::Tensor, "Storage tensors is empty.");
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Storage tensors are empty.");
         return SUCCESS;
     }
     auto& tensor = *(tensorsDesc.tensors.begin());

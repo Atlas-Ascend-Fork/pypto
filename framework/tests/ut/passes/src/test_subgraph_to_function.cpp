@@ -208,6 +208,22 @@ static void BuildDifferentOffsetSubgraph2(const std::shared_ptr<Function>& func,
     copyoutop2.opmagic = 10030;
 }
 
+TEST_F(SubgraphToFunctionTest, CacheProcessingRequiresCallAttributes)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_CALL, {}, {}, "caller"));
+    auto* call = graph.GetOp("caller");
+    Function leaf(Program::GetInstance(), "leaf", "leaf", nullptr);
+    for (bool hit : {true, false}) {
+        SubgraphToFunction pass;
+        size_t programIndex = 1;
+        std::vector<Function*> output;
+        EXPECT_EQ(pass.ProcessCacheResult({&leaf, call, hit}, 0, programIndex, output, *call), FAILED);
+        EXPECT_EQ(programIndex, 1U);
+        EXPECT_TRUE(output.empty());
+    }
+}
+
 TEST_F(SubgraphToFunctionTest, DifferentOffset)
 {
     auto func = std::make_shared<Function>(Program::GetInstance(), "TILE_DifferentOffset", "TILE_DifferentOffset",

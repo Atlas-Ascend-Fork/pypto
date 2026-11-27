@@ -34,7 +34,8 @@ bool InsertCondition(const Opcode& code) { return SUPPORT_BRC_INLINE.count(code)
 Status AlignedIfNeed(int64_t& currentDim, int64_t padValue)
 {
     if (padValue == 0) {
-        APASS_LOG_ERROR_F(Elements::Config, "invalid pad base %ld.", static_cast<long>(padValue));
+        APASS_LOG_ERROR_F(Elements::Config, "invalid pad base %ld, expected a non-zero positive pad base.",
+                          static_cast<long>(padValue));
         return FAILED;
     }
     if (currentDim % padValue != 0) {

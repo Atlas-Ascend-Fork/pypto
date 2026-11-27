@@ -284,3 +284,45 @@ TEST_F(RemoveRedundantOpTest, ProcessParallelAssembleWithReshape)
     }
     EXPECT_EQ(newAssembleCount, 2) << "Only ASSEMBLE ops sharing the same output producer group should be preserved";
 }
+
+// A trivially removable reshape (equal input/output shapes) that consumes an external token and has no
+// external data consumers cannot migrate its token dependency, so MoveTokenDependencyBeforeRemoveOp refuses
+// the removal ("Moving token dependency before removing op[%d] would be invalid.") and keeps the reshape.
+TEST_F(RemoveRedundantOpTest, ReshapeWithUnmigratableTokenKeptInPlace)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "TokenReshapeKeptInPlace", "TokenReshapeKeptInPlace",
+                                           nullptr);
+    ASSERT_TRUE(func != nullptr);
+
+    std::vector<int64_t> shape = {32, 128};
+    auto incast = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    incast->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+    auto mid = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    mid->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+    auto out = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    out->SetMemoryTypeBoth(MemoryType::MEM_UB, true);
+
+    auto& producer = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_ADDS, {incast}, {mid});
+    auto& reshape = IRBuilder().CreateTensorOpStmt(*func, Opcode::OP_RESHAPE, {mid}, {out});
+
+    func->inCasts_.push_back(incast);
+    func->outCasts_.push_back(out);
+
+    // Token produced by the ADDS op and consumed by the reshape; the reshape output (outcast) has no data
+    // consumers, so migrating the token to consumers is impossible.
+    auto token = IRBuilder().CreateTokenVar(ir::Span::Unknown());
+    producer.result_token_ = {token};
+    func->GetVarDependency().AddProducer(token, std::static_pointer_cast<const ir::Stmt>(producer.shared_from_this()));
+    reshape.tokens_ = {token};
+    func->GetVarDependency().AddConsumer(token, std::static_pointer_cast<const ir::Stmt>(reshape.shared_from_this()));
+
+    RemoveRedundantOp removeRedundantOp;
+    EXPECT_EQ(removeRedundantOp.RunOnFunction(*func), SUCCESS);
+
+    // in->shape == out->shape makes ProcessReshape mark the reshape removable; the only way it survives is
+    // MoveTokenDependencyBeforeRemoveOp returning false (token consumer with no external consumers).
+    EXPECT_FALSE(reshape.IsDeleted());
+    ASSERT_EQ(out->GetProducers().size(), 1U);
+    EXPECT_EQ(*out->GetProducers().begin(), &reshape);
+    EXPECT_EQ(reshape.GetIOperands().front(), mid);
+}

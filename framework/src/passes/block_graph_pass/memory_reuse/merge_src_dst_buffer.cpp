@@ -193,7 +193,7 @@ Status SrcDstBufferMergeImpl::Run(Function& func)
         return FAILED;
     }
     for (auto& subProgram : func.rootFunc_->programs_) {
-        APASS_LOG_INFO_F(Elements::Operation, "Merge src dst for program id : [%lu]", subProgram.first);
+        APASS_LOG_DEBUG_F(Elements::Operation, "Merge src dst for program id : [%lu]", subProgram.first);
         auto opList = subProgram.second->Operations(false).DuplicatedOpList();
         if (Init(opList) != SUCCESS) {
             APASS_LOG_ERROR_F(Elements::Operation, "Init failed; Please check the Init method.");
@@ -271,7 +271,7 @@ bool SrcDstBufferMergeImpl::CanSrcDstReuse(const Operation& ops, std::shared_ptr
     }
     if (BytesOf(oOperand->Datatype()) != BytesOf(iOperand->Datatype())) {
         APASS_LOG_DEBUG_F(Elements::Tensor, "Bytes of input datatype[%zu] != Bytes of output datatype[%zu], op:%s[%d]",
-                          BytesOf(oOperand->Datatype()), BytesOf(iOperand->Datatype()), ops.GetOpcodeStr().c_str(),
+                          BytesOf(iOperand->Datatype()), BytesOf(oOperand->Datatype()), ops.GetOpcodeStr().c_str(),
                           ops.GetOpMagic());
         return false;
     }
@@ -377,7 +377,7 @@ Status SrcDstBufferMergeImpl::ProcessL0MemoryReuse(
         return FAILED;
     }
     if (tensorConsumers_[inputTensor->memoryrange.memId].size() > 1) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "Tensor[%d], memId[%d], memType[%s] has more than 1 consumer.",
+        APASS_LOG_DEBUG_F(Elements::Operation, "Input tensor[%d], memId[%d], memType[%s] has more than 1 consumer.",
                           inputTensor->GetMagic(), inputTensor->memoryrange.memId,
                           MemoryTypeToString(inputTensor->GetMemoryTypeOriginal()).c_str());
         return SUCCESS;
@@ -388,7 +388,7 @@ Status SrcDstBufferMergeImpl::ProcessL0MemoryReuse(
         }
         auto l0cTensor = producerOp->GetIOperands().front();
         if (tensorConsumers_[l0cTensor->memoryrange.memId].size() > 1) {
-            APASS_LOG_DEBUG_F(Elements::Operation, "Tensor[%d], memId[%d], memType[%s] has more than 1 consumer.",
+            APASS_LOG_DEBUG_F(Elements::Operation, "L0C tensor[%d], memId[%d], memType[%s] has more than 1 consumer.",
                               l0cTensor->GetMagic(), l0cTensor->memoryrange.memId,
                               MemoryTypeToString(l0cTensor->GetMemoryTypeOriginal()).c_str());
             return SUCCESS;

@@ -27,6 +27,7 @@
 #include "interface/configs/config_manager.h"
 #include "passes/tile_graph_pass/graph_optimization/process_atomic.h"
 #include "passes/tile_graph_pass/graph_constraint/pre_graph/pre_graph.h"
+#include "tilefwk/error_manager.h"
 #include "computational_graph_builder.h"
 #include "ut_json/ut_json_tool.h"
 
@@ -162,6 +163,16 @@ TEST_F(ProcessAtomicTest, TestMMFP32) { CheckL0cType(DataType::DT_FP32, DataType
 TEST_F(ProcessAtomicTest, TestMMINT8) { CheckL0cType(DataType::DT_INT8, DataType::DT_INT8, DataType::DT_INT32); }
 TEST_F(ProcessAtomicTest, TestMMINT16) { CheckL0cType(DataType::DT_INT16, DataType::DT_INT16, DataType::DT_INT32); }
 TEST_F(ProcessAtomicTest, TestMMINT32) { CheckL0cType(DataType::DT_INT32, DataType::DT_INT32, DataType::DT_INT32); }
+
+TEST_F(ProcessAtomicTest, PostCheckRejectsMissingOutcast)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensor(DT_FP32, {16}, "input"));
+    ASSERT_TRUE(graph.SetInCast({"input"}));
+    ASSERT_TRUE(graph.SetOutCast({}));
+    ProcessAtomic pass;
+    EXPECT_EQ(pass.PostCheck(*graph.GetFunction()), FAILED);
+}
 
 TEST_F(ProcessAtomicTest, TestGetL0CCopyOutsInvalidOutputMemory)
 {
@@ -1416,6 +1427,55 @@ TEST_F(ProcessAtomicTest, TestAtomicRMWMinModeUnsupported)
     EXPECT_EQ(preCheckResult, SUCCESS);
     Status runResult = passLocal.Run(*function, "", "", 0);
     EXPECT_NE(runResult, SUCCESS);
+}
+
+// rmwMode out of the [ADD, MIN] enum range passes the MAX/MIN-only gate in CheckAtomicRMWUnsupportedMode
+// but is rejected by ProcessSingleAtomicRMW with the invalid-rmwMode error.
+TEST_F(ProcessAtomicTest, TestAtomicRMWInvalidModeValueRejected)
+{
+    constexpr int INVALID_RMW_MODE = 7; // AtomicRMWMode is {ADD=0, MAX=1, MIN=2}.
+
+    ComputationalGraphBuilder G;
+    DataType dtype = DataType::DT_FP16;
+
+    G.AddTensor(dtype, {64, 128}, "inputDdr");
+    auto inputDdr = G.GetTensor("inputDdr");
+    inputDdr->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+
+    G.AddTensor(dtype, {64, 128}, "contractInput");
+    auto contractInput = G.GetTensor("contractInput");
+    contractInput->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+
+    G.AddTensor(dtype, {128, 128}, "outputDdr");
+    auto outputDdr = G.GetTensor("outputDdr");
+    outputDdr->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+
+    G.AddOp(Opcode::OP_CONTRACT, {"contractInput"}, {"inputDdr"}, "contractOp");
+    auto contractOp = G.GetOp("contractOp");
+    auto contractAttr = std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{0, 0});
+    contractOp->SetOpAttribute(contractAttr);
+
+    G.AddOp(Opcode::OP_ATOMIC_RMW, {"inputDdr"}, {"outputDdr"}, "atomicRmwOp");
+    auto atomicRmwOp = G.GetOp("atomicRmwOp");
+    auto atomicRmwAttr = std::make_shared<AssembleOpAttribute>(std::vector<int64_t>{64, 0});
+    atomicRmwOp->SetOpAttribute(atomicRmwAttr);
+    atomicRmwOp->SetAttribute(OpAttributeKey::rmwMode, INVALID_RMW_MODE);
+
+    G.SetInCast({"contractInput"});
+    G.SetOutCast({"outputDdr"});
+
+    Function* function = G.GetFunction();
+    ASSERT_NE(function, nullptr);
+
+    ErrorManager::Instance().OutputErrorMessage(true); // Clear history so assertions target this run only.
+    ProcessAtomic passLocal;
+    EXPECT_EQ(passLocal.RunOnFunction(*function), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("has invalid rmwMode value 7; valid range is"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true); // Drain remaining errors to keep later cases clean.
+
+    EXPECT_EQ(CountOpsByType(function, Opcode::OP_ATOMIC_RMW), 1U);
 }
 
 TEST_F(ProcessAtomicTest, TestAtomicRMWInvalidInputMemory)

@@ -23,6 +23,7 @@
 #include "passes/pass_mgr/pass_manager.h"
 #include "ut_json/ut_json_tool.h"
 #include "interface/configs/config_manager.h"
+#include "tilefwk/error_manager.h"
 #include "passes/tile_graph_pass/graph_optimization/duplicate_op.h"
 #include "passes/pass_check/duplicate_op_checker.h"
 #include "symbolic_scalar_test_utils.h"
@@ -1096,6 +1097,67 @@ TEST_F(TestDuplicateOpPass, TestSpan)
             EXPECT_EQ(op.GetScopeId(), 1);
         }
     }
+}
+
+/*
+TESTDuplicateGatherinConsumerGatherinRunOnFunctionFails
+inCast{8,16}->Gatherin->ubTensor{1,8,16}->Gatherin->outCast{1,8,16}
+
+ProcessGatherIn rejects a GATHER_IN_L1 consumer of a GATHER_IN_L1 output, so Process fails and
+RunOnFunction reports the function-level "DuplicateOp::Process failed" error. PreCheck also
+rejects this graph, but the pass runner in this test invokes RunOnFunction directly, which is
+the path that exercises the function-level error log.
+*/
+TEST_F(TestDuplicateOpPass, DuplicateGatherInConsumerGatherInRunFails)
+{
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "TestDuplicateGatherInChain",
+                                                      "TestDuplicateGatherInChain", nullptr);
+    EXPECT_TRUE(currFunctionPtr != nullptr);
+
+    // Prepare the graph
+    std::vector<int64_t> shape1 = {kNumEight, kNumExpFour};
+    std::vector<int64_t> shape2 = {kNumOne, kNumEight, kNumExpFour};
+    auto inCast = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape1, CreateTestConstIntVector(shape1));
+    inCast->UpdateDynValidShape({IRBuilder().CreateConstInt(kNumEight), IRBuilder().CreateConstInt(kNumExpFour)});
+    auto ubTensor = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape2, CreateTestConstIntVector(shape2));
+    auto outCast = npu::tile_fwk::IRBuilder().CreateTensorVar(DT_FP32, shape2, CreateTestConstIntVector(shape2));
+
+    auto offsets1 = CreateGatherInAuxTensor(kNumEight);
+    auto blockTable1 = CreateGatherInAuxTensor(kNumOne);
+    auto offsets2 = CreateGatherInAuxTensor(kNumEight);
+    auto blockTable2 = CreateGatherInAuxTensor(kNumOne);
+
+    int64_t startOffset1 = 0;
+    int64_t startOffset2 = 0;
+    PassOperationUtils::AddOperation(
+        *currFunctionPtr, Opcode::OP_GATHER_IN_L1, {inCast, offsets1, blockTable1}, {ubTensor},
+        [&startOffset1](Operation& op) { op.SetAttribute(OpAttributeKey::startOffset, startOffset1); });
+    PassOperationUtils::AddOperation(
+        *currFunctionPtr, Opcode::OP_GATHER_IN_L1, {ubTensor, offsets2, blockTable2}, {outCast},
+        [&startOffset2](Operation& op) { op.SetAttribute(OpAttributeKey::startOffset, startOffset2); });
+
+    currFunctionPtr->inCasts_.push_back(inCast);
+    currFunctionPtr->outCasts_.push_back(outCast);
+
+    ErrorManager::Instance().OutputErrorMessage(true); // Clear history so assertions target this run only.
+    DuplicateOp duplicateoppass;
+    EXPECT_EQ(duplicateoppass.RunOnFunction(*currFunctionPtr), FAILED);
+
+    // Error queue: [gather-in consumer error, "ProcessGatherIn failed.", "ProcessOp failed.",
+    // "DuplicateOp::Process failed for function ..."].
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("OP_GATHER_IN_L1's consumer cannot be OP_GATHER_IN_L1"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(false); // Pop the first error.
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("ProcessGatherIn failed."), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(false); // Pop the second error.
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("ProcessOp failed."), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(false); // Pop the third error.
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("DuplicateOp::Process failed for function [TestDuplicateGatherInChain]"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true); // Drain remaining errors to keep later cases clean.
 }
 } // namespace tile_fwk
 } // namespace npu

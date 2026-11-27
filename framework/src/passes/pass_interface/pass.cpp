@@ -140,7 +140,8 @@ std::string Pass::GetDumpFilePrefix(Function& function, bool before, Function* s
 Status Pass::PrintFunction(Function& function, const std::string& logFolder, bool beforeFunction = true)
 {
     std::string stageName = beforeFunction ? "Before" : "After";
-    APASS_LOG_INFO_F(Elements::Function, "Dump function %s pass [%s].", stageName.c_str(), identifier_.c_str());
+    APASS_LOG_INFO_F(Elements::Function, "Dump function %s pass [%s] to tifwkgr.", stageName.c_str(),
+                     identifier_.c_str());
     if (function.rootFunc_ != nullptr) {
         std::stringstream ssRoot;
         ssRoot << GetDumpFilePrefix(function, beforeFunction) << "_Root_.tifwkgr";
@@ -175,7 +176,7 @@ Status Pass::PrintFunction(Function& function, const std::string& logFolder, boo
 Status Pass::DumpFunctionJson(Function& function, const std::string& logFolder, bool beforeFunction = true)
 {
     std::string stageName = beforeFunction ? "Before" : "After";
-    APASS_LOG_INFO_F(Elements::Function, "Dump function %s pass [%s].", stageName.c_str(), identifier_.c_str());
+    APASS_LOG_INFO_F(Elements::Function, "Dump function %s pass [%s] to json.", stageName.c_str(), identifier_.c_str());
     std::stringstream ss;
     ss << GetDumpFilePrefix(function, beforeFunction) << ".json";
     function.DumpJsonFile(logFolder + "/" + ss.str());

@@ -345,7 +345,8 @@ void AssignMemoryType::ApplyReshapeCubeToVecUpgrade(Operation& op, const Logical
         // 将生产者的 CONTRACT 输入设为 Cube 输出类型（L0C 或 L1）。
         if (producerInput->GetMemoryTypeOriginal() != cubeOutputType) {
             APASS_LOG_DEBUG_F(
-                Elements::Tensor, "AssignMemoryType::ApplyReshapeCubeToVecUpgrade: tensor[%d] original %s -> %s.",
+                Elements::Tensor,
+                "AssignMemoryType::ApplyReshapeCubeToVecUpgrade: producer input tensor[%d] original %s -> %s.",
                 producerInput->GetMagic(), BriefMemoryTypeToString(producerInput->GetMemoryTypeOriginal()).c_str(),
                 BriefMemoryTypeToString(cubeOutputType).c_str());
         }
@@ -355,7 +356,8 @@ void AssignMemoryType::ApplyReshapeCubeToVecUpgrade(Operation& op, const Logical
         // 将生产者输出驻留在 UB。
         if (producerOutput->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
             APASS_LOG_DEBUG_F(
-                Elements::Tensor, "AssignMemoryType::ApplyReshapeCubeToVecUpgrade: tensor[%d] original %s -> %s.",
+                Elements::Tensor,
+                "AssignMemoryType::ApplyReshapeCubeToVecUpgrade: producer output tensor[%d] original %s -> %s.",
                 producerOutput->GetMagic(), BriefMemoryTypeToString(producerOutput->GetMemoryTypeOriginal()).c_str(),
                 BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
         }
@@ -364,10 +366,11 @@ void AssignMemoryType::ApplyReshapeCubeToVecUpgrade(Operation& op, const Logical
     }
     // 将 reshape 输出驻留在 UB。
     if (output->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
-        APASS_LOG_DEBUG_F(Elements::Tensor,
-                          "AssignMemoryType::ApplyReshapeCubeToVecUpgrade: tensor[%d] original %s -> %s.",
-                          output->GetMagic(), BriefMemoryTypeToString(output->GetMemoryTypeOriginal()).c_str(),
-                          BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
+        APASS_LOG_DEBUG_F(
+            Elements::Tensor,
+            "AssignMemoryType::ApplyReshapeCubeToVecUpgrade: reshape output tensor[%d] original %s -> %s.",
+            output->GetMagic(), BriefMemoryTypeToString(output->GetMemoryTypeOriginal()).c_str(),
+            BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
     }
     output->SetMemoryTypeOriginal(MemoryType::MEM_UB, true);
 
@@ -387,7 +390,8 @@ void AssignMemoryType::SetVecToCubeReshapeConsumersToL1(const std::set<Operation
         // 将 reshape 输出驻留在 UB，并将消费需求设为 L1。
         if (consumerInput->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
             APASS_LOG_DEBUG_F(
-                Elements::Tensor, "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: tensor[%d] original %s -> %s.",
+                Elements::Tensor,
+                "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: consumer input tensor[%d] original %s -> %s.",
                 consumerInput->GetMagic(), BriefMemoryTypeToString(consumerInput->GetMemoryTypeOriginal()).c_str(),
                 BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
         }
@@ -397,7 +401,8 @@ void AssignMemoryType::SetVecToCubeReshapeConsumersToL1(const std::set<Operation
         // 将消费侧切片的输出驻留在 L1。
         if (consumerOutput->GetMemoryTypeOriginal() != MemoryType::MEM_L1) {
             APASS_LOG_DEBUG_F(
-                Elements::Tensor, "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: tensor[%d] original %s -> %s.",
+                Elements::Tensor,
+                "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: consumer output tensor[%d] original %s -> %s.",
                 consumerOutput->GetMagic(), BriefMemoryTypeToString(consumerOutput->GetMemoryTypeOriginal()).c_str(),
                 BriefMemoryTypeToString(MemoryType::MEM_L1).c_str());
         }
@@ -420,7 +425,8 @@ void AssignMemoryType::ApplyReshapeVecToCubeUpgrade(Operation& op,
         // 将生产侧 SLICE、CONTRACT 的输入设为 UB。
         if (producerInput->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
             APASS_LOG_DEBUG_F(
-                Elements::Tensor, "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: tensor[%d] original %s -> %s.",
+                Elements::Tensor,
+                "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: producer input tensor[%d] original %s -> %s.",
                 producerInput->GetMagic(), BriefMemoryTypeToString(producerInput->GetMemoryTypeOriginal()).c_str(),
                 BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
         }
@@ -430,7 +436,8 @@ void AssignMemoryType::ApplyReshapeVecToCubeUpgrade(Operation& op,
         // 将 reshape 的输入设为 UB。
         if (producerOutput->GetMemoryTypeOriginal() != MemoryType::MEM_UB) {
             APASS_LOG_DEBUG_F(
-                Elements::Tensor, "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: tensor[%d] original %s -> %s.",
+                Elements::Tensor,
+                "AssignMemoryType::ApplyReshapeVecToCubeUpgrade: producer output tensor[%d] original %s -> %s.",
                 producerOutput->GetMagic(), BriefMemoryTypeToString(producerOutput->GetMemoryTypeOriginal()).c_str(),
                 BriefMemoryTypeToString(MemoryType::MEM_UB).c_str());
         }
@@ -1314,15 +1321,18 @@ Status AssignMemoryType::ApplySliceContractUpgrade(Operation& sliceOp, MemoryTyp
     for (auto* producer : middle->GetProducers()) {
         auto input = producer->iOperand.front();
         if (input == nullptr) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Upgrade %s[%d] failed because contract input is null.",
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Upgrade %s[%d] failed because producer input is null in ApplySliceContractUpgrade.",
                               reason.c_str(), producer->GetOpMagic());
             return FAILED;
         }
         MemoryPathUtils::ForceSetRequirement(inserter, input, *producer, sourceType, reason);
         auto assembleOpAttribute = std::dynamic_pointer_cast<AssembleOpAttribute>(producer->GetOpAttribute());
         if (assembleOpAttribute == nullptr) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Upgrade %s[%d] failed because contract attr is null.",
-                              reason.c_str(), producer->GetOpMagic());
+            APASS_LOG_ERROR_F(
+                Elements::Operation,
+                "Upgrade %s[%d] failed because producer assemble attr is null in ApplySliceContractUpgrade.",
+                reason.c_str(), producer->GetOpMagic());
             return FAILED;
         }
         assembleOpAttribute->SetFromType(sourceType);
@@ -1339,22 +1349,28 @@ Status AssignMemoryType::ApplySingleContractSliceUpgrade(Operation& contractOp, 
     MemoryPathUtils::ForceSetOriginal(middle, sourceType, reason);
     auto assembleOpAttribute = std::dynamic_pointer_cast<AssembleOpAttribute>(contractOp.GetOpAttribute());
     if (assembleOpAttribute == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Upgrade %s[%d] failed because contract attr is null.", reason.c_str(),
-                          contractOp.GetOpMagic());
+        APASS_LOG_ERROR_F(Elements::Operation,
+                          "Upgrade %s[%d] failed because contract op assemble attr is null in "
+                          "ApplySingleContractSliceUpgrade.",
+                          reason.c_str(), contractOp.GetOpMagic());
         return FAILED;
     }
     for (auto* producer : middle->GetProducers()) {
         auto input = producer->iOperand.front();
         if (input == nullptr) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Upgrade %s[%d] failed because contract input is null.",
-                              reason.c_str(), producer->GetOpMagic());
+            APASS_LOG_ERROR_F(
+                Elements::Operation,
+                "Upgrade %s[%d] failed because producer input is null in ApplySingleContractSliceUpgrade.",
+                reason.c_str(), producer->GetOpMagic());
             return FAILED;
         }
         MemoryPathUtils::ForceSetRequirement(inserter, input, *producer, sourceType, reason);
         auto producerAssembleOpAttribute = std::dynamic_pointer_cast<AssembleOpAttribute>(producer->GetOpAttribute());
         if (producerAssembleOpAttribute == nullptr) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Upgrade %s[%d] failed because contract attr is null.",
-                              reason.c_str(), producer->GetOpMagic());
+            APASS_LOG_ERROR_F(
+                Elements::Operation,
+                "Upgrade %s[%d] failed because producer assemble attr is null in ApplySingleContractSliceUpgrade.",
+                reason.c_str(), producer->GetOpMagic());
             return FAILED;
         }
         producerAssembleOpAttribute->SetFromType(sourceType);
@@ -1843,7 +1859,7 @@ size_t AssignMemoryType::CalcNzAlignedSize(const LogicalTensorPtr& tensor, bool 
         c0 = static_cast<size_t>(kC0AlignBytes / bytes);
     }
     if (c0 == 0) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "CalcNzAlignedSize: invalid C0 size, c0=%zu", c0);
+        APASS_LOG_DEBUG_F(Elements::Operation, "CalcNzAlignedSize: invalid C0 size, c0=%zu, expect c0 > 0.", c0);
         return 0;
     }
     size_t alignedOuter = (outer + outerAlign - 1) / outerAlign * outerAlign + 1;

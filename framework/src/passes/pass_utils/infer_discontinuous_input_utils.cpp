@@ -70,7 +70,10 @@ inline bool ShapeToSize(Shape& shapes, int64_t& out)
 {
     auto [result, overflow] = CommonUtils::SafeMultiplyShape(shapes);
     if (overflow) {
-        APASS_LOG_ERROR_F(Elements::Tensor, "Shape multiply overflow.");
+        APASS_LOG_ERROR_F(Elements::Tensor,
+                          "Shape multiply overflow, shape=%s, dims must be non-negative and the product must not "
+                          "exceed INT64_MAX(%ld).",
+                          IntVecToStr(shapes).c_str(), INT64_MAX);
         return false;
     }
     out = result;

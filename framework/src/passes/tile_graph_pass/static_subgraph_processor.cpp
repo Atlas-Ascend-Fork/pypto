@@ -50,7 +50,7 @@ Status StaticSubgraphProcessor::BuildInGraph(Function& function)
                 auto [parentSeqNo, found] = operationViewer.FindOpPosition(*parentOp);
                 if (EdgeIndexCheck(found, parentSeqNo, inGraph.size()) != SUCCESS) {
                     APASS_LOG_ERROR_F(Elements::Operation,
-                                      "Error inserting op magic %d in function %d %s to inGraph. %s",
+                                      "Error inserting producer op magic %d in function %d %s to inGraph. %s",
                                       parentOp->GetOpMagic(), function.GetFuncMagic(), function.GetRawName().c_str(),
                                       GetFormatBacktrace(parentOp).c_str());
                     return FAILED;
@@ -62,7 +62,8 @@ Status StaticSubgraphProcessor::BuildInGraph(Function& function)
         for (const auto& inControlOp : operationViewer[i].GetInCtrlOperations()) {
             auto [parentSeqNo, found] = operationViewer.FindOpPosition(*inControlOp);
             if (EdgeIndexCheck(found, parentSeqNo, inGraph.size()) != SUCCESS) {
-                APASS_LOG_ERROR_F(Elements::Operation, "Error inserting op magic %d in function %d %s to inGraph. %s",
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "Error inserting control op magic %d in function %d %s to inGraph. %s",
                                   inControlOp->GetOpMagic(), function.GetFuncMagic(), function.GetRawName().c_str(),
                                   GetFormatBacktrace(inControlOp).c_str());
                 return FAILED;
@@ -230,8 +231,8 @@ void StaticSubgraphProcessor::EraseRedundantColorEdges(const Function& function)
     // Erase redundant edges
     for (size_t i = 0; i < colorNum; i++) {
         std::sort(redundantColorOutGraph[i].begin(), redundantColorOutGraph[i].end());
-        APASS_LOG_INFO_F(Elements::Operation, "Redundant outgraph of %zu is %s.", i,
-                         IntVecToStr(redundantColorOutGraph[i]).c_str());
+        APASS_LOG_DEBUG_F(Elements::Operation, "Redundant outgraph of %zu is %s.", i,
+                          IntVecToStr(redundantColorOutGraph[i]).c_str());
         std::vector<int> newGraph;
         // update color_in_graph
         size_t j = 0U;

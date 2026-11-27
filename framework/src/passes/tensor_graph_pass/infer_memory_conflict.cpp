@@ -805,12 +805,17 @@ Status InferMemoryConflict::UpdateViewTypeTileShape(Function& function)
         auto outEntry = viewTypeTable.find(outType);
         if (inEntry == viewTypeTable.end() || outEntry == viewTypeTable.end()) {
             APASS_LOG_ERROR_F(Elements::Operation,
-                              "ViewType Input Tensor OR Output Tensor DataType is not in viewType, Please check it!");
+                              "UpdateViewTypeTileShape: ViewType op[%d] input dtype [%s] or output dtype [%s] is "
+                              "not in viewTypeTable, supported dtypes: DT_INT8, DT_BF16, DT_FP16, DT_FP32, "
+                              "DT_FP8E4M3, DT_FP8E5M2, DT_FP8E8M0.",
+                              op.GetOpMagic(), DataType2String(inType), DataType2String(outType));
             return FAILED;
         }
         if (inEntry->second < outEntry->second) {
             if (vecTypeTile.tile[vecTypeTile.tile.size() - 1] % (outEntry->second / inEntry->second) != 0) {
-                APASS_LOG_ERROR_F(Elements::Operation, "vecTypeTile tile dim n is not even.");
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "vecTypeTile tile dim n [%ld] is not divisible by the required factor [%d].",
+                                  vecTypeTile.tile[vecTypeTile.tile.size() - 1], outEntry->second / inEntry->second);
                 return FAILED;
             }
             vecTypeTile.tile[vecTypeTile.tile.size() - 1] /= (outEntry->second / inEntry->second);
@@ -848,7 +853,10 @@ bool InferMemoryConflict::CheckRawShapeConflict(const LogicalTensorPtr& inTensor
     if (consumerOp->GetOpcode() == Opcode::OP_VIEW_TYPE) {
         if (inEntry == viewTypeTable.end() || outEntry == viewTypeTable.end()) {
             APASS_LOG_ERROR_F(Elements::Operation,
-                              "ViewType Input Tensor OR Output Tensor DataType is not in viewType, Please check it!");
+                              "CheckRawShapeConflict: ViewType op[%d] input dtype [%s] or output dtype [%s] is not "
+                              "in viewTypeTable, supported dtypes: DT_INT8, DT_BF16, DT_FP16, DT_FP32, DT_FP8E4M3, "
+                              "DT_FP8E5M2, DT_FP8E8M0.",
+                              consumerOp->GetOpMagic(), DataType2String(inType), DataType2String(outType));
             return true;
         }
         if (inEntry->second > outEntry->second) {
@@ -972,8 +980,12 @@ Status InferMemoryConflict::MatchBmmReshapePattern(Function& function, const Log
         APASS_LOG_ERROR_F(
             Elements::Operation,
             "The BMM input tensor does not support two or more dynamic axes when the tensor format is NZ. "
-            "Please check the format of the BMM input tensor. tensor format: %s",
-            formatStr.c_str());
+            "Please check the format of the BMM input tensor. tensor format: %s, dynamic axes count: %zu "
+            "(allowed: fewer than 2 dynamic axes), tensor shape: %s",
+            formatStr.c_str(),
+            static_cast<size_t>(std::count_if(nzIncast->GetShape().begin(), nzIncast->GetShape().end(),
+                                              [](int64_t dim) { return dim < 0; })),
+            nzIncast->DumpType().c_str());
         return FAILED;
     }
     if (!reshapeIn || !reshapeOut || HasNegativeDimAfterFirstCast(function)) {
@@ -1343,8 +1355,11 @@ Status InferMemoryConflict::InferTileShape(Operation& op, const LogicalTensorPtr
     vecTile.back() = AlignUp(vecTile.back(), BLOCK_SIZE / BytesOf(tensor->Datatype()));
     op.UpdateTileShape(parentTile);
     if (!IsValidTileShape(op)) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Invalid tile size for %s[%d]. %s", op.GetOpcodeStr().c_str(),
-                          op.GetOpMagic(), GetFormatBacktrace(op).c_str());
+        APASS_LOG_ERROR_F(Elements::Operation,
+                          "Invalid tile size for %s[%d], tile size: %s, tensor shape: %s, tile dims must equal "
+                          "tensor shape dims: %zu. %s",
+                          op.GetOpcodeStr().c_str(), op.GetOpMagic(), op.GetTileShape().ToString(TileType::VEC).c_str(),
+                          tensor->DumpType().c_str(), tensorSize, GetFormatBacktrace(op).c_str());
         return FAILED;
     }
     return SUCCESS;
@@ -1374,7 +1389,7 @@ Status InferMemoryConflict::InsertPrecededCopy(Function& function, Operation& op
     auto newTensor = irBuilder_.CreateTensorVar(newRawTensor, newOffset, inputTensor->GetShape(),
                                                 inputTensor->GetDynValidShape());
     auto& copyOp = irBuilder_.CreateTensorOpStmt(function, Opcode::OP_REGISTER_COPY, {inputTensor}, {newTensor});
-    APASS_LOG_DEBUG_F(Elements::Operation, "Insert copy op [%d]", copyOp.GetOpMagic());
+    APASS_LOG_DEBUG_F(Elements::Operation, "Insert input copy op [%d]", copyOp.GetOpMagic());
     Shape reshapeTile;
     if (op.GetOpcode() == Opcode::OP_RESHAPE) {
         const auto& vecTile = op.GetTileShape();
@@ -1422,7 +1437,7 @@ Status InferMemoryConflict::InsertPostCopys(Function& function)
         LogicalTensorPtr newTensor = irBuilder_.CreateTensorVar(newRawTensor, newOffset, outputTensor->GetShape(),
                                                                 outputTensor->GetDynValidShape());
         auto& copyOp = irBuilder_.CreateTensorOpStmt(function, Opcode::OP_REGISTER_COPY, {newTensor}, {outputTensor});
-        APASS_LOG_DEBUG_F(Elements::Operation, "Insert copy op [%d]", copyOp.GetOpMagic());
+        APASS_LOG_DEBUG_F(Elements::Operation, "Insert output copy op [%d]", copyOp.GetOpMagic());
         Shape reshapeTile;
         if (ObtainReshapeTile(*op, ObtainTileShape(op->ProducerOps()).GetVecTile().tile, reshapeTile) != SUCCESS) {
             APASS_LOG_ERROR_F(Elements::Operation, "ObtainReshapeTile failed. %s", GetFormatBacktrace(*op).c_str());

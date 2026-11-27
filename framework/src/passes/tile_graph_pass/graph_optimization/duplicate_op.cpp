@@ -42,7 +42,8 @@ Status DuplicateOp::RunOnFunction(Function& function)
                      function.GetRawName().c_str());
     std::vector<Operation*> newOps;
     if (Process(function, newOps) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Function, "Process failed.");
+        APASS_LOG_ERROR_F(Elements::Function, "DuplicateOp::Process failed for function [%s].",
+                          function.GetRawName().c_str());
         return FAILED;
     }
     if (!newOps.empty()) {

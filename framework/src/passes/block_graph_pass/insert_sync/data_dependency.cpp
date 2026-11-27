@@ -752,7 +752,9 @@ Status PipeSync::AddOpDep(DepOp& setOp, DepOp& waitOp, bool isMergeCvSyncBase)
             if (isMergeCvSyncBase) {
                 return SUCCESS;
             }
-            APASS_LOG_ERROR_F(Elements::Operation, "New waitidx should less than old, AddOpDep failed.");
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "New waitidx %zu should be less than the old one %zu, AddOpDep failed.", waitOpIdx,
+                              existing->idx);
             return FAILED;
         }
         RemoveOpDep(setOp, depOps_[existing->idx]);
