@@ -701,14 +701,10 @@ static void CalFmapL1DynValidShape(const ConvTileInfo& convTileInfo, const ConvI
     srcGmDynValidShape = SymbolicScalar::FromConcrete(srcGmValidShape);
     size_t hIdx = convAttrParam.isConv3D ? NUM3 : NUM2;
     size_t wIdx = convAttrParam.isConv3D ? NUM4 : NUM3;
-    if (HasSymPadH(convAttrParam)) {
-        dstAL1DynValidShape[hIdx] = iterInfo.symValidHL1;
-        srcGmDynValidShape[hIdx] = iterInfo.symValidHL1;
-    }
-    if (HasSymPadW(convAttrParam)) {
-        dstAL1DynValidShape[wIdx] = iterInfo.symValidWL1;
-        srcGmDynValidShape[wIdx] = iterInfo.symValidWL1;
-    }
+    dstAL1DynValidShape[hIdx] = iterInfo.symValidHL1;
+    srcGmDynValidShape[hIdx] = iterInfo.symValidHL1;
+    dstAL1DynValidShape[wIdx] = iterInfo.symValidWL1;
+    srcGmDynValidShape[wIdx] = iterInfo.symValidWL1;
     if (convAttrParam.isConv3D && iterInfo.hasSymDkPad) {
         int64_t blockBase = iterInfo.kAL1BaseOffset / convTileInfo.kPerGroup;
         SymbolicScalar blockValid = CalSymDkBlockValid(iterInfo, blockBase, iterInfo.dkAL1Size);
@@ -731,7 +727,8 @@ static void ConstructFmapL1ViewTile(Function& function, const ConvGraphNodes& te
     auto& sliceOpAl1 = function.AddOperation(config::GetSliceOpcode(), {tensorGraphNodes.fmapTensorPtr},
                                              {viewL1TensorPtr});
     sliceOpAl1.SetAttribute(OpAttributeKey::isConv, true);
-    SetCopyInAL1Op(sliceOpAl1, convTileInfo, iterInfo, convAttrParam, dstAL1Shape, srcGmValidShape, srcCinOffset, true);
+    SetCopyInAL1Op(sliceOpAl1, convTileInfo, iterInfo, convAttrParam, dstAL1Shape, srcGmValidShape, srcCinOffset, true,
+                   srcGmDynValidShape);
     auto& transFormatL1Op = function.AddOperation(Opcode::OP_TRANS_FORMAT_L1, {viewL1TensorPtr}, {dstAL1TensorPtr});
     transFormatL1Op.SetAttribute(OpAttributeKey::isConv, true);
     transFormatL1Op.SetAttribute(LoadStoreConvOpAttributeKey::isFmap, true);
@@ -1264,24 +1261,22 @@ void UpdateL1IterInfo(const ConvTileInfo& convTileInfo, ConvIterInfo& iterInfo, 
     int64_t needHL1Size = (iterInfo.houtL1Size - 1) * convAttrParam.strides[0] +
                           (convTileInfo.orgKh - 1) * convAttrParam.dilations[0] + 1;
     iterInfo.hinL1Size = CalAxisInL1Size(convTileInfo.orgHin, iterInfo.hL1InOffset, needHL1Size);
-    if (HasSymPadH(convAttrParam)) {
-        size_t hIdx = convAttrParam.isConv3D ? NUM3 : NUM2;
-        CalSymPadL1Exprs(convAttrParam.symPaddings[PAD_TOP_INDEX], iterInfo.hL1OutOffset, convAttrParam.strides[0],
-                         needHL1Size, fmapDynValidShape[hIdx], iterInfo.symPadTopL1, iterInfo.symSrcOffsetH,
-                         iterInfo.symValidHL1);
-    }
+    size_t hIdx = convAttrParam.isConv3D ? NUM3 : NUM2;
+    SymbolicScalar hDynValid = (fmapDynValidShape.size() > hIdx) ? fmapDynValidShape[hIdx] :
+                                                                   SymbolicScalar(convTileInfo.orgHin);
+    CalSymPadL1Exprs(convAttrParam.symPaddings[PAD_TOP_INDEX], iterInfo.hL1OutOffset, convAttrParam.strides[0],
+                     needHL1Size, hDynValid, iterInfo.symPadTopL1, iterInfo.symSrcOffsetH, iterInfo.symValidHL1);
     // cal winL1Size
     iterInfo.woutL1Size = std::min(convTileInfo.orgWout - iterInfo.wL1OutOffset, convTileInfo.wAL1Out);
     iterInfo.wL1InOffset = iterInfo.wL1OutOffset * convAttrParam.strides[1] - convAttrParam.paddings[NUM2];
     int64_t needWL1Size = (iterInfo.woutL1Size - 1) * convAttrParam.strides[1] +
                           (convTileInfo.orgKw - 1) * convAttrParam.dilations[1] + 1;
     iterInfo.winL1Size = CalAxisInL1Size(convTileInfo.orgWin, iterInfo.wL1InOffset, needWL1Size);
-    if (HasSymPadW(convAttrParam)) {
-        size_t wIdx = convAttrParam.isConv3D ? NUM4 : NUM3;
-        CalSymPadL1Exprs(convAttrParam.symPaddings[PAD_LEFT_INDEX], iterInfo.wL1OutOffset, convAttrParam.strides[1],
-                         needWL1Size, fmapDynValidShape[wIdx], iterInfo.symPadLeftL1, iterInfo.symSrcOffsetW,
-                         iterInfo.symValidWL1);
-    }
+    size_t wIdx = convAttrParam.isConv3D ? NUM4 : NUM3;
+    SymbolicScalar wDynValid = (fmapDynValidShape.size() > wIdx) ? fmapDynValidShape[wIdx] :
+                                                                   SymbolicScalar(convTileInfo.orgWin);
+    CalSymPadL1Exprs(convAttrParam.symPaddings[PAD_LEFT_INDEX], iterInfo.wL1OutOffset, convAttrParam.strides[1],
+                     needWL1Size, wDynValid, iterInfo.symPadLeftL1, iterInfo.symSrcOffsetW, iterInfo.symValidWL1);
     // cal nL1Size
     iterInfo.nL1Size = std::min(convTileInfo.coutPerGroup - iterInfo.nL1Offset, convTileInfo.nBL1);
     Cal3DDkL1Size(convTileInfo, iterInfo, convAttrParam, dataDin);
