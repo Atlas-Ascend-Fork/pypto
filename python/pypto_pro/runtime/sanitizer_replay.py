@@ -31,7 +31,7 @@ DETECTIONS row.
 
 Detections:
     1  GmAccess    GM_OUT_OF_BOUNDS    access window vs tensor shape
-    2  TileAccess  TILE_OUT_OF_BOUNDS / TILE_SLICE_UNALIGNED  tile bounds / L1 slice start alignment
+    2  TileAccess  TILE_OUT_OF_BOUNDS / TILE_SLICE_UNALIGNED  tile bounds / slice start alignment
     3  MutexAccess MUTEX_*             lock/unlock pairing
     4  ViewShape   GM_OUT_OF_BOUNDS    make_tensor view vs source capacity
     5  TileScalar  TILE_OUT_OF_BOUNDS  getval/setval vs tile element count
@@ -182,7 +182,7 @@ ScalarAxisRecord = RECORD_TYPES[9]
 #     win_ax0/win_ax1 (-1 = that tile dim maps to no axis), all other
 #     dims are offset-only. Rank-1 access carries the whole-tile window
 #     product in acc_row with win_ax0 = 0.
-#   2 TileAccess: L1 slice bounds use runtime valid_shape; alignment uses
+#   2 TileAccess: UB/L1/L0C slice bounds use runtime valid_shape; alignment uses
 #     layout, base address, physical shape and dtype bits.
 #   3 MutexAccess RecordMutex: one record per mutex id of a deduped call;
 #     region distinguishes independent sub-block mutex hardware slots.
@@ -330,7 +330,7 @@ def _slice_unaligned_issue(rec: TileAccessRecord, ctx: ReplayContext) -> Finding
         return None
     return Finding(
         "TILE_SLICE_UNALIGNED",
-        f"L1 {Layout(rec.layout_kind).name} slice start [{rec.off_row}, {rec.off_col}] {detail}",
+        f"Tile {Layout(rec.layout_kind).name} slice start [{rec.off_row}, {rec.off_col}] {detail}",
         ctx.location(rec.line),
         hint=hint,
         group_key=(rec.region, rec.layout_kind) + identity,
@@ -363,7 +363,7 @@ def check_tile_bounds(records: list[TileAccessRecord], ctx: ReplayContext) -> li
         if not violations:
             continue
         if is_slice:
-            message = (f"L1 slice window [{rec.acc_row}, {rec.acc_col}] at offsets [{rec.off_row}, {rec.off_col}] "
+            message = (f"Tile slice window [{rec.acc_row}, {rec.acc_col}] at offsets [{rec.off_row}, {rec.off_col}] "
                        f"is invalid for the parent Tile's runtime valid_shape [{rec.dim_row}, {rec.dim_col}]")
             hint = "Keep the slice within the parent Tile's runtime valid_shape"
         else:

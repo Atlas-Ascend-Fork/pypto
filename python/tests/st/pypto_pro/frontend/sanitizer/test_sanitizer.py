@@ -3131,6 +3131,67 @@ def test_mat_slice_bounds_compare_runtime_valid_shape(start, valid_rows, expecte
             f"expected {expected}, got {[f.kind for f in findings]}"
 
 
+@pytest.mark.soc("950", "960")
+@pytest.mark.parametrize("memory,layout", [
+    (pl.MemorySpace.Vec, pl.ND),
+    (pl.MemorySpace.Vec, pl.DN),
+    (pl.MemorySpace.Vec, pl.NZ),
+    (pl.MemorySpace.Mat, pl.NZ),
+    (pl.MemorySpace.Acc, pl.NZ),
+])
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.parametrize("start,width,expected", [
+    (16, 16, None),
+    (32, 16, "TILE_OUT_OF_BOUNDS"),
+    (-16, 16, "TILE_OUT_OF_BOUNDS"),
+    (1, 16, "TILE_SLICE_UNALIGNED"),
+    (16, 0, None),
+    (32, 0, None),
+    (48, 0, "TILE_OUT_OF_BOUNDS"),
+], ids=["in_valid_shape", "beyond_valid_shape", "negative_start", "unaligned_start",
+        "empty_window", "empty_window_at_end", "empty_window_beyond_end"])
+def test_tile_slice_bounds_and_alignment(memory, layout, nested, start, width, expected):
+    _require_3510_or_9201(ST_DEVICE)
+
+    @pl.jit(sanitizer=True, auto_mutex=True)
+    def kernel(out: pl.Tensor[[1], pl.DT_INT64], offset: pl.DT_INT64, extent: pl.DT_INT64):
+        tile_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP32, target_memory=memory, layout=layout)
+        group = pl.make_tile_group(type=tile_type, addrs=0, mutex_ids=[0])
+        if memory == pl.MemorySpace.Vec:
+            with pl.section_vector():
+                tile = group.current()
+                pl.set_validshape(tile, [32, 32])
+                parent = tile
+                if nested:
+                    parent = tile[0:32, 0:32]
+                if layout == pl.DN:
+                    view = parent[offset:offset + extent, 0:16]
+                    out[0] = view.valid_shape[0]
+                else:
+                    view = parent[0:16, offset:offset + extent]
+                    out[0] = view.valid_shape[1]
+        else:
+            with pl.section_cube():
+                tile = group.current()
+                pl.set_validshape(tile, [32, 32])
+                parent = tile
+                if nested:
+                    parent = tile[0:32, 0:32]
+                view = parent[0:16, offset:offset + extent]
+                out[0] = view.valid_shape[1]
+
+    # Only consume the descriptor, so invalid slices do not issue an illegal data access.
+    out = torch.zeros(1, device=ST_DEVICE, dtype=torch.int64)
+    if expected is None:
+        kernel[None, 1](out, start, width)
+        torch.npu.synchronize()
+        assert out.item() == width
+    else:
+        with pytest.raises(SanitizerReplayError) as error:
+            kernel[None, 1](out, start, width)
+        assert [finding.kind for finding in error.value.findings] == [expected]
+
+
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("layout", [pl.ND, pl.DN])
 @pytest.mark.parametrize("dtype,aligned_step", [(pl.DT_FP16, 16), (pl.DT_FP4E2M1, 64)])

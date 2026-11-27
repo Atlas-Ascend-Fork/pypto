@@ -518,9 +518,9 @@ PyPTO Sanitizer: 1 issue(s) detected
 
 结论：demo.py第12行的data[tid]在128线程下tid可取到127，而tensor只有64个元素，需要按tensor大小截断线程坐标或改用更小的max_threads。
 
-### Mat空间tile切片越界与起点不对齐
+### Tile切片越界与起点不对齐
 
-Mat空间tile（即L1 Buffer上的tile）的切片操作（tile[r:r+h, c:c+w]）在运行时检测两类问题：切片窗口超出父tile的运行时valid_shape（TILE_OUT_OF_BOUNDS），以及切片起点未对齐到物理布局要求的边界（TILE_SLICE_UNALIGNED）。切片的起点、窗口和父tile运行时valid_shape均以运行时表达式记录，由设备在切片执行前求值，动态偏移（如循环变量计算出的起点）同样被覆盖。
+UB、L1 Buffer和L0C Buffer上的tile切片操作（tile[r:r+h, c:c+w]）在运行时检测两类问题：切片窗口超出父tile的运行时valid_shape（TILE_OUT_OF_BOUNDS），以及切片起点未对齐到物理布局要求的边界（TILE_SLICE_UNALIGNED）。切片的起点、窗口和父tile运行时valid_shape均以运行时表达式记录，由设备在切片执行前求值，动态偏移（如循环变量计算出的起点）同样被覆盖。
 
 #### 切片窗口越界
 
@@ -541,13 +541,13 @@ def slice_oob_kernel(a: pypto_pro.language.Tensor[[64, 128], pypto_pro.language.
 ```text
 ===== kernel 'slice_oob_kernel' launch b2c3d4e5 (./build/slice_oob_kernel__3510__d0/tk_none) =====
 PyPTO Sanitizer: 1 issue(s) detected
-[1/1] TILE_OUT_OF_BOUNDS: L1 slice window [32, 67] at offsets [16, 40] is invalid for the parent Tile's runtime valid_shape [51, 99] — dim1: offset 40 + valid_shape 67 = 107 > 99 (over by 8) at demo.py:18
+[1/1] TILE_OUT_OF_BOUNDS: Tile slice window [32, 67] at offsets [16, 40] is invalid for the parent Tile's runtime valid_shape [51, 99] — dim1: offset 40 + valid_shape 67 = 107 > 99 (over by 8) at demo.py:18
       Hint: Keep the slice within the parent Tile's runtime valid_shape
 ```
 
 字段解读：
 
-- L1 slice window后的方括号：切片的行列窗口大小（终点减起点）。
+- Tile slice window后的方括号：切片的行列窗口大小（终点减起点）。
 - at offsets后的方括号：切片起点坐标。
 - parent Tile's runtime valid_shape后的方括号：父tile在切片执行时刻的运行时有效形状。
 - dim1: offset 40 + valid_shape 67 = 107 > 99：列方向40（起点）加67（窗口）超出99（运行时界）共8个元素。
@@ -566,7 +566,7 @@ view = tile[16:48, 30:46]
 ```text
 ===== kernel 'slice_unaligned_kernel' launch c3d4e5f6 (./build/slice_unaligned_kernel__3510__d0/tk_none) =====
 PyPTO Sanitizer: 1 issue(s) detected
-[1/1] TILE_SLICE_UNALIGNED: L1 ND slice start [16, 30] bit address 295392 is not 32-byte (256-bit) aligned at demo.py:22
+[1/1] TILE_SLICE_UNALIGNED: Tile ND slice start [16, 30] bit address 295392 is not 32-byte (256-bit) aligned at demo.py:22
       Hint: Align the slice start address to 32 bytes, including sub-byte element offsets
 ```
 
@@ -590,13 +590,13 @@ view = tile[8:24, 16:32]
 ```text
 ===== kernel 'slice_nz_unaligned_kernel' launch d4e5f6a7 (./build/slice_nz_unaligned_kernel__3510__d0/tk_none) =====
 PyPTO Sanitizer: 1 issue(s) detected
-[1/1] TILE_SLICE_UNALIGNED: L1 NZ slice start [8, 16] is unaligned to the [16, 16] fractal inner block at demo.py:25
+[1/1] TILE_SLICE_UNALIGNED: Tile NZ slice start [8, 16] is unaligned to the [16, 16] fractal inner block at demo.py:25
       Hint: Start fractal slices at multiples of the inner block, as the static slice contract requires
 ```
 
 字段解读：
 
 - is unaligned to the [16, 16] fractal inner block：起点[8, 16]中行方向8不是内块行数16的倍数（列方向16已对齐）。
-- fractal inner block：NZ/ZN布局的分形内块大小，由dtype位宽决定（FP16为(16, 16)，INT8为(16, 32)等）；ZN布局行列含义转置。
+- fractal inner block：按Tile的fractal计算，不区分内存空间。fractal=1024时为(16, 16)；fractal=512时NZ为(16, 256/dtype.bit)，ZN行列含义转置。
 
 结论：demo.py第25行的切片行起点8未对齐到NZ内块的行边界16，需要将行起点调整为16的倍数（如8改为16），或改用ND布局（仅需32字节地址对齐）。

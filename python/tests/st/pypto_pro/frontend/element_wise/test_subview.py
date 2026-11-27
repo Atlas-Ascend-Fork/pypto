@@ -14,13 +14,14 @@
 Tests cover:
 
   1. Subview without valid_shape: row+col offset, stride mismatch (Vector section)
-  2. Subview with runtime valid_shape (pl.set_validshape): intersection clamp
+  2. Subview with runtime valid_shape (pl.set_validshape): explicit valid endpoint
   3. VF subview: 2D row+col offset, per-row load/store with stride
   4. UB DN subview: column-major offset and parent-column stride in VF
   5. NZ subview: multi-fractal offset and byte conversion for C0=8/16/32/64
   6. L1 NZ/ZN subview: multi-fractal windows consumed by matmul
   7. L0C NZ subview: matmul destination and FixPipe source with ReLU/cast
   8. Cube composite: M/N/K loops, aligned tails, dynamic slices, and phases
+  9. Nested subviews: inherited valid_shape for omitted ends
 """
 
 import ctypes
@@ -181,11 +182,11 @@ def test_tile_subview():
 
 
 # ===========================================================================
-# Test T02: Subview with valid_shape intersection — runtime set_validshape
+# Test T02: Subview within runtime set_validshape
 #
-# tile shape [8, 64], valid_shape [6, 40] (via pl.set_validshape), slice [2:8, 8:64]
+# tile shape [8, 64], valid_shape [6, 40] (via pl.set_validshape), slice [2:6, 16:40]
 #
-# Covers: rt_valid via set_validshape, intersection clamp
+# Covers: runtime valid_shape via set_validshape with an explicit valid endpoint
 # ===========================================================================
 @pl.jit(auto_mutex=True)
 def tile_subview_vshape_kernel(
@@ -201,7 +202,7 @@ def tile_subview_vshape_kernel(
         tile = tile_group.next()
         pl.set_validshape(tile, [6, 40])
         pl.load(tile, a, [0, 0])
-        sub1 = tile[2:6, 16:50]
+        sub1 = tile[2:6, 16:40]
         pl.store(out1, sub1, [0, 0])
 
 
@@ -220,6 +221,43 @@ def test_tile_subview_valid_shape():
     expected = a[2:6, 16:40]
     torch.testing.assert_close(out1, expected, rtol=0, atol=0)
     logging.info("test_tile_subview_valid_shape passed.")
+
+
+# ===========================================================================
+# Nested subviews: [2:, :] reads the parent's valid_shape [4, 24] and produces [2, 24].
+# The final window selects the original Tile's [4:6, 16:40] region.
+# ===========================================================================
+@pl.jit(auto_mutex=True)
+def tile_subview_nested_kernel(
+    a: pl.Tensor[[8, 64], pl.DT_FP16],
+    out: pl.Tensor[[2, 24], pl.DT_FP16],
+):
+    tile_group = pl.make_tile_group(
+        type=pl.TileType(shape=[8, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec),
+        addrs=0x0000,
+        mutex_ids=[0],
+    )
+    with pl.section_vector():
+        tile = tile_group.next()
+        pl.set_validshape(tile, [6, 40])
+        pl.load(tile, a, [0, 0])
+        sub = tile[2:6, 16:40]
+        nested = sub[2:, :]
+        pl.store(out, nested, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_tile_subview_nested():
+    if not _is_3510():
+        return
+    a = torch.arange(8 * 64, device=ST_DEVICE, dtype=torch.float16).reshape(8, 64)
+    out = torch.zeros(2, 24, device=ST_DEVICE, dtype=torch.float16)
+
+    tile_subview_nested_kernel[None, 1](a, out)
+    torch.npu.synchronize()
+
+    expected = a[4:6, 16:40]
+    torch.testing.assert_close(out, expected, rtol=0, atol=0)
 
 
 # ===========================================================================
@@ -351,8 +389,8 @@ def test_tile_subview_dn():
 # Test T05: NZ subview — layout-aware element offset and dtype byte conversion
 #
 # Physical Tile [64, 4*C0] uses runtime valid_shape [48, 3*C0]. Its subview
-# [16:64, C0:4*C0] is clamped to [32, 2*C0], spanning two M and two N
-# fractals. Parameterization covers byte widths 32/16/8/4; FP4 detects whether
+# [16:48, C0:3*C0] spans two M and two N fractals within valid_shape.
+# Parameterization covers byte widths 32/16/8/4; FP4 detects whether
 # the logical element offset is converted to bytes with /2.
 # ===========================================================================
 def _make_nz_subview_kernel(name, dtype, c0):
@@ -376,7 +414,7 @@ def _make_nz_subview_kernel(name, dtype, c0):
         with pl.section_vector():
             tile = tile_group.next()
             pl.set_validshape(tile, [48, 3 * c0])
-            sub = tile[16:64, c0:4 * c0]
+            sub = tile[16:48, c0:3 * c0]
             pl.load(sub, inp, [16, c0])
             pl.store(out, sub, [16, c0])
 

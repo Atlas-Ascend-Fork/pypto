@@ -580,7 +580,7 @@ def _slice_rec(off_row, off_col, acc_row, acc_col, dim_row=64, dim_col=64,
 
 
 def test_slice_alignment_records():
-    """纯逻辑测试：L1 分形切片的动态对齐检测（TILE_SLICE_UNALIGNED）。"""
+    """纯逻辑测试：Tile 分形切片的动态对齐检测（TILE_SLICE_UNALIGNED）。"""
     ctx = ReplayContext(source_file="ut.py")
 
     # 对齐且在界内：无 finding
@@ -590,6 +590,7 @@ def test_slice_alignment_records():
     hits = check_tile_bounds([_slice_rec(8, 0, 32, 32)], ctx)
     assert len(hits) == 1
     assert hits[0].kind == "TILE_SLICE_UNALIGNED"
+    assert hits[0].message.startswith("Tile NZ slice start")
     assert "[8, 0] is unaligned to the [16, 16] fractal inner block" in hits[0].message
 
     # ZN 布局（INT8 inner=(32,16)）：行方向未对齐（C0 方向）
@@ -655,6 +656,7 @@ def test_slice_bounds_use_runtime_valid_shape():
     hits = check_tile_bounds([rec], ctx)
     assert len(hits) == 1
     assert hits[0].kind == "TILE_OUT_OF_BOUNDS"
+    assert hits[0].message.startswith("Tile slice window")
     assert "dim0: offset 24 + valid_shape 16 = 40 > 32" in hits[0].message
 
     # start 16 + size 16 = 32 == valid_shape 32 → in bounds
@@ -691,10 +693,46 @@ def test_l1_slice_alignment_precedes_zero_bound(layout):
     assert [finding.kind for finding in findings] == ["TILE_SLICE_UNALIGNED"]
 
 
+@pytest.mark.parametrize("layout", [0, 1, 2, 3])
+@pytest.mark.parametrize("dims", [(0, 16), (16, 0), (0, 0)])
+@pytest.mark.parametrize("empty_parent", [False, True])
+def test_slice_accepts_empty_window(layout, dims, empty_parent):
+    bounds = dims if empty_parent else (64, 64)
+    record = _slice_rec(0, 0, *dims, dim_row=bounds[0], dim_col=bounds[1],
+                        layout_kind=layout, base_addr=0)
+    assert check_tile_bounds([record], _CTX) == []
+
+
+@pytest.mark.parametrize("layout", [0, 1, 2, 3])
+@pytest.mark.parametrize("axis", [0, 1])
+def test_slice_accepts_empty_window_at_parent_end(layout, axis):
+    offsets, window = ((64, 0), (0, 16)) if axis == 0 else ((0, 64), (16, 0))
+    record = _slice_rec(*offsets, *window, layout_kind=layout, base_addr=0)
+    assert check_tile_bounds([record], _CTX) == []
+
+
+@pytest.mark.parametrize("layout", [0, 1, 2, 3])
+@pytest.mark.parametrize("axis", [0, 1])
+def test_slice_rejects_empty_window_beyond_parent_end(layout, axis):
+    offsets, window = ((80, 0), (0, 16)) if axis == 0 else ((0, 80), (16, 0))
+    record = _slice_rec(*offsets, *window, layout_kind=layout, base_addr=0)
+    findings = check_tile_bounds([record], _CTX)
+    assert [finding.kind for finding in findings] == ["TILE_OUT_OF_BOUNDS"]
+    assert f"dim{axis}: slice start 80 exceeds parent valid_shape 64" in findings[0].message
+
+
+@pytest.mark.parametrize("layout", [0, 1, 2, 3])
+@pytest.mark.parametrize("window", [(-1, 16), (16, -1)])
+def test_slice_rejects_negative_window(layout, window):
+    record = _slice_rec(0, 0, *window, layout_kind=layout, base_addr=0)
+    findings = check_tile_bounds([record], _CTX)
+    assert [finding.kind for finding in findings] == ["TILE_OUT_OF_BOUNDS"]
+    assert "negative window size -1" in findings[0].message
+
+
 @pytest.mark.parametrize("dims", [(0, 64), (64, 0), (0, 0)])
-def test_l1_slice_empty_window_fits_empty_bound(dims):
-    record = _slice_rec(0, 0, *dims, dim_row=dims[0], dim_col=dims[1],
-                        layout_kind=0, base_addr=0)
+def test_non_slice_zero_window_remains_valid(dims):
+    record = _slice_rec(0, 0, *dims, layout_kind=-1)
     assert check_tile_bounds([record], _CTX) == []
 
 

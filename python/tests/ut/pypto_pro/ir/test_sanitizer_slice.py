@@ -1,6 +1,6 @@
 # Copyright (c) 2026 Huawei Technologies Co., Ltd.
 # Licensed under the CANN Open Software License Agreement Version 2.0.
-"""L1 slice records preserve the runtime tile, coordinates and layout contract."""
+"""Tile slice records preserve the runtime tile, coordinates and layout contract."""
 
 from pypto_pro import ir
 import pypto_pro.language as pl
@@ -117,54 +117,76 @@ def test_fractal_l1_slice_records_logical_inner_axes(layout, dtype, fractal, inn
     assert all(fields[name].value == -1 for name in ("base_addr", "shape_row", "shape_col", "dtype_bits"))
 
 
-@pytest.mark.parametrize("layout", [pl.ND, pl.DN])
-def test_nested_group_slice_uses_selected_parent_descriptor(layout):
+@pytest.mark.parametrize("memory,layout,dtype,section", [
+    (pl.MemorySpace.Mat, pl.ND, pl.DT_FP16, ir.SectionKind.Cube),
+    (pl.MemorySpace.Mat, pl.DN, pl.DT_FP16, ir.SectionKind.Cube),
+    (pl.MemorySpace.Vec, pl.ND, pl.DT_FP16, ir.SectionKind.Vector),
+    (pl.MemorySpace.Vec, pl.DN, pl.DT_FP16, ir.SectionKind.Vector),
+    (pl.MemorySpace.Vec, pl.NZ, pl.DT_FP16, ir.SectionKind.Vector),
+    (pl.MemorySpace.Acc, pl.NZ, pl.DT_FP32, ir.SectionKind.Cube),
+])
+def test_nested_group_slice_uses_selected_parent_descriptor(memory, layout, dtype, section):
     @pl.jit(arch="3510", auto_mutex=False)
     def kernel(index: pl.DT_INT64, row: pl.DT_INT64, col: pl.DT_INT64):
-        tile_type = pl.TileType(shape=[64, 64], dtype=pl.DT_FP16,
-                                target_memory=pl.MemorySpace.Mat, layout=layout)
-        group = pl.make_tile_group(type=tile_type, addrs=[0, 8192], depth=2)
-        with pl.section_cube():
-            selected = group[index]
-            parent = selected[row:row + 32, col:col + 32]
-            _child = parent[row:row + 16, col:col + 16]
+        tile_type = pl.TileType(shape=[64, 64], dtype=dtype, target_memory=memory, layout=layout)
+        group = pl.make_tile_group(type=tile_type, addrs=[0, 16384], depth=2)
+        if memory == pl.MemorySpace.Vec:
+            with pl.section_vector():
+                selected = group[index]
+                parent = selected[row:row + 32, col:col + 32]
+                _child = parent[row:row + 16, col:col + 16]
+        else:
+            with pl.section_cube():
+                selected = group[index]
+                parent = selected[row:row + 32, col:col + 32]
+                _child = parent[row:row + 16, col:col + 16]
 
-    records = _slice_records(_instrument(kernel))
+    records = _slice_records(_instrument(kernel, section))
     assert len(records) == 2
     for stmt, fields in records:
         _assert_runtime_parent(stmt, fields)
-        _assert_address_inputs(stmt, fields, 16)
+        if layout in (pl.ND, pl.DN):
+            _assert_address_inputs(stmt, fields, 16)
     parent, _ = records[0]
     child, _ = records[1]
     assert ir.structural_equal(child.value.args[0], parent.targets[0])
     assert [dim.value for dim in child.value.args[0].type.shape] == [64, 64]
 
 
-@pytest.mark.parametrize("memory,layout,section", [
-    (pl.MemorySpace.Vec, pl.ND, ir.SectionKind.Vector),
-    (pl.MemorySpace.Vec, pl.NZ, ir.SectionKind.Vector),
-    (pl.MemorySpace.Acc, pl.NZ, ir.SectionKind.Cube),
+@pytest.mark.parametrize("memory,layout,dtype,fractal,section,inner", [
+    (pl.MemorySpace.Vec, pl.ND, pl.DT_FP16, None, ir.SectionKind.Vector, None),
+    (pl.MemorySpace.Vec, pl.DN, pl.DT_FP16, None, ir.SectionKind.Vector, None),
+    (pl.MemorySpace.Vec, pl.NZ, pl.DT_FP32, None, ir.SectionKind.Vector, (16, 8)),
+    (pl.MemorySpace.Vec, pl.NZ, pl.DT_INT8, None, ir.SectionKind.Vector, (16, 32)),
+    (pl.MemorySpace.Vec, pl.NZ, pl.DT_FP4E2M1, None, ir.SectionKind.Vector, (16, 64)),
+    (pl.MemorySpace.Acc, pl.NZ, pl.DT_FP32, None, ir.SectionKind.Cube, (16, 16)),
+    (pl.MemorySpace.Acc, pl.NZ, pl.DT_INT32, None, ir.SectionKind.Cube, (16, 16)),
+    (pl.MemorySpace.Acc, pl.NZ, pl.DT_FP32, 512, ir.SectionKind.Cube, (16, 8)),
 ])
-def test_non_l1_slice_has_no_slice_record(memory, layout, section):
+def test_ub_l0c_slice_records_runtime_bounds_and_alignment(memory, layout, dtype, fractal, section, inner):
     @pl.jit(arch="3510", auto_mutex=False)
-    def kernel(row: pl.DT_INT64, col: pl.DT_INT64):
-        tile = pl.make_tile(pl.TileType(shape=[64, 64], dtype=pl.DT_FP32,
-                                       target_memory=memory, layout=layout), addr=0)
+    def kernel(row: pl.DT_INT64, col: pl.DT_INT64, rows: pl.DT_INT64, cols: pl.DT_INT64):
+        tile = pl.make_tile(pl.TileType(shape=[64, 64], dtype=dtype,
+                                       target_memory=memory, layout=layout, fractal=fractal), addr=0)
         if memory == pl.MemorySpace.Vec:
             with pl.section_vector():
+                pl.set_validshape(tile, [rows, cols])
                 _view = tile[row:row + 16, col:col + 16]
         else:
             with pl.section_cube():
+                pl.set_validshape(tile, [rows, cols])
                 _view = tile[row:row + 16, col:col + 16]
 
-    statements = _instrument(kernel, section)
-    assert any(isinstance(stmt, ir.AssignStmt) and isinstance(stmt.value, ir.Call)
-               and stmt.value.name == "block.subview" for stmt in statements)
-    logs = [stmt.value for stmt in statements
-            if isinstance(stmt, ir.AssignStmt) and not stmt.targets
-            and isinstance(stmt.value, ir.Call)
-            and stmt.value.name == "block.sanitizer_log"]
-    assert all(log.args[0].value & 0xFFFF != 2 for log in logs)
+    records = _slice_records(_instrument(kernel, section))
+    assert len(records) == 1
+    stmt, fields = records[0]
+    _assert_runtime_parent(stmt, fields)
+    assert fields["layout_kind"].value == int(layout)
+    if inner is None:
+        _assert_address_inputs(stmt, fields, 16)
+    else:
+        assert (fields["inner_rows"].value, fields["inner_cols"].value) == inner
+        assert all(fields[name].value == -1 for name in ("base_addr", "shape_row", "shape_col", "dtype_bits"))
 
 
 def test_existing_validshape_and_transfer_records_omit_slice_metadata():

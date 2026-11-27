@@ -96,9 +96,9 @@ __aicore__ inline void _auto_mutex_split_n_transpose_kernel_impl_cube(__gm__ hal
     _expr_tmp_8_0_Type _expr_tmp_8_0{_expr_tmp_8_0_Type::PtoTile(64, 32), {_expr_tmp_6_0.mutex_ids[0], _expr_tmp_6_0.mutex_ids[1]}};
     TASSIGN(_expr_tmp_8_0.tile, (uint64_t)_expr_tmp_6_0.tile.data());
     using _expr_tmp_9_0_Type = SyncedTile<Tile<TileType::Acc, float, 64, 64, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 2>;
-    _expr_tmp_9_0_Type _expr_tmp_9_0{_expr_tmp_9_0_Type::PtoTile(64, min((int64_t)((64 - 32)), (int64_t)(32))), {_tg_gc_tiles_0[0].mutex_ids[0], _tg_gc_tiles_0[0].mutex_ids[1]}};
+    _expr_tmp_9_0_Type _expr_tmp_9_0{_expr_tmp_9_0_Type::PtoTile(64, (64 - 32)), {_tg_gc_tiles_0[0].mutex_ids[0], _tg_gc_tiles_0[0].mutex_ids[1]}};
     TASSIGN(_expr_tmp_9_0.tile, (uint64_t)_tg_gc_tiles_0[0].tile.data() + ((pto::GetTileOffset<std::remove_reference_t<decltype(_tg_gc_tiles_0[0].tile)>>(0, 32))*32/8));
-    _expr_tmp_9_0.tile.SetValidShape(64, min((int64_t)((64 - 32)), (int64_t)(32)));
+    _expr_tmp_9_0.tile.SetValidShape(64, (64 - 32));
     int64_t _tuple_anchor_10_0[] = {static_cast<int64_t>(64), static_cast<int64_t>(32)};
     using _expr_tmp_11_0_Type = SyncedTile<Tile<TileType::Acc, float, 64, 32, BLayout::ColMajor, -1, -1, SLayout::RowMajor, 1024, PadValue::Null, CompactMode::Normal>, 2>;
     _expr_tmp_11_0_Type _expr_tmp_11_0{_expr_tmp_11_0_Type::PtoTile(64, 32), {_expr_tmp_9_0.mutex_ids[0], _expr_tmp_9_0.mutex_ids[1]}};

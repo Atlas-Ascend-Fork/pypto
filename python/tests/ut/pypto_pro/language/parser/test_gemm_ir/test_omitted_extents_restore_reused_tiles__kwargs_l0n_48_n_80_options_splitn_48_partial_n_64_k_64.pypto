@@ -38,7 +38,7 @@ function kernel incast(tensor<1, half, tensor_view<-2, ND, %arg_ptr>> %arg_0, in
     tuple<int64_t, int64_t> %_tuple_anchor_7_0 = tuple(64, 48);
     mutex_tile<tile<64 x 48, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_8_0 = block.reinterpret(%_expr_tmp_6_0, tuple(64, 48), dtype=float, blayout=2, slayout=1);
     tuple<mutex_tile<tile<64 x 48, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1>> %_pl_gemm1_strips_0 = tuple(%_expr_tmp_8_0);
-    mutex_tile<tile<64 x 80, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_9_0 = block.subview(%c_0, tuple(0, 48), tuple(64, ((64 sub 48) min 16)));
+    mutex_tile<tile<64 x 80, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_9_0 = block.subview(%c_0, tuple(0, 48), tuple(64, (64 sub 48)));
     tuple<int64_t, int64_t> %_tuple_anchor_10_0 = tuple(64, 16);
     mutex_tile<tile<64 x 16, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_11_0 = block.reinterpret(%_expr_tmp_9_0, tuple(64, 16), dtype=float, blayout=2, slayout=1);
     tuple<mutex_tile<tile<64 x 16, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1>> %_pl_gemm1_tailstrip_0 = tuple(%_expr_tmp_11_0);
@@ -98,7 +98,7 @@ function kernel incast(tensor<1, half, tensor_view<-2, ND, %arg_ptr>> %arg_0, in
     tuple<int64_t, int64_t> %_tuple_anchor_21_0 = tuple(64, 48);
     mutex_tile<tile<64 x 48, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_22_0 = block.reinterpret(%_expr_tmp_20_0, tuple(64, 48), dtype=float, blayout=2, slayout=1);
     tuple<mutex_tile<tile<64 x 48, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1>> %_pl_gemm2_strips_0 = tuple(%_expr_tmp_22_0);
-    mutex_tile<tile<64 x 80, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_23_0 = block.subview(%c_0, tuple(0, 48), tuple(64, ((80 sub 48) min 32)));
+    mutex_tile<tile<64 x 80, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_23_0 = block.subview(%c_0, tuple(0, 48), tuple(64, (80 sub 48)));
     tuple<int64_t, int64_t> %_tuple_anchor_24_0 = tuple(64, 32);
     mutex_tile<tile<64 x 32, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_25_0 = block.reinterpret(%_expr_tmp_23_0, tuple(64, 32), dtype=float, blayout=2, slayout=1);
     tuple<mutex_tile<tile<64 x 32, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1>> %_pl_gemm2_tailstrip_0 = tuple(%_expr_tmp_25_0);
@@ -194,7 +194,7 @@ function kernel incast(tensor<1, half, tensor_view<-2, ND, %arg_ptr>> %arg_0, in
     tuple<int64_t, int64_t> %_tuple_anchor_7_0 = tuple(64, 48);
     mutex_tile<tile<64 x 48, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_8_0 = block.reinterpret(%_expr_tmp_6_0, tuple(64, 48), dtype=float, blayout=2, slayout=1);
     tuple<mutex_tile<tile<64 x 48, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1>> %_pl_gemm1_strips_0 = tuple(%_expr_tmp_8_0);
-    mutex_tile<tile<64 x 80, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_9_0 = block.subview(%c_0, tuple(0, 48), tuple(64, ((64 sub 48) min 16)));
+    mutex_tile<tile<64 x 80, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_9_0 = block.subview(%c_0, tuple(0, 48), tuple(64, (64 sub 48)));
     tuple<int64_t, int64_t> %_tuple_anchor_10_0 = tuple(64, 16);
     mutex_tile<tile<64 x 16, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_11_0 = block.reinterpret(%_expr_tmp_9_0, tuple(64, 16), dtype=float, blayout=2, slayout=1);
     tuple<mutex_tile<tile<64 x 16, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1>> %_pl_gemm1_tailstrip_0 = tuple(%_expr_tmp_11_0);
@@ -254,7 +254,7 @@ function kernel incast(tensor<1, half, tensor_view<-2, ND, %arg_ptr>> %arg_0, in
     tuple<int64_t, int64_t> %_tuple_anchor_21_0 = tuple(64, 48);
     mutex_tile<tile<64 x 48, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_22_0 = block.reinterpret(%_expr_tmp_20_0, tuple(64, 48), dtype=float, blayout=2, slayout=1);
     tuple<mutex_tile<tile<64 x 48, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1>> %_pl_gemm2_strips_0 = tuple(%_expr_tmp_22_0);
-    mutex_tile<tile<64 x 80, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_23_0 = block.subview(%c_0, tuple(0, 48), tuple(64, ((80 sub 48) min 32)));
+    mutex_tile<tile<64 x 80, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_23_0 = block.subview(%c_0, tuple(0, 48), tuple(64, (80 sub 48)));
     tuple<int64_t, int64_t> %_tuple_anchor_24_0 = tuple(64, 32);
     mutex_tile<tile<64 x 32, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1> %_expr_tmp_25_0 = block.reinterpret(%_expr_tmp_23_0, tuple(64, 32), dtype=float, blayout=2, slayout=1);
     tuple<mutex_tile<tile<64 x 32, float, tile_view<-1 x -1>, hw_info<col_major, row_major, 1024, null, normal>>, 1>> %_pl_gemm2_tailstrip_0 = tuple(%_expr_tmp_25_0);

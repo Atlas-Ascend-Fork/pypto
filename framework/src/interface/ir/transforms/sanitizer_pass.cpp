@@ -78,7 +78,7 @@ struct TileLayoutDesc {
     int64_t innerCols = 0;
 };
 
-// Mirrors the frontend L1 slice contract: NZ (16, 256/bits), ZN (256/bits, 16); fractal 1024 uses (16, 16).
+// Mirrors the frontend slice contract: fractal 1024 uses (16, 16); otherwise NZ/ZN use 256/bits.
 TileLayoutDesc TileLayoutInfo(const TypePtr& type)
 {
     constexpr uint64_t kAccFractalBytes = 1024;
@@ -158,7 +158,7 @@ public:
             return SeqStmts::Flatten({src, dst}, c->span_);
         };
         auto scalarBounds = [this](const CallPtr& c) { return RecordScalarAccess(c); };
-        auto matSlice = [this](const CallPtr& c) { return RecordSubview(c); };
+        auto tileSlice = [this](const CallPtr& c) { return RecordSubview(c); };
         auto validshapeBounds = [this](const CallPtr& c) { return RecordValidShape(c); };
         auto mutexPairing = [this](const CallPtr& c) { return RecordMutex(c); };
         auto tileOverlapDecl = [this](const CallPtr& c) { return CollectMakeTile(c); };
@@ -208,7 +208,7 @@ public:
             {"block.store", gmAndPhaseStore},
             {"block.move", tileAndPhaseMove},
             {"block.insert", tileAndPhaseInsert},
-            {"block.subview", matSlice},
+            {"block.subview", tileSlice},
             {"block.getval", scalarBounds},
             {"block.setval", scalarBounds},
             {"block.atomic_rmw", scalarBounds},
@@ -254,7 +254,7 @@ private:
     StmtPtr RecordGmAccess(const CallPtr& call);
     StmtPtr RecordTileAccess(const CallPtr& call, uint32_t tileArgIdx, const ExprPtr& offRow, const ExprPtr& offCol,
                              const ExprPtr& winRow, const ExprPtr& winCol);
-    // L1 (Mat) slice records: one per block.subview call, judged by the replay.
+    // Tile slice records: one per block.subview call, judged by the replay.
     StmtPtr RecordSubview(const CallPtr& call);
     StmtPtr RecordMutex(const CallPtr& call);
     // sync_src/sync_dst record: event_id (runtime expr from args[0]) +
@@ -616,19 +616,20 @@ StmtPtr SanitizerInstrumenter::RecordTileAccess(const CallPtr& call, uint32_t ti
     return MakeLogStmt(static_cast<uint32_t>(SanitizerDetection::TileAccess), std::move(fields), call->span_);
 }
 
-// block.subview slice record: Mat tiles only (L1 scope); the scalar-offset VF form has no window and is skipped.
+// block.subview slice record: UB/L1/L0C; the scalar-offset VF form has no window and is skipped.
 StmtPtr SanitizerInstrumenter::RecordSubview(const CallPtr& call)
 {
     auto tileType = As<TileType>(call->args_[0]->GetType());
     if (tileType == nullptr || !tileType->memref_.has_value() || *tileType->memref_ == nullptr)
         return nullptr;
-    if ((*tileType->memref_)->memorySpace_ != MemorySpace::Mat)
+    const auto space = (*tileType->memref_)->memorySpace_;
+    if (space != MemorySpace::Vec && space != MemorySpace::Mat && space != MemorySpace::Acc)
         return nullptr;
     auto offTuple = As<MakeTuple>(call->args_[1]);
     auto winTuple = As<MakeTuple>(call->args_[2]);
     if (offTuple == nullptr || winTuple == nullptr)
         return nullptr;
-    // Bounds are the parent's runtime valid_shape, matching the frontend's static clamp.
+    // Record the parent's runtime valid_shape as the window bound for replay.
     const auto layoutDesc = TileLayoutInfo(call->args_[0]->GetType());
     std::vector<ExprPtr> fields;
     fields.push_back(TileDim(call->args_[0], 0));

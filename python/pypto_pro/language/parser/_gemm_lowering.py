@@ -488,13 +488,14 @@ class _GemmCall:
         return [*outer, self.loop("k", extent, split, body)]
 
     def strip_views(self, suffix, rows, width, columns):
+        limit = self.known_int(self.read("n"))
         views = []
         for col in columns:
             window = ast.Subscript(
                 value=self.read("acc"),
                 slice=ast.Tuple(elts=[
                     ast.Slice(lower=_const(0), upper=_const(rows)),
-                    ast.Slice(lower=_const(col), upper=_const(col + width)),
+                    ast.Slice(lower=_const(col), upper=_const(min(col + width, limit))),
                 ], ctx=ast.Load()),
                 ctx=ast.Load(),
             )
