@@ -120,6 +120,30 @@ def test_barrier_timeout_must_be_compile_time():
     assert "compile-time" in str(caught.value)
 
 
+def test_dist_barrier_timeout_zero_is_no_wait():
+    """``timeout=0`` is an explicit no-wait bound, distinct from ``None`` (forever)."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window):
+        with pl.section_vector():
+            pld.barrier(win, timeout=0)
+    _assert_ir(kernel, "test_dist_barrier_timeout_zero_is_no_wait")
+
+
+def test_barrier_timeout_rejects_negative_sentinel():
+    """The forever sentinel -1 is internal and cannot be spelled from the frontend."""
+
+    @pl.jit(arch="3510", auto_mutex=False)
+    def kernel(win: pld.Window):
+        with pl.section_vector():
+            pld.barrier(win, timeout=-1)
+
+    with pytest.raises(InvalidVal) as caught:
+        _parse(kernel)
+    assert "timeout" in str(caught.value)
+    assert "no wait" in str(caught.value)
+
+
 # =============================================================================
 # remote_ptr — typed device-side pointer over a registered region
 # =============================================================================

@@ -79,7 +79,7 @@ repos:
       - id: codespell
         args: [
             "-L",
-            "CANN,cann,NNAL,nnal,ASCEND,ascend,EnQue,CopyIn,ArchType,AND,ND,tbe,copyin,alog,uSig,Dout,InOut,NAM,SER,entrys,tieM",
+            "CANN,cann,NNAL,nnal,ASCEND,ascend,EnQue,CopyIn,ArchType,AND,ND,tbe,copyin,alog,uSig,Dout,InOut,NAM,SER,entrys,tieM,CLOS",
             "--skip",
             "*.py,*.cpp,*.hpp,*.c,*.h",
           ]

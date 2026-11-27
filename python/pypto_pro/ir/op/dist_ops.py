@@ -208,20 +208,19 @@ def _signal_ptr_operand(value, api, arg_name, span):
     return ptr
 
 
-def _timeout_value(timeout, api, *, minimum=0):
-    """``timeout=`` compile-time cycles (``None`` -> 0 = forever)."""
+def _timeout_value(timeout, api):
+    """``timeout=`` compile-time cycles (``None`` -> -1 = forever; ``0`` = no wait)."""
     timeout = _none_value(timeout)
     if timeout is None:
-        return 0
+        return -1
     if isinstance(timeout, _ir_core.ConstInt):
         timeout = int(timeout.value)
     if not _is_int(timeout):
         raise InvalidType(f"{api} timeout must be an int or None, got {timeout!r}")
-    if not minimum <= timeout <= _MAX_TIMEOUT_CYCLES:
-        forever = " (None = forever)" if minimum else ""
+    if not 0 <= timeout <= _MAX_TIMEOUT_CYCLES:
         raise InvalidVal(
-            f"{api} timeout must be in [{minimum}, {_MAX_TIMEOUT_CYCLES}] device cycles"
-            f"{forever}, but got {timeout}",
+            f"{api} timeout must be in [0, {_MAX_TIMEOUT_CYCLES}] device cycles "
+            f"(None = forever, 0 = no wait), but got {timeout}",
         )
     return timeout
 
@@ -497,7 +496,7 @@ def _build_channel_write(parser, call, channel):
     submit = kwargs_parsed.get("submit", True)
     if not isinstance(submit, bool):
         raise InvalidType(f"ch.write submit must be a compile-time bool, got {submit!r}")
-    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write", minimum=1)
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write")
     option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.write")
 
     source = parser.parse_expression(call.args[1])
@@ -590,7 +589,7 @@ def _build_channel_read(parser, call, channel):
     submit = kwargs_parsed.get("submit", True)
     if not isinstance(submit, bool):
         raise InvalidType(f"ch.read submit must be a compile-time bool, got {submit!r}")
-    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.read", minimum=1)
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.read")
     option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.read")
 
     num_bytes_arg = _shape_byte_count(dst.type.shape, dst.type.dtype, span)
@@ -659,7 +658,7 @@ def _build_channel_write_reduce(parser, call, channel):
     submit = kwargs_parsed.get("submit", True)
     if not isinstance(submit, bool):
         raise InvalidType(f"ch.write_reduce submit must be a compile-time bool, got {submit!r}")
-    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_reduce", minimum=1)
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_reduce")
     option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.write_reduce")
 
     num_bytes_arg = _shape_byte_count(source.type.shape, source.type.dtype, span)
@@ -724,7 +723,7 @@ def _build_channel_atomic_fetch_add(parser, call, channel):
     submit = kwargs_parsed.get("submit", True)
     if not isinstance(submit, bool):
         raise InvalidType(f"ch.atomic_fetch_add submit must be a compile-time bool, got {submit!r}")
-    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.atomic_fetch_add", minimum=1)
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.atomic_fetch_add")
     option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.atomic_fetch_add")
 
     return _ir_core.create_op_call(
@@ -771,7 +770,7 @@ def _build_channel_atomic_cas(parser, call, channel):
     submit = kwargs_parsed.get("submit", True)
     if not isinstance(submit, bool):
         raise InvalidType(f"ch.atomic_cas submit must be a compile-time bool, got {submit!r}")
-    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.atomic_cas", minimum=1)
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.atomic_cas")
     option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.atomic_cas")
 
     return _ir_core.create_op_call(
@@ -812,7 +811,7 @@ def _build_channel_write_notify(parser, call, channel):
     submit = kwargs_parsed.get("submit", True)
     if not isinstance(submit, bool):
         raise InvalidType(f"ch.write_notify submit must be a compile-time bool, got {submit!r}")
-    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_notify", minimum=1)
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.write_notify")
     option = _urma_option(kwargs_parsed.get("option", _URMA_OPTION_DEFAULT), "ch.write_notify")
 
     num_bytes_arg = _shape_byte_count(source.type.shape, source.type.dtype, span)
@@ -868,7 +867,7 @@ def _build_channel_drain(parser, call, channel):
         if "timeout" in kwargs_parsed:
             raise InvalidArgument("ch.drain timeout given both positionally and by keyword")
         kwargs_parsed = {"timeout": _require_const_int(parser, call.args[0], "ch.drain", "timeout")}
-    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.drain", minimum=1)
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "ch.drain")
     return _ir_core.create_op_call(
         "channel.drain", [channel.token], {"timeout_cycles": timeout}, span
     )
@@ -991,7 +990,7 @@ def _build_buffer_channel_submit(parser, call, bchannel):
         if "timeout" in kwargs_parsed:
             raise InvalidArgument("bch.submit timeout given both positionally and by keyword")
         kwargs_parsed = {"timeout": _require_const_int(parser, call.args[0], "bch.submit", "timeout")}
-    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "bch.submit", minimum=1)
+    timeout = _timeout_value(kwargs_parsed.get("timeout", None), "bch.submit")
     return _ir_core.create_op_call(
         "buffer_channel.submit", [bchannel.token], {"timeout_cycles": timeout}, span
     )

@@ -63,6 +63,7 @@
     - [AI CPU算子开发](programming_guide/pro/aicpu_development/index.md)
       - [Kernel核函数创建](programming_guide/pro/aicpu_development/kernel_function.md)
       - [Tensor创建和操作](programming_guide/pro/aicpu_development/tensor_creation_and_operations.md)
+    - [通信算子开发](programming_guide/pro/communication_development/index.md)
     - [调试调优](programming_guide/pro/debug/index.md)
       - [AI Core](programming_guide/pro/debug/ai_core/index.md)
         - [功能调试](programming_guide/pro/debug/ai_core/functional_debugging.md)

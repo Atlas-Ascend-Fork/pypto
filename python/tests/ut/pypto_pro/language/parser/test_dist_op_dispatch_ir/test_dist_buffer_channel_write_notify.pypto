@@ -6,7 +6,7 @@ function kernel incast( %win_0, tensor<1 x 8, int32_t, tensor_view<-2, ND, %dst_
     ptr<int64_t> %_expr_tmp_0_0 = ptr.make_ptr(%sig_0);
     ptr<int64_t> %_expr_tmp_1_0 = ptr.addptr(%_expr_tmp_0_0, 1);
     buffer_channel.write_notify(%bch_0, %rptr_0, (((32 mul 1) mul 8) div 8), %src_0, %_expr_tmp_1_0, 5, option=13);
-    buffer_channel.submit(%bch_0, timeout_cycles=0);
-    channel.drain(%bch_0, timeout_cycles=0);
+    buffer_channel.submit(%bch_0, timeout_cycles=-1);
+    channel.drain(%bch_0, timeout_cycles=-1);
     return;
 }

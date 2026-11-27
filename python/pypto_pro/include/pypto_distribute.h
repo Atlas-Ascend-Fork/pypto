@@ -164,7 +164,7 @@ __aicore__ inline void BarrierSync(__gm__ Window* win)
             if (sig == target) {
                 break;
             }
-            if (kTimeoutCycles > 0 && get_sys_cnt() - t0 >= kTimeoutCycles) {
+            if (get_sys_cnt() - t0 >= kTimeoutCycles) {
                 pypto_panic("dist.barrier timeout: nrank %d, Signal %d, target %d, phase %d, counter %lld\n",
                             win->nrank, sig, target, phase, static_cast<long long>(cnt));
             }
@@ -707,10 +707,8 @@ public:
                 if (((header >> 2U) & 1U) != phase) {
                     break;
                 }
-                if constexpr (kTimeoutCycles > 0) {
-                    if (get_sys_cnt() - start >= kTimeoutCycles) {
-                        pypto_panic("dist.channel PollCq timeout, tail %u, target %u\n", tail, target);
-                    }
+                if (get_sys_cnt() - start >= kTimeoutCycles) {
+                    pypto_panic("dist.channel PollCq timeout, tail %u, target %u\n", tail, target);
                 }
                 CpuRelax();
             } while (true);
@@ -764,11 +762,9 @@ public:
             // No completion left to reclaim (equality), or the CQ counters disagree.
             pypto_assert(cqTail < expected, "dist.channel: SQ/CQ accounting inconsistent\n");
 
-            if constexpr (kTimeoutCycles > 0) {
-                if (get_sys_cnt() - start >= kTimeoutCycles) {
-                    pypto_panic("dist.channel ReserveOrWait timeout, wqebbs %u, usedSq %u, usedCq %u\n", wqebbs, usedSq,
-                                usedCq);
-                }
+            if (get_sys_cnt() - start >= kTimeoutCycles) {
+                pypto_panic("dist.channel ReserveOrWait timeout, wqebbs %u, usedSq %u, usedCq %u\n", wqebbs, usedSq,
+                            usedCq);
             }
 
             // Reclaim one completion, then recheck both capacities.

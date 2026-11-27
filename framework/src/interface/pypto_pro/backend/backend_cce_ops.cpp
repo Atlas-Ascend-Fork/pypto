@@ -1759,7 +1759,10 @@ REGISTER_BACKEND_OP(BackendCCE, "dist.window_get")
 
 static std::string DistTimeoutLiteral(int64_t timeoutCycles)
 {
-    return timeoutCycles == 0 ? "INT64_MAX" : std::to_string(timeoutCycles) + "LL";
+    // -1 = wait forever (frontend None) -> INT64_MAX; 0 = no wait -> the engine template
+    // expires as soon as elapsed cycles reach the literal, so 0 traps on the first
+    // unsatisfied check.
+    return timeoutCycles == -1 ? "INT64_MAX" : std::to_string(timeoutCycles) + "LL";
 }
 
 static std::string MakeDistBarrierCodegenCCE(const ir::CallPtr& op, codegen::CodegenBase& codegenBase)
@@ -1777,7 +1780,7 @@ static std::string MakeDistBarrierCodegenCCE(const ir::CallPtr& op, codegen::Cod
                                ir::As<ir::WindowType>(windowVar->GetType()))
         << "dist.barrier requires window to have WindowType";
 
-    const int64_t timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
+    const int64_t timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : -1;
     const bool syncLocal = !op->HasKwarg("sync_local") || op->GetKwarg<bool>("sync_local");
     const bool flushStore = !op->HasKwarg("flush_store") || op->GetKwarg<bool>("flush_store");
 
@@ -1903,7 +1906,7 @@ static std::string MakeDistBufferChannelSubmitCodegenCCE(const ir::CallPtr& op, 
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "buffer_channel.submit requires the Vector target";
 
-    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
+    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : -1;
     codegen.Emit(codegen.GetExprAsCode(op->args_[0]) + ".Submit<" + DistTimeoutLiteral(timeoutCycles) + ">();");
     return "";
 }
@@ -2078,7 +2081,7 @@ static std::string MakeDistChannelWriteCodegenCCE(const ir::CallPtr& op, codegen
         << "channel.write source must have TensorType";
 
     const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
-    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
+    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : -1;
     const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x2D;
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
@@ -2100,7 +2103,7 @@ static std::string MakeDistChannelWriteValueCodegenCCE(const ir::CallPtr& op, co
         << "channel.write_value requires the Vector target (the write engine runs on the AIV)";
 
     const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
-    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
+    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : -1;
     const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x2D;
     auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
     PRO_CODEGEN_INTERNAL_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, dstPtrType != nullptr)
@@ -2131,7 +2134,7 @@ static std::string MakeDistChannelReadCodegenCCE(const ir::CallPtr& op, codegen:
         << "channel.read destination must have TensorType";
 
     const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
-    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
+    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : -1;
     const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x2D;
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
@@ -2161,7 +2164,7 @@ static std::string MakeDistChannelWriteReduceCodegenCCE(const ir::CallPtr& op, c
         << "channel.write_reduce source must have TensorType";
 
     const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
-    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
+    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : -1;
     const int reduceOp = op->HasKwarg("reduce_op") ? op->GetKwarg<int>("reduce_op") : 0;
     const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x2D;
 
@@ -2198,7 +2201,7 @@ static std::string MakeDistChannelWriteNotifyCodegenCCE(const ir::CallPtr& op, c
         << "channel.write_notify source must have TensorType";
 
     const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
-    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
+    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : -1;
     const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x2D;
 
     const std::string channel = codegen.GetExprAsCode(op->args_[0]);
@@ -2230,7 +2233,7 @@ static std::string MakeDistChannelAtomicFetchAddCodegenCCE(const ir::CallPtr& op
         << "channel.atomic_fetch_add fetch destination must have TensorType";
 
     const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
-    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
+    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : -1;
     const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x2D;
 
     auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
@@ -2266,7 +2269,7 @@ static std::string MakeDistChannelAtomicCasCodegenCCE(const ir::CallPtr& op, cod
         << "channel.atomic_cas fetch destination must have TensorType";
 
     const bool submit = op->HasKwarg("submit") ? op->GetKwarg<bool>("submit") : true;
-    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
+    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : -1;
     const int option = op->HasKwarg("option") ? op->GetKwarg<int>("option") : 0x2D;
 
     auto dstPtrType = ir::As<ir::PtrType>(op->args_[1]->GetType());
@@ -2305,7 +2308,7 @@ static std::string MakeDistChannelDrainCodegenCCE(const ir::CallPtr& op, codegen
     PRO_CODEGEN_CHECK(ExternalError::INVALID_OPERATION, codegen.GetTarget() == ir::SectionKind::Vector)
         << "channel.drain requires the Vector target";
 
-    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : 0;
+    const int timeoutCycles = op->HasKwarg("timeout_cycles") ? op->GetKwarg<int>("timeout_cycles") : -1;
     codegen.Emit(codegen.GetExprAsCode(op->args_[0]) + ".Drain<" + DistTimeoutLiteral(timeoutCycles) + ">();");
     return "";
 }

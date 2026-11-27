@@ -8,7 +8,7 @@ function kernel incast( %win_0, tensor<1 x 8, int32_t, tensor_view<-2, ND, %dst_
     buffer_channel.write_reduce(%bch_0, %dst_rptr_0, (((32 mul 1) mul 8) div 8), %src_0, reduce_op=10, option=13);
     buffer_channel.atomic_fetch_add(%bch_0, %dst_rptr_0, %fetch_0, 3, option=13);
     buffer_channel.atomic_cas(%bch_0, %dst_rptr_0, %fetch_0, 0, 3, option=13);
-    buffer_channel.submit(%bch_0, timeout_cycles=0);
-    channel.drain(%bch_0, timeout_cycles=0);
+    buffer_channel.submit(%bch_0, timeout_cycles=-1);
+    channel.drain(%bch_0, timeout_cycles=-1);
     return;
 }

@@ -83,8 +83,8 @@ TypePtr DeduceBarrierType(const std::vector<ExprPtr>& args, const std::vector<st
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, false)
             << "dist.barrier does not accept keyword argument '" << name << "'";
     }
-    PRO_IR_CHECK(ExternalError::INVALID_VAL, timeoutCycles >= 0)
-        << "dist.barrier timeout_cycles must be >= 0 (0 = wait forever), but got " << timeoutCycles;
+    PRO_IR_CHECK(ExternalError::INVALID_VAL, timeoutCycles >= -1)
+        << "dist.barrier timeout_cycles must be >= -1 (-1 = wait forever, 0 = no wait), but got " << timeoutCycles;
     return GetNoneType();
 }
 } // namespace
@@ -218,9 +218,10 @@ ChannelWriteKwargs ParseChannelWriteKwargs(const std::vector<std::pair<std::stri
     if (requireSubmit) {
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, hasSubmit) << opName << " requires the 'submit' keyword";
     }
-    // 0 = wait forever at the op layer; the backend emits INT64_MAX for the engine template.
-    PRO_IR_CHECK(ExternalError::INVALID_VAL, parsed.timeoutCycles >= 0)
-        << opName << " timeout_cycles must be >= 0 (0 = wait forever), but got " << parsed.timeoutCycles;
+    // -1 = wait forever at the op layer (the frontend maps None to it); the backend emits
+    // INT64_MAX for it. 0 = no wait: the engine template expires on the first unsatisfied check.
+    PRO_IR_CHECK(ExternalError::INVALID_VAL, parsed.timeoutCycles >= -1)
+        << opName << " timeout_cycles must be >= -1 (-1 = wait forever, 0 = no wait), but got " << parsed.timeoutCycles;
     // WQE flag byte: odr[2:0], fence[3], cqe[5]; cqe is required for drain accounting.
     PRO_IR_CHECK(ExternalError::INVALID_VAL, parsed.option >= 0 && (parsed.option & ~0x2F) == 0)
         << opName << " option sets unsupported WQE flag bits, got " << parsed.option;
@@ -446,8 +447,8 @@ TypePtr DeduceDistChannelDrainType(const std::vector<ExprPtr>& args,
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, false)
             << "channel.drain does not accept keyword argument '" << name << "'";
     }
-    PRO_IR_CHECK(ExternalError::INVALID_VAL, timeoutCycles >= 0)
-        << "channel.drain timeout_cycles must be >= 0 (0 = wait forever), but got " << timeoutCycles;
+    PRO_IR_CHECK(ExternalError::INVALID_VAL, timeoutCycles >= -1)
+        << "channel.drain timeout_cycles must be >= -1 (-1 = wait forever, 0 = no wait), but got " << timeoutCycles;
     return GetNoneType();
 }
 
@@ -542,8 +543,9 @@ TypePtr DeduceDistBufferChannelSubmitType(const std::vector<ExprPtr>& args,
         PRO_IR_CHECK(ExternalError::INVALID_ARGUMENT, false)
             << "buffer_channel.submit does not accept keyword argument '" << name << "'";
     }
-    PRO_IR_CHECK(ExternalError::INVALID_VAL, timeoutCycles >= 0)
-        << "buffer_channel.submit timeout_cycles must be >= 0 (0 = wait forever), but got " << timeoutCycles;
+    PRO_IR_CHECK(ExternalError::INVALID_VAL, timeoutCycles >= -1)
+        << "buffer_channel.submit timeout_cycles must be >= -1 (-1 = wait forever, 0 = no wait), but got "
+        << timeoutCycles;
     return GetNoneType();
 }
 

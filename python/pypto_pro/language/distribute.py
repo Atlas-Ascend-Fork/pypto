@@ -248,7 +248,8 @@ class Channel(NamedTuple):
         """Wait for engine completion of this channel's writes (device-only).
 
         Same scope as :meth:`submit`. ``timeout`` is a compile-time device-cycle
-        bound; expiry traps the AIV. ``None`` waits forever. :meth:`drain` never
+        bound in [0, 2^31-1]; expiry traps the AIV. ``None`` waits forever, ``0``
+        does not wait. :meth:`drain` never
         publishes WQEs staged with ``submit=False``: they need :meth:`submit`, or a
         later post that runs out of queue capacity.
         """
@@ -322,8 +323,8 @@ class BufferChannel(NamedTuple):
 
         One CQE per published batch (the last staged WQEBB carries the final flags).
         The doorbell always rings, so an engine op posted earlier with ``submit=False``
-        is published too. ``timeout`` bounds the SQ/CQ capacity wait; expiry traps
-        the AIV.
+        is published too. ``timeout`` bounds the SQ/CQ capacity wait in [0, 2^31-1]
+        (``None`` waits forever, ``0`` does not wait); expiry traps the AIV.
         """
 
     @_api_decl
@@ -388,8 +389,9 @@ def barrier(
 
     Args:
         win: the window (carries the group and the barrier region).
-        timeout: compile-time device-cycle bound (max 2^31-1); expiry traps the AIV.
-            ``None`` waits forever.
+        timeout: compile-time device-cycle bound in [0, 2^31-1]; expiry traps the AIV.
+            ``None`` waits forever; ``0`` does not wait (traps immediately unless the
+            wait is already satisfied).
         sync_local: include the local AIV-core exchange (default ``True``) — between
             this rank's AIV cores only, never between ranks. ``False`` leaves the
             arrival exchange to the leader AIV alone (single-AIV launches).

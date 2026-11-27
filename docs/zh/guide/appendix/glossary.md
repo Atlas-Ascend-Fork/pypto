@@ -21,3 +21,9 @@
 | **SuperKernel（SK）**   | 算子二进制融合技术：图编译阶段将多个已编译的子核函数融合成一个超级核函数，减少任务调度与下发开销。 |
 | **AI CPU Kernel**        | 运行在SoC控制CPU（AI CPU）上的串行任务Kernel，通过pypto_pro.language.jit的mode="aicpu_kernel"声明。单任务执行、无多核启动规模与Tile编程，直接对GM做标量读写，通过返回值上报状态（0为成功，1为参数非法），适合tiling分核、偏移计算、动态shape预处理等控制流密集型任务。 |
 | **早启（Early-Start）** | SuperKernel子核间的任务重叠执行能力：通过成对的set_next_task_start与wait_pre_task_end接口，使子核与相邻子核的指令并行执行。 |
+| **对称窗口（Window）** | PyPTO Pro分布式编程中，由HCCL通信组内所有rank共同创建并按相同顺序映射同一内存区域的通信上下文。窗口不分配业务数据内存，业务内存通过create_window的memories参数注册，create_window内部完成建链。 |
+| **写引擎** | PyPTO Pro分布式接口中基于URMA的工作队列提交引擎，通过Channel提交异步写、读、归约和原子操作。 |
+| **Jetty** | UB网络通信端点，作用类似RoCE的QP，承载URMA工作队列并连接本端与对端。共享窗口中每个AIV持有私有Jetty；per-endpoint窗口中每个对端对应一个Jetty，由多个AIV共享。 |
+| **WQE** | 工作队列元素（Work Queue Element），提交给通信引擎的一次请求描述，用于描述一次数据传输或原子操作。 |
+| **WQEBB** | WQE基本块（WQE Basic Block），工作队列中64字节的槽位。一个WQE由一个或多个WQEBB组成，带通知的写操作和原子操作各占两个WQEBB。 |
+| **CQE** | 完成队列元素（Completion Queue Element），通信引擎上报请求完成的记录。Channel中每个WQE产生一个CQE；BufferChannel的整个批次只产生一个CQE，供drain等待完成。 |

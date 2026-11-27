@@ -6,6 +6,7 @@
 
 programming_paradigm/index
 development/index
+communication_development/index
 aicpu_development/index
 debug/index
 ```

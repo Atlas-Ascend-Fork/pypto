@@ -1,0 +1,4 @@
+function kernel incast( %win_0) outcast() #entry(false) #type(pro) {
+    dist.barrier(%win_0, timeout_cycles=0, sync_local=true, flush_store=true);
+    return;
+}
