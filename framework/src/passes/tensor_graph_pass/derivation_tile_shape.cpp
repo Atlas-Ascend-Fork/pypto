@@ -367,7 +367,9 @@ static Status DerivationAlignShapeTile(std::vector<ShapeStatus>& inStatus, std::
         }
         /* shapeStatus.axisType只可能为keep或者split */
         if (shapeStatus.axisType != AXIS_SPLIT) {
-            APASS_LOG_WARN_F(Elements::Tensor, "The axisType property of inStatus is invalid.");
+            APASS_LOG_WARN_F(Elements::Tensor,
+                             "The axisType property of inStatus is invalid, axisType: %d, expected: AXIS_SPLIT (%d).",
+                             static_cast<int32_t>(shapeStatus.axisType), static_cast<int32_t>(AXIS_SPLIT));
             return WARNING;
         }
 
@@ -400,7 +402,11 @@ static Status DerivationOutShapeTileWithAlign(std::vector<ShapeStatus>& alignedS
         auto o = alignStatus.transformAxisIndex[0];
         /* alignStatus.axisType只可能为keep或者merge */
         if (alignStatus.axisType != AXIS_KEEP && alignStatus.axisType != AXIS_MERGE) {
-            APASS_LOG_WARN_F(Elements::Tensor, "The axisType property of alignedStatus is invalid.");
+            APASS_LOG_WARN_F(Elements::Tensor,
+                             "The axisType property of alignedStatus is invalid, axisType: %d, expected: AXIS_KEEP "
+                             "(%d) or AXIS_MERGE (%d).",
+                             static_cast<int32_t>(alignStatus.axisType), static_cast<int32_t>(AXIS_KEEP),
+                             static_cast<int32_t>(AXIS_MERGE));
             return WARNING;
         }
         tileShape[o] = tileShape[o] * alignStatus.tileSize;
@@ -422,11 +428,11 @@ static Status DerivationOutShapeTileWithAlign(std::vector<ShapeStatus>& alignedS
             indexes.push_back(i);
         } else {
             if (!CheckMemoryCondition(indexes, alignedStatus)) {
-                APASS_LOG_WARN_F(
-                    Elements::Tensor,
-                    "The memory Layout can not be mapped: AlignedShape%s, OutputShape%s, alignTileShape%s, tileShape%s",
-                    GetShapeStr(alignedStatus).c_str(), GetStr(outShape).c_str(), GetTileStr(alignedStatus).c_str(),
-                    GetStr(tileShape).c_str());
+                APASS_LOG_WARN_F(Elements::Tensor,
+                                 "The memory Layout can not be mapped at merged axis group boundary: AlignedShape%s, "
+                                 "OutputShape%s, alignTileShape%s, tileShape%s",
+                                 GetShapeStr(alignedStatus).c_str(), GetStr(outShape).c_str(),
+                                 GetTileStr(alignedStatus).c_str(), GetStr(tileShape).c_str());
                 return WARNING;
             }
             indexes.clear();
@@ -435,11 +441,11 @@ static Status DerivationOutShapeTileWithAlign(std::vector<ShapeStatus>& alignedS
 
         if (indexes.size() > 1) {
             if (!CheckMemoryCondition(indexes, alignedStatus)) {
-                APASS_LOG_WARN_F(
-                    Elements::Tensor,
-                    "The memory Layout can not be mapped: AlignedShape%s, OutputShape%s, alignTileShape%s, tileShape%s",
-                    GetShapeStr(alignedStatus).c_str(), GetStr(outShape).c_str(), GetTileStr(alignedStatus).c_str(),
-                    GetStr(tileShape).c_str());
+                APASS_LOG_WARN_F(Elements::Tensor,
+                                 "The memory Layout can not be mapped for current merged axis group: AlignedShape%s, "
+                                 "OutputShape%s, alignTileShape%s, tileShape%s",
+                                 GetShapeStr(alignedStatus).c_str(), GetStr(outShape).c_str(),
+                                 GetTileStr(alignedStatus).c_str(), GetStr(tileShape).c_str());
                 return WARNING;
             }
         }

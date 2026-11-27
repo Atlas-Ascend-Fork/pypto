@@ -2711,5 +2711,150 @@ TEST_F(ReplaceTensorTest, UnionFindUniteUnregisteredTensorRegistersAsSingleton)
     ASSERT_EQ(groups[0].size(), 2);
 }
 
+// 同组两个inCast张量的symbol/memoryId/actualRawmagic互不相同时, FindBaseTensor判定base冲突,
+// 报ERROR并返回FAILED(覆盖replace_tensor.cpp "baseTensor %d and curTensor %d have a conflict."日志分支)
+TEST_F(ReplaceTensorTest, FindBaseTensorConflictBetweenInCastTensors)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "BaseTensorConflict", "BaseTensorConflict",
+                                               nullptr);
+    std::vector<int64_t> shape = {kNumEight, kNumEight};
+    std::vector<int64_t> offset = {kNumZero, kNumZero};
+    auto rawA = std::make_shared<RawTensor>(DT_FP32, shape);
+    auto rawB = std::make_shared<RawTensor>(DT_FP32, shape);
+    rawA->SetSymbol("incast_a");
+    rawB->SetSymbol("incast_b");
+    rawA->memoryId = 1;
+    rawB->memoryId = 2;
+    rawA->actualRawmagic = 101;
+    rawB->actualRawmagic = 102;
+    auto tensorA = IRBuilder().CreateTensorVar(rawA, offset, shape, CreateTestConstIntVector(shape));
+    auto tensorB = IRBuilder().CreateTensorVar(rawB, offset, shape, CreateTestConstIntVector(shape));
+    function->inCasts_ = {tensorA, tensorB};
+
+    ReplaceTensor pass;
+    auto tensorToOrderIndex = pass.BuildTensorOrderIndexMap(*function);
+    LogicalTensors group = {tensorA, tensorB};
+    LogicalTensorPtr baseTensor = nullptr;
+    EXPECT_EQ(pass.FindBaseTensor(*function, tensorToOrderIndex, group, baseTensor), FAILED);
+    EXPECT_EQ(baseTensor, tensorA);
+}
+
+// ForwardAssemble传入的rootTensor与assemble输入不一致时报ERROR并返回FAILED
+// (覆盖replace_tensor.cpp "OP_ASSEMBLE %d rootTensor %d is not same as assembleIn %d."日志分支)
+TEST_F(ReplaceTensorTest, ForwardAssembleRejectsMismatchedRootTensor)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "AssembleRootMismatch", "AssembleRootMismatch",
+                                               nullptr);
+    std::vector<int64_t> shape = {kNumEight, kNumEight};
+    std::vector<int64_t> offset = {kNumZero, kNumZero};
+    auto assembleIn = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto assembleOut = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto otherRoot = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto& assembleOp = PassOperationUtils::AddOperation(*function, Opcode::OP_ASSEMBLE, {assembleIn}, {assembleOut});
+    assembleOp.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, offset));
+
+    ReplaceTensor pass;
+    LogicalTensorPtr rootTensor = otherRoot;
+    EXPECT_EQ(pass.ForwardAssemble(&assembleOp, rootTensor, *function), FAILED);
+}
+
+// ForwardCopyOut的输入不是当前rootTensor时打INFO日志并跳过替换, 返回SUCCESS
+TEST_F(ReplaceTensorTest, ForwardCopyOutSkipsMismatchedRootTensor)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "CopyOutRootMismatch", "CopyOutRootMismatch",
+                                               nullptr);
+    std::vector<int64_t> shape = {kNumEight, kNumEight};
+    auto copyOutIn = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto copyOutOut = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto otherRoot = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto& copyOutOp = PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_OUT, {copyOutIn}, {copyOutOut});
+    copyOutOp.SetAttribute(OpAttributeKey::inplaceIdx, 0);
+
+    ReplaceTensor pass;
+    LogicalTensorPtr rootTensor = otherRoot;
+    EXPECT_EQ(pass.ForwardCopyOut(&copyOutOp, rootTensor, *function), SUCCESS);
+    EXPECT_TRUE(pass.processedOp.empty());
+}
+
+// ForwardInputIdx的inplace输入不是当前rootTensor时打INFO日志并跳过替换, 返回SUCCESS
+TEST_F(ReplaceTensorTest, ForwardInputIdxSkipsMismatchedRootTensor)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "InputIdxRootMismatch", "InputIdxRootMismatch",
+                                               nullptr);
+    std::vector<int64_t> shape = {kNumEight, kNumEight};
+    std::vector<int64_t> indexShape = {kNumEight};
+    auto rootLike = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto values = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto indices = IRBuilder().CreateTensorVar(DT_INT32, indexShape, CreateTestConstIntVector(indexShape));
+    auto indexPutOut = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto otherRoot = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto& indexPut = PassOperationUtils::AddOperation(*function, Opcode::OP_INDEX_PUT, {rootLike, values, indices},
+                                                      {indexPutOut});
+    indexPut.SetAttribute(OpAttributeKey::inplaceIdx, 0);
+
+    ReplaceTensor pass;
+    LogicalTensorPtr rootTensor = otherRoot;
+    EXPECT_EQ(pass.ForwardInputIdx(&indexPut, rootTensor, *function), SUCCESS);
+    EXPECT_TRUE(pass.processedOp.empty());
+}
+
+// BackwardInplaceOp的输出不是当前rootTensor时打INFO日志并跳过反向替换, 返回SUCCESS
+// (覆盖replace_tensor.cpp "OP %s[%d] tensorOut %d is not same as rootTensor %d, tensorIn: %d."日志分支)
+TEST_F(ReplaceTensorTest, BackwardInplaceOpSkipsMismatchedRootTensor)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "BackInplaceRootMismatch",
+                                               "BackInplaceRootMismatch", nullptr);
+    std::vector<int64_t> shape = {kNumEight, kNumEight};
+    auto mulAccIn0 = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto mulAccIn1 = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto mulAccPartial = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto mulAccOut = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto otherRoot = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto& mulAccOp = PassOperationUtils::AddOperation(*function, Opcode::OP_A_MULACC_B,
+                                                      {mulAccIn0, mulAccIn1, mulAccPartial}, {mulAccOut});
+
+    ReplaceTensor pass;
+    LogicalTensorPtr rootTensor = otherRoot;
+    EXPECT_EQ(pass.BackwardInplaceOp(&mulAccOp, rootTensor, *function), SUCCESS);
+    EXPECT_TRUE(pass.processedOp.empty());
+}
+
+// BackwardInputIdx的输出不是当前rootTensor时打INFO日志并跳过反向替换, 返回SUCCESS
+// (覆盖replace_tensor.cpp "op %s[%d] tensorOut %d is not same as rootTensor %d, tensorIn: %d."日志分支)
+TEST_F(ReplaceTensorTest, BackwardInputIdxSkipsMismatchedRootTensor)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "BackInputIdxRootMismatch",
+                                               "BackInputIdxRootMismatch", nullptr);
+    std::vector<int64_t> shape = {kNumEight, kNumEight};
+    std::vector<int64_t> indexShape = {kNumEight};
+    auto rootLike = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto values = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto indices = IRBuilder().CreateTensorVar(DT_INT32, indexShape, CreateTestConstIntVector(indexShape));
+    auto indexPutOut = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto otherRoot = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto& indexPut = PassOperationUtils::AddOperation(*function, Opcode::OP_INDEX_PUT, {rootLike, values, indices},
+                                                      {indexPutOut});
+    indexPut.SetAttribute(OpAttributeKey::inplaceIdx, 0);
+
+    ReplaceTensor pass;
+    LogicalTensorPtr rootTensor = otherRoot;
+    EXPECT_EQ(pass.BackwardInputIdx(&indexPut, rootTensor, *function), SUCCESS);
+    EXPECT_TRUE(pass.processedOp.empty());
+}
+
+// ViewType窄化(大dtype->小dtype)时末位offset不能被ratio整除, AdjustOffsetAndRawShape报ERROR并返回FAILED
+// (覆盖replace_tensor.cpp "ViewType Offset is not Even"日志分支)
+TEST_F(ReplaceTensorTest, AdjustOffsetAndRawShapeRejectsUnevenViewTypeOffset)
+{
+    std::vector<int64_t> shape = {kNumFour, kNumEight};
+    std::vector<int64_t> unevenOffset = {kNumZero, kNumOne};
+    auto fromRaw = std::make_shared<RawTensor>(DT_INT8, shape);
+    auto fromView = IRBuilder().CreateTensorVar(fromRaw, unevenOffset, shape, CreateTestConstIntVector(shape));
+    auto toView = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+
+    ReplaceTensor pass;
+    EXPECT_EQ(pass.AdjustOffsetAndRawShape(fromView, toView), FAILED);
+}
+
 } // namespace tile_fwk
 } // namespace npu

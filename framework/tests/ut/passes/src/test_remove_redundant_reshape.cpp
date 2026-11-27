@@ -79,6 +79,19 @@ protected:
     }
 };
 
+TEST_F(RemoveRedundantReshapeTest, RejectsReshapeWithMultipleOutputs)
+{
+    Function function(Program::GetInstance(), "malformed_reshape", "malformed_reshape", nullptr);
+    const std::vector<int64_t> shape{16};
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto first = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto second = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto& reshape = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_RESHAPE, {input}, {first});
+    reshape.GetOOperands().push_back(second);
+    RemoveRedundantReshape pass;
+    EXPECT_EQ(pass.RemoveReshape(function), FAILED);
+}
+
 TEST_F(RemoveRedundantReshapeTest, TestReshapeChain)
 {
     // Define Tensor shapes

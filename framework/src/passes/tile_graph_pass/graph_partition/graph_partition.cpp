@@ -30,7 +30,10 @@ Status RunIsoPartition(Function& function)
     IsoPartitioner partitioner;
     if (partitioner.SetParameter(function.paramConfigs_.sgParallelNum, function.paramConfigs_.sgPgLowerBound, true) !=
         SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Config, "Set parameters of GraphPartition failed.");
+        APASS_LOG_ERROR_F(Elements::Config,
+                          "Set parameters of IsoPartitioner failed, sgParallelNum: %d, sgPgLowerBound: %d, "
+                          "expected both to be non-negative.",
+                          function.paramConfigs_.sgParallelNum, function.paramConfigs_.sgPgLowerBound);
         return FAILED;
     }
     if (partitioner.PartitionGraph(function) != SUCCESS) {
@@ -51,7 +54,7 @@ Status RunOspPartition(Function& function, const std::string& partitionMode)
 
     OspPartitioner partitioner(mode);
     if (partitioner.SetParameter(function) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Config, "Set parameters of GraphPartition failed.");
+        APASS_LOG_ERROR_F(Elements::Config, "Set parameters of OspPartitioner failed.");
         return FAILED;
     }
     if (partitioner.PartitionGraph(function) != SUCCESS) {
@@ -102,7 +105,8 @@ Status GraphPartition::RunOnFunction(Function& function)
     } else if (partitionMode == "OspSarkar" || partitionMode == "OspBsp") {
         return RunOspPartition(function, partitionMode);
     } else {
-        APASS_LOG_ERROR_F(Elements::Operation, "Invalid partition mode.");
+        APASS_LOG_ERROR_F(Elements::Operation, "Invalid partition mode: %s, expected one of Iso, OspSarkar or OspBsp.",
+                          partitionMode.c_str());
         return FAILED;
     }
 }

@@ -174,7 +174,7 @@ LogicalTensorPtr PassOperationUtils::ConnectWithOverlap(Function& function, Logi
         case OverlapStatus::BE_COVERED_BY_ALL:
             return HandleBeCoveredByAll(function, iOperand, matches, offsetOfOverlaps);
         default:
-            FE_ASSERT(false) << "unexpected behavior";
+            FE_ASSERT(false) << "unexpected behavior: unhandled OverlapStatus " << OverlapStatusString(overlapStatus);
     }
 
     FE_ASSERT(false) << "unexpected behavior";

@@ -29,6 +29,7 @@
 #include "ir/scalar_expr.h"
 #include "ir/stmt.h"
 #include "ir/transforms/passes.h"
+#include "ir/verifier/verifier.h"
 #include "ir/type.h"
 
 namespace pypto {
@@ -197,6 +198,18 @@ TEST_F(PassesTest, TestRunVerifierFactoryContract)
 
     EXPECT_EQ(verifier.GetName(), "IRVerifier");
     EXPECT_EQ(verifier.run(prog).get(), prog.get());
+}
+
+TEST_F(PassesTest, VerifierPreservesProgramWithDiagnostics)
+{
+    auto variable = std::make_shared<Var>("value", Scalar(DataType::INT32), Sp());
+    auto assign = std::make_shared<AssignStmt>(std::vector<VarPtr>{variable},
+                                               std::make_shared<ConstInt>(1, DataType::INT32, Sp()), Sp());
+    auto body = std::make_shared<SeqStmts>(std::vector<StmtPtr>{assign, assign}, Sp());
+    auto function = std::make_shared<Function>("duplicate", std::vector<VarPtr>{}, std::vector<TypePtr>{}, body, Sp());
+    auto program = std::make_shared<Program>(std::vector<FunctionPtr>{function}, "test", Sp());
+    ASSERT_FALSE(IRVerifier::CreateDefault().Verify(program).empty());
+    EXPECT_EQ(pass::RunVerifier({}).run(program), program);
 }
 
 TEST_F(PassesTest, TestLegacyShimPassFactoryNames)

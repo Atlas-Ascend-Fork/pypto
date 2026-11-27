@@ -232,7 +232,7 @@ Status PipeSync::PopFromQueue(IssueQueue& issueQ, std::vector<size_t>& poped, bo
             break;
         }
         if (op.issued) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Try to issue a op which is already issued, PopFromQueue failed.");
+            APASS_LOG_ERROR_F(Elements::Operation, "Try to issue an op which is already issued, PopFromQueue failed.");
             return FAILED;
         }
         if (!CheckIssuedOp(op)) {
@@ -282,7 +282,8 @@ Status PipeSync::InjectSync(Function& function, const std::vector<Operation*>& o
 {
     // check idx range
     if (idx > std::numeric_limits<uint64_t>::max() / SEQUENCE_IDX) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Operation index is out of range, InjectSync failed.");
+        APASS_LOG_ERROR_F(Elements::Operation, "Operation index %zu is out of range [0, %lu], InjectSync failed.", idx,
+                          std::numeric_limits<uint64_t>::max() / SEQUENCE_IDX);
         return FAILED;
     }
 

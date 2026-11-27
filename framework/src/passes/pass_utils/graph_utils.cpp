@@ -52,7 +52,10 @@ Operation& GraphUtils::AddAssembleOperation(Function& function, const AssembleOp
     IRBuilder builder;
     if (!IsAssembleLike(assemble.opcode)) {
         APASS_LOG_WARN_F(Elements::Operation,
-                         "Invalid assemble-family opcode for AddAssembleOperation, fallback to OP_ASSEMBLE.");
+                         "Invalid assemble-family opcode %d for AddAssembleOperation, expected OP_ASSEMBLE(%d) or "
+                         "OP_CONTRACT(%d), fallback to OP_ASSEMBLE.",
+                         static_cast<int>(assemble.opcode), static_cast<int>(Opcode::OP_ASSEMBLE),
+                         static_cast<int>(Opcode::OP_CONTRACT));
     }
     const auto opcode = IsAssembleLike(assemble.opcode) ? assemble.opcode : Opcode::OP_ASSEMBLE;
     auto& newOp = builder.CreateTensorOpStmt(function, opcode, {assemble.input}, {assemble.output});

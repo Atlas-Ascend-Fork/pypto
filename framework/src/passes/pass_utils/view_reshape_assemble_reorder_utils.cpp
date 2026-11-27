@@ -882,7 +882,9 @@ Status ViewReshapeAssembleReorderUtils::TryCollectFaninAssembleRecord(
     }
     auto producerAttr = std::dynamic_pointer_cast<AssembleOpAttribute>(producer.GetOpAttribute());
     if (producerAttr == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Assemble op[%d] missing AssembleOpAttribute.", producer.GetOpMagic());
+        APASS_LOG_ERROR_F(Elements::Operation,
+                          "Assemble producer op[%d] missing AssembleOpAttribute in TryCollectFaninAssembleRecord.",
+                          producer.GetOpMagic());
         return FAILED;
     }
     auto producerInput = producer.GetIOperands().front();

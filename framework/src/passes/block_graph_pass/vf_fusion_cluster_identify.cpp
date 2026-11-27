@@ -454,7 +454,8 @@ bool VFFusionClusterIdentify::IsFusionResourceWithinLimits(const GraphContext& g
     const size_t externalMemoryLimit = ubSize * VF_CLUSTER_EXTERNAL_UB_MEMORY_RATIO_NUMERATOR /
                                        VF_CLUSTER_EXTERNAL_UB_MEMORY_RATIO_DENOMINATOR;
     if (externalMemory > externalMemoryLimit) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "Cannot fuse VF ops: external memory %zu exceeds %zu%% of UB (%zu).",
+        APASS_LOG_DEBUG_F(Elements::Operation,
+                          "Cannot fuse VF ops: external memory %zu bytes exceeds %zu%% of UB (%zu bytes).",
                           externalMemory,
                           VF_CLUSTER_EXTERNAL_UB_MEMORY_RATIO_NUMERATOR * PERCENT_SCALE /
                               VF_CLUSTER_EXTERNAL_UB_MEMORY_RATIO_DENOMINATOR,
@@ -1363,6 +1364,8 @@ std::vector<Operation*> VFFusionClusterIdentify::BuildScheduledList(const GraphC
     }
     auto scheduledOps = EmitScheduleGroups(groups, groupConsumers, std::move(inDegree));
     if (scheduledOps.size() != scheduleOrder_.size()) {
+        APASS_LOG_WARN_F(Elements::Graph, "Build scheduled list failed: scheduledOps=%zu, expectedOps=%zu.",
+                         scheduledOps.size(), scheduleOrder_.size());
         return {};
     }
     APASS_LOG_DEBUG_F(Elements::Graph,
@@ -1457,8 +1460,10 @@ std::vector<Operation*> VFFusionClusterIdentify::EmitScheduleGroups(
         scheduledOps.insert(scheduledOps.end(), groups[groupIndex].ops.begin(), groups[groupIndex].ops.end());
         for (size_t consumerGroup : groupConsumers[groupIndex]) {
             if (inDegree[consumerGroup] == 0) {
-                APASS_LOG_WARN_F(Elements::Graph, "Build scheduled list failed: group %zu indegree underflow.",
-                                 consumerGroup);
+                APASS_LOG_WARN_F(Elements::Graph,
+                                 "Build scheduled list failed: group %zu indegree underflow, currentIndegree=%zu, "
+                                 "expected>=1.",
+                                 consumerGroup, inDegree[consumerGroup]);
                 return {};
             }
             inDegree[consumerGroup]--;
@@ -1720,11 +1725,12 @@ void VFFusionClusterIdentify::DumpVfClusters(const std::unordered_map<int, std::
 Status VFFusionClusterIdentify::RunOnFunction(Function& function)
 {
     if (!config::GetPassGlobalConfig(KEY_ENABLE_VF, false)) {
-        APASS_LOG_DEBUG_F(Elements::Function, "VFFusionClusterIdentify is skipped for ENABLE_VF is false.");
+        APASS_LOG_DEBUG_F(Elements::Function, "VFFusionClusterIdentify is skipped because ENABLE_VF is false.");
         return SUCCESS;
     }
     if (function.paramConfigs_.oooSchedMode != "HLF") {
-        APASS_LOG_DEBUG_F(Elements::Function, "VFFusionClusterIdentify is skipped for ooo_sched_mode[%s] is not HLF.",
+        APASS_LOG_DEBUG_F(Elements::Function,
+                          "VFFusionClusterIdentify is skipped because ooo_sched_mode[%s] is not HLF.",
                           function.paramConfigs_.oooSchedMode.c_str());
         return SUCCESS;
     }
@@ -1734,7 +1740,7 @@ Status VFFusionClusterIdentify::RunOnFunction(Function& function)
         return SUCCESS;
     }
     if (function.rootFunc_ == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Function, "VFFusionClusterIdentify failed for root function is null.");
+        APASS_LOG_ERROR_F(Elements::Function, "VFFusionClusterIdentify failed because root function is null.");
         return FAILED;
     }
     APASS_LOG_INFO_F(Elements::Function, "Start VFFusionClusterIdentify for root function[%s]: leafFunctions=%zu.",

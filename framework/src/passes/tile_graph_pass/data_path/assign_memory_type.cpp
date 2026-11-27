@@ -1438,7 +1438,8 @@ Status AssignMemoryType::ApplyOversizedLocalBufferFallback(Function& function)
     const size_t l1Threshold = static_cast<size_t>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_L1) *
                                                    L1_THRESHOLD);
     if (IsSliceMode()) {
-        APASS_LOG_INFO_F(Elements::Function, "Memory threshold: UB strict %zu, UB normal %zu, L1 %zu.", ubThreshold,
+        APASS_LOG_INFO_F(Elements::Function,
+                         "Memory threshold: UB strict %zu bytes, UB normal %zu bytes, L1 %zu bytes.", ubThreshold,
                          ubNormalThreshold, l1Threshold);
     } else {
         APASS_LOG_INFO_F(Elements::Function,
@@ -1816,7 +1817,7 @@ Status AssignMemoryType::InsertConvertOpsAndInferShape(Function& function)
     function.SortOperations(SortOperationsMode::LIGHTWEIGHT);
     if (!addedOps.empty()) {
         if (InferShapeUtils::InferShape(function, addedOps) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "InferShape for added ops failed.");
+            APASS_LOG_ERROR_F(Elements::Function, "InferShape for %zu added ops failed.", addedOps.size());
             return FAILED;
         }
     }

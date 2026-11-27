@@ -1237,7 +1237,7 @@ Status MergeViewAssembleUtils::ProcessCandidateChains(Function& function)
             processStatus = MergeAssembleChain(function, *op, chain);
         }
         if (processStatus != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "ProcessOperations failed.");
+            APASS_LOG_ERROR_F(Elements::Function, "MergeAssembleChain failed for candidate op[%d].", op->GetOpMagic());
             return processStatus;
         }
     }
@@ -1557,7 +1557,10 @@ Status MergeViewAssembleUtils::ProcessChainEnd(Function& function, std::vector<O
     auto& startTensor = startOp->iOperand.front();
     auto& endTensor = endOp->oOperand.front();
     if (!startTensor || !endTensor) {
-        APASS_LOG_ERROR_F(Elements::Function, "Null tensor found in chain.");
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Null tensor found in chain in ProcessChainEnd, startOp[%d] input tensor or endOp[%d] "
+                          "output tensor is null.",
+                          startOp->GetOpMagic(), endOp->GetOpMagic());
         return FAILED;
     }
     TokenDependency tokenDependency;
@@ -1952,13 +1955,20 @@ Status MergeViewAssembleUtils::ProcessAssembleChainEnd(Function& function, std::
     (void)operation;
     // 验证链有效性
     if (chain.front()->iOperand.empty() || chain.back()->oOperand.empty()) {
-        APASS_LOG_ERROR_F(Elements::Function, "Invalid chain operations.");
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Invalid chain operations in ProcessAssembleChainEnd, startOp[%d] iOperand size=%zu, "
+                          "endOp[%d] oOperand size=%zu.",
+                          chain.front()->GetOpMagic(), chain.front()->iOperand.size(), chain.back()->GetOpMagic(),
+                          chain.back()->oOperand.size());
         return FAILED;
     }
     auto& startTensor = chain.front()->iOperand.front();
     auto& endTensor = chain.back()->oOperand.front();
     if (!startTensor || !endTensor) {
-        APASS_LOG_ERROR_F(Elements::Function, "Null tensor found in chain.");
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Null tensor found in chain in ProcessAssembleChainEnd, startOp[%d] input tensor or "
+                          "endOp[%d] output tensor is null.",
+                          chain.front()->GetOpMagic(), chain.back()->GetOpMagic());
         return FAILED;
     }
     if (!HasBlockingChainCycle(function, chain)) {

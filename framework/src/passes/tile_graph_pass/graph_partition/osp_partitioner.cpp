@@ -32,7 +32,7 @@ Status OspPartitioner::BuildSuperNodeGraph()
     std::vector<Operation*>& opList = operationInfo_->opList_;
     if (opList.size() != operationInfo_->inGraph_.size() || opList.size() != operationInfo_->outGraph_.size()) {
         APASS_LOG_ERROR_F(Elements::Function,
-                          "Osp: Operation inGraph and outGraph have not been initialized.\n"
+                          "Osp: Operation inGraph and outGraph have not been initialized. "
                           "Operation list size (%zu) does not match with Operation "
                           "In- and Out-Graph size (%zu, respectively %zu).",
                           opList.size(), operationInfo_->inGraph_.size(), operationInfo_->outGraph_.size());
@@ -299,7 +299,7 @@ Status OspPartitioner::ConstructDagCVSplit(GraphType& graph)
         if (vertexType != OpCoreType::AIC && vertexType != OpCoreType::AIV && vertexType != OpCoreType::AICPU) {
             APASS_LOG_ERROR_F(Elements::Operation,
                               "SuperNode (%d) has core type (%d) which is neither cube"
-                              " nor vector nor ai-scalar.",
+                              " nor vector nor ai-scalar in ConstructDagCVSplit.",
                               static_cast<int>(superNode), static_cast<int>(vertexType));
             return FAILED;
         }
@@ -321,7 +321,7 @@ Status OspPartitioner::ConstructDagCVMix(GraphType& graph)
         if (vertexType != OpCoreType::AIC && vertexType != OpCoreType::AIV && vertexType != OpCoreType::AICPU) {
             APASS_LOG_ERROR_F(Elements::Operation,
                               "SuperNode (%d) has core type (%d) which is neither cube"
-                              " nor vector nor ai-scalar.",
+                              " nor vector nor ai-scalar in ConstructDagCVMix.",
                               static_cast<int>(superNode), static_cast<int>(vertexType));
             return FAILED;
         }
@@ -368,7 +368,10 @@ Status OspPartitioner::ConstructBspArchCVMix(osp::BspArchitecture<GraphType>& bs
     const size_t numAiScalarCores = Platform::Instance().GetSoc().GetAICPUNum();
 
     if (numCubeCores == 0 || ((numVectorCores % numCubeCores) != 0)) {
-        APASS_LOG_ERROR_F(Elements::Config, "OSP bsp architecture does not satisfy an 1:N ratio of Cube:Vector cores.");
+        APASS_LOG_ERROR_F(Elements::Config,
+                          "OSP bsp architecture does not satisfy a 1:N ratio of Cube:Vector cores: cubeCores=%zu, "
+                          "vectorCores=%zu, expected vectorCores %% cubeCores == 0 and cubeCores > 0.",
+                          numCubeCores, numVectorCores);
         return FAILED;
     }
 
@@ -405,12 +408,12 @@ Status OspPartitioner::ConstructDag(GraphType& graph)
 {
     if (useCVMixPartition_) {
         if (ConstructDagCVMix(graph) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "OSP failed to generate graph with CV mix.");
+            APASS_LOG_ERROR_F(Elements::Function, "OSP failed to generate graph with CV mix in ConstructDag.");
             return FAILED;
         }
     } else {
         if (ConstructDagCVSplit(graph) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "OSP failed to generate graph with CV split.");
+            APASS_LOG_ERROR_F(Elements::Function, "OSP failed to generate graph with CV split in ConstructDag.");
             return FAILED;
         }
     }
@@ -425,13 +428,14 @@ Status OspPartitioner::ConstructBspInstance(osp::BspInstance<GraphType>& bspInst
             return FAILED;
         }
         if (ConstructDagCVMix(bspInst.GetComputationalDag()) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "OSP failed to generate graph with CV mix.");
+            APASS_LOG_ERROR_F(Elements::Function, "OSP failed to generate graph with CV mix in ConstructBspInstance.");
             return FAILED;
         }
     } else {
         ConstructBspArchCVSplit(bspInst.GetArchitecture());
         if (ConstructDagCVSplit(bspInst.GetComputationalDag()) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "OSP failed to generate graph with CV split.");
+            APASS_LOG_ERROR_F(Elements::Function,
+                              "OSP failed to generate graph with CV split in ConstructBspInstance.");
             return FAILED;
         }
     }

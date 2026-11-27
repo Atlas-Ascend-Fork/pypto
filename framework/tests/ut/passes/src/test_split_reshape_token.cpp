@@ -18,9 +18,11 @@
 #include "interface/function/function.h"
 #include "interface/tensor/irbuilder.h"
 #include "tilefwk/tilefwk.h"
+#include "tilefwk/error_manager.h"
 #include "interface/inner/tilefwk.h"
 #include "interface/configs/config_manager.h"
 #include "passes/pass_utils/pass_operation_utils.h"
+#include "passes/pass_utils/pass_attr_defs.h"
 #define private public
 #define protected public
 #include "passes/tile_graph_pass/graph_optimization/split_reshape.h"
@@ -169,4 +171,251 @@ TEST_F(SplitReshapeTokenTest, ReadTensorWithNullProducerSkipsSplit)
     pass.reshapeSources_[alias->GetRawMagic()] = base;
     CheckOutputParam checkOutputParam;
     EXPECT_EQ(pass.CheckReshapeSkip(alias, read, checkOutputParam), WARNING);
+}
+
+namespace {
+std::shared_ptr<LogicalTensor> MakeRank2TestTensor(int64_t rows, int64_t cols)
+{
+    return IRBuilder().CreateTensorVar(DT_FP32, Shape{rows, cols});
+}
+
+std::shared_ptr<Function> MakeDirectCallFunction(const std::string& name)
+{
+    return std::make_shared<Function>(Program::GetInstance(), name, name, nullptr);
+}
+} // namespace
+
+// GetAssembleDynShape reports the new tensor-magic error when the assemble output was never registered
+// in reshapeOffset_.
+TEST_F(SplitReshapeTokenTest, GetAssembleDynShapeReportsMissingOutput)
+{
+    SplitReshape pass;
+    ASSERT_EQ(pass.Init(), SUCCESS);
+    auto input = MakeRank2TestTensor(16, 16);
+    auto output = MakeRank2TestTensor(16, 16);
+    std::vector<SymbolicScalar> dynValidShape;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(pass.GetAssembleDynShape(input, output, std::vector<int64_t>{0, 0}, dynValidShape), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Cannot find output from reshapeOffset, output tensor magic is"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// AddOperation fails through GetAssembleDynShape when an assembled entry's output has no reshapeOffset_ entry.
+TEST_F(SplitReshapeTokenTest, AddOperationFailsWhenAssembleOutputNotRegistered)
+{
+    auto func = MakeDirectCallFunction("AddOperationAssembleMissing");
+    SplitReshape pass;
+    ASSERT_EQ(pass.Init(), SUCCESS);
+    auto input = MakeRank2TestTensor(16, 16);
+    auto output = MakeRank2TestTensor(16, 16);
+    pass.assembles_.push_back(
+        AssembleOp{MemoryType::MEM_UB, std::vector<int64_t>{0, 0}, input, output, nullptr, Opcode::OP_ASSEMBLE});
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(pass.AddOperation(*func), FAILED);
+    std::string errMsg;
+    // First error is GetAssembleDynShape's own report, the second is AddOperation's wrapper report.
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Cannot find output from reshapeOffset"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(false);
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Get assemble dynamic shape for AddOperation failed"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// GetReshapeDynShape reports the new error when the reshape op has no viewOffset_ entry.
+TEST_F(SplitReshapeTokenTest, GetReshapeDynShapeReportsMissingReshapeOp)
+{
+    SplitReshape pass;
+    ASSERT_EQ(pass.Init(), SUCCESS);
+    auto input = MakeRank2TestTensor(16, 16);
+    auto output = MakeRank2TestTensor(16, 16);
+    auto reshapeOp = std::make_shared<ReshapeOp>(input, output, nullptr);
+    std::vector<SymbolicScalar> dynValidShape;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(pass.GetReshapeDynShape(reshapeOp, dynValidShape), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Cannot find reshapeop with sharedptr, reshape input tensor magic"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// AddOperation fails through GetReshapeDynShape when a reshapes_ entry never received a viewOffset_ slot.
+TEST_F(SplitReshapeTokenTest, AddOperationFailsWhenReshapeOpNotRegistered)
+{
+    auto func = MakeDirectCallFunction("AddOperationReshapeMissing");
+    SplitReshape pass;
+    ASSERT_EQ(pass.Init(), SUCCESS);
+    auto input = MakeRank2TestTensor(16, 16);
+    auto output = MakeRank2TestTensor(16, 16);
+    pass.reshapes_[0UL] = std::make_shared<ReshapeOp>(input, output, nullptr);
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(pass.AddOperation(*func), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Cannot find reshapeop with sharedptr"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(false);
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Get reshape dynamic shape for AddOperation failed"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// UpdateForPerfectlyMatchWithAll reuses one newReshapeSource for every overlap; a second overlap whose
+// assemble write offset was never recorded resolves to an empty offset and fails the axis check in
+// AddAssembleOp for the already-registered output.
+TEST_F(SplitReshapeTokenTest, UpdateForPerfectlyMatchWithAllFailsOnUnmappedSecondOverlap)
+{
+    auto func = MakeDirectCallFunction("UpdateForPerfectlyMatchWithAllSecondOverlap");
+    SplitReshape pass;
+    ASSERT_EQ(pass.Init(), SUCCESS);
+
+    auto reshapeSource = MakeRank2TestTensor(32, 16);
+    auto overlap1 = MakeRank2TestTensor(8, 16);
+    auto overlap2 = MakeRank2TestTensor(8, 16);
+    auto input = MakeRank2TestTensor(8, 16);
+    auto inputView = MakeRank2TestTensor(8, 16);
+    auto output = MakeRank2TestTensor(8, 16);
+
+    std::vector<int64_t> viewOffset{0, 0};
+    auto& viewOp = PassOperationUtils::AddOperation(
+        *func, Opcode::OP_SLICE, {input}, {output}, [&viewOffset](Operation& op) {
+            op.SetOpAttribute(std::make_shared<ViewOpAttribute>(viewOffset, MemoryType::MEM_UNKNOWN));
+        });
+
+    // Only the first overlap has an assemble write offset recorded in mapOffset_.
+    pass.mapOffset_[std::make_pair(overlap1->GetMagic(), reshapeSource->GetMagic())] = std::vector<int64_t>{0, 0};
+
+    CalcOverlapPara para{};
+    para.alignedShape = std::vector<int64_t>{32, 16};
+    para.reshapeSource = reshapeSource;
+    para.newInputViewTileOffset = std::vector<int64_t>{0, 0};
+    para.newInputViewTileShape = std::vector<int64_t>{8, 16};
+    para.overlaps = {overlap1, overlap2};
+    para.newOverlaps = {overlap1, overlap2};
+    para.input = input;
+    para.inputView = inputView;
+    para.output = output;
+    ReshapeSourcePara sourcePara{};
+    sourcePara.newReshapeSourceTileShape = std::vector<int64_t>{8, 16};
+    sourcePara.newReshapeSourceTileOffset = std::vector<int64_t>{0, 0};
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(pass.UpdateForPerfectlyMatchWithAll(*func, viewOp, para, sourcePara), FAILED);
+    std::string errMsg;
+    // AddAssembleOp reports the axis mismatch first, then UpdateForPerfectlyMatchWithAll wraps it.
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Incorrect axis, toOffset is"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(false);
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("AddAssembleOp failed in UpdateForPerfectlyMatchWithAll"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+namespace {
+// Shared fixture for the ProcessPerfectlyMatch / ProcessBeCovered direct-call cases: a real reshape op
+// carries a rank-2 VALID_SHAPE while the crafted reshape output is rank-3, so UpdateDynShape must fail.
+struct PerfectlyMatchDirectCallGraph {
+    std::shared_ptr<Function> func;
+    Operation* reshapeOp = nullptr;
+    Operation* viewOp = nullptr;
+    LogicalTensorPtr viewInput;
+    LogicalTensorPtr viewOutput;
+    LogicalTensorPtr overlap;
+    LogicalTensorPtr reshapeSource;
+    LogicalTensorPtr rank3ReshapeOutput;
+
+    void Build(const std::string& name)
+    {
+        func = MakeDirectCallFunction(name);
+        auto reshapeInput = MakeRank2TestTensor(16, 16);
+        auto reshapeOutputBase = MakeRank2TestTensor(16, 16);
+        viewInput = MakeRank2TestTensor(16, 16);
+        viewOutput = MakeRank2TestTensor(16, 16);
+        overlap = MakeRank2TestTensor(16, 16);
+        reshapeSource = MakeRank2TestTensor(32, 16);
+        rank3ReshapeOutput = IRBuilder().CreateTensorVar(DT_FP32, Shape{4, 4, 4});
+
+        auto& reshape = PassOperationUtils::AddOperation(*func, Opcode::OP_RESHAPE, {reshapeInput},
+                                                         {reshapeOutputBase});
+        reshape.SetAttribute(OP_ATTR_VALID_SHAPE, std::vector<SymbolicScalar>{SymbolicScalar(16), SymbolicScalar(16)});
+        reshapeOp = &reshape;
+
+        std::vector<int64_t> zeroOffset{0, 0};
+        auto& view = PassOperationUtils::AddOperation(
+            *func, Opcode::OP_SLICE, {viewInput}, {viewOutput}, [&zeroOffset](Operation& op) {
+                op.SetOpAttribute(std::make_shared<ViewOpAttribute>(zeroOffset, MemoryType::MEM_UNKNOWN));
+            });
+        viewOp = &view;
+    }
+};
+} // namespace
+
+// ProcessPerfectlyMatch fails on the isAddReshapeOp path when the origin reshape's VALID_SHAPE rank does
+// not match the crafted reshape output rank.
+TEST_F(SplitReshapeTokenTest, ProcessPerfectlyMatchRejectsMismatchedOriginValidShape)
+{
+    PerfectlyMatchDirectCallGraph graph;
+    graph.Build("ProcessPerfectlyMatchMismatch");
+
+    SplitReshape pass;
+    ASSERT_EQ(pass.Init(), SUCCESS);
+    pass.reshapeOpPtrs_[graph.viewInput->GetMagic()] = graph.reshapeOp;
+    // ObtainReshapeSource builds the new source with this offset, so it must match the overlap rank.
+    pass.mapOffset_[std::make_pair(graph.overlap->GetMagic(), graph.reshapeSource->GetMagic())] = std::vector<int64_t>{
+        0, 0};
+
+    PerfectlyMatchPara para{};
+    para.input = graph.viewInput;
+    para.output = graph.viewOutput;
+    para.overlap = graph.overlap;
+    para.reshapeSource = graph.reshapeSource;
+    para.reshapeOutput = graph.rank3ReshapeOutput;
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(pass.ProcessPerfectlyMatch(*graph.func, *graph.viewOp, para), FAILED);
+    std::string errMsg;
+    // UpdateDynShape reports the rank mismatch first, then ProcessPerfectlyMatch wraps it.
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("does not equal dynShape"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(false);
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Failed to UpdateDynShape or GroupReshapeOffset for isAddReshapeOp in "
+                          "ProcessPerfectlyMatch"),
+              std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// ProcessBeCovered fails on the isAddReshapeOp path when the origin reshape's VALID_SHAPE rank does not
+// match the crafted reshape output rank.
+TEST_F(SplitReshapeTokenTest, ProcessBeCoveredRejectsMismatchedOriginValidShape)
+{
+    PerfectlyMatchDirectCallGraph graph;
+    graph.Build("ProcessBeCoveredMismatch");
+
+    SplitReshape pass;
+    ASSERT_EQ(pass.Init(), SUCCESS);
+    pass.reshapeOpPtrs_[graph.viewInput->GetMagic()] = graph.reshapeOp;
+    pass.mapOffset_[std::make_pair(graph.overlap->GetMagic(), graph.reshapeSource->GetMagic())] = std::vector<int64_t>{
+        0, 0};
+
+    BeCoveredPara para{};
+    para.overlap = graph.overlap;
+    para.input = graph.viewInput;
+    para.reshapeOutput = graph.rank3ReshapeOutput;
+    para.reshapeSource = graph.reshapeSource;
+    para.newOffset = std::vector<int64_t>{0, 0};
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(pass.ProcessBeCovered(*graph.func, *graph.viewOp, para), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("does not equal dynShape"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(false);
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Failed to UpdateDynShape or GroupReshapeOffset for isAddReshapeOp in ProcessBeCovered"),
+              std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
 }

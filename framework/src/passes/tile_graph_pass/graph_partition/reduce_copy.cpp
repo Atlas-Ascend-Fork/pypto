@@ -63,8 +63,8 @@ static bool IsValidMergeGroup(const std::vector<int>& mergeGroup, const std::uno
 static void LogSubgraphLatencies(const std::vector<int>& aicLatency, const std::vector<int>& aivLatency)
 {
     for (size_t i = 0; i < aicLatency.size(); i++) {
-        APASS_LOG_INFO_F(Elements::Operation, "Subgraph %zu : AIC Latency %d cycles, AIV Latency %d cycles.", i,
-                         aicLatency[i], aivLatency[i]);
+        APASS_LOG_DEBUG_F(Elements::Operation, "Subgraph %zu : AIC Latency %d cycles, AIV Latency %d cycles.", i,
+                          aicLatency[i], aivLatency[i]);
     }
 }
 
@@ -88,7 +88,7 @@ Status ReduceCopyMerge::RunOnFunction(Function& function)
                       "***************************** ReduceCopy Pass start, graph: %s *****************************",
                       function.GetMagicName().c_str());
     if (Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510) {
-        APASS_LOG_INFO_F(Elements::Operation, "Platform not support CV mix graph, skip ReduceCopy Pass.");
+        APASS_LOG_INFO_F(Elements::Operation, "Platform does not support CV mix graph, skip ReduceCopy Pass.");
         return SUCCESS;
     }
     size_t subgraphNumBefore = function.GetTotalSubGraphCount();
@@ -113,7 +113,9 @@ Status ReduceCopyMerge::RunOnFunction(Function& function)
     for (auto& op : function.Operations()) {
         int src = op.GetSubgraphID();
         if (src >= static_cast<int>(output.subgraphIdUpdated.size())) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Current op subgraphID not in ReduceCopy subgraph update record.");
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Current op subgraphID %d is out of ReduceCopy subgraph update record range [0, %zu).",
+                              src, output.subgraphIdUpdated.size());
             return FAILED;
         }
         op.UpdateSubgraphID(output.subgraphIdUpdated[src]);
@@ -191,7 +193,8 @@ static void MarkCrossSubgraph(Function& function, std::unordered_set<int>& noMer
         if (hasSameConsumerId && hasOtherConsumerId) {
             noMergeSubgraph.insert(src);
             APASS_LOG_DEBUG_F(Elements::Operation,
-                              "Subgraph %d is not mergeable because it has inner tensor used by other subgraph.", src);
+                              "Subgraph %d is not mergeable because its inner tensor is consumed by other subgraph.",
+                              src);
         }
         bool hasSameProducerId = false;
         bool hasOtherProducerId = false;
@@ -205,7 +208,8 @@ static void MarkCrossSubgraph(Function& function, std::unordered_set<int>& noMer
         if (hasSameProducerId && hasOtherProducerId) {
             noMergeSubgraph.insert(src);
             APASS_LOG_DEBUG_F(Elements::Operation,
-                              "Subgraph %d is not mergeable because it has inner tensor used by other subgraph.", src);
+                              "Subgraph %d is not mergeable because its inner tensor is produced by other subgraph.",
+                              src);
         }
     }
 }
@@ -731,7 +735,8 @@ Status ReduceCopyMerge::PostCheck(Function& function)
     (void)function;
     APASS_LOG_INFO_F(Elements::Function, "PostCheck for ReduceCopy.");
     if (Platform::Instance().GetSoc().GetNPUArch() != NPUArch::DAV_3510) {
-        APASS_LOG_INFO_F(Elements::Operation, "Platform not support CV mix graph, skip PostCheck for ReduceCopy Pass.");
+        APASS_LOG_INFO_F(Elements::Operation,
+                         "Platform does not support CV mix graph, skip PostCheck for ReduceCopy Pass.");
         return SUCCESS;
     }
     return SUCCESS;
@@ -1914,8 +1919,8 @@ bool MixGraphMerger::TryMergeGroup(size_t groupIdx, const MergeInput& input, int
         if (CanMergeWithoutCycle(actualGroup) && CheckNoExternalUseOfMergedInnerTensor(actualGroup, true)) {
             // enforce 路径不受 op 数上限拦截, 但超限时打 WARN 提示编译时间风险(观测用, 不改变合并行为)
             WarnIfEnforceOpNumExceeds(actualGroup);
-            APASS_LOG_DEBUG_F(Elements::Operation, "Merge group %zu succeeded: actualGroup=%s.", groupIdx,
-                              IntVecToStr(actualGroup).c_str());
+            APASS_LOG_DEBUG_F(Elements::Operation, "Merge group %zu succeeded via enforce path: actualGroup=%s.",
+                              groupIdx, IntVecToStr(actualGroup).c_str());
             PerformMerge(actualGroup);
             return true;
         }
@@ -1925,7 +1930,7 @@ bool MixGraphMerger::TryMergeGroup(size_t groupIdx, const MergeInput& input, int
     }
     if (!input.hasScopedOp && enableAutoMix && mergeLoopStep != 0 && input.isValidMergeGroup[groupIdx] &&
         CanMergeWithConstraints(actualGroup, allowSinkMerge)) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "Merge group %zu succeeded: actualGroup=%s.", groupIdx,
+        APASS_LOG_DEBUG_F(Elements::Operation, "Merge group %zu succeeded via autoMix path: actualGroup=%s.", groupIdx,
                           IntVecToStr(actualGroup).c_str());
         PerformMerge(actualGroup);
         return true;

@@ -416,11 +416,11 @@ void TuneSyncForVF::LogOpList(const std::string& label)
 Status TuneSyncForVF::RunOnFunction(Function& function)
 {
     if (!config::GetPassGlobalConfig(KEY_ENABLE_VF, false)) {
-        APASS_LOG_DEBUG_F(Elements::Function, "TuneSyncForVF is skipped for ENABLE_VF is false.");
+        APASS_LOG_DEBUG_F(Elements::Function, "TuneSyncForVF is skipped because ENABLE_VF is false.");
         return SUCCESS;
     }
     if (config::GetPassGlobalConfig<bool>(KEY_ENABLE_PIPE_ALL, false)) {
-        APASS_LOG_DEBUG_F(Elements::Function, "TuneSyncForVF is skipped for ENABLE_PIPE_ALL is true.");
+        APASS_LOG_DEBUG_F(Elements::Function, "TuneSyncForVF is skipped because ENABLE_PIPE_ALL is true.");
         return SUCCESS;
     }
     int64_t tunevfMode = config::GetPassOption<int64_t>(SG_SET_TUNEVF_MODE);
@@ -436,11 +436,11 @@ Status TuneSyncForVF::RunOnFunction(Function& function)
         LogOpList("Input");
         GenPipeOpMap(program.second);
         if (ChangeOpSeq(program.second, false) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "RunOnFunction failed at function ChangeOpSeq.");
+            APASS_LOG_ERROR_F(Elements::Function, "RunOnFunction failed at function ChangeOpSeq(false).");
             return FAILED;
         }
         if (ChangeOpSeq(program.second, true) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "RunOnFunction failed at function ChangeOpSeq.");
+            APASS_LOG_ERROR_F(Elements::Function, "RunOnFunction failed at function ChangeOpSeq(true).");
             return FAILED;
         }
         program.second->ScheduleBy(opList_, true);

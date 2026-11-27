@@ -120,7 +120,7 @@ Status ScheduleState::DelBufRefCount(const int memId)
     bufRefCount[memId]--;
     APASS_LOG_DEBUG_F(Elements::Tensor, "DelBufRefCount: memId [%d], refcount [%d].", memId, bufRefCount[memId]);
     if (bufRefCount[memId] < 0) {
-        APASS_LOG_ERROR_F(Elements::Tensor, "Tensor[%d] bufRefCount cannot less than 0.", memId);
+        APASS_LOG_ERROR_F(Elements::Tensor, "Tensor[%d] bufRefCount cannot be less than 0.", memId);
         return FAILED;
     }
     return SUCCESS;
@@ -189,7 +189,8 @@ Status ScheduleState::InitBufRefCount(std::vector<Operation*>& list)
             UpdateBufRefCount(op, tensor);
             int memId = tensor->memoryrange.memId;
             if (InitLocalBuffer(tensor, memId) == FAILED) {
-                APASS_LOG_ERROR_F(Elements::Operation, "InitLocalBuffer failed at InitBufRefCount!");
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "InitLocalBuffer failed at InitBufRefCount for input tensor[%d]!", memId);
                 return FAILED;
             }
         }
@@ -197,7 +198,8 @@ Status ScheduleState::InitBufRefCount(std::vector<Operation*>& list)
             UpdateBufRefCount(op, tensor);
             int memId = tensor->memoryrange.memId;
             if (InitLocalBuffer(tensor, memId) == FAILED) {
-                APASS_LOG_ERROR_F(Elements::Operation, "InitLocalBuffer failed at InitBufRefCount!");
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "InitLocalBuffer failed at InitBufRefCount for output tensor[%d]!", memId);
                 return FAILED;
             }
         }

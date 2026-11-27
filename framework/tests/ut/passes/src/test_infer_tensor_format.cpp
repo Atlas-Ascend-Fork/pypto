@@ -315,6 +315,16 @@ TEST_F(InferTensorFormatTest, FakeTransInsertsRequiredInputAndOutputTransDataThe
     EXPECT_TRUE(G.GetTensor("fake_out")->GetConsumers().empty());
 }
 
+TEST_F(InferTensorFormatTest, FakeTransFormatOutsideEnumFails)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddTensors(DT_FP16, {2, 32, 14, 14}, {"input", "output"}));
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_FAKE_TRANS, {"input"}, {"output"}, "convert"));
+    ASSERT_TRUE(graph.SetInCast({"input"}));
+    SetFakeTransFormat(graph, "convert", TileOpFormat::TILEOP_NC1HWC0, TileOpFormat::TILEOP_FORMAT_NUM);
+    EXPECT_EQ(RunInferTensorFormat(graph.GetFunction()), FAILED);
+}
+
 TEST_F(InferTensorFormatTest, FakeTransMissingFormatAttrFails)
 {
     ComputationalGraphBuilder G;

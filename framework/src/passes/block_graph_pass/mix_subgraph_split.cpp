@@ -44,7 +44,7 @@ Status MixSubgraphSplit::RunOnFunction(Function& function)
         APASS_LOG_ERROR_F(Elements::Function, "GatherSubGraphInfo failed");
         return FAILED;
     }
-    APASS_LOG_INFO_F(Elements::Function, "Found %zu leaf function to process", programs.size());
+    APASS_LOG_INFO_F(Elements::Function, "Found %zu leaf function(s) to process", programs.size());
 
     if (mixSubgraphs.empty()) {
         APASS_LOG_INFO_F(Elements::Function, "No mix subgraph found, jump MixSubgraphSplit.");
@@ -783,8 +783,10 @@ Status BuildLeafIoDescDict(Function* originalMixFunc, Function* newFunc,
             continue;
         }
         if (callInfo.ioTypeIndex < 0 || static_cast<size_t>(callInfo.ioTypeIndex) >= originalIncasts.size()) {
-            APASS_LOG_ERROR_F(Elements::Tensor, "GetTensorData index %d has invalid incast index %d of function %s",
-                              tensorDataIndex, callInfo.ioTypeIndex, originalMixFunc->GetRawName().c_str());
+            APASS_LOG_ERROR_F(
+                Elements::Tensor,
+                "GetTensorData index %d has invalid incast index %d (valid range [0, %zu)) of function %s",
+                tensorDataIndex, callInfo.ioTypeIndex, originalIncasts.size(), originalMixFunc->GetRawName().c_str());
             return FAILED;
         }
         auto tensor = originalIncasts[callInfo.ioTypeIndex];
@@ -865,8 +867,8 @@ Status MixSubgraphSplit::RemapGetTensorDataIO(Function* originalMixFunc,
             continue;
         }
         RefreshLeafTensorDataIO(newFunc, iodescDict);
-        APASS_LOG_INFO_F(Elements::Tensor, "Remapped %zu GetTensorData symbol(s) to function %s", iodescDict.size(),
-                         newFunc->GetRawName().c_str());
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Remapped %zu GetTensorData symbol(s) to function %s", iodescDict.size(),
+                          newFunc->GetRawName().c_str());
         WarnSharedTensorDvsRemap(newFunc, newFunctions, i, iodescDict);
     }
     return SUCCESS;

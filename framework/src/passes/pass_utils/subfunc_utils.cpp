@@ -31,7 +31,8 @@ const int SPACE_NUM_16 = 16;
 void SubfuncInvokeInfoTy::ConstructActualInvokeParam(int esgId)
 {
     if (!isFinalized_) {
-        APASS_LOG_ERROR_F(Elements::Function, "Error: does not finalized before constructing InvokeParam");
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Error: SubfuncInvokeInfoTy is not finalized before constructing InvokeParam");
         return;
     }
 
@@ -686,7 +687,8 @@ Status CheckDumpEntryArgs(int esgId, int64_t entryOffset, const int64_t* entryPa
         return FAILED;
     }
     if (esgId < 0) {
-        APASS_LOG_ERROR_F(Elements::Function, "Error: invalid esgId %d in DumpEachEntryInfo", esgId);
+        APASS_LOG_ERROR_F(Elements::Function, "Error: invalid esgId %d in DumpEachEntryInfo, expected esgId >= 0",
+                          esgId);
         return FAILED;
     }
     esgIndex = static_cast<size_t>(esgId);
@@ -696,7 +698,9 @@ Status CheckDumpEntryArgs(int esgId, int64_t entryOffset, const int64_t* entryPa
         return FAILED;
     }
     if (entryOffset < 0 || entryOffset % static_cast<int64_t>(sizeof(int64_t)) != 0) {
-        APASS_LOG_ERROR_F(Elements::Function, "Error: invalid entryOffset %ld in DumpEachEntryInfo", entryOffset);
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Error: invalid entryOffset %ld in DumpEachEntryInfo, expected >= 0 and multiple of 8",
+                          entryOffset);
         return FAILED;
     }
     readyStateOffset = esgIndex * READY_STATE_INFO_NUM;

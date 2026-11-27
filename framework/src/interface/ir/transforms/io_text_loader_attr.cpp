@@ -108,7 +108,8 @@ bool RequireDistInt(int64_t value, const char* field, int& out, std::string& err
     const int64_t kMin = std::numeric_limits<int>::min();
     const int64_t kMax = std::numeric_limits<int>::max();
     if (value < kMin || value > kMax) {
-        error = std::string("DistTile: ") + field + " does not fit in int";
+        error = std::string("DistTile: ") + field + " value " + std::to_string(value) + " out of int range [" +
+                std::to_string(kMin) + ", " + std::to_string(kMax) + "]";
         return false;
     }
     out = static_cast<int>(value);
@@ -452,7 +453,7 @@ bool IRTextParser::FillSymbolicScalarListAttr(const std::string& key, const std:
                                               std::vector<npu::tile_fwk::SymbolicScalar>& out)
 {
     if (!IsSymbolicScalarListAttr(value)) {
-        Error("invalid attr value for #" + key);
+        Error("invalid symbolic scalar list attr value for #" + key);
         return false;
     }
     SetValue(out, value);

@@ -468,6 +468,18 @@ TEST_F(TestGlobalMemoryReuse, AbnormalNullStorage)
     EXPECT_EQ(status, FAILED);
 }
 
+TEST_F(TestGlobalMemoryReuse, EmptyStorageGroupPreservesIdMap)
+{
+    Allocator allocator(Program::GetInstance().GetCurrentFunction());
+    TensorsDesc emptyGroup;
+    std::unordered_map<int64_t, int> ids{{1, 2}};
+    const auto originalIds = ids;
+    int nextId = 3;
+    EXPECT_EQ(allocator.UpdateStorageId(emptyGroup, ids, nextId), SUCCESS);
+    EXPECT_EQ(ids, originalIds);
+    EXPECT_EQ(nextId, 3);
+}
+
 TEST_F(TestGlobalMemoryReuse, TestConnectionMatrix)
 {
     ComputationalGraphBuilder G;

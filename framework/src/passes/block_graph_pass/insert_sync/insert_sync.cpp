@@ -927,7 +927,7 @@ Status PipeSync::InjectWaitFlag(Function& function, size_t idx, std::vector<Inde
         syncedOpLog.emplace_back(std::make_pair(++waitIdx, std::ref(syncOp)));
         APASS_LOG_DEBUG_F(
             Elements::Operation,
-            "Insert %d %s, setpipe: %s, waitpipe: %s, eventid: %d, setAIVCore type: %d, waitAIVCore type: %d",
+            "Insert wait_flag %d %s, setpipe: %s, waitpipe: %s, eventid: %d, setAIVCore type: %d, waitAIVCore type: %d",
             syncOp.GetOpMagic(), syncOp.GetOpcodeStr().c_str(),
             GetPipeTypeDict().Find(syncOp.syncQueue_.pipeId_).c_str(),
             GetPipeTypeDict().Find(syncOp.syncQueue_.trigPipeId_).c_str(), syncOp.syncQueue_.eventId_,
@@ -978,13 +978,14 @@ Status PipeSync::InjectSetFlag(Function& function, size_t idx, std::vector<Index
             // insert set_flag
             syncOp.SetAIVCore(currPipe.aivCore);
             syncedOpLog.emplace_back(std::make_pair(++setIdx, std::ref(syncOp)));
-            APASS_LOG_DEBUG_F(
-                Elements::Operation,
-                "Insert %d %s, setpipe: %s, waitpipe: %s, eventid: %d, setAIVCore type: %d, waitAIVCore type: %d",
-                syncOp.GetOpMagic(), syncOp.GetOpcodeStr().c_str(),
-                GetPipeTypeDict().Find(syncOp.syncQueue_.pipeId_).c_str(),
-                GetPipeTypeDict().Find(syncOp.syncQueue_.trigPipeId_).c_str(), syncOp.syncQueue_.eventId_,
-                static_cast<int>(syncOp.syncQueue_.setAivCore_), static_cast<int>(syncOp.syncQueue_.waitAivCore_));
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "Insert set_flag %d %s, setpipe: %s, waitpipe: %s, eventid: %d, setAIVCore type: %d, "
+                              "waitAIVCore type: %d",
+                              syncOp.GetOpMagic(), syncOp.GetOpcodeStr().c_str(),
+                              GetPipeTypeDict().Find(syncOp.syncQueue_.pipeId_).c_str(),
+                              GetPipeTypeDict().Find(syncOp.syncQueue_.trigPipeId_).c_str(), syncOp.syncQueue_.eventId_,
+                              static_cast<int>(syncOp.syncQueue_.setAivCore_),
+                              static_cast<int>(syncOp.syncQueue_.waitAivCore_));
             setWaitPairMap_[{idx, ele}] = eventId;
             // 记录wait op 和 setflag的对应关系
             setOpMap.emplace(&syncOp, oriOpList_[ele]);

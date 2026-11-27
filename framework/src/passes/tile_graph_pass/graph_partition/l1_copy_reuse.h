@@ -175,14 +175,14 @@ private:
     {
         APASS_LOG_INFO_F(Elements::Operation, "===> Start L1CopyInReuseMerge.");
         if (CommonOperationEliminateUtils::EliminateCommonOperation(function) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Common operation eliminate failed!");
+            APASS_LOG_ERROR_F(Elements::Operation, "Common operation eliminate failed before L1CopyInReuse!");
             return FAILED;
         }
         if (L1CopyInReuse(function) == FAILED) {
             return FAILED;
         }
         if (CommonOperationEliminateUtils::EliminateCommonOperation(function) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Common operation eliminate failed!");
+            APASS_LOG_ERROR_F(Elements::Operation, "Common operation eliminate failed after L1CopyInReuse!");
             return FAILED;
         }
         DeadOperationEliminator eliminator;

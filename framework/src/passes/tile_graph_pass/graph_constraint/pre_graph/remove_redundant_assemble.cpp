@@ -357,7 +357,8 @@ bool CalculateNewRawShapeExpand(const std::vector<int64_t>& newShape, const std:
     int64_t oriShapeSize = std::accumulate(oriRawShape.begin(), oriRawShape.end(), INT64_C(1),
                                            std::multiplies<int64_t>());
     if (newShapeSize == 0 || oriShapeSize % newShapeSize != 0) {
-        APASS_LOG_INFO_F(Elements::Function, "Cannot calculate NewRawShape as the dimension is not divisible.");
+        APASS_LOG_INFO_F(Elements::Function,
+                         "Cannot calculate NewRawShape in expand case as the dimension is not divisible.");
         return false;
     }
     newRawShape[0] = oriShapeSize / newShapeSize;
@@ -378,7 +379,8 @@ bool CalculateNewRawShapeReduce(const std::vector<int64_t>& newShape, const std:
         remainShapeSize = oriShapeSize / newShapeSize;
     }
     if (remainShapeSize <= 0 || oriShapeSize % newShapeSize != 0) {
-        APASS_LOG_INFO_F(Elements::Function, "Cannot calculate NewRawShape as the dimension is not divisible.");
+        APASS_LOG_INFO_F(Elements::Function,
+                         "Cannot calculate NewRawShape in reduce case as the dimension is not divisible.");
         return false;
     }
     newRawShape.back() = newRawShape.back() * remainShapeSize;
@@ -407,7 +409,8 @@ bool CalculateNewDynRawShapeExpand(const std::vector<int64_t>& newShape,
     SymbolicScalar oriShapeSize = std::accumulate(oriDynRawShape.begin(), oriDynRawShape.end(),
                                                   IRBuilder().CreateConstInt(1), std::multiplies<>());
     if (newShapeSize.ConcreteValid() && newShapeSize == 0) {
-        APASS_LOG_ERROR_F(Elements::Function, "Cannot calculate NewDynRawShape as the dimension is zero.");
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Cannot calculate NewDynRawShape in expand case as the dimension is zero.");
         return false;
     }
     // Max(1) only avoids building a symbolic division-by-zero expression; runtime size >= 1 is guaranteed upstream.
@@ -437,7 +440,8 @@ bool CalculateNewDynRawShapeReduce(const std::vector<int64_t>& newShape,
     SymbolicScalar oriShapeSize = std::accumulate(oriDynRawShape.begin(), oriDynRawShape.end(),
                                                   IRBuilder().CreateConstInt(1), std::multiplies<>());
     if (newShapeSize.ConcreteValid() && newShapeSize == 0) {
-        APASS_LOG_ERROR_F(Elements::Function, "Cannot calculate NewDynRawShape as the dimension is zero.");
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Cannot calculate NewDynRawShape in reduce case as the dimension is zero.");
         return false;
     }
     // Max(1) only avoids building a symbolic division-by-zero expression; runtime size >= 1 is guaranteed upstream.
@@ -487,7 +491,8 @@ void GetDynOffsetBeforeReshape(const std::vector<SymbolicScalar>& oriOffset, con
     IRBuilder builder;
     // 计算原始shape的步长（stride）
     if (oriShape.size() != oriOffset.size()) {
-        APASS_LOG_ERROR_F(Elements::Tensor, "OriShape and oriOffset size mismatch.");
+        APASS_LOG_ERROR_F(Elements::Tensor, "OriShape size [%zu] and oriOffset size [%zu] mismatch.", oriShape.size(),
+                          oriOffset.size());
         return;
     }
     size_t oriSize = oriOffset.size();
@@ -535,7 +540,8 @@ void GetDynOffsetBeforeDynReshape(const std::vector<SymbolicScalar>& oriOffset,
                                   const std::vector<SymbolicScalar>& newShape, std::vector<SymbolicScalar>& newOffset)
 {
     if (oriShape.size() != oriOffset.size()) {
-        APASS_LOG_ERROR_F(Elements::Tensor, "OriDynShape and oriOffset size mismatch.");
+        APASS_LOG_ERROR_F(Elements::Tensor, "OriDynShape size [%zu] and oriOffset size [%zu] mismatch.",
+                          oriShape.size(), oriOffset.size());
         return;
     }
     size_t oriSize = oriOffset.size();

@@ -706,7 +706,7 @@ std::pair<LogicalTensorPtr, std::vector<Operation*>> CommonOperationEliminateUti
     }
     const uint64_t groupHash = ComputeHash(currentBucketProducers, orderedTensor);
     if (hashCache_.count(groupHash) != 0) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "Tensor[%d] are marked as hash already existed tensor.",
+        APASS_LOG_DEBUG_F(Elements::Operation, "Tensor[%d] is marked as an already existing hash tensor.",
                           orderedTensor->GetMagic());
         return hashCache_[groupHash];
     }
@@ -1269,7 +1269,7 @@ bool CommonOperationEliminateUtils::TensorProducersMerge(
         return false;
     }
     APASS_LOG_DEBUG_F(Elements::Operation,
-                      "In CommonOperationEliminateUtils, Tensor[%d] and producersgroup are marked as redundant.",
+                      "In CommonOperationEliminateUtils, Tensor[%d] and producers group are marked as redundant.",
                       oldTensor->GetMagic());
     return true;
 }

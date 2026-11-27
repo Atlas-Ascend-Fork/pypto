@@ -15,6 +15,7 @@
 
 #include "infer_dyn_shape_checker.h"
 #include "passes/pass_log/pass_log.h"
+#include "passes/pass_utils/pass_utils.h"
 
 #define MODULE_NAME "InferDynShape"
 
@@ -70,8 +71,11 @@ Status InferDynShapeChecker::DoPostCheck(Function& function)
                 continue;
             }
             if (!IsValidShapeInTensorShape(opOut)) {
-                APASS_LOG_ERROR_F(Elements::Tensor, "Op %s[%d] output [%d] dynamic valid shape is out of tensor shape.",
-                                  op.GetOpcodeStr().c_str(), op.GetOpMagic(), opOut->GetMagic());
+                APASS_LOG_ERROR_F(Elements::Tensor,
+                                  "Op %s[%d] output [%d] dynamic valid shape(%s) is out of tensor shape(%s).",
+                                  op.GetOpcodeStr().c_str(), op.GetOpMagic(), opOut->GetMagic(),
+                                  CommonUtils::ContainerToStr(opOut->GetDynValidShape()).c_str(),
+                                  CommonUtils::ContainerToStr(opOut->GetShape()).c_str());
                 return FAILED;
             }
         }

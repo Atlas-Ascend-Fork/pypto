@@ -28,7 +28,7 @@ Status DumpFunctionUtils::GetCallee(const Operation& callop, Function*& callFunc
     auto callopAttr = std::static_pointer_cast<CallOpAttribute>(callop.GetOpAttribute());
     callFunc = Program::GetInstance().GetFunctionByMagicName(callopAttr->GetCalleeMagicName());
     if (callFunc == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Function, "Get callee function %s failed.",
+        APASS_LOG_ERROR_F(Elements::Function, "Get callee function %s failed in DumpFunctionUtils.",
                           callopAttr->GetCalleeMagicName().c_str());
         return FAILED;
     }
@@ -85,7 +85,7 @@ Status DumpFunctionUtils::PrintTileFunctions(Function& function, const std::stri
     if (GetTileFunction(&function, tileFunctionSet) != SUCCESS) {
         return FAILED;
     }
-    APASS_LOG_DEBUG_F(Elements::Function, "Obtained a total of %zu tileFunctions", tileFunctionSet.size());
+    APASS_LOG_DEBUG_F(Elements::Function, "Obtained a total of %zu tileFunctions to print", tileFunctionSet.size());
     for (auto tileFunc : tileFunctionSet) {
         APASS_LOG_DEBUG_F(Elements::Function, "Print tileFunction[%s]", tileFunc->GetRawName().c_str());
         if (printFunc(*tileFunc, logFolder, beforeFunction) != SUCCESS) {

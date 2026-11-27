@@ -92,7 +92,11 @@ std::string SimulationPlatform::GetDevicePlatform()
 
     socVersion = NormalizeLegacyDevicePlatform(socVersion);
     if (StringToDPlatform(socVersion) == DPlatform::UNKNOWN_DEVICE) {
-        PLATFORM_LOGW("Invalid soc version:%s, use default platform.", socVersion.c_str());
+        PLATFORM_LOGW("Invalid soc version:%s, expected one of Ascend910B1, Ascend910B2, Ascend910B3, Ascend910B4, "
+                      "Ascend910_9363, Ascend950DT_9572, Ascend950PR_9579, Ascend950DT_9581, Ascend950DT_9581X, "
+                      "Ascend950DT_9582, Ascend950PR_9589, Kirin9030, KirinX90, Kirin9050, Ascend350_355e, "
+                      "Ascend350_354f, use default platform.",
+                      socVersion.c_str());
         return DEFAULT_SOC_VERSION;
     }
     return socVersion;

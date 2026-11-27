@@ -478,9 +478,9 @@ Status TuneTileOpSeqForVF::InitAndValidateOps(PipeSync& ps)
             continue;
         }
         if (op->GetAIVCore() != AIVCore::AIV0 && op->GetAIVCore() != AIVCore::AIV1) {
-            APASS_LOG_ERROR_F(Elements::Operation,
-                              "Pipe_V op %d %s AIV type is neither AIV0 nor AIV1, RunOnFunction failed.",
-                              op->GetOpMagic(), op->GetOpcodeStr().c_str());
+            APASS_LOG_ERROR_F(
+                Elements::Operation, "Pipe_V op %d %s AIV type is %s, expected AIV0 or AIV1, RunOnFunction failed.",
+                op->GetOpMagic(), op->GetOpcodeStr().c_str(), GetAIVCoreDict().Find(op->GetAIVCore()).c_str());
             return FAILED;
         }
     }
@@ -498,7 +498,7 @@ void TuneTileOpSeqForVF::LogOpList(const std::string& label)
 Status TuneTileOpSeqForVF::RunOnFunction(Function& function)
 {
     if (!config::GetPassGlobalConfig(KEY_ENABLE_VF, false)) {
-        APASS_LOG_DEBUG_F(Elements::Function, "TuneTileOpSeqForVF is skipped for ENABLE_VF is false.");
+        APASS_LOG_DEBUG_F(Elements::Function, "TuneTileOpSeqForVF is skipped because ENABLE_VF is false.");
         return SUCCESS;
     }
     int64_t tunevfMode = config::GetPassOption<int64_t>(SG_SET_TUNEVF_MODE);

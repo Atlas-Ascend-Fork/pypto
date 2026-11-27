@@ -72,9 +72,9 @@ Status GraphPartitionChecker::DoPostCheck(Function& function)
         if (curSubgraphID < 0 || curSubgraphID >= static_cast<int32_t>(function.GetTotalSubGraphCount())) {
             APASS_LOG_ERROR_F(
                 Elements::Operation,
-                "Operation (opmagic: %d) has illegal SubgraphID; Please review the error messages generated during the "
-                "processing procedure.%s",
-                op.GetOpMagic(), GetFormatBacktrace(op).c_str());
+                "Operation (opmagic: %d) has illegal SubgraphID %d, legal range is [0, %zu); Please review the error "
+                "messages generated during the processing procedure.%s",
+                op.GetOpMagic(), curSubgraphID, function.GetTotalSubGraphCount(), GetFormatBacktrace(op).c_str());
             return FAILED;
         }
         subgraphs[curSubgraphID].push_back(&op);

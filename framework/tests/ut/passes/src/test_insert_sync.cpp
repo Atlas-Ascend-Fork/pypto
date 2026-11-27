@@ -5539,6 +5539,23 @@ TEST_F(InsertSyncTest, RedundantAivDependencyCannotUseAnotherVectorFifo)
     EXPECT_TRUE(ps.AnalyzeIntraEventCapacity(ps.depOps_[0]).has_value());
 }
 
+TEST_F(InsertSyncTest, RejectsSecondIssueWithoutAdvancingQueue)
+{
+    PipeSync sync;
+    sync.depOps_.emplace_back(0, PipeSync::PipeCore{PIPE_V, PIPE_V, CoreType::AIV, AIVCore::AIV0});
+    sync.depOps_.front().issued = true;
+    sync.orderedOpList_.push(0);
+    PipeSync::IssueQueue queue({PIPE_V, CoreType::AIV, AIVCore::AIV0});
+    queue.ops.push_back(0);
+    std::vector<size_t> popped;
+    std::vector<IndexOp> issued;
+    bool deadlock = false;
+    EXPECT_EQ(sync.PopFromQueue(queue, popped, deadlock, issued), FAILED);
+    EXPECT_EQ(queue.currOp, 0U);
+    EXPECT_TRUE(popped.empty());
+    EXPECT_TRUE(issued.empty());
+}
+
 TEST_F(InsertSyncTest, RedundantAivDependencyKeepsNecessaryEdges)
 {
     NpuArchScope archScope(NPUArch::DAV_2201);

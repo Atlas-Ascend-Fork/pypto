@@ -364,8 +364,10 @@ void RemoveUnalignedReshape::ReplaceDynUnalignedReshapeOpsForUB(Function& functi
 
     for (const auto& dim : changedDims) {
         if ((size_t)dim >= outDynValidShape.size()) {
-            APASS_LOG_WARN_F(Elements::Operation, "The dynValidShape of output[%d] of op[%d] has no [%ld] index.",
-                             output->GetMagic(), op.GetOpMagic(), static_cast<long>(dim));
+            APASS_LOG_WARN_F(Elements::Operation,
+                             "The dynValidShape of output[%d] of op[%d] has no [%ld] index, valid index range is "
+                             "[0, %zu).",
+                             output->GetMagic(), op.GetOpMagic(), static_cast<long>(dim), outDynValidShape.size());
             break;
         } else if (!outDynValidShape[dim].IsImmediate()) {
             auto tmpWorkSpaceIn = irBuilder_.CreateTensorVar(input->Datatype(), input->shape,
@@ -405,7 +407,7 @@ void RemoveUnalignedReshape::ReplaceDynUnalignedReshapeOpsForUB(Function& functi
             SetReshapeCopyInValidShapeAttr(reshapeCopyInOp);
             FoldConsumerViewOffsetIntoCopyIn(reshapeCopyInOp);
             APASS_LOG_INFO_F(Elements::Operation,
-                             "Reshape op %d is replaceed by reshapeCopyOutOp %d and reshapeCopyInOp %d.", op.opmagic,
+                             "Reshape op %d is replaced by reshapeCopyOutOp %d and reshapeCopyInOp %d.", op.opmagic,
                              reshapeCopyOutOp.opmagic, reshapeCopyInOp.opmagic);
             processedReshapeOps.insert(op.GetOpMagic());
             function.EraseOperations(true, false);
@@ -475,8 +477,9 @@ LogicalTensorPtr RemoveUnalignedReshape::HandleNoCopyOutInProducer(Function& fun
     const int UB_SIZE_THRESHOLD = static_cast<int>(Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB));
     if (copyInOutputPtr->GetDataSize() > UB_SIZE_THRESHOLD) {
         APASS_LOG_WARN_F(Elements::Tensor,
-                         "Tensor [%d] can not copy to UB, tensor size [%ld] exceeds the UB size [%d] limit.",
-                         input->magic, input->GetDataSize(), UB_SIZE_THRESHOLD);
+                         "Tensor [%d] can not copy to UB, tensor size [%ld bytes] exceeds the UB size [%d bytes] "
+                         "limit.",
+                         copyInOutputPtr->magic, copyInOutputPtr->GetDataSize(), UB_SIZE_THRESHOLD);
         checkOverUbSize = true;
         return nullptr;
     }
@@ -604,11 +607,13 @@ void RemoveUnalignedReshape::InsertReshapeCopy(Function& function, Operation& op
         ProcessCopyInOfDDRReshape(copyInOps);
     } else {
         APASS_LOG_WARN_F(Elements::Tensor,
-                         "Reshape[%d] on GM had processed failed, "
-                         "because the size of input[%d] or output[%d] of reshape[%d] exceeded ub if copy to ub.",
-                         op.GetOpMagic(), input->GetMagic(), output->GetMagic(), op.GetOpMagic());
+                         "Reshape[%d] on GM processing failed, "
+                         "because the size of input[%d] or output[%d] of reshape[%d] exceeded ub if copy to ub, "
+                         "input size is %ld bytes, output size is %ld bytes, ub size limit is %zu bytes.",
+                         op.GetOpMagic(), input->GetMagic(), output->GetMagic(), op.GetOpMagic(), input->GetDataSize(),
+                         output->GetDataSize(), Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB));
     }
-    APASS_LOG_DEBUG_F(Elements::Operation, "Reshape[%d] on GM had processed successfully.", op.GetOpMagic());
+    APASS_LOG_DEBUG_F(Elements::Operation, "Reshape[%d] on GM was processed successfully.", op.GetOpMagic());
     processedReshapeOps.insert(op.GetOpMagic());
 }
 
@@ -623,8 +628,10 @@ void RemoveUnalignedReshape::ReplaceDynUnalignedReshapeOpsForDDR(Function& funct
     auto changedDims = FindChangedDims(output->shape, input->shape);
     for (const auto& dim : changedDims) {
         if ((size_t)dim >= outputValidShape.size()) {
-            APASS_LOG_WARN_F(Elements::Operation, "The dynValidShape of output[%d] of op[%d] has no [%ld] index.",
-                             output->GetMagic(), op.GetOpMagic(), static_cast<long>(dim));
+            APASS_LOG_WARN_F(Elements::Operation,
+                             "The dynValidShape of output[%d] of op[%d] has no [%ld] index, valid index range is "
+                             "[0, %zu).",
+                             output->GetMagic(), op.GetOpMagic(), static_cast<long>(dim), outputValidShape.size());
             break;
         } else if (!outputValidShape[dim].IsImmediate()) {
             hasNonImmediate = true;
@@ -649,8 +656,8 @@ void RemoveUnalignedReshape::HandleNoCopyInConsumer(Function& function, Operatio
     if (static_cast<size_t>(newCopyinTensorPtr->GetDataSize()) > UB_SIZE_THRESHOLD) {
         APASS_LOG_WARN_F(
             Elements::Tensor,
-            "The size[%ld] of copyTensor[%d] from output of reshape op[%d] should not exceed %zu after padding. "
-            "Consider reducing its size.",
+            "The size[%ld bytes] of copyTensor[%d] from output of reshape op[%d] should not exceed %zu bytes after "
+            "padding. Consider reducing its size.",
             newCopyinTensorPtr->GetDataSize(), newCopyinTensorPtr->GetMagic(), op.GetOpMagic(), UB_SIZE_THRESHOLD);
         checkOverUbSize = true;
         return;

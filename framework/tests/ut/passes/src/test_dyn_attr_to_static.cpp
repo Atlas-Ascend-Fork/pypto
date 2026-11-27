@@ -26,6 +26,7 @@
 #include "interface/configs/config_manager.h"
 #include "passes/block_graph_pass/dyn_attr_to_static.h"
 #include "interface/interpreter/raw_tensor_data.h"
+#include "tilefwk/error_manager.h"
 
 using namespace npu::tile_fwk;
 
@@ -483,4 +484,114 @@ TEST_F(DynAttrToStaticTest, DumpAndPrintFunction)
     CountFilesByExtension(dir, jsonCnt, tifwkgrCnt);
     EXPECT_EQ(jsonCnt, 3u);
     EXPECT_EQ(tifwkgrCnt, 3u);
+}
+
+namespace {
+// 逐条弹出 ErrorManager 队列，查找包含 substr 的错误消息；未命中的消息打印后丢弃。
+// 命中后不清空队列，便于同一用例内继续断言后续消息；用例末尾需自行清空队列。
+bool FindReportedErrorContains(const std::string& substr, std::string& foundMsg)
+{
+    std::string errMsg;
+    while (ErrorManager::Instance().GetFirstErrorMessage(errMsg)) {
+        if (errMsg.find(substr) != std::string::npos) {
+            foundMsg = errMsg;
+            return true;
+        }
+        ErrorManager::Instance().OutputErrorMessage(false);
+    }
+    return false;
+}
+
+// 构造指向 calleeMagicName 的 CALL 算子
+Operation* MakeCallop(Function* caller, const std::string& calleeMagicName)
+{
+    auto& call = caller->AddOperation(Opcode::OP_CALL, {}, {});
+    auto attr = std::make_shared<CallOpAttribute>();
+    attr->SetCalleeMagicName(calleeMagicName);
+    call.SetOpAttribute(attr);
+    return &call;
+}
+} // namespace
+
+// COA 宏的 dim 索引超出 int 范围（INT_MAX+1），std::stoi 抛出 out_of_range，
+// SToIParamShapeAndOffset 报 "Failed to convert dim from string" 且 BuildNewCoa 返回 FAILED
+TEST_F(DynAttrToStaticTest, CoaDimIndexOutOfRangeFailsToConvert)
+{
+    constexpr int64_t overflowValue = 2147483648LL; // INT_MAX + 1
+    auto expression = SymbolicScalar(AddRuntimeCoaPrefix("GET_PARAM_OFFSET"))(overflowValue, 0, 0);
+    auto dynScalar = std::ref(expression);
+    std::vector<std::vector<SymbolicScalar>> callerArguments{{0, 0, 0, 0, 0}};
+    DynAttrToStatic pass;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(pass.BuildNewCoa(dynScalar, callerArguments), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(FindReportedErrorContains("Failed to convert dim from string '2147483648'", errMsg));
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// COA 宏的 base 索引超出 int 范围，报 "Failed to convert base from string" 且返回 FAILED
+TEST_F(DynAttrToStaticTest, CoaBaseIndexOutOfRangeFailsToConvert)
+{
+    constexpr int64_t overflowValue = 2147483648LL; // INT_MAX + 1
+    auto expression = SymbolicScalar(AddRuntimeCoaPrefix("GET_PARAM_OFFSET"))(0, overflowValue, 0);
+    auto dynScalar = std::ref(expression);
+    std::vector<std::vector<SymbolicScalar>> callerArguments{{0, 0, 0, 0, 0}};
+    DynAttrToStatic pass;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(pass.BuildNewCoa(dynScalar, callerArguments), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(FindReportedErrorContains("Failed to convert base from string '2147483648'", errMsg));
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// COA 宏的 idx 索引超出 int 范围，报 "Failed to convert idx from string" 且返回 FAILED
+TEST_F(DynAttrToStaticTest, CoaIdxIndexOutOfRangeFailsToConvert)
+{
+    constexpr int64_t overflowValue = 2147483648LL; // INT_MAX + 1
+    auto expression = SymbolicScalar(AddRuntimeCoaPrefix("GET_PARAM_OFFSET"))(0, 0, overflowValue);
+    auto dynScalar = std::ref(expression);
+    std::vector<std::vector<SymbolicScalar>> callerArguments{{0, 0, 0, 0, 0}};
+    DynAttrToStatic pass;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(pass.BuildNewCoa(dynScalar, callerArguments), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(FindReportedErrorContains("Failed to convert idx from string '2147483648'", errMsg));
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// DYNAMIC_LOOP/TENSOR_GRAPH 函数的 CALL 算子指向不存在的被调函数：
+// GetCallee 报 "Get callee function ... failed in DynAttrToStatic."，
+// BuildLeafToCaller 报 "... GetCallee failed in tensor graph." 并返回 FAILED
+TEST_F(DynAttrToStaticTest, BuildLeafToCallerTensorGraphMissingCalleeFails)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "tensor_dyn_magic", "TENSOR_dyn", nullptr);
+    func->SetFunctionType(FunctionType::DYNAMIC_LOOP);
+    func->SetGraphType(GraphType::TENSOR_GRAPH);
+    (void)MakeCallop(func.get(), "missing_callee");
+
+    DynAttrToStatic pass;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(pass.BuildLeafToCaller(func.get()), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(FindReportedErrorContains("Get callee function missing_callee failed in DynAttrToStatic.", errMsg));
+    EXPECT_TRUE(FindReportedErrorContains("GetCallee failed in tensor graph.", errMsg));
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// EXECUTE_GRAPH 函数的 CALL 算子指向不存在的被调函数：
+// BuildLeafToCaller 报 "... GetCallee failed in execute graph." 并返回 FAILED
+TEST_F(DynAttrToStaticTest, BuildLeafToCallerExecuteGraphMissingCalleeFails)
+{
+    auto func = std::make_shared<Function>(Program::GetInstance(), "execute_magic", "EXEC_main", nullptr);
+    func->SetFunctionType(FunctionType::STATIC);
+    func->SetGraphType(GraphType::EXECUTE_GRAPH);
+    (void)MakeCallop(func.get(), "missing_callee");
+
+    DynAttrToStatic pass;
+    ErrorManager::Instance().OutputErrorMessage(true);
+    EXPECT_EQ(pass.BuildLeafToCaller(func.get()), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(FindReportedErrorContains("Get callee function missing_callee failed in DynAttrToStatic.", errMsg));
+    EXPECT_TRUE(FindReportedErrorContains("GetCallee failed in execute graph.", errMsg));
+    ErrorManager::Instance().OutputErrorMessage(true);
 }

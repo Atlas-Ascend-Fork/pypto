@@ -215,7 +215,7 @@ DEFINE_UNARY_VISITOR(Floor)
 
 void IRVisitor::VisitStmt_(const AssignStmtPtr& op)
 {
-    INTERNAL_CHECK_SPAN(op->value_, op->span_) << "AssignStmt has null value";
+    INTERNAL_CHECK_SPAN(op->value_, op->span_) << "IRVisitor: AssignStmt has null value";
     for (const auto& target : op->targets_) {
         INTERNAL_CHECK_SPAN(target, op->span_) << "AssignStmt has null target";
         VisitExpr(target);

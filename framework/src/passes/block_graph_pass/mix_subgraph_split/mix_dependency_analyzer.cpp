@@ -572,9 +572,9 @@ void MixDependencyAnalyzer::CollectGetTensorDataIncasts(const std::vector<Intern
         for (size_t i = 0; i < components.size(); i++) {
             if (!ContainsTensor(allIncasts[i], incasts[idx])) {
                 allIncasts[i].emplace_back(incasts[idx], -1, 0);
-                APASS_LOG_INFO_F(Elements::Tensor,
-                                 "Added GetTensorData incast tensor %d to component %zu of function %s",
-                                 incasts[idx]->GetRawMagic(), i, originalMixFunc->GetRawName().c_str());
+                APASS_LOG_DEBUG_F(Elements::Tensor,
+                                  "Added GetTensorData incast tensor %d to component %zu of function %s",
+                                  incasts[idx]->GetRawMagic(), i, originalMixFunc->GetRawName().c_str());
             }
         }
     }
@@ -594,8 +594,8 @@ Status MixDependencyAnalyzer::ProcessDependencyAnalyzer(const AnalyzerInput& inp
     auto directDeps = AnalyzeComponentDependencies(*input.originalMixFunc, crossComponentTensors);
     APASS_LOG_INFO_F(Elements::Tensor, "Found %zu cross-component tensor dependencies:", crossComponentTensors.size());
     for (const auto& [edge, tensors] : crossComponentTensors) {
-        APASS_LOG_INFO_F(Elements::Tensor, "  Component %d -> %d: %zu tensor(s)", edge.first, edge.second,
-                         tensors.size());
+        APASS_LOG_DEBUG_F(Elements::Tensor, "  Component %d -> %d: %zu tensor(s)", edge.first, edge.second,
+                          tensors.size());
     }
     // 步骤3：计算依赖传递闭包
     APASS_LOG_INFO_F(Elements::Tensor, "Step 3: Computing dependency closure...");

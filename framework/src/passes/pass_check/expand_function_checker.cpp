@@ -33,8 +33,8 @@ Status ExpandFunctionChecker::DoDefaultEnabledPreCheck(Function& function)
     InplaceConflictChecker inplaceConflictChecker;
     if (inplaceConflictChecker.CheckIndexOutcastDisorderedCoverage(function) != SUCCESS) {
         APASS_LOG_WARN_F(Elements::Function,
-                         "Function[%d] has tensor serves both the dst of OP_INDEX_OUTCAST and the input of other "
-                         "Operations, the precision may be abnormal.",
+                         "Function[%d] has a tensor that serves both the dst of OP_INDEX_OUTCAST and the input of "
+                         "other Operations, the precision may be abnormal.",
                          function.GetFuncMagic());
     }
     if (inplaceConflictChecker.CheckInplaceOperationConflict(function) != SUCCESS) {
@@ -50,7 +50,7 @@ Status ExpandFunctionChecker::DoPostCheck(Function& function)
     APASS_LOG_INFO_F(Elements::Function, "PostCheck for ExpandFunction!");
     if (function.expandFunctionAccelerate != false) {
         APASS_LOG_ERROR_F(Elements::Function,
-                          "ExpandFunctionAccelerate should equal to false after ExpandFunction process.");
+                          "ExpandFunctionAccelerate should be equal to false after ExpandFunction process.");
         return FAILED;
     }
     if (!function.OperationLoopCheck()) {

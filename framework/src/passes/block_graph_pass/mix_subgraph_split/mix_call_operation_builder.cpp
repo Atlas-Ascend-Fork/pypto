@@ -490,7 +490,10 @@ OperandAttribute MixCallOperationBuilder::FindOriginalAttrInOriginalCallOp(Logic
                                                                            Operation* originalCallOp) const
 {
     if (tensor == nullptr || originalCallOp == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Tensor, "Tensor or original callOp is nullptr in FindOriginalAttrInOriginalCallOp");
+        APASS_LOG_ERROR_F(Elements::Tensor,
+                          "Tensor or original callOp is nullptr in FindOriginalAttrInOriginalCallOp, tensor=%p, "
+                          "originalCallOp=%p",
+                          tensor.get(), originalCallOp);
         return -1;
     }
     int tensorMagic = tensor->GetRawMagic();
@@ -565,7 +568,7 @@ void MixCallOperationBuilder::SetCallOpAttribute(Function& leafFunc, Operation& 
                                                  CallOpCreationInfo& info)
 {
     if (originalCallAttr == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Original callOp %d has no CallOpAttribute",
+        APASS_LOG_ERROR_F(Elements::Operation, "Original callOp %d has no CallOpAttribute in SetCallOpAttribute",
                           originalCallOp->GetOpMagic());
         return;
     }

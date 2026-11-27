@@ -235,10 +235,10 @@ Status IntraSubgraphAdapter::CheckColorCount(Function& function, LogicalTensorPt
     }
     if (commonColorCount == 0) {
         if (ProcessBoundaryTensor(function, tensor) == FAILED) {
-            APASS_LOG_ERROR_F(
-                Elements::Tensor,
-                "Process boundary tensor failed, tensor magic : %d; Please check the ProcessBoundaryTensor method.",
-                tensor->GetMagic());
+            APASS_LOG_ERROR_F(Elements::Tensor,
+                              "Process boundary tensor failed in CheckColorCount, tensor magic : %d; Please check the "
+                              "ProcessBoundaryTensor method.",
+                              tensor->GetMagic());
             return FAILED;
         }
     }
@@ -361,7 +361,8 @@ Status IntraSubgraphAdapter::ProcessBoundaryTensors(Function& function, LogicalT
         if (ProcessBoundaryTensor(function, tensor) == FAILED) {
             APASS_LOG_ERROR_F(
                 Elements::Tensor,
-                "Process boundary tensor failed, tensor magic : %d; Please check the ProcessBoundaryTensor method.",
+                "Process boundary tensor failed in ProcessBoundaryTensors batch loop, tensor magic : %d; Please "
+                "check the ProcessBoundaryTensor method.",
                 tensor->GetMagic());
             return FAILED;
         }
@@ -560,8 +561,8 @@ LogicalTensorPtr IntraSubgraphAdapter::InsertOpBetween(Function& function, Opcod
     }
     GraphUtils::CopyDynStatus(newTensor, tensor);
     op.ReplaceOutputOperand(tensor, newTensor);
-    APASS_LOG_DEBUG_F(Elements::Tensor, "Compare Ori: %s", tensor->Dump().c_str());
-    APASS_LOG_DEBUG_F(Elements::Tensor, "Compare New: %s", newTensor->Dump().c_str());
+    APASS_LOG_DEBUG_F(Elements::Tensor, "Compare Ori (InsertOpBetween): %s", tensor->Dump().c_str());
+    APASS_LOG_DEBUG_F(Elements::Tensor, "Compare New (InsertOpBetween): %s", newTensor->Dump().c_str());
 
     std::vector<int64_t> offset(tensor->GetShape().size(), 0);
     Operation* newOp = &irBuilder_.CreateTensorOpStmt(function, opcode, {newTensor}, {tensor});
@@ -569,8 +570,8 @@ LogicalTensorPtr IntraSubgraphAdapter::InsertOpBetween(Function& function, Opcod
     newOp->SetOpAttribute(std::make_shared<AssembleOpAttribute>(newTensor->GetMemoryTypeOriginal(), offset,
                                                                 tensor->GetDynOffset(), tensor->GetDynValidShape()));
     newOp->SetScopeInfo(op.GetScopeInfo());
-    APASS_LOG_DEBUG_F(Elements::Operation, "Insert New Op %s[%d], info: %s", newOp->GetOpcodeStr().c_str(),
-                      newOp->GetOpMagic(), newOp->Dump().c_str());
+    APASS_LOG_DEBUG_F(Elements::Operation, "Insert New Op %s[%d] via InsertOpBetween, info: %s",
+                      newOp->GetOpcodeStr().c_str(), newOp->GetOpMagic(), newOp->Dump().c_str());
     newOp->UpdateSubgraphID(op.GetSubgraphID());
     newTensor->AddProducer(op);
     newTensor->AddConsumer(newOp);
@@ -622,8 +623,8 @@ LogicalTensorPtr IntraSubgraphAdapter::CreateInsertedOpTensor(const LogicalTenso
     newTensor->UpdateOffset(tensor->GetTensorOffset());
     GraphUtils::CopyDynStatus(newTensor, tensor);
     newTensor->SetMemoryTypeBoth(tensor->GetMemoryTypeOriginal(), true);
-    APASS_LOG_DEBUG_F(Elements::Tensor, "Compare Ori: %s", tensor->Dump().c_str());
-    APASS_LOG_DEBUG_F(Elements::Tensor, "Compare New: %s", newTensor->Dump().c_str());
+    APASS_LOG_DEBUG_F(Elements::Tensor, "Compare Ori (CreateInsertedOpTensor): %s", tensor->Dump().c_str());
+    APASS_LOG_DEBUG_F(Elements::Tensor, "Compare New (CreateInsertedOpTensor): %s", newTensor->Dump().c_str());
     return newTensor;
 }
 
@@ -646,8 +647,8 @@ Operation* IntraSubgraphAdapter::CreateInsertedOp(Function& function, Opcode opc
                                                                 tensor->GetDynOffset(), tensor->GetDynValidShape()));
         newOp->SetScopeInfo(ops[0]->GetScopeInfo());
     }
-    APASS_LOG_DEBUG_F(Elements::Operation, "Insert New Op %s[%d], info: %s", newOp->GetOpcodeStr().c_str(),
-                      newOp->GetOpMagic(), newOp->Dump().c_str());
+    APASS_LOG_DEBUG_F(Elements::Operation, "Insert New Op %s[%d] via CreateInsertedOp, info: %s",
+                      newOp->GetOpcodeStr().c_str(), newOp->GetOpMagic(), newOp->Dump().c_str());
     newOp->UpdateSubgraphID(newOpSubgraphID == kInheritOpsSubgraphId ? ops[0]->GetSubgraphID() : newOpSubgraphID);
     return newOp;
 }
@@ -712,8 +713,8 @@ Status IntraSubgraphAdapter::RouteVersionGroupsToDDR(Function& function)
             sibling->GetMemoryTypeOriginal() == MEM_DEVICE_DDR) {
             continue;
         }
-        APASS_LOG_INFO_F(Elements::Tensor, "Route sibling version(magic : %d) of rawMagic %d to DDR for consistency.",
-                         sibling->GetMagic(), rawMagic);
+        APASS_LOG_DEBUG_F(Elements::Tensor, "Route sibling version(magic : %d) of rawMagic %d to DDR for consistency.",
+                          sibling->GetMagic(), rawMagic);
         // Insert adapters before changing the sibling memory type so the producer output and consumer inputs
         // retain their original local memory type.
         if (AdapteTensorProducers(function, sibling) != SUCCESS) {

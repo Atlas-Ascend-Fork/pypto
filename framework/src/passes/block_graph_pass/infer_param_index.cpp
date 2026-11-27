@@ -191,7 +191,7 @@ bool InferParamIndex::ResetGmCopyDynValidShape(Operation& op, Function& function
     std::vector<SymbolicScalar> validShape;
     op.GetOOperands().front()->UpdateDynValidShape(validShape);
     APASS_LOG_DEBUG_F(Elements::Operation,
-                      "op[%d] in function %s has cleared its DynValidShape what will be inferred again",
+                      "op[%d] in function %s has cleared its DynValidShape, which will be inferred again.",
                       op.GetOpMagic(), function.GetRawName().c_str());
     auto copyAttr = std::static_pointer_cast<CopyOpAttribute>(op.GetOpAttribute());
     if (isCopyIn) {
@@ -309,8 +309,8 @@ Status InferParamIndex::InsertAddr2ValidShapeSpecified(
         auto ioNum = op.GetIOperands().size();
         auto ooNum = op.GetOOperands().size();
         if (ioNum < ooNum) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Copyin[%d] does not support fewer inputs than outputs.",
-                              op.GetOpMagic());
+            APASS_LOG_ERROR_F(Elements::Operation, "Copyin[%d] does not support fewer inputs (%zu) than outputs (%zu).",
+                              op.GetOpMagic(), ioNum, ooNum);
             return FAILED;
         }
     }
@@ -415,7 +415,7 @@ Status InferParamIndex::UpdateParamIndex(Function& function)
             APASS_LOG_ERROR_F(Elements::Function, "InferShape failed; Please check the InferShape method.");
             return FAILED;
         }
-        APASS_LOG_DEBUG_F(Elements::Function, "Print function before update: %s\n", subFunc.Dump().c_str());
+        APASS_LOG_DEBUG_F(Elements::Function, "Print function before update: %s", subFunc.Dump().c_str());
         std::map<int, std::vector<SymbolicScalar>> addr2ValidShape;
         std::map<int, std::vector<SymbolicScalar>> addr2ValidShapeSpecified;
         std::map<int, int> magic2Coa;
@@ -426,12 +426,13 @@ Status InferParamIndex::UpdateParamIndex(Function& function)
             return FAILED;
         }
         if (SetSubValidShape(subFunc, addr2ValidShape, addr2ValidShapeSpecified, magic2Coa) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function,
-                              "Update valid shape for the function %s failed. Please check above for more information.",
-                              function.GetRawName().c_str());
+            APASS_LOG_ERROR_F(
+                Elements::Function,
+                "Set sub valid shape for the function %s failed. Please check above for more information.",
+                function.GetRawName().c_str());
             return FAILED;
         }
-        APASS_LOG_DEBUG_F(Elements::Function, "Print function after update: %s\n",
+        APASS_LOG_DEBUG_F(Elements::Function, "Print function after update: %s",
                           DumpParamIndex(subFunc.GetDynParamTable()).c_str());
     }
     return SUCCESS;

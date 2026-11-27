@@ -162,8 +162,10 @@ Status AssignMemoryType::InferViewMemoryTypeLegacy(Operation& operation)
         return SUCCESS;
     auto viewOpAttribute = std::dynamic_pointer_cast<ViewOpAttribute>(operation.GetOpAttribute());
     if (viewOpAttribute == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Infer OP_VIEW[%d] memory type failed because view attr is null.",
-                          operation.GetOpMagic());
+        APASS_LOG_ERROR_F(
+            Elements::Operation,
+            "Infer OP_VIEW[%d] memory type failed because view attr is null in InferViewMemoryTypeLegacy.",
+            operation.GetOpMagic());
         return FAILED;
     }
     MemoryType inputOriginal = input->GetMemoryTypeOriginal();
@@ -204,8 +206,10 @@ Status AssignMemoryType::InferViewKnownInputOutput(Operation& operation, const L
 {
     auto viewOpAttribute = std::dynamic_pointer_cast<ViewOpAttribute>(operation.GetOpAttribute());
     if (viewOpAttribute == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Infer OP_VIEW[%d] memory type failed because view attr is null.",
-                          operation.GetOpMagic());
+        APASS_LOG_ERROR_F(
+            Elements::Operation,
+            "Infer OP_VIEW[%d] memory type failed because view attr is null in InferViewKnownInputOutput.",
+            operation.GetOpMagic());
         return FAILED;
     }
     viewOpAttribute->SetToType(outputOriginal);
@@ -229,8 +233,10 @@ Status AssignMemoryType::InferViewKnownInputUnknownOutput(Operation& operation, 
     MemoryPathUtils::ForceSetRequirement(inserter, input, operation, inputOriginal, "InferViewReuseInputOriginal");
     auto viewOpAttribute = std::dynamic_pointer_cast<ViewOpAttribute>(operation.GetOpAttribute());
     if (viewOpAttribute == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Infer OP_VIEW[%d] memory type failed because view attr is null.",
-                          operation.GetOpMagic());
+        APASS_LOG_ERROR_F(
+            Elements::Operation,
+            "Infer OP_VIEW[%d] memory type failed because view attr is null in InferViewKnownInputUnknownOutput.",
+            operation.GetOpMagic());
         return FAILED;
     }
     viewOpAttribute->SetToType(inputOriginal);
@@ -1097,7 +1103,9 @@ void AssignMemoryType::ProcessUB2L1SmallToLargeLegacy(Function& function)
                               DataType2String(iOperand->Datatype()), iOperand->magic);
             if (oOperand->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
                 APASS_LOG_DEBUG_F(
-                    Elements::Tensor, "AssignMemoryType::ProcessUB2L1SmallToLargeLegacy: tensor[%d] original %s -> %s.",
+                    Elements::Tensor,
+                    "AssignMemoryType::ProcessUB2L1SmallToLargeLegacy: tensor[%d] original %s -> %s because UB2L1 "
+                    "dtype is unsupported.",
                     oOperand->GetMagic(), BriefMemoryTypeToString(oOperand->GetMemoryTypeOriginal()).c_str(),
                     BriefMemoryTypeToString(MemoryType::MEM_DEVICE_DDR).c_str());
             }
@@ -1107,7 +1115,9 @@ void AssignMemoryType::ProcessUB2L1SmallToLargeLegacy(Function& function)
         if (ShouldSkipUB2L1SmallToLarge(iOperand, oOperand)) {
             if (oOperand->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
                 APASS_LOG_DEBUG_F(
-                    Elements::Tensor, "AssignMemoryType::ProcessUB2L1SmallToLargeLegacy: tensor[%d] original %s -> %s.",
+                    Elements::Tensor,
+                    "AssignMemoryType::ProcessUB2L1SmallToLargeLegacy: tensor[%d] original %s -> %s because "
+                    "ShouldSkipUB2L1SmallToLarge is true.",
                     oOperand->GetMagic(), BriefMemoryTypeToString(oOperand->GetMemoryTypeOriginal()).c_str(),
                     BriefMemoryTypeToString(MemoryType::MEM_DEVICE_DDR).c_str());
             }
@@ -1120,7 +1130,9 @@ void AssignMemoryType::ProcessUB2L1SmallToLargeLegacy(Function& function)
             !CheckConsumerMoveInShapeMultiple(oOperand, iOperand)) {
             if (oOperand->GetMemoryTypeOriginal() != MemoryType::MEM_DEVICE_DDR) {
                 APASS_LOG_DEBUG_F(
-                    Elements::Tensor, "AssignMemoryType::ProcessUB2L1SmallToLargeLegacy: tensor[%d] original %s -> %s.",
+                    Elements::Tensor,
+                    "AssignMemoryType::ProcessUB2L1SmallToLargeLegacy: tensor[%d] original %s -> %s because consumer "
+                    "requirement or shape check failed.",
                     oOperand->GetMagic(), BriefMemoryTypeToString(oOperand->GetMemoryTypeOriginal()).c_str(),
                     BriefMemoryTypeToString(MemoryType::MEM_DEVICE_DDR).c_str());
             }
@@ -1170,8 +1182,8 @@ void AssignMemoryType::ProcessUB2L1LargeToSmallLegacy(Function& function)
         size_t totalSize = CalcNZTensorSizeLegacy(iOperand);
         if (totalSize > UB_LIMIT) {
             APASS_LOG_DEBUG_F(Elements::Operation,
-                              "UB2L1 large to small: totalSize %zu exceeds UB_LIMIT %zu, downgrade to DDR", totalSize,
-                              UB_LIMIT);
+                              "UB2L1 large to small: totalSize %zu bytes exceeds UB_LIMIT %zu bytes, downgrade to DDR",
+                              totalSize, UB_LIMIT);
             inserter.UpdateTensorTobeMap(iOperand, op, MEM_DEVICE_DDR);
             continue;
         }
@@ -1412,7 +1424,7 @@ size_t AssignMemoryType::CalcNZTensorSizeLegacy(const LogicalTensorPtr& tensor) 
         c0 = static_cast<size_t>(kC0AlignBytes / bytes);
     }
     if (c0 <= 0) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "CalcNZTensorSize: invalid C0 size, c0=%zu", c0);
+        APASS_LOG_DEBUG_F(Elements::Operation, "CalcNZTensorSize: invalid C0 size, c0=%zu, expected c0 > 0", c0);
         // 返回原始 ND 格式大小作为 fallback
         return outer * inner * static_cast<size_t>(bytes > 0 ? bytes : kAlignBytes);
     }

@@ -816,7 +816,8 @@ Status SubgraphToFunction::ProcessCacheResult(const std::tuple<Function*, Operat
         psgToESgMap.insert({std::get<0>(result)->GetProgramId(), i});
         auto callAttr = dynamic_cast<CallOpAttribute*>(callOp.GetOpAttribute().get());
         if (callAttr == nullptr) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Failed to get CallOpAttribute for operation %zu. %s", i,
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Failed to get CallOpAttribute for operation %zu when processing cache hit. %s", i,
                               GetFormatBacktrace(callOp).c_str());
             return FAILED;
         }
@@ -837,7 +838,8 @@ Status SubgraphToFunction::ProcessCacheResult(const std::tuple<Function*, Operat
     std::get<0>(result)->SetProgramId(programIdx);
     auto callAttr = dynamic_cast<CallOpAttribute*>(callOp.GetOpAttribute().get());
     if (callAttr == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Failed to get CallOpAttribute for operation %zu. %s", i,
+        APASS_LOG_ERROR_F(Elements::Operation,
+                          "Failed to get CallOpAttribute for operation %zu when processing cache miss. %s", i,
                           GetFormatBacktrace(callOp).c_str());
         return FAILED;
     }
@@ -1401,7 +1403,7 @@ Status SubgraphToFunction::RecoverCopyInToViewAfterGenSubgraph(Function& functio
                 if (viewToCopyInMapping_.count(&op) <= 0) {
                     APASS_LOG_ERROR_F(
                         Elements::Operation,
-                        "Operation[%d] is not found after SubgrahToFunction. It exists before the pass. %s",
+                        "Operation[%d] is not found after SubgraphToFunction. It exists before the pass. %s",
                         op.GetOpMagic(), GetFormatBacktrace(op).c_str());
                     return FAILED;
                 }

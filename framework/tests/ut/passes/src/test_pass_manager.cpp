@@ -26,6 +26,7 @@
 #include "passes/pass_mgr/pass_registry.h"
 #include "ut_json/ut_json_tool.h"
 #include "computational_graph_builder.h"
+#include "passes/pass_utils/dump_function_utils.h"
 #include "utils/file_utils.h"
 
 namespace npu::tile_fwk {
@@ -96,6 +97,24 @@ public:
     }
     void TearDown() override {}
 };
+
+TEST_F(PassManagerTest, DumpTileFunctionsRejectsUnknownCallee)
+{
+    ComputationalGraphBuilder graph;
+    ASSERT_TRUE(graph.AddOp(Opcode::OP_CALL, {}, {}, "call"));
+    auto attr = std::make_shared<CallOpAttribute>();
+    attr->SetCalleeMagicName("unregistered_tile_function");
+    graph.GetOp("call")->SetOpAttribute(attr);
+    DumpFunctionUtils utils;
+    bool dumped = false;
+    EXPECT_EQ(utils.DumpTileFunctionsJson(*graph.GetFunction(), "", false,
+                                          [&](Function&, const std::string&, bool) {
+                                              dumped = true;
+                                              return SUCCESS;
+                                          }),
+              FAILED);
+    EXPECT_FALSE(dumped);
+}
 
 TEST_F(PassManagerTest, TestPassManager)
 {

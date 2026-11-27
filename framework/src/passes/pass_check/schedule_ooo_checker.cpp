@@ -37,8 +37,9 @@ bool OoOScheduleChecker::PreCheckTensorInfo(const LogicalTensorPtr tensor)
     // memorytypeOriginal和Tobe要一致
     if (tensor->GetMemoryTypeOriginal() != tensor->GetMemoryTypeToBe()) {
         APASS_LOG_ERROR_C(TensorErr::TENSOR_INVALID_MEMORY_TYPE, Elements::Tensor,
-                          "Tensor[%d] memorytypeOriginal is not equal to memorytypeTobe, OoOSchedule Precheck failed!",
-                          tensor->GetMagic());
+                          "Tensor[%d] memorytypeOriginal [%d] is not equal to memorytypeTobe [%d], "
+                          "OoOSchedule Precheck failed!",
+                          tensor->GetMagic(), tensor->GetMemoryTypeOriginal(), tensor->GetMemoryTypeToBe());
         return false;
     }
     // 子图边界上的tensor不检查
@@ -81,8 +82,8 @@ bool OoOScheduleChecker::PreCheckOpInfo(const Operation* op)
     }
     // 检查ASSEMBLE/RESHAPE/VIEW op的latency
     if (op->GetLatency() != 1) {
-        APASS_LOG_WARN_F(Elements::Operation, "%s[%d] Op latency is not 1, OoOSchedule Precheck warning!",
-                         op->GetOpcodeStr().c_str(), op->GetOpMagic());
+        APASS_LOG_WARN_F(Elements::Operation, "%s[%d] Op latency is %d, expected 1, OoOSchedule Precheck warning!",
+                         op->GetOpcodeStr().c_str(), op->GetOpMagic(), op->GetLatency());
     }
     // 检查输出不在DDR上的Op
     if (op->GetOOperands()[0]->GetMemoryTypeOriginal() < MemoryType::MEM_DEVICE_DDR) {
@@ -91,8 +92,9 @@ bool OoOScheduleChecker::PreCheckOpInfo(const Operation* op)
         for (auto inTensor : op->GetIOperands()) {
             if (inTensor->memoryrange.memId != memId && inTensor->GetMemoryTypeOriginal() == MemoryType::MEM_UB) {
                 APASS_LOG_ERROR_C(TensorErr::TENSOR_INVALID_MEMORY_TYPE, Elements::Operation,
-                                  "%s[%d] input output tensors memId does not match, OoOSchedule Precheck failed!",
-                                  op->GetOpcodeStr().c_str(), op->GetOpMagic());
+                                  "%s[%d] input tensor memId [%d] does not match output memId [%d], "
+                                  "OoOSchedule Precheck failed!",
+                                  op->GetOpcodeStr().c_str(), op->GetOpMagic(), inTensor->memoryrange.memId, memId);
                 return false;
             }
         }
@@ -140,8 +142,8 @@ Status OoOScheduleChecker::DoPreCheck(Function& function)
                                   "PreCheckOpInfo failed; Please check the PreCheckOpInfo method.");
                 return FAILED;
             }
-            APASS_LOG_INFO_F(Elements::Operation, "Before OoOSchedule op: %s, %d.", op->GetOpcodeStr().c_str(),
-                             op->GetOpMagic()); // topo order
+            APASS_LOG_DEBUG_F(Elements::Operation, "Before OoOSchedule op: %s, %d.", op->GetOpcodeStr().c_str(),
+                              op->GetOpMagic()); // topo order
             // 记录所有op的输入tensor和输出tensor
             auto ioperands = op->GetIOperands();
             auto ooperands = op->GetOOperands();
@@ -197,10 +199,10 @@ bool OoOScheduleChecker::PostCheckNewOpConnection(const std::vector<Operation*> 
         std::vector<Operation*> copyins;
         for (auto& opNew : beforeNotAfterHas) {
             if (opNew->GetOpcode() != Opcode::OP_COPY_IN) {
-                APASS_LOG_ERROR_F(
-                    Elements::Operation,
-                    "Program %d: %d op's successors include unexpected op %s, OoOSchedule Postcheck failed!",
-                    programIdx, op->GetOpMagic(), opNew->GetOpcodeStr().c_str());
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "Program %d: %d op's successors include unexpected op %s, expected COPY_IN, "
+                                  "OoOSchedule Postcheck failed!",
+                                  programIdx, op->GetOpMagic(), opNew->GetOpcodeStr().c_str());
                 return false;
             }
             copyins.emplace_back(opNew);
@@ -209,10 +211,10 @@ bool OoOScheduleChecker::PostCheckNewOpConnection(const std::vector<Operation*> 
         for (auto& copyin : copyins) {
             auto opPtr = *(copyin->GetIOperands()[0]->GetProducers().begin());
             if (opPtr->GetOpcode() != Opcode::OP_COPY_OUT) {
-                APASS_LOG_ERROR_F(
-                    Elements::Operation,
-                    "Program %d: %d op's successors include unexpected op %s, OoOSchedule Postcheck failed!",
-                    programIdx, copyin->GetOpMagic(), opPtr->GetOpcodeStr().c_str());
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "Program %d: %d op's successors include unexpected op %s, expected COPY_OUT, "
+                                  "OoOSchedule Postcheck failed!",
+                                  programIdx, copyin->GetOpMagic(), opPtr->GetOpcodeStr().c_str());
                 return false;
             }
         }
@@ -395,7 +397,7 @@ Status OoOScheduleChecker::PostCheckSubGraph(const std::pair<uint64_t, Function*
 {
     auto opList = program.second->Operations().DuplicatedOpList();
     if (opList.empty()) {
-        APASS_LOG_INFO_F(Elements::Operation, "Operation List is empty! \nSubgraph[%zu] OoOSchedule Precheck end.",
+        APASS_LOG_INFO_F(Elements::Operation, "Operation List is empty! Subgraph[%zu] OoOSchedule Precheck end.",
                          program.first);
         return SUCCESS;
     }

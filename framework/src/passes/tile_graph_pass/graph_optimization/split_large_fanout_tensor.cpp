@@ -221,7 +221,7 @@ Status SplitLargeFanoutTensor::RunOnFunction(Function& function)
     if (config::EnableSlice()) {
         bool contractSliceUpdated = false;
         if (RemoveRedundantOpUtils::ProcessContractSlice(function, addedOps_, contractSliceUpdated) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "ProcessContractSlice failed.");
+            APASS_LOG_ERROR_F(Elements::Function, "SplitLargeFanoutTensor ProcessContractSlice call failed.");
             return FAILED;
         }
     } else {
@@ -667,7 +667,7 @@ void SplitLargeFanoutTensor::CreateOpFor1toM(Function& function, const LogicalTe
             }
             auto assembleOp = *newTensor->GetProducers().begin();
             APASS_LOG_DEBUG_F(Elements::Operation,
-                              "In one-to-multiple situation, create an AssembleOp[%d], input is a "
+                              "In one-to-multiple situation, create an AssembleOp[%d], input is an "
                               "overlap[%d], output is a newTensor[%d].",
                               assembleOp->GetOpMagic(), overlap->GetMagic(), newTensor->GetMagic());
             auto viewOpAttr = dynamic_cast<ViewOpAttribute*>(viewOp->GetOpAttribute().get());
@@ -680,7 +680,7 @@ void SplitLargeFanoutTensor::CreateOpFor1toM(Function& function, const LogicalTe
             viewOp->ReplaceInput(newTensor, largeTensor);
             APASS_LOG_DEBUG_F(Elements::Operation,
                               "In one-to-multiple situation, "
-                              "ViewOp[%d]'s input[%d] has been replaced to newTensor[%d].",
+                              "ViewOp[%d]'s input[%d] has been replaced with newTensor[%d].",
                               viewOp->GetOpMagic(), largeTensor->GetMagic(), newTensor->GetMagic());
         }
         return;
@@ -693,7 +693,7 @@ void SplitLargeFanoutTensor::CreateOpFor1toM(Function& function, const LogicalTe
     }
     addedOps_.push_back(assembleOp);
     APASS_LOG_DEBUG_F(Elements::Operation,
-                      "In one-to-multiple situation, create a %s[%d], input is a "
+                      "In one-to-multiple situation, create a %s[%d], input is an "
                       "overlap[%d], output is a newTensor[%d].",
                       assembleOp->GetOpcodeStr().c_str(), assembleOp->GetOpMagic(), overlap->GetMagic(),
                       newTensor->GetMagic());
@@ -829,17 +829,20 @@ void SplitLargeFanoutTensor::CreateOpForMtoM(Function& function, const LogicalTe
     for (const auto& dualOverlap : dualOverlaps) {
         auto viewOp = FindViewFamilyProducer(dualOverlap, largeTensor);
         if (viewOp == nullptr) {
-            APASS_LOG_INFO_F(Elements::Operation, "No view-family producer found for dualOverlap[%d], skip.",
+            APASS_LOG_INFO_F(Elements::Operation,
+                             "No view-family producer found for dualOverlap[%d] in multiple-to-multiple split, skip.",
                              dualOverlap->GetMagic());
             continue;
         }
         if (viewOp->GetIOperands().front()->tensor->rawmagic != largeTensor->tensor->rawmagic) {
-            APASS_LOG_INFO_F(Elements::Operation, "%s[%d]'s input has been replaced, skip.",
+            APASS_LOG_INFO_F(Elements::Operation,
+                             "%s[%d]'s input has been replaced in multiple-to-multiple split, skip.",
                              viewOp->GetOpcodeStr().c_str(), viewOp->GetOpMagic());
         } else {
             auto viewOpAttr = dynamic_cast<ViewOpAttribute*>(viewOp->GetOpAttribute().get());
             if (viewOpAttr == nullptr) {
-                APASS_LOG_WARN_F(Elements::Operation, "%s[%d] has no valid view-family attribute, skip.",
+                APASS_LOG_WARN_F(Elements::Operation,
+                                 "%s[%d] has no valid view-family attribute in multiple-to-multiple split, skip.",
                                  viewOp->GetOpcodeStr().c_str(), viewOp->GetOpMagic());
                 continue;
             }

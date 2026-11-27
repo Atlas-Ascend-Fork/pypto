@@ -37,7 +37,7 @@ Status CheckIOOperands(const Operation& op, LogicalTensorPtr& in, LogicalTensorP
         return FAILED;
     }
     if (op.GetOOperands().size() != 1) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Op [%d] has invalid input operands. %s", op.GetOpMagic(),
+        APASS_LOG_ERROR_F(Elements::Operation, "Op [%d] has invalid output operands. %s", op.GetOpMagic(),
                           GetFormatBacktrace(op).c_str());
         return FAILED;
     }

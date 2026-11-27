@@ -357,8 +357,11 @@ Status InferTensorFormat::GetFakeTransFormat(const Operation& op, const std::str
     }
     int64_t value = op.GetIntAttribute(attrName);
     if (!IsValidTileOpFormat(value)) {
-        APASS_LOG_ERROR_F(Elements::Operation, "OP_FAKE_TRANS[%d] attribute [%s] has invalid format value [%ld].",
-                          op.GetOpMagic(), attrName.c_str(), value);
+        APASS_LOG_ERROR_F(Elements::Operation,
+                          "OP_FAKE_TRANS[%d] attribute [%s] has invalid format value [%ld], expected range: [0, "
+                          "%ld).",
+                          op.GetOpMagic(), attrName.c_str(), value,
+                          static_cast<int64_t>(TileOpFormat::TILEOP_FORMAT_NUM));
         return FAILED;
     }
     format = static_cast<TileOpFormat>(value);

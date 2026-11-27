@@ -43,7 +43,8 @@ Status GenerateMoveOpChecker::DoPreCheck(Function& function)
                 continue;
         }
         if (!isValid) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Operation validation failed.");
+            APASS_LOG_ERROR_F(Elements::Operation, "Operation %s[%d] validation failed.",
+                              operation.GetOpcodeStr().c_str(), operation.GetOpMagic());
             return FAILED;
         }
     }
@@ -79,7 +80,7 @@ Status GenerateMoveOpChecker::DoPostCheck(Function& function)
             if (inputMemType != outputMemType) {
                 APASS_LOG_ERROR_F(
                     Elements::Operation,
-                    "Operation validation failed: Operation %s[%d] has dismatched memory type. Input memory type:%s. "
+                    "Operation validation failed: Operation %s[%d] has mismatched memory type. Input memory type:%s. "
                     "Output memory type:%s",
                     operation.GetOpcodeStr().c_str(), operation.GetOpMagic(),
                     BriefMemoryTypeToString(inputMemType).c_str(), BriefMemoryTypeToString(outputMemType).c_str());
@@ -240,14 +241,14 @@ bool GenerateMoveOpChecker::ValidConvertOp(const Operation& op) const
     if (inputMemType == outputMemType) {
         APASS_LOG_ERROR_C(
             TensorErr::TENSOR_INVALID_MEMORY_TYPE, Elements::Operation,
-            "Convert op [%d] check failed : Op has dismatched memory type. Input memory type:%s. Output memory type:%s",
+            "Convert op [%d] check failed : Op has mismatched memory type. Input memory type:%s. Output memory type:%s",
             op.GetOpMagic(), BriefMemoryTypeToString(inputMemType).c_str(),
             BriefMemoryTypeToString(outputMemType).c_str());
         return false;
     }
     if (op.GetIOperands().front()->GetShape() != op.GetOOperands().front()->GetShape()) {
         APASS_LOG_ERROR_C(TensorErr::TENSOR_SHAPE_MISMATCH, Elements::Operation,
-                          "Convert op [%d] check failed : Input and output tensor has different data shape.",
+                          "Convert op [%d] check failed : Input and output tensors have different data shapes.",
                           op.GetOpMagic());
         return false;
     }

@@ -59,10 +59,10 @@ void OoOScheduler::PrintOpList(std::vector<Operation*> opList)
             }
         }
         if (!op->oOperand.empty()) {
-            APASS_LOG_INFO_F(Elements::Operation, "%s[%d], range[%zu, %zu]", op->GetOpcodeStr().c_str(),
-                             op->GetOpMagic(), op->oOperand[0]->memoryrange.start, op->oOperand[0]->memoryrange.end);
+            APASS_LOG_DEBUG_F(Elements::Operation, "%s[%d], range[%zu, %zu]", op->GetOpcodeStr().c_str(),
+                              op->GetOpMagic(), op->oOperand[0]->memoryrange.start, op->oOperand[0]->memoryrange.end);
         } else {
-            APASS_LOG_INFO_F(Elements::Operation, "%s[%d]", op->GetOpcodeStr().c_str(), op->GetOpMagic());
+            APASS_LOG_DEBUG_F(Elements::Operation, "%s[%d]", op->GetOpcodeStr().c_str(), op->GetOpMagic());
         }
     }
 }
@@ -246,7 +246,7 @@ Status OoOScheduler::LaunchIssueStage(int& nextCycle)
                                   coreTypeToString(coreLocation).c_str(), GetFormatBacktrace(*op).c_str());
                 return FAILED;
             }
-            APASS_LOG_DEBUG_F(Elements::Operation, "Insert: %s.", state_.GetOpInfo(op).c_str());
+            APASS_LOG_DEBUG_F(Elements::Operation, "Insert(launch): %s.", state_.GetOpInfo(op).c_str());
         }
     }
     return SUCCESS;
@@ -333,7 +333,7 @@ Status OoOScheduler::TryRegularAllocOnce(Operation* op, MemoryType memType, Core
         return FAILED;
     }
     state_.newOperations.push_back(op);
-    APASS_LOG_DEBUG_F(Elements::Operation, "Insert: %s.", state_.GetOpInfo(op).c_str());
+    APASS_LOG_DEBUG_F(Elements::Operation, "Insert(alloc): %s.", state_.GetOpInfo(op).c_str());
     if (RetireOpAndAwakeSucc(op, commitCnt) != SUCCESS) {
         APASS_LOG_ERROR_F(Elements::Operation, "RetireOpAndAwakeSuccOp failed. %s", GetFormatBacktrace(*op).c_str());
         return FAILED;
@@ -432,14 +432,22 @@ Status OoOScheduler::ExecuteAivUbAllocRound(uint64_t& commitCnt)
     bool isDual0 = state_.IsDualDstAlloc(front0);
     bool isDual1 = state_.IsDualDstAlloc(front1);
     if (isDual0 != isDual1) {
-        APASS_LOG_ERROR_F(Elements::Operation, "AIV UB alloc queue fronts have different DualDst kinds.");
+        APASS_LOG_ERROR_F(Elements::Operation,
+                          "AIV UB alloc queue fronts have different DualDst kinds: front0=%d, front1=%d, isDual0=%d, "
+                          "isDual1=%d.",
+                          front0->GetOpMagic(), front1->GetOpMagic(), static_cast<int>(isDual0),
+                          static_cast<int>(isDual1));
         return FAILED;
     }
     if (!isDual0)
         return ExecuteAivRegularAllocStage(commitCnt, queue0, queue1);
     if (state_.schedInfoMap[front0].pairedDualDstAlloc != front1 ||
         state_.schedInfoMap[front1].pairedDualDstAlloc != front0) {
-        APASS_LOG_ERROR_F(Elements::Operation, "AIV UB DualDst queue fronts are not paired.");
+        APASS_LOG_ERROR_F(Elements::Operation,
+                          "AIV UB DualDst queue fronts are not paired: front0=%d, front1=%d, paired0=%p, paired1=%p.",
+                          front0->GetOpMagic(), front1->GetOpMagic(),
+                          static_cast<void*>(state_.schedInfoMap[front0].pairedDualDstAlloc),
+                          static_cast<void*>(state_.schedInfoMap[front1].pairedDualDstAlloc));
         return FAILED;
     }
     return ExecuteAivUbDualDstStage(commitCnt, queue0, queue1, front0, front1);
@@ -526,10 +534,11 @@ Status OoOScheduler::FreeBuffer(Operation* op, std::vector<int>& freedMemIds)
                 return FAILED;
             }
             // pool-evt 记录 free 事件。
-            APASS_LOG_DEBUG_F(
-                Elements::Operation, "[pool-evt] free clock=%llu core=%d mt=%d memId=%d size=%llu freerOp=%s",
-                (unsigned long long)state_.clock, static_cast<int>(coreLocation), static_cast<int>(memType), memId,
-                (unsigned long long)freedSize, state_.GetOpInfo(op).c_str());
+            APASS_LOG_DEBUG_F(Elements::Operation,
+                              "[pool-evt] free clock=%llu cycles core=%d mt=%d memId=%d size=%llu bytes freerOp=%s",
+                              (unsigned long long)state_.clock, static_cast<int>(coreLocation),
+                              static_cast<int>(memType), memId, (unsigned long long)freedSize,
+                              state_.GetOpInfo(op).c_str());
             freedMemIds.push_back(memId);
             if (state_.tensorOccupyMap.erase(memId) == 0) {
                 APASS_LOG_ERROR_F(Elements::Tensor, "Erase tensor[%d] failed.", memId);
@@ -545,6 +554,8 @@ std::vector<Operation*> OoOScheduler::GetNewOperations()
     std::vector<Operation*> uniq;
     uniq.reserve(state_.newOperations.size());
     std::unordered_set<Operation*> seen;
+    size_t duplicateCnt = 0;
+    Operation* firstDuplicate = nullptr;
     for (auto* op : state_.newOperations) {
         if (op == nullptr)
             continue;
@@ -552,9 +563,17 @@ std::vector<Operation*> OoOScheduler::GetNewOperations()
             uniq.push_back(op);
         } else {
             // 命中即代表上游某条 push 路径漏了去重 (期望随后续根因修复降为 0)。
-            APASS_LOG_WARN_F(Elements::Operation, "GetNewOperations dedupe drop duplicate op[%d] %s", op->GetOpMagic(),
-                             op->GetOpcodeStr().c_str());
+            if (duplicateCnt == 0) {
+                firstDuplicate = op;
+            }
+            duplicateCnt++;
         }
+    }
+    if (duplicateCnt > 0) {
+        APASS_LOG_WARN_F(Elements::Operation,
+                         "GetNewOperations dedupe dropped %zu duplicate op(s), first duplicate op[%d] %s, an upstream "
+                         "push path missed dedupe.",
+                         duplicateCnt, firstDuplicate->GetOpMagic(), firstDuplicate->GetOpcodeStr().c_str());
     }
     return uniq;
 }
@@ -633,7 +652,8 @@ Status OoOScheduler::RetireIssueStage(uint64_t& commitCnt, int& nextCycle)
 {
     for (auto coreLocation : state_.coreInitConfigs) {
         if (RetireCoreIssue(coreLocation, commitCnt, nextCycle) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Operation, "RetireIssueStage failed");
+            APASS_LOG_ERROR_F(Elements::Operation, "RetireIssueStage failed at coreType: %s.",
+                              coreTypeToString(coreLocation).c_str());
             return FAILED;
         }
     }
@@ -747,8 +767,9 @@ Status OoOScheduler::SeqSchedule()
     while (pcIdx < state_.orderedOps.size()) {
         if (++iterCnt > iterGuard) {
             APASS_LOG_ERROR_F(Elements::Operation,
-                              "Spill dead-loop in SeqSchedule: pcIdx=%zu, orderedOps=%zu, original=%zu, iter=%zu.",
-                              pcIdx, state_.orderedOps.size(), state_.originalNumTotalIssues, iterCnt);
+                              "Spill dead-loop in SeqSchedule: pcIdx=%zu, orderedOps=%zu, original=%lu, iter=%zu, "
+                              "iterGuard=%zu.",
+                              pcIdx, state_.orderedOps.size(), state_.originalNumTotalIssues, iterCnt, iterGuard);
             return FAILED;
         }
         auto op = state_.orderedOps[pcIdx];
@@ -767,7 +788,7 @@ Status OoOScheduler::SeqSchedule()
         }
     }
     if (state_.InitBufRefCount(state_.orderedOps) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Operation, "InitBufRefCount failed!");
+        APASS_LOG_ERROR_F(Elements::Operation, "InitBufRefCount failed in SeqSchedule!");
         return FAILED;
     }
     for (const auto& op : state_.orderedOps) {
@@ -775,7 +796,7 @@ Status OoOScheduler::SeqSchedule()
     }
     // 更新依赖关系
     if (state_.depManager.InitDependencies(state_.orderedOps, false) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Operation, "InitDependencies failed!");
+        APASS_LOG_ERROR_F(Elements::Operation, "InitDependencies failed in SeqSchedule!");
         return FAILED;
     }
     state_.depManager.PrintDependencies(state_.orderedOps);
@@ -817,7 +838,8 @@ Status OoOScheduler::ProcessSeqOp(Operation* op, size_t& pcIdx)
     }
     pcIdx += 1;
     if (state_.orderedOps.size() > state_.originalNumTotalIssues * MAX_NUM_TOTAL_ISSUES_RATIO) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Spill dead-loop.");
+        APASS_LOG_ERROR_F(Elements::Operation, "Spill dead-loop in ProcessSeqOp: orderedOps size %zu exceeds max %lu.",
+                          state_.orderedOps.size(), state_.originalNumTotalIssues * MAX_NUM_TOTAL_ISSUES_RATIO);
         return FAILED;
     }
     return SUCCESS;
@@ -1161,7 +1183,9 @@ Status OoOScheduler::InitOpCoreType(Operation* op)
             } else if (op->GetInputOperand(0)->GetMemoryTypeOriginal() <= MemoryType::MEM_BT) {
                 coreLocation = CoreLocationType::AIC;
             } else {
-                APASS_LOG_ERROR_F(Elements::Operation, "%s init coreLocation failed.", state_.GetOpInfo(op).c_str());
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "%s init coreLocation failed: unsupported input operand memory type.",
+                                  state_.GetOpInfo(op).c_str());
                 return FAILED;
             }
         } else {
@@ -1252,12 +1276,12 @@ Status OoOScheduler::Init(const std::vector<Operation*>& opList,
     state_.numTotalIssues = state_.orderedOps.size();
 
     if (state_.InitBufRefCount(state_.orderedOps) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Operation, "InitBufRefCount failed!");
+        APASS_LOG_ERROR_F(Elements::Operation, "InitBufRefCount failed in Init!");
         return FAILED;
     }
     // 初始化依赖关系
     if (state_.depManager.InitDependencies(state_.orderedOps, false) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Operation, "InitDependencies failed!");
+        APASS_LOG_ERROR_F(Elements::Operation, "InitDependencies failed in Init!");
         return FAILED;
     }
     state_.depManager.PrintDependencies(state_.orderedOps);

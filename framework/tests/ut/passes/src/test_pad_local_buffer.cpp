@@ -1520,7 +1520,7 @@ TEST_F(TestPadLocalBuffer, MXSceneScaleInputLessThan3DimsErrors)
     // MX scale 场景命中但维数不足，必须报错并跳过 MX pad
     std::string errMsg;
     EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
-    EXPECT_NE(errMsg.find("raw shape size is less than 3"), std::string::npos);
+    EXPECT_NE(errMsg.find("expected at least 3"), std::string::npos);
     // int8 普通通路按 32 对齐兜底，两轴均被 pad，证明 MX 轴 pad 未生效
     EXPECT_EQ(graph.GetTensor("saL1")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{32, 32}));
     EXPECT_EQ(graph.GetTensor("saL0A")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{32, 32}));
@@ -1753,4 +1753,92 @@ TEST_F(TestPadLocalBuffer, MxScaleCopyOutRequiresPackedGmLayout)
     check(4, scaleShape, {});
     check(2, {7, 3, 4}, {});
     check(2, {}, {7, 3, CreateTestScalarVar("gmWidth")});
+}
+
+// PadMatmul 入口对空 logical tensor 指针的防御性校验：报错并直接返回，不做任何 pad
+// （正常 DoPadding 链路不会传入空指针，直接调用 PadMatmul 复现被污染的 IR 输入）
+TEST_F(TestPadLocalBuffer, MatmulNullLogicalTensorPointerReported)
+{
+    ComputationalGraphBuilder graph;
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP16, {16, 16}, MemoryType::MEM_L0A, "a"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP16, {16, 16}, MemoryType::MEM_L0B, "b"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP16, {16, 16}, MemoryType::MEM_L0C, "c"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_A_MUL_B, {"a", "b"}, {"c"}, "AMULB", true), true);
+
+    ErrorManager::Instance().OutputErrorMessage(true); // 清空历史错误，保证断言只针对本次构图
+    PadLocalBuffer padLocalBufferTest;
+    LogicalTensorPtr nullTensor = nullptr;
+    padLocalBufferTest.PadMatmul(*graph.GetOp("AMULB"), nullTensor);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("logical tensor pointer is null"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true); // 清空本次错误，避免影响后续用例
+}
+
+// UB->L1 搬运 op 的 opcode 不是 OP_UB_COPY_L1（此处为 ND 变体）时触发告警：
+// HandleUb2L1CopyOp 的 opcode 校验位于 PadMatmul 调用之前，非 UB_COPY_L1 的 UB->L1 搬运必经该告警行
+TEST_F(TestPadLocalBuffer, Ub2L1CopyOpWithUnexpectedOpcode)
+{
+    ComputationalGraphBuilder graph;
+    EXPECT_EQ(graph.AddTensor(DataType::DT_INT8, {15, 32}, MemoryType::MEM_UB, "ub_a"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_INT8, {15, 32}, MemoryType::MEM_L1, "l1_a"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_UB_COPY_L1_ND, {"ub_a"}, {"l1_a"}, "COPY_ND", true), true);
+
+    auto* currFunctionPtr = graph.GetFunction();
+    PadLocalBuffer padLocalBufferTest;
+    EXPECT_EQ(padLocalBufferTest.RunOnFunction(*currFunctionPtr), SUCCESS);
+    // int8 输入按 32 对齐 pad；opcode 非 OP_UB_COPY_L1 使 isUB2L1Scene 不成立，高维不做 +1
+    // （对比 UB2L1 用例中 OP_UB_COPY_L1 的 {33, 32}），证明走的是告警分支后的 PadMatmul 通路
+    std::vector<int64_t> expectShape{32, 32};
+    EXPECT_EQ(graph.GetTensor("ub_a")->tensor->GetRawShape(), expectShape);
+}
+
+// OP_QUANT_MX 的 packed scale 输出 rawshape 少于 2 维（1 维）时，ShouldSkipVectorPad 报维数错误并跳过 pad
+TEST_F(TestPadLocalBuffer, PackedQuantMxScaleOneDimRawShapeErrors)
+{
+    ComputationalGraphBuilder graph;
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_DEVICE_DDR, "x"), true);
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_UB, "mxOut"), true);
+    // scale 为 1 维 UB tensor：IsPackedQuantMxScale 命中（quantMx 输出 1 且无 mxScalePadded 属性），但维数不足
+    EXPECT_EQ(graph.AddTensor(DataType::DT_FP8E8M0, {15}, MemoryType::MEM_UB, "mxScale"), true);
+    EXPECT_EQ(graph.AddOp(Opcode::OP_QUANT_MX, {"x"}, {"mxOut", "mxScale"}, "quantmx", true), true);
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    auto* currFunctionPtr = graph.GetFunction();
+    PadLocalBuffer padLocalBufferTest;
+    EXPECT_EQ(padLocalBufferTest.RunOnFunction(*currFunctionPtr), SUCCESS);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("at least two raw dimensions"), std::string::npos);
+    // 命中维数校验后跳过 pad，1 维 rawshape 保持原值
+    EXPECT_EQ(graph.GetTensor("mxScale")->GetRawTensor()->GetRawShape(), (std::vector<int64_t>{15}));
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
+
+// CMPS 行 pad 场景中输入 shape 为 1 维而 rawshape 为 2 维的异常 tensor：
+// PadVector256 报 shape/rawshape 维数不匹配错误（不落入 1D pad 分支）
+TEST_F(TestPadLocalBuffer, PadVector256ShapeRawshapeDimMismatch)
+{
+    ComputationalGraphBuilder graphBuilder;
+    EXPECT_EQ(graphBuilder.AddTensor(DataType::DT_FP32, {8}, MemoryType::MEM_DEVICE_DDR, "in1"), true);
+    EXPECT_EQ(graphBuilder.AddTensor(DataType::DT_FP32, {8}, MemoryType::MEM_DEVICE_DDR, "in2"), true);
+    EXPECT_EQ(graphBuilder.AddTensor(DataType::DT_FP32, {8}, MemoryType::MEM_UB, "t1"), true);
+    EXPECT_EQ(graphBuilder.AddTensor(DataType::DT_FP32, {8}, MemoryType::MEM_UB, "t2"), true);
+    EXPECT_EQ(graphBuilder.AddOp(Opcode::OP_COPY_IN, {"in1"}, {"t1"}, "copyin1", true), true);
+    EXPECT_EQ(graphBuilder.AddOp(Opcode::OP_COPY_IN, {"in2"}, {"t2"}, "copyin2", true), true);
+    EXPECT_EQ(graphBuilder.AddTensor(DataType::DT_BOOL, {8}, MemoryType::MEM_UB, "t3"), true);
+    EXPECT_EQ(graphBuilder.AddOp(Opcode::OP_CMPS, {"t1", "t2"}, {"t3"}, "cmps1", true), true);
+    EXPECT_EQ(graphBuilder.AddTensor(DataType::DT_BOOL, {8}, MemoryType::MEM_DEVICE_DDR, "out1"), true);
+    EXPECT_EQ(graphBuilder.AddOp(Opcode::OP_COPY_OUT, {"t3"}, {"out1"}, "copyout1", true), true);
+    graphBuilder.GetOp("cmps1")->SetAttr(OpAttributeKey::rowPad, std::vector<bool>({true, false}));
+    // 构造 shape 为 1 维、rawshape 为 2 维的异常 tensor（末维 8 个 fp32 = 32B，满足 32B 对齐前置条件）
+    graphBuilder.GetTensor("t1")->GetRawTensor()->rawshape = {8, 8};
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    PadLocalBuffer padLocalBufferTest;
+    EXPECT_EQ(padLocalBufferTest.RunOnFunction(*graphBuilder.GetFunction()), SUCCESS);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("dimension mismatch"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
 }

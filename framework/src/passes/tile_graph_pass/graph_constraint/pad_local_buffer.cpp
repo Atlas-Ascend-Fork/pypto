@@ -133,8 +133,8 @@ bool PadLocalBuffer::IsInputDataType(const Operation& op, const LogicalTensorPtr
         // L0C上只需要对齐到(16, 16)
         return false;
     }
-    APASS_LOG_DEBUG_F(Elements::Tensor, "Matmul Op %d is %s\n", op.opmagic, op.GetOpcodeStr().c_str());
-    APASS_LOG_DEBUG_F(Elements::Tensor, "####### %d data type is %s\n", in->magic,
+    APASS_LOG_DEBUG_F(Elements::Tensor, "Matmul Op %d is %s", op.opmagic, op.GetOpcodeStr().c_str());
+    APASS_LOG_DEBUG_F(Elements::Tensor, "####### %d data type is %s", in->magic,
                       DataType2VectorRegStr(in->tensor->GetDataType()).c_str());
 
     bool matmulOp = cubeMatmulOps.count(op.GetOpcode()) != 0;
@@ -200,8 +200,12 @@ void PadLocalBuffer::PadMatmulL1ConvertScene(Operation& op, LogicalTensorPtr& in
     }
     if ((*consumers.begin())->GetOpcode() == Opcode::OP_L1_TO_BT) { // Opcode::OP_L1_TO_BT
         if (bytes == 0 || BT_PAD_BASE % bytes != 0) {
-            APASS_LOG_ERROR_F(Elements::Tensor, "Matmul Op %d %s input %d type is not valid.", op.opmagic,
-                              op.GetOpcodeStr().c_str(), in->magic);
+            APASS_LOG_ERROR_F(Elements::Tensor,
+                              "Matmul Op %d %s input %d type is not valid, data type is %s, bytes is %zu, "
+                              "BT_PAD_BASE is %ld, expected a non-zero bytes value that divides BT_PAD_BASE evenly.",
+                              op.opmagic, op.GetOpcodeStr().c_str(), in->magic,
+                              DataType2VectorRegStr(in->tensor->GetDataType()).c_str(), bytes,
+                              static_cast<long>(BT_PAD_BASE));
             return;
         }
         padShape[lowIndex] = AlignmentUtils::Pad(oriRawshape[lowIndex], BT_PAD_BASE / bytes);
@@ -274,8 +278,9 @@ bool PadLocalBuffer::TryPadMatmulMXScene(Operation& op, LogicalTensorPtr& in)
     // MX scale 主体为 3 维（构图层保证 3~5 维），维数不足时尾维定位会下溢
     if (in->tensor->rawshape.size() < SHAPE_DIM3) {
         APASS_LOG_ERROR_F(Elements::Tensor,
-                          "Matmul Op %d %s input %d raw shape size is less than 3; Please check the input size.",
-                          op.opmagic, op.GetOpcodeStr().c_str(), in->magic);
+                          "Matmul Op %d %s input %d raw shape size is %zu, expected at least 3; Please check the "
+                          "input size.",
+                          op.opmagic, op.GetOpcodeStr().c_str(), in->magic, in->tensor->rawshape.size());
         return false;
     }
     // L0A scale 的 m 恒在倒数第 3 维，L0B scale 的 n 恒在倒数第 2 维
@@ -366,13 +371,16 @@ void PadLocalBuffer::PadMatmulGemvKAlign(LogicalTensorPtr& in, size_t highIndex,
 void PadLocalBuffer::PadMatmul(Operation& op, LogicalTensorPtr& in)
 {
     if (in == nullptr || in->tensor == nullptr) {
-        APASS_LOG_ERROR_F(Elements::Tensor, "logical tensor pointer is null.");
+        APASS_LOG_ERROR_F(Elements::Tensor, "Matmul Op %d %s logical tensor pointer is null.", op.opmagic,
+                          op.GetOpcodeStr().c_str());
         return;
     }
     if (in->shape.size() < MATMUL_MIN_SHAPE_SIZE) {
         APASS_LOG_ERROR_F(Elements::Tensor,
-                          "Matmul Op %d %s input %d shape size is less than 2; Please check the input size. %s",
-                          op.opmagic, op.GetOpcodeStr().c_str(), in->magic, GetFormatBacktrace(op).c_str());
+                          "Matmul Op %d %s input %d shape size is %zu, expected at least 2; Please check the input "
+                          "size. %s",
+                          op.opmagic, op.GetOpcodeStr().c_str(), in->magic, in->shape.size(),
+                          GetFormatBacktrace(op).c_str());
         return;
     }
     auto highIndex = in->shape.size() - 2; // matmul高轴
@@ -391,8 +399,9 @@ void PadLocalBuffer::PadMatmul(Operation& op, LogicalTensorPtr& in)
     }
     if (in->tensor->rawshape.size() < MATMUL_MIN_SHAPE_SIZE) {
         APASS_LOG_ERROR_F(Elements::Tensor,
-                          "Matmul Op %d %s input %d raw shape size is less than 2; Please check the input size.",
-                          op.opmagic, op.GetOpcodeStr().c_str(), in->magic);
+                          "Matmul Op %d %s input %d raw shape size is %zu, expected at least 2; Please check the "
+                          "input size.",
+                          op.opmagic, op.GetOpcodeStr().c_str(), in->magic, in->tensor->rawshape.size());
         return;
     }
     MatmulSceneFlags sceneFlags = DetectMatmulScene(in);
@@ -406,7 +415,7 @@ void PadLocalBuffer::PadMatmul(Operation& op, LogicalTensorPtr& in)
         // GEMV 跳过 ND2NZ，无 bank 冲突优化需求，跳过 +=1（避免改 RESHAPE 输出 rawshape）。
         (in->tensor->rawshape[highIndex]) += 1;
     }
-    APASS_LOG_DEBUG_F(Elements::Tensor, "####### %d %d set rawshape as %s\n", in->tensor->rawmagic, in->magic,
+    APASS_LOG_DEBUG_F(Elements::Tensor, "####### %d %d set rawshape as %s", in->tensor->rawmagic, in->magic,
                       IntVecToStr(in->tensor->rawshape).c_str());
 }
 
@@ -438,8 +447,8 @@ bool PadLocalBuffer::HandleUb2L1CopyOp(Operation& op, LogicalTensorPtr& in)
         return false;
     }
     if (op.GetOpcode() != Opcode::OP_UB_COPY_L1) {
-        APASS_LOG_ERROR_F(Elements::Operation, "UB to L1 copy operation expected OP_UB_COPY_L1, but got %s. %s",
-                          op.GetOpcodeStr().c_str(), GetFormatBacktrace(op).c_str());
+        APASS_LOG_WARN_F(Elements::Operation, "UB to L1 copy operation expected OP_UB_COPY_L1, but got %s. %s",
+                         op.GetOpcodeStr().c_str(), GetFormatBacktrace(op).c_str());
     }
     PadMatmul(op, in);
     return true;
@@ -453,8 +462,10 @@ bool PadLocalBuffer::ShouldSkipVectorPad(Operation& op, LogicalTensorPtr& in)
     if (PassOperationUtils::IsPackedQuantMxScale(in)) {
         auto& rawshape = in->tensor->rawshape;
         if (rawshape.size() < SHAPE_DIM2) {
-            APASS_LOG_ERROR_F(Elements::Tensor, "Packed QuantMX scale tensor %d requires at least two raw dimensions.",
-                              in->magic);
+            APASS_LOG_ERROR_F(Elements::Tensor,
+                              "Packed QuantMX scale tensor %d requires at least two raw dimensions, current raw "
+                              "shape size is %zu, expected at least 2.",
+                              in->magic, rawshape.size());
             return true;
         }
         const auto& oriRawshape = SetOriRawshape(in);
@@ -486,10 +497,13 @@ void PadLocalBuffer::PadVector256(Operation& op, LogicalTensorPtr& in, bool need
                 auto vectorAlign = AlignmentUtils::GetLastDimAlignBase(in) *
                                    static_cast<int64_t>(kVectorBytes / kAlignBytes);
                 in->tensor->rawshape[0] = std::max(in->tensor->rawshape[0], vectorAlign);
-                APASS_LOG_INFO_F(Elements::Operation, "Op %d %s 1D input rawshape has been padded to 256B\n",
-                                 op.opmagic, op.GetOpcodeStr().c_str());
+                APASS_LOG_INFO_F(Elements::Operation, "Op %d %s 1D input rawshape has been padded to 256B", op.opmagic,
+                                 op.GetOpcodeStr().c_str());
             } else {
-                APASS_LOG_ERROR_F(Elements::Tensor, "Tensor %d shape or rawshape dimension mismatch\n", in->GetMagic());
+                APASS_LOG_ERROR_F(Elements::Tensor,
+                                  "Tensor %d shape or rawshape dimension mismatch, shape size is %zu, rawshape "
+                                  "size is %zu, expected both to be 1 for 1D padding.",
+                                  in->GetMagic(), in->shape.size(), in->tensor->rawshape.size());
             }
             return;
         }
@@ -501,7 +515,7 @@ void PadLocalBuffer::PadVector256(Operation& op, LogicalTensorPtr& in, bool need
         int64_t padValue = (8 + dim32Count - 1) / dim32Count;
         Shape& oriRawshape = GetOriRawshape(in); // 获取 DoPadding 中已设置的值
         in->tensor->rawshape[lastIdx - 1] = AlignmentUtils::PadRowDim(oriRawshape[lastIdx - 1], padValue);
-        APASS_LOG_INFO_F(Elements::Operation, "Op %d %s input shape and rawshape has been changed\n", op.opmagic,
+        APASS_LOG_INFO_F(Elements::Operation, "Op %d %s input shape and rawshape have been changed", op.opmagic,
                          op.GetOpcodeStr().c_str());
     }
 }

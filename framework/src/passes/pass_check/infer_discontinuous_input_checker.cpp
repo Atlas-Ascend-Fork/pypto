@@ -105,7 +105,7 @@ Status checkTensor(const LogicalTensorPtr& tensor)
             producer->GetOpAttribute());
         if (attr == nullptr) {
             APASS_LOG_ERROR_C(OperationErr::OP_NULL_POINTER, Elements::Operation,
-                              "Assemble op %d do not have attribute. %s", producer->GetOpMagic(),
+                              "Assemble op %d does not have attribute. %s", producer->GetOpMagic(),
                               GetFormatBacktrace(producer).c_str());
             return FAILED;
         }

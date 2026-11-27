@@ -140,7 +140,8 @@ bool OperationGraphInfo::CoreTypeMergeable(const std::set<OpCoreType>& coreTypes
 inline int32_t FindParent(std::vector<int32_t>& parent, int32_t i)
 {
     if (i < 0 || i >= static_cast<int32_t>(parent.size())) {
-        APASS_LOG_ERROR_F(Elements::Operation, "Call FindParent with illegal parameter %d.", i);
+        APASS_LOG_ERROR_F(Elements::Operation, "Call FindParent with illegal parameter %d, expected range [0, %zu).", i,
+                          parent.size());
         return -1;
     }
     if (parent[i] == i) {
@@ -152,7 +153,8 @@ inline int32_t FindParent(std::vector<int32_t>& parent, int32_t i)
         searchPath.push_back(currIdx);
         currIdx = parent[currIdx];
         if (currIdx < 0 || currIdx >= static_cast<int32_t>(parent.size())) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Find illegal parameter %d in FindParent.", currIdx);
+            APASS_LOG_ERROR_F(Elements::Operation, "Find illegal parameter %d in FindParent, expected range [0, %zu).",
+                              currIdx, parent.size());
             return -1;
         }
         if (searchPath.size() > (parent.size() + 1)) {
@@ -292,7 +294,8 @@ Status NodeGraphInfo::AvoidLoop(const std::shared_ptr<OperationGraphInfo> operat
     for (int32_t i = 0; i < static_cast<int32_t>(opList.size()); i++) {
         int32_t currParent = FindParent(parent, i);
         if (currParent == -1) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Find parent in the union set failed.%s",
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Find parent in the union set failed in parent-to-node mapping stage.%s",
                               GetFormatBacktrace(*(operationGraphInfo->opList_[i])).c_str());
             return FAILED;
         }
@@ -304,7 +307,8 @@ Status NodeGraphInfo::AvoidLoop(const std::shared_ptr<OperationGraphInfo> operat
     for (int32_t i = 0; i < static_cast<int32_t>(operationGraphInfo->opList_.size()); i++) {
         int32_t currParent = FindParent(parent, i);
         if (currParent == -1) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Find parent in the union set failed.%s",
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Find parent in the union set failed in op-to-node assignment stage.%s",
                               GetFormatBacktrace(*(operationGraphInfo->opList_[i])).c_str());
             return FAILED;
         }
@@ -322,7 +326,7 @@ Status NodeGraphInfo::AvoidLoop(const std::shared_ptr<OperationGraphInfo> operat
         updated = true;
         for (size_t opIdx = 1; opIdx < expandNode.size(); opIdx++) {
             if (MergeSrcToDstIsland(operationGraphInfo, parent, expandNode[0], expandNode[opIdx]) != SUCCESS) {
-                APASS_LOG_ERROR_F(Elements::Function, "Build the disjoint set failed.");
+                APASS_LOG_ERROR_F(Elements::Function, "Build the disjoint set failed in expand node merge stage.");
                 return FAILED;
             }
         }
@@ -340,7 +344,7 @@ Status NodeGraphInfo::Build(const std::shared_ptr<OperationGraphInfo> operationG
     }
     for (auto& pr : mergePair) {
         if (MergeSrcToDstIsland(operationGraphInfo, parent, pr.first, pr.second) != SUCCESS) {
-            APASS_LOG_ERROR_F(Elements::Function, "Build the disjoint set failed.");
+            APASS_LOG_ERROR_F(Elements::Function, "Build the disjoint set failed in merge pair stage.");
             return FAILED;
         }
     }
@@ -1088,7 +1092,10 @@ Status SuperNodeGraphBuilder::BuildSuperNodeGraph()
 {
     std::vector<Operation*>& opList = operationInfo_->opList_;
     if (opList.size() != operationInfo_->inGraph_.size() || opList.size() != operationInfo_->outGraph_.size()) {
-        APASS_LOG_ERROR_F(Elements::Function, "Operation inGraph and outGraph have not been initialized.");
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Operation inGraph and outGraph have not been initialized: "
+                          "opList size=%zu, inGraph size=%zu, outGraph size=%zu.",
+                          opList.size(), operationInfo_->inGraph_.size(), operationInfo_->outGraph_.size());
         return FAILED;
     }
     std::vector<std::pair<int32_t, int32_t>> mergePair;
@@ -1438,7 +1445,10 @@ Status SuperNodeGraphBuilder::BuildReduceNodeHash(std::shared_ptr<NodeGraphInfo>
     std::vector<uint64_t> reduceNodeHashListBack(reduceNodeInfo->node2Op_.size(), 0);
     std::vector<uint64_t> reduceNodeHashList(reduceNodeInfo->node2Op_.size(), 0);
     if (operationInfo_->opHashList_.size() != reduceNodeInfo->op2Node_.size()) {
-        APASS_LOG_ERROR_F(Elements::Function, "Operation number mismatch in OperationInfo and ReduceNodeInfo.");
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Operation number mismatch in OperationInfo and ReduceNodeInfo: "
+                          "operationInfo opNum=%zu, reduceNodeInfo opNum=%zu.",
+                          operationInfo_->opHashList_.size(), reduceNodeInfo->op2Node_.size());
         return FAILED;
     }
     for (size_t i = 0; i < reduceNodeInfo->node2Op_.size(); i++) {
@@ -1537,7 +1547,10 @@ Status SuperNodeGraphBuilder::BuildHashValues()
         opHashList.swap(opHashListFrontBack);
     }
     if (superNodeInfo_->op2Node_.size() != operationInfo_->opList_.size()) {
-        APASS_LOG_ERROR_F(Elements::Function, "Operation number mismatch in SuperNodeInfo and OperationInfo.");
+        APASS_LOG_ERROR_F(Elements::Function,
+                          "Operation number mismatch in SuperNodeInfo and OperationInfo: "
+                          "superNodeInfo opNum=%zu, operationInfo opNum=%zu.",
+                          superNodeInfo_->op2Node_.size(), operationInfo_->opList_.size());
         return FAILED;
     }
     int32_t numNode = superNodeInfo_->node2Op_.size();

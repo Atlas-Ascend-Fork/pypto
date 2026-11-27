@@ -50,7 +50,8 @@ Status ProcessAtomicChecker::DoPostCheck(Function& function)
 {
     APASS_LOG_INFO_F(Elements::Function, "PostCheck for ProcessAtomic.");
     if (CheckCompleteness(function) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Function, "CheckCompleteness for function[%d] failed!", function.GetFuncMagic());
+        APASS_LOG_ERROR_F(Elements::Function, "CheckCompleteness failed in DoPostCheck for function[%d]!",
+                          function.GetFuncMagic());
         return FAILED;
     }
     if (CheckNoReduceAcc(function) != SUCCESS) {
@@ -114,7 +115,7 @@ Status ProcessAtomicChecker::CheckReduceAccOpValidity(const Operation& op)
     }
     if (op.GetOOperands().size() != 1) {
         APASS_LOG_ERROR_F(Elements::Operation,
-                          "Op[%d] has output num not equal to one; Please check if the output num for is one.%s",
+                          "Op[%d] has output num not equal to one; Please check if the output num is one.%s",
                           op.GetOpMagic(), GetFormatBacktrace(op).c_str());
         return FAILED;
     }
@@ -186,8 +187,8 @@ Status ProcessAtomicChecker::CheckAtomicRMWShape(const Operation& op)
     auto& outputShape = op.GetOOperands().front()->GetShape();
     if (outputShape.size() < inputShape.size()) {
         APASS_LOG_ERROR_F(Elements::Operation,
-                          "Op[%d] output shape size less than input shape size; Please check shape validity.",
-                          op.GetOpMagic());
+                          "Op[%d] output shape size %zu less than input shape size %zu; Please check shape validity.",
+                          op.GetOpMagic(), outputShape.size(), inputShape.size());
         return FAILED;
     }
     for (size_t i = 0; i < inputShape.size(); ++i) {

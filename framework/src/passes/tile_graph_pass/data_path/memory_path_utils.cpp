@@ -409,8 +409,10 @@ bool MemoryPathUtils::CheckInnerAxisC0Size(const LogicalTensorPtr& input, const 
     int64_t outputC0Size = (outputDtypeBytes > 0) ? (kC0AlignBytes / outputDtypeBytes) : 0;
     if (inputC0Size <= 0 || outputC0Size <= 0) {
         APASS_LOG_DEBUG_F(Elements::Operation,
-                          "CheckInnerAxisC0Size: invalid C0 size, inputC0Size=%ld, outputC0Size=%ld",
-                          static_cast<long>(inputC0Size), static_cast<long>(outputC0Size));
+                          "CheckInnerAxisC0Size: invalid C0 size, inputC0Size=%ld, outputC0Size=%ld, expected C0 size "
+                          "must be greater than 0 (inputDtypeBytes=%ld, outputDtypeBytes=%ld)",
+                          static_cast<long>(inputC0Size), static_cast<long>(outputC0Size),
+                          static_cast<long>(inputDtypeBytes), static_cast<long>(outputDtypeBytes));
         return false;
     }
     // 分别检查 input 和 output 的内轴是否满足各自的 C0 size 切分

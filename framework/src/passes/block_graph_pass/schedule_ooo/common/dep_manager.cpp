@@ -195,7 +195,6 @@ void DependencyManager::PrintDependencies(const std::vector<Operation*>& ops)
             APASS_LOG_DEBUG_F(Elements::Operation, "    |--- Successors:");
             APASS_LOG_DEBUG_F(Elements::Operation, "        |--- %s", PrintOp(succOp).c_str());
         }
-        APASS_LOG_DEBUG_F(Elements::Operation, "\n");
     }
 }
 
@@ -399,7 +398,8 @@ Status DependencyManager::RefreshDependencies(const std::vector<Operation*>& see
             }
             auto it = allocMap.find(tensor->memoryrange.memId);
             if (it == allocMap.end()) {
-                APASS_LOG_ERROR_F(Elements::Operation, "Tensor[%d] must have alloc. magic: %d, op: %s",
+                APASS_LOG_ERROR_F(Elements::Operation,
+                                  "Tensor[%d] must have alloc in RefreshDependencies. magic: %d, op: %s",
                                   tensor->memoryrange.memId, tensor->GetMagic(), PrintOp(op).c_str());
                 return FAILED;
             }
@@ -416,7 +416,8 @@ Status DependencyManager::InitDependencies(const std::vector<Operation*>& ops, b
     for (const auto& op : ops) {
         if (IsOpAlloc(op)) {
             if (op->GetOOperands().size() != 1) {
-                APASS_LOG_ERROR_F(Elements::Operation, "Alloc[%d] oOperand must be 1.", op->GetOpMagic());
+                APASS_LOG_ERROR_F(Elements::Operation, "Alloc[%d] oOperand count is %zu, must be 1.", op->GetOpMagic(),
+                                  op->GetOOperands().size());
                 return FAILED;
             }
             int memId = op->GetOutputOperand(0)->memoryrange.memId;

@@ -19,6 +19,8 @@
 #include <climits>
 #include "interface/function/function.h"
 #include "tilefwk/error_code.h"
+#define MODULE_NAME "PriorScheduling"
+#include "passes/pass_log/pass_log.h"
 
 using namespace npu::tile_fwk;
 
@@ -55,7 +57,7 @@ void FillGraphTopologyInfo(std::map<int, std::set<int>>& subgrChild, std::map<in
 {
     auto wholeGraphTopology = function.rootFunc_->topoInfo_.topology_;
     int wholeGraphTopologySize = int(wholeGraphTopology.size());
-    std::cout << "!Topology size: " << wholeGraphTopologySize << std::endl;
+    APASS_LOG_DEBUG_F(Elements::Function, "Topology size: %d.", wholeGraphTopologySize);
 
     // Fill graph topology childs & parents
     for (auto& subg : wholeGraphTopology) {

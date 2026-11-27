@@ -28,6 +28,7 @@
 #include <string>
 #include <nlohmann/json.hpp>
 #include "computational_graph_builder.h"
+#include "tilefwk/error_manager.h"
 #include "passes/tile_graph_pass/graph_partition/graph_partition.h"
 #include "passes/tile_graph_pass/graph_partition/l1_copy_reuse.h"
 #include "interface/tensor/irbuilder.h"
@@ -1012,6 +1013,40 @@ INSTANTIATE_TEST_SUITE_P(
         MergeCountValidationParam{"NBufferLabelExceedsIntMax", MergeCountEntry::kCubeNBufferByLabel,
                                   kMergeCountExceedsIntMax, FAILED}),
     MergeCountTestName);
+
+// ValidateSubgraphIds rejects ops whose subgraph ID exceeds the refreshed total subgraph count: ops that were
+// deliberately left out of colorNode keep their original (stale) IDs while MergeProcessIdUpdate shrinks the count.
+TEST_F(L1CopyInReuseTest, ValidateSubgraphIdsRejectsStaleSubgraphId)
+{
+    ComputationalGraphBuilder G;
+    std::vector<int64_t> tileShape{16, 16};
+    const int subGraphNum = 20;
+    InitGraphBuilder(G, tileShape, subGraphNum);
+    Function* function = G.GetFunction();
+    // Both settings use the skip value 1: no merging phase may rewrite op subgraph IDs before validation.
+    function->paramConfigs_.cubeL1ReuseSetting = {{-1, 1}};
+    function->paramConfigs_.cubeNBufferSetting = {{-1, 1}};
+    function->SetTotalSubGraphCount(subGraphNum);
+
+    auto operations = function->Operations(true, SortOperationsMode::LIGHTWEIGHT).DuplicatedOpList();
+    std::vector<std::vector<int>> colorNode(subGraphNum);
+    for (size_t i = 0; i < operations.size(); i++) {
+        int color = operations[i]->GetSubgraphID();
+        if (color > 1) {
+            continue; // ops of subgraphs 2..19 stay outside colorNode and keep their original IDs
+        }
+        colorNode[color].push_back(static_cast<int>(i));
+    }
+
+    ErrorManager::Instance().OutputErrorMessage(true);
+    L1CopyInReuseRunner runner;
+    EXPECT_EQ(runner.Run(*function, subGraphNum, colorNode), FAILED);
+    std::string errMsg;
+    EXPECT_TRUE(ErrorManager::Instance().GetFirstErrorMessage(errMsg));
+    EXPECT_NE(errMsg.find("Run: op SubGraph ID "), std::string::npos);
+    EXPECT_NE(errMsg.find("out of range, valid range [0, 2]"), std::string::npos);
+    ErrorManager::Instance().OutputErrorMessage(true);
+}
 
 } // namespace tile_fwk
 } // namespace npu

@@ -79,7 +79,7 @@ void PassContext::RunBeforePass(const Pass& pass, const ProgramPtr& program)
 void PassContext::RunAfterPass(const Pass& pass, const ProgramPtr& program)
 {
     for (const auto& instrument : instruments_) {
-        INTERNAL_CHECK(instrument != nullptr) << "PassContext contains a null PassInstrument";
+        INTERNAL_CHECK(instrument != nullptr) << "PassContext contains a null PassInstrument in RunAfterPass";
         instrument->RunAfterPass(pass, program);
     }
 }

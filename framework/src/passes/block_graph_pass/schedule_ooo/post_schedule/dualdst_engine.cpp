@@ -571,7 +571,9 @@ void DualDstEngine::SetDualDstCopyAttr(Operation* C, LogicalTensorPtr l0cIn, con
     int64_t lM = SpecifiedInt(lShapeImms[0]);
     int64_t lN = SpecifiedInt(lShapeImms[1]);
     if (eM <= 0 || eN <= 0 || lM <= 0 || lN <= 0) {
-        APASS_LOG_WARN_F(Elements::Operation, "DualDst SetCopyAttr: shape not specified for op[%d]", C->GetOpMagic());
+        APASS_LOG_WARN_F(Elements::Operation,
+                         "DualDst SetCopyAttr: shape not specified for op[%d], eM=%ld eN=%ld lM=%ld lN=%ld (expect >0)",
+                         C->GetOpMagic(), eM, eN, lM, lN);
         return;
     }
     int64_t direction = dualDstL0CDirection_.count(l0cIn) ? dualDstL0CDirection_[l0cIn] : 0;

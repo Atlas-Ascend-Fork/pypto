@@ -284,7 +284,7 @@ Status OoOScheduler::GetGroupNextUseTime(std::vector<int> group, Operation* allo
     for (auto& memId : group) {
         Operation* spillOp = spillEngine_.GetSpillOp(memId);
         if (spillOp == nullptr) {
-            APASS_LOG_ERROR_F(Elements::Tensor, "Cannot find spill Tensor[%d] occupy op.", memId);
+            APASS_LOG_ERROR_F(Elements::Tensor, "Cannot find spill Tensor[%d] occupy op (scheduler side).", memId);
             return FAILED;
         }
         if (spillEngine_.IsBelongSpillBlackList(memId, allocOp)) {
@@ -328,13 +328,13 @@ std::vector<int> OoOScheduler::SelectSpillBuffers(Operation* allocOp)
     std::vector<int> groupNextUseTime;
     for (auto& group : canSpillGroups) {
         if (GetGroupNextUseTime(group, allocOp, groupNextUseTime, nextUseTimeCache) != SUCCESS) {
-            APASS_LOG_WARN_F(Elements::Operation, "Get group next use time failed, begin spill all tensor.");
+            APASS_LOG_WARN_F(Elements::Operation, "Get group next use time failed, begin to spill all tensors.");
             return pool.GetAddrSortedBufs();
         }
     }
     size_t groupSel = std::max_element(groupNextUseTime.begin(), groupNextUseTime.end()) - groupNextUseTime.begin();
     if (groupNextUseTime[groupSel] == -1) {
-        APASS_LOG_WARN_F(Elements::Tensor, "Cannot find tensor to spill, begin spill all tensor.");
+        APASS_LOG_WARN_F(Elements::Tensor, "Cannot find tensor to spill, begin to spill all tensors.");
         return pool.GetAddrSortedBufs();
     }
     return canSpillGroups[groupSel];
@@ -468,7 +468,7 @@ Status OoOScheduler::FinalizeSingleSideSpill(Operation* allocOp, MemoryType reqM
         APASS_LOG_ERROR_F(
             Elements::Operation,
             "Possible causes: incorrect memory reuse, memory fragmentation, or spill not supported for "
-            "L0C_COPY_TO_L1."
+            "L0C_COPY_TO_L1. "
             "Please check tile shape and OOO spill failed info. Consider avoiding cube-aligned matrix sizes.");
         NotifyAllocFail(allocOp, reqMemType, reqSize);
         return FAILED;
@@ -525,7 +525,8 @@ Status OoOScheduler::InsertSpillCopyoutOp(Operation* copyoutOp)
             }
         }
         if (foundCnt != scopeOpSet.size()) {
-            APASS_LOG_ERROR_F(Elements::Operation, "Insert spillout %s failed: vf scope %d not fully launch(%zu/%zu).",
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "Insert spillout %s failed: vf scope %d not fully launched(%zu/%zu).",
                               state_.GetOpInfo(copyoutOp).c_str(), scopeId, foundCnt, scopeOpSet.size());
             return FAILED;
         }
@@ -603,7 +604,7 @@ Status OoOScheduler::PrintSpillFailedInfo(Operation* allocOp)
                       GetFormatBacktrace(*allocOp).c_str());
 
     APASS_LOG_ERROR_F(Elements::Operation, "---- alloc request ----");
-    APASS_LOG_ERROR_F(Elements::Operation, "op:%s need buffer size: %lu. %s", state_.GetOpInfo(allocOp).c_str(),
+    APASS_LOG_ERROR_F(Elements::Operation, "op:%s need buffer size: %lu bytes. %s", state_.GetOpInfo(allocOp).c_str(),
                       state_.localBufferMap[state_.GetOpMemIds(allocOp)[0]]->size,
                       GetFormatBacktrace(*allocOp).c_str());
 
@@ -612,10 +613,10 @@ Status OoOScheduler::PrintSpillFailedInfo(Operation* allocOp)
         if (state_.localBufferMap[memId]->memType != memType) {
             continue;
         }
-        APASS_LOG_ERROR_F(Elements::Operation, "Tensor[%d], size:%lu, range[%lu,%lu], last writer: %s. %s", memId,
-                          state_.localBufferMap[memId]->size, state_.localBufferMap[memId]->start,
-                          state_.localBufferMap[memId]->end, state_.GetOpInfo(occupyOp).c_str(),
-                          GetFormatBacktrace(*occupyOp).c_str());
+        APASS_LOG_ERROR_F(
+            Elements::Operation, "Tensor[%d], size: %lu bytes, range: [%lu, %lu] bytes, last writer: %s. %s", memId,
+            state_.localBufferMap[memId]->size, state_.localBufferMap[memId]->start, state_.localBufferMap[memId]->end,
+            state_.GetOpInfo(occupyOp).c_str(), GetFormatBacktrace(*occupyOp).c_str());
     }
     return SUCCESS;
 }

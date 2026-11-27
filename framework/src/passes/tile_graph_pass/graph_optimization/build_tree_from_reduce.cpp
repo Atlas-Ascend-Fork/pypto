@@ -469,7 +469,13 @@ Status BuildTreeFromReducePass::FinalizeAddedAddMemory(ConvertInserterT& inserte
     for (auto* addOp : addedAddOps) {
         if (addOp == nullptr || addOp->IsDeleted() || addOp->GetIOperands().size() != ADD_TREE_FAN_IN ||
             addOp->GetOOperands().size() != 1) {
-            APASS_LOG_ERROR_F(Elements::Operation, "BuildTree generated an invalid ADD operation.");
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "BuildTree generated an invalid ADD operation (magic: %d, deleted: %s, input count: "
+                              "%zu, expected input count: %zu, output count: %zu, expected output count: 1).",
+                              addOp != nullptr ? addOp->GetOpMagic() : -1,
+                              addOp != nullptr && addOp->IsDeleted() ? "yes" : "no",
+                              addOp != nullptr ? addOp->GetIOperands().size() : 0, ADD_TREE_FAN_IN,
+                              addOp != nullptr ? addOp->GetOOperands().size() : 0);
             return FAILED;
         }
         auto output = addOp->GetOutputOperand(0);
@@ -494,7 +500,12 @@ Status BuildTreeFromReducePass::FinalizeRetainedAssemblesMemory(ConvertInserterT
 {
     for (auto* assemble : retainedAssembles) {
         if (assemble == nullptr || assemble->IsDeleted() || assemble->GetIOperands().size() != 1) {
-            APASS_LOG_ERROR_F(Elements::Operation, "BuildTree retained an invalid Assemble operation.");
+            APASS_LOG_ERROR_F(Elements::Operation,
+                              "BuildTree retained an invalid Assemble operation (magic: %d, deleted: %s, input "
+                              "count: %zu, expected input count: 1).",
+                              assemble != nullptr ? assemble->GetOpMagic() : -1,
+                              assemble != nullptr && assemble->IsDeleted() ? "yes" : "no",
+                              assemble != nullptr ? assemble->GetIOperands().size() : 0);
             return FAILED;
         }
         auto input = assemble->GetInputOperand(0);

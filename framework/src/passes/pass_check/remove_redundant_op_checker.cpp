@@ -125,8 +125,8 @@ Status RemoveRedundantOpChecker::PreCheckView(Function& function, const Operatio
     if (in->shape == out->shape && op.ConsumerOps().empty() && in->GetConsumers().size() > 1 &&
         function.IsFromOutCast(out)) {
         APASS_LOG_ERROR_C(OperationErr::OP_PRODUCER_CONSUMER, Elements::Operation,
-                          "There is another op consumes the input of a view op[%d] (the output is an outcast) without "
-                          "consumer; Please check view op[%d].%s",
+                          "There is another op that consumes the input of a view op[%d] (the output is an outcast) "
+                          "without consumer; Please check view op[%d].%s",
                           op.GetOpMagic(), op.GetOpMagic(), GetFormatBacktrace(op).c_str());
         return FAILED;
     }

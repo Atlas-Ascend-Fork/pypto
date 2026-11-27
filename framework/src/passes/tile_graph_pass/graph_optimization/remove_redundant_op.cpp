@@ -174,7 +174,7 @@ bool MoveTokenDependencyBeforeRemoveOp(Function& function, Operation& op)
     }
     if (!remove_redundant_op_internal::CanMigrateRemovedOpsTokenDependency(function, removedOps, targetConsumers,
                                                                            targetProducers)) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "Move token dependency before removing op[%d] would be invalid.",
+        APASS_LOG_DEBUG_F(Elements::Operation, "Moving token dependency before removing op[%d] would be invalid.",
                           op.GetOpMagic());
         return false;
     }
@@ -307,7 +307,7 @@ bool RemoveRedundantOp::ProcessRedundantOpWithDynShape(Operation& op) const
                              IsReduceAccExclusiveConsumer(op.GetOOperands().front());
     if (!EqualInOut(op, relaxMaxZeroClamp)) {
         APASS_LOG_DEBUG_F(Elements::Operation,
-                          "op[%d]'s input and output has unequal shape and dynshape, skip removing.", op.GetOpMagic());
+                          "op[%d]'s input and output have unequal shape and dynshape, skip removing.", op.GetOpMagic());
         return false;
     }
     return true;
@@ -316,7 +316,7 @@ bool RemoveRedundantOp::ProcessRedundantOpWithDynShape(Operation& op) const
 bool RemoveRedundantOp::ProcessRedundantOpWithoutDynShape(Operation& op) const
 {
     if (!EqualInOutShape(op)) {
-        APASS_LOG_DEBUG_F(Elements::Operation, "op[%d]'s input and output has unequal shape, skip removing.",
+        APASS_LOG_DEBUG_F(Elements::Operation, "op[%d]'s input and output have unequal shape, skip removing.",
                           op.opmagic);
         return false;
     }
@@ -512,7 +512,7 @@ Status RemoveRedundantOp::ProcessReshape(Function& function)
                 consumerOp->ReplaceInput(in, out);
             }
             if (canRemove) {
-                APASS_LOG_DEBUG_F(Elements::Operation, "All consummers of op [%d] are reshape.", op.GetOpMagic());
+                APASS_LOG_DEBUG_F(Elements::Operation, "All consumers of op [%d] are reshape.", op.GetOpMagic());
             }
         }
         if (canRemove) {

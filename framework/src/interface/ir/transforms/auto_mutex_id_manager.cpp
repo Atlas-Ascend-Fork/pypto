@@ -792,7 +792,8 @@ private:
     {
         PRO_PASS_INTERNAL_CHECK_WITH_SPAN(npu::tile_fwk::InternalError::PASS_INNER_ERROR,
                                           mutexIds->elements_.size() == tiles.size(), mutexIds->span_)
-            << "mutex ID count must match TileGroup depth";
+            << "mutex ID count must match TileGroup depth, mutex ID count: " << mutexIds->elements_.size()
+            << ", TileGroup depth: " << tiles.size();
 
         size_t groupId = nextGroupId_++;
         for (size_t index = 0; index < tiles.size(); ++index) {
@@ -845,7 +846,8 @@ private:
             memref->size_ <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()) &&
                 address->value_ <= std::numeric_limits<int64_t>::max() - static_cast<int64_t>(memref->size_),
             tile->span_)
-            << "Tile address range must fit int64";
+            << "Tile address range must fit int64, address: " << address->value_ << ", size: " << memref->size_
+            << ", int64 max: " << std::numeric_limits<int64_t>::max();
 
         if (collectedTiles_.count(tile.get()) != 0) {
             return;
@@ -869,7 +871,7 @@ private:
     {
         PRO_PASS_INTERNAL_CHECK_WITH_SPAN(npu::tile_fwk::InternalError::PASS_INNER_ERROR,
                                           mutexId >= 0 && mutexId < kMutexIdCount, span)
-            << "mutex ID must be in [0, 31]";
+            << "mutex ID " << mutexId << " must be in [0, 31]";
     }
 
     std::vector<TileRecord> tiles_;

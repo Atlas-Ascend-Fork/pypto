@@ -110,14 +110,17 @@ public:
             InitializeUniformSendCosts();
         } else {
             if (numberOfProcessors != sendCosts.size()) {
-                APASS_LOG_ERROR_F(Elements::Config,
-                                  "BspArchitecture: sendCosts_ needs to be a processors x processors matrix.\n");
+                APASS_LOG_ERROR_F(
+                    Elements::Config,
+                    "BspArchitecture: sendCosts_ row count (%zu) does not match number of processors (%u).",
+                    sendCosts.size(), numberOfProcessors);
                 throw std::invalid_argument("sendCosts_ needs to be a processors x processors matrix.\n");
             }
             if (std::any_of(sendCosts.begin(), sendCosts.end(),
                             [numberOfProcessors](const auto& thing) { return thing.size() != numberOfProcessors; })) {
                 APASS_LOG_ERROR_F(Elements::Config,
-                                  "BspArchitecture: sendCosts_ needs to be a processors x processors matrix.\n");
+                                  "BspArchitecture: sendCosts_ row length does not match number of processors (%u).",
+                                  numberOfProcessors);
                 throw std::invalid_argument("sendCosts_ needs to be a processors x processors matrix.\n");
             }
 
@@ -196,8 +199,10 @@ public:
     void SetMemoryBound(const std::vector<VMemwT<GraphT>>& memoryBound)
     {
         if (memoryBound.size() != numberOfProcessors_) {
-            APASS_LOG_ERROR_F(Elements::Config,
-                              "Invalid Argument: Memory bound vector size does not match number of processors.");
+            APASS_LOG_ERROR_F(
+                Elements::Config,
+                "Invalid Argument: Memory bound vector size (%zu) does not match number of processors (%u).",
+                memoryBound.size(), numberOfProcessors_);
             throw std::invalid_argument(
                 "Invalid Argument: Memory bound vector size does not match number of processors.");
         }
@@ -260,7 +265,8 @@ public:
             throw std::invalid_argument("Invalid Argument: Processor types vector is empty.");
         }
         if (processorTypes.size() > std::numeric_limits<unsigned>::max()) {
-            APASS_LOG_ERROR_F(Elements::Config, "Invalid Argument: Number of processors exceeds the limit.");
+            APASS_LOG_ERROR_F(Elements::Config, "Invalid Argument: processorTypes size (%zu) exceeds the limit (%u).",
+                              processorTypes.size(), std::numeric_limits<unsigned>::max());
             throw std::invalid_argument("Invalid Argument: Number of processors exceeds the limit.");
         }
         numberOfProcessors_ = static_cast<unsigned>(processorTypes.size());
@@ -286,14 +292,18 @@ public:
                                    const std::vector<VMemwT<GraphT>>& processorTypeMemory)
     {
         if (processorTypeCount.size() != processorTypeMemory.size()) {
-            APASS_LOG_ERROR_F(Elements::Config,
-                              "Invalid Argument: processorTypeCount and processorTypeMemory must have the same size.");
+            APASS_LOG_ERROR_F(
+                Elements::Config,
+                "Invalid Argument: processorTypeCount size (%zu) and processorTypeMemory size (%zu) differ.",
+                processorTypeCount.size(), processorTypeMemory.size());
             throw std::invalid_argument(
                 "Invalid Argument: processorTypeCount and processorTypeMemory must have the same size.");
         }
 
         if (processorTypeCount.size() > std::numeric_limits<unsigned>::max()) {
-            APASS_LOG_ERROR_F(Elements::Config, "Invalid Argument: Number of processors exceeds the limit.");
+            APASS_LOG_ERROR_F(Elements::Config,
+                              "Invalid Argument: processorTypeCount size (%zu) exceeds the limit (%u).",
+                              processorTypeCount.size(), std::numeric_limits<unsigned>::max());
             throw std::invalid_argument("Invalid Argument: Number of processors exceeds the limit.");
         }
 

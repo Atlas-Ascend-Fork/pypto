@@ -172,7 +172,7 @@ public:
     [[nodiscard]] const Key& Top() const
     {
         if (IsEmpty()) {
-            APASS_LOG_ERROR_F(Elements::Config, "Heap is empty.");
+            APASS_LOG_ERROR_F(Elements::Config, "Heap is empty when Top() is called.");
         }
         return root_->key_;
     }
@@ -184,7 +184,7 @@ public:
     Key Pop()
     {
         if (IsEmpty()) {
-            APASS_LOG_ERROR_F(Elements::Config, "Heap is empty.");
+            APASS_LOG_ERROR_F(Elements::Config, "Heap is empty when Pop() is called.");
             throw std::runtime_error("Heap is empty.");
         }
 

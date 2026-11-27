@@ -379,7 +379,7 @@ std::pair<int64_t, int64_t> SanitizerInstrumenter::TileDims(const ExprPtr& tile)
     auto dim0 = As<ConstInt>(tileType->shape_[0]);
     auto dim1 = As<ConstInt>(tileType->shape_[1]);
     PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, dim0 != nullptr && dim1 != nullptr)
-        << "sanitizer: tile shape dims must be static";
+        << "sanitizer: tile shape dims must be static in TileDims";
     return {dim0->value_, dim1->value_};
 }
 
@@ -779,7 +779,7 @@ StmtPtr SanitizerInstrumenter::CollectMakeTile(const CallPtr& call)
     for (const auto& d : tileType->shape_) {
         auto c = As<ConstInt>(d);
         PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, c != nullptr)
-            << "sanitizer: tile shape dims must be static";
+            << "sanitizer: make_tile tile shape dims must be static";
         sz *= c->value_;
     }
     auto memref = *tileType->memref_;
@@ -787,7 +787,7 @@ StmtPtr SanitizerInstrumenter::CollectMakeTile(const CallPtr& call)
     PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, addrConst != nullptr)
         << "sanitizer: make_tile memref address must be a constant integer";
     PRO_PASS_INTERNAL_CHECK(npu::tile_fwk::InternalError::PASS_INNER_ERROR, memref->size_ > 0)
-        << "sanitizer: make_tile memref size must be positive";
+        << "sanitizer: make_tile memref size must be positive, got " << memref->size_;
     // Use the resolved MemRef footprint rather than shape*dtype.  The MemRef
     // preserves explicit spans and physical NZ/fractal padding.
     std::vector<ExprPtr> fields;
@@ -821,7 +821,8 @@ StmtPtr SanitizerInstrumenter::CollectMakeTensor(const CallPtr& call)
     PRO_PASS_INTERNAL_CHECK(
         npu::tile_fwk::InternalError::PASS_INNER_ERROR,
         strideTuple->elements_.empty() || strideTuple->elements_.size() == shapeTuple->elements_.size())
-        << "sanitizer: ptr.make_tensor stride rank must match the shape";
+        << "sanitizer: ptr.make_tensor stride rank (" << strideTuple->elements_.size() << ") must match shape rank ("
+        << shapeTuple->elements_.size() << ")";
 
     // Byte footprint expression: (sum((dim-1)*stride) + 1) * elem_bytes, with
     // an omitted stride read as the compact row-major product of inner dims.
