@@ -1516,21 +1516,18 @@ REGISTER_BACKEND_OP(BackendCCE, "get_subblock_idx")
     .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& /*codegen_base*/) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 0)
             << "get_subblock_idx requires no arguments";
-        return std::string("(int64_t)(get_subblockid())");
+        // pypto_block_meta.h resolves the SK block-local seed vs the raw builtin.
+        return std::string("(int64_t)(__pypto_subblock_idx_value())");
     });
 
 REGISTER_BACKEND_OP(BackendCCE, "get_subblock_num")
     .set_pipe(ir::PipeType::S)
-    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& codegenBase) {
+    .f_codegen([](const ir::CallPtr& op, codegen::CodegenBase& /*codegenBase*/) {
         PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 0)
             << "get_subblock_num requires no arguments";
-        // Matches AscendC GetTaskRation(): AIC returns 1, AIV returns get_subblockdim().
-        auto& cg = dynamic_cast<codegen::CCECodegen&>(codegenBase);
-        const auto target = cg.GetTarget();
-        if (target == ir::SectionKind::Vector) {
-            return std::string("(int64_t)(get_subblockdim())");
-        }
-        return std::string("(int64_t)(1)");
+        // pypto_block_meta.h picks the per-core block-local seed (SK) or the raw
+        // builtin (non-SK), both already shaped by the sub-kernel's compile-time type.
+        return std::string("(int64_t)(__pypto_subblock_num_value())");
     });
 
 // ============================================================================

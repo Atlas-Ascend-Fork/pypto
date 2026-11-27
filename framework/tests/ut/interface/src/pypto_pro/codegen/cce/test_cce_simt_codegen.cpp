@@ -649,7 +649,7 @@ TEST(CCESimtCodegenTest, DoesNotInterceptOrdinaryKernelCallsWithMatchingCalleeNa
     auto entry_function = generated.substr(entry_pos, kernel_pos - entry_pos);
     auto kernel_function = generated.substr(kernel_pos);
     EXPECT_NE(entry_function.find("get_subblock_idx()"), std::string::npos);
-    EXPECT_NE(kernel_function.find("get_subblockid()"), std::string::npos);
+    EXPECT_NE(kernel_function.find("__pypto_subblock_idx_value()"), std::string::npos);
 }
 
 TEST(CCESimtCodegenTest, GeneratesRegisteredSynchronizationScalarCastAndMathOperations)
