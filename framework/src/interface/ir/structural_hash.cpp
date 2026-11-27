@@ -217,6 +217,8 @@ public:
             // Hash value based on type
             if (value.type() == typeid(int)) {
                 h = HashCombine(h, std::hash<int>{}(AnyCast<int>(value, "hashing kwarg: " + key)));
+            } else if (value.type() == typeid(int64_t)) {
+                h = HashCombine(h, std::hash<int64_t>{}(AnyCast<int64_t>(value, "hashing kwarg: " + key)));
             } else if (value.type() == typeid(bool)) {
                 h = HashCombine(h, std::hash<bool>{}(AnyCast<bool>(value, "hashing kwarg: " + key)));
             } else if (value.type() == typeid(std::string)) {
@@ -231,6 +233,11 @@ public:
                 const auto& vec = AnyCast<std::vector<int>>(value, "hashing kwarg: " + key);
                 for (int v : vec) {
                     h = HashCombine(h, std::hash<int>{}(v));
+                }
+            } else if (value.type() == typeid(std::vector<int64_t>)) {
+                const auto& vec = AnyCast<std::vector<int64_t>>(value, "hashing kwarg: " + key);
+                for (int64_t v : vec) {
+                    h = HashCombine(h, std::hash<int64_t>{}(v));
                 }
             } else if (value.type() == typeid(std::vector<std::string>)) {
                 const auto& vec = AnyCast<std::vector<std::string>>(value, "hashing kwarg: " + key);

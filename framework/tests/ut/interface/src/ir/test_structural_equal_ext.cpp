@@ -15,6 +15,7 @@
 
 #include "gtest/gtest.h"
 
+#include "ir/op_registry.h"
 #include "ir/stmt.h"
 #include "ir/transforms/structural_comparison.h"
 #include "op/test_op_helpers.h"
@@ -23,6 +24,9 @@
 namespace pypto {
 namespace ir {
 
+using test_helpers::MakeOffsetsTuple;
+using test_helpers::MakeTensorVar;
+using test_helpers::MakeTileVar;
 using test_helpers::Node;
 using test_helpers::Scalar;
 using test_helpers::Sp;
@@ -1269,6 +1273,33 @@ TEST_F(IRStructEqAssertTest, TestAssertVarDefFieldMappingInconsistent)
 
     EXPECT_FALSE(structural_equal(Node(for_lhs), Node(for_rhs), false));
     EXPECT_THROW(assert_structural_equal(Node(for_lhs), Node(for_rhs), false), npu::tile_fwk::Error);
+}
+
+TEST_F(IRStructEqExprTest, TestRegisteredOpKwargsInt64AndVector)
+{
+    auto& reg = OpRegistry::GetInstance();
+    auto out = MakeTileVar("out", {16, 32}, DataType::FP16);
+    auto tensor = MakeTensorVar("tensor", {16, 32}, DataType::FP16);
+    auto offsets = MakeOffsetsTuple({0, 0});
+    std::vector<std::pair<std::string, std::any>> kw1{{"tile_dims", std::vector<int>{2, 1}}, {"l2_cache_mode", 1}};
+    std::vector<std::pair<std::string, std::any>> kw2{{"tile_dims", std::vector<int>{2, 1}}, {"l2_cache_mode", 1}};
+    std::vector<std::pair<std::string, std::any>> kwDiffInt{{"tile_dims", std::vector<int>{2, 1}},
+                                                            {"l2_cache_mode", 2}};
+    std::vector<std::pair<std::string, std::any>> kwDiffVec{{"tile_dims", std::vector<int>{2, 2}},
+                                                            {"l2_cache_mode", 1}};
+
+    auto c1 = reg.Create("block.load", {out, tensor, offsets}, kw1, Sp());
+    auto c2 = reg.Create("block.load", {out, tensor, offsets}, kw2, Sp());
+    auto c3 = reg.Create("block.load", {out, tensor, offsets}, kwDiffInt, Sp());
+    auto c4 = reg.Create("block.load", {out, tensor, offsets}, kwDiffVec, Sp());
+
+    EXPECT_TRUE(structural_equal(Node(c1), Node(c2)));
+    EXPECT_FALSE(structural_equal(Node(c1), Node(c3)));
+    EXPECT_FALSE(structural_equal(Node(c1), Node(c4)));
+
+    EXPECT_EQ(structural_hash(Node(c1)), structural_hash(Node(c2)));
+    EXPECT_NE(structural_hash(Node(c1)), structural_hash(Node(c3)));
+    EXPECT_NE(structural_hash(Node(c1)), structural_hash(Node(c4)));
 }
 
 } // namespace ir
