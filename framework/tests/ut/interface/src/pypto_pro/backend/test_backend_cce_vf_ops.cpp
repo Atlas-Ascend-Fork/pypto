@@ -355,6 +355,9 @@ TEST(BackendCCEVFOpsTest, EmitsDeclarationsMasksBroadcastsAndMoves)
 
     ExpectInvoke(codegen, VF_CREATE_ADDR_REG, {"AddrReg addr = _vag_b32_2((4) * 2, (8) * 2);"}, {Int(4), Int(8)},
                  {{"dtype", ir::DataType::INT64}}, "addr");
+    // UINT64 doubles the strides like INT64 (the AddrReg itself is b32).
+    ExpectInvoke(codegen, VF_CREATE_ADDR_REG, {"AddrReg addr_u64 = _vag_b32_2((4) * 2, (8) * 2);"}, {Int(4), Int(8)},
+                 {{"dtype", ir::DataType::UINT64}}, "addr_u64");
     ExpectInvoke(codegen, VF_MOVE, {"vmov(fp, fp);"}, {fp}, {}, "fp");
     ExpectInvoke(codegen, VF_MOVE, {"vmov(fp, fp, mask, MODE_MERGING);"}, {fp, mask}, {}, "fp");
     ExpectInvoke(codegen, VF_MOVE, {"pmov(mask2, mask);"}, {mask}, {}, "mask2");
@@ -881,6 +884,7 @@ TEST(BackendCCEVFOpsTest, EmitsAlignedDataMovement)
     auto fp16b = MakeVar("fp16b", ir::DataType::FP16);
     auto u8 = MakeVar("u8", ir::DataType::UINT8);
     auto i64 = MakeVar("i64", ir::DataType::INT64);
+    auto u64 = MakeVar("u64", ir::DataType::UINT64);
     auto mask = MakeMaskVar("mask");
     auto addr = MakeAddrRegVar("addr");
     auto f8 = MakeVar("f8", ir::DataType::FP8E4M3FN);
@@ -893,7 +897,14 @@ TEST(BackendCCEVFOpsTest, EmitsAlignedDataMovement)
     ExpectInvoke(codegen, VF_LOAD_ALIGN,
                  {"vlds((RegTensor<uint32_t>&)i64", "(__ubuf__ uint32_t *)tile64", "(32) * 2", "NORM"},
                  {tile64, Int(32)}, {}, "i64", i64->GetType());
-    ExpectInvoke(codegen, VF_LOAD_ALIGN, {"vld(fp16"}, {tile, addr}, {}, "fp16");
+    ExpectInvoke(codegen, VF_LOAD_ALIGN, {"vld(fp16"}, {tile, addr}, {}, "fp16", fp16->GetType());
+    // b64 AddrReg loads have no b64 vld form: both signed and unsigned load
+    // through the int32 view, reinterpreting the register and the pointer
+    // (mirrors AscendC LoadAlign's b64 branch).
+    ExpectInvoke(codegen, VF_LOAD_ALIGN, {"vld((RegTensor<int32_t>&)i64", "(__ubuf__ int32_t *)tile64", "addr", "NORM"},
+                 {tile64, addr}, {}, "i64", i64->GetType());
+    ExpectInvoke(codegen, VF_LOAD_ALIGN, {"vld((RegTensor<int32_t>&)u64", "(__ubuf__ int32_t *)tile64", "addr", "NORM"},
+                 {tile64, addr}, {}, "u64", u64->GetType());
     ExpectInvoke(codegen, VF_LOAD_ALIGN, {"plds(mask"}, {tile, Int(0)}, {{"dist", EnumValue(ir::LoadDist::US)}}, "mask",
                  mask->GetType());
     // Suffix-free US/DS are MaskDist (plds) names and are rejected on a
@@ -919,8 +930,14 @@ TEST(BackendCCEVFOpsTest, EmitsAlignedDataMovement)
                  {{"dist", EnumValue(ir::StoreDist::FIRST_ELEMENT)}});
     ExpectInvoke(codegen, VF_STORE_ALIGN, {"INTLV_B16"}, {tile, fp16, fp16b, mask},
                  {{"dist", EnumValue(ir::StoreDist::INTLV)}});
-    ExpectInvoke(codegen, VF_STORE_ALIGN, {"vsstb(", "POST_UPDATE"}, {tile, fp16, mask, Int(2), Int(3)},
-                 {{"data_copy_mode", EnumValue(ir::DataCopyMode::DATA_BLOCK_COPY)}, {"post_update", true}});
+    ExpectInvoke(codegen, VF_STORE_ALIGN, {"vsstb(", "POST_UPDATE"}, {tile, fp16, mask},
+                 {{"data_copy_mode", EnumValue(ir::DataCopyMode::DATA_BLOCK_COPY)},
+                  {"block_stride", 2},
+                  {"repeat_stride", 3},
+                  {"post_update", true}});
+    // DataBlock mode has no offset argument: the 4th positional is rejected.
+    EXPECT_ANY_THROW(Invoke(codegen, VF_STORE_ALIGN, {tile, fp16, mask, Int(0)},
+                            {{"data_copy_mode", EnumValue(ir::DataCopyMode::DATA_BLOCK_COPY)}}));
     ExpectInvoke(codegen, VF_STORE_ALIGN, {"vst(fp16"}, {tile, fp16, mask, addr});
     ExpectInvoke(codegen, VF_STORE_ALIGN, {"NORM_B8"}, {tile8, f8, mask});
 }
@@ -1005,7 +1022,10 @@ TEST(BackendCCEVFOpsTest, EmitsGatherAndUnalignedDataMovement)
     ExpectInvoke(codegen, VF_GATHER, {"vgather2_bc("}, {tile, index, mask}, {}, "fp16");
     ExpectInvoke(codegen, VF_GATHER, {"vgatherb("}, {tile, index, mask},
                  {{"data_copy_mode", EnumValue(ir::DataCopyMode::DATA_BLOCK_LOAD)}}, "fp16");
-    ExpectInvoke(codegen, VF_GATHER, {"vselr("}, {fp16, index_u16}, {}, "fp16");
+    ExpectInvoke(codegen, VF_GATHER, {"vselr("}, {fp16, index_u16}, {}, "fp16", fp16->GetType());
+    // reg→reg gather requires src and dst to have the same type.
+    auto dst32Type = std::make_shared<const ir::RegType>(ir::RegKind::VecReg, ir::DataType::INT32);
+    EXPECT_ANY_THROW(Invoke(codegen, VF_GATHER, {fp16, index_u16}, {}, "dst32", dst32Type));
     ExpectInvoke(codegen, VF_SCATTER, {"vscatter("}, {tile, fp16, index_u16, mask});
     ExpectInvoke(codegen, VF_LOAD, {"UnalignReg __ureg_ld_", "vldas(", "vldus("}, {tile}, {}, "fp16");
     ExpectInvoke(codegen, VF_LOAD, {"UnalignReg __ureg_ld_", "vldas(", "vldus(", "POST_UPDATE"}, {tile64, Int(4)}, {},
@@ -1614,11 +1634,17 @@ TEST(BackendCCEVFOpsTest, EmitsB64SelectCompareAndMiscSequences)
 
     // Full (b64): scalar broadcast duplicates the value into two b32 halves
     // then interleaves (masked: vdup halves; unmasked: vbr halves).
+    auto dst64Type = std::make_shared<const ir::RegType>(ir::RegKind::VecReg, ir::DataType::INT64);
     ExpectInvoke(codegen, VF_FULL,
                  {"ppack(dst64_dup__pm_, mask, LOWER)", "vdup(dst64_dup__lo_, (uint32_t)((int64_t)(5))",
                   "vintlv((RegTensor<uint32_t>&)dst64"},
-                 {Int(5), mask}, {}, "dst64");
-    ExpectInvoke(codegen, VF_FULL, {"vbr(dst64_br__lo_, (uint32_t)((int64_t)(5))"}, {Int(5)}, {}, "dst64");
+                 {Int(5), mask}, {}, "dst64", dst64Type);
+    ExpectInvoke(codegen, VF_FULL, {"vbr(dst64_br__lo_, (uint32_t)((int64_t)(5))"}, {Int(5)}, {}, "dst64", dst64Type);
+
+    // The fill width follows the destination: an int literal (INT64) must not
+    // force the b64 split when the destination is b16.
+    auto dst16Type = std::make_shared<const ir::RegType>(ir::RegKind::VecReg, ir::DataType::INT16);
+    ExpectInvoke(codegen, VF_FULL, {"vdup(dst16, 5, mask, MODE_ZEROING"}, {Int(5), mask}, {}, "dst16", dst16Type);
 
     // Move (b64): the b64 mask is expanded via pintlv_b32 so both b32 halves
     // share the element's mask bit, then vmov runs on the u32 view.
@@ -2607,6 +2633,21 @@ TEST(BackendCCEVFOpsTest, BitCastViewFeedsVectorCompare)
     ExpectInvoke(codegen, VF_EQ, {"vcmp_eq("}, {vreg_high, idx_view, preg_b8}, {}, "preg_b8");
     EXPECT_EQ(Invoke(codegen, VF_EQ, {vreg_high, idx_view, preg_b8}, {}, "preg_b8").find("vcmps_"), std::string::npos)
         << "u8 register source must not take the scalar compare path";
+}
+
+TEST(BackendCCEVFOpsTest, UsesAddrRegElementViewForB8)
+{
+    CapturingCCECodegen codegen(ir::SectionKind::Vector);
+    auto tile8 = MakeTile("tile8", ir::DataType::INT8);
+    auto i8 = MakeVar("i8", ir::DataType::INT8);
+    auto mask = MakeMaskVar("mask", ir::DataType::UINT8);
+    auto addr = MakeAddrRegVar("addr");
+
+    ExpectInvoke(codegen, VF_LOAD_ALIGN, {"vld((RegTensor<uint8_t>&)i8", "(__ubuf__ uint8_t *)tile8", "addr", "NORM"},
+                 {tile8, addr}, {}, "i8", i8->GetType());
+    ExpectInvoke(codegen, VF_STORE_ALIGN,
+                 {"vst((RegTensor<uint8_t>&)i8", "(__ubuf__ uint8_t *)tile8", "addr", "NORM_B8", "mask"},
+                 {tile8, i8, mask, addr});
 }
 
 } // namespace
