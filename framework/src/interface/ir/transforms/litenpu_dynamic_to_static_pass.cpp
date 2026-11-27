@@ -36,6 +36,8 @@ namespace {
 using npu::tile_fwk::AsLogicalTensor;
 using npu::tile_fwk::LogicalTensor;
 using npu::tile_fwk::LogicalTensorPtr;
+using npu::tile_fwk::OpAttributeKey;
+using npu::tile_fwk::Opcode;
 using npu::tile_fwk::Operation;
 using npu::tile_fwk::RawSymbolicExpression;
 using npu::tile_fwk::RawSymbolicImmediate;
@@ -139,7 +141,6 @@ private:
     // GetVarName de-dup suffix, so it always matches the ARG operand exactly. The parameter tensor
     // carries the concrete static shape written back by register_static_shape_tensor.
     std::unordered_map<std::string, const LogicalTensor*> staticShapeTensorBySymbol_;
-
     void BuildStaticShapeByTensor(const std::vector<ir::VarPtr>& params)
     {
         staticShapeTensorBySymbol_.clear();
@@ -355,15 +356,41 @@ private:
         resolver.VisitStmt(seq);
     }
 
-    // Clone a tensor result to a fresh SSA version and substitute its dynamic symbols.
-    ir::VarPtr CloneTensor(const ir::VarPtr& res)
+    // Whether an op result writes into already-existing storage. An assemble dst, an assemble-ssa
+    // dst, an atomic-rmw dest, or an inplace result aliases a buffer that already exists (the
+    // dst/input), so the unrolled copy must keep that raw or the write lands on a different buffer
+    // than the one later read. Results that materialize fresh storage get their own raw.
+    bool WritesExistingStorage(const TensorOpStmtPtr& op, size_t resultIndex) const
+    {
+        auto operation = std::dynamic_pointer_cast<const Operation>(op);
+        if (operation == nullptr) {
+            return false;
+        }
+        const Opcode opcode = operation->GetOpcode();
+        const bool assembleLike = (opcode == Opcode::OP_ASSEMBLE && operation->HasAttribute("dassemble")) ||
+                                  opcode == Opcode::OP_ASSEMBLE_SSA || opcode == Opcode::OP_ATOMIC_RMW;
+        // GetInplaceIndex asserts outputIndex == 0 when inplaceIdx is set, so skip probing the
+        // other outputs of such multi-output ops instead of tripping the assert.
+        if (resultIndex != 0 && operation->HasAttribute(OpAttributeKey::inplaceIdx)) {
+            return assembleLike;
+        }
+        return assembleLike || operation->GetInplaceIndex(resultIndex) >= 0;
+    }
+
+    // Clone a tensor result to a fresh SSA version and substitute its dynamic symbols. A result
+    // that writes existing storage keeps its raw; any other result gets its own RawTensor.
+    ir::VarPtr CloneTensor(const ir::VarPtr& res, bool shareRaw)
     {
         auto lt = std::dynamic_pointer_cast<const LogicalTensor>(res);
         if (lt == nullptr) {
             return res;
         }
-        auto cloned = lt->Clone(true);
+        auto cloned = lt->Clone(shareRaw);
         auto* clonedTensor = AsMutableTensor(cloned);
+        // The non-shared clone path (Clone(Function&, create=true)) resets oriShape to `shape`
+        // instead of preserving the original/valid shape; keep it alive here so downstream
+        // broadcast / fillpad / view valid-shape inference and STATIC dumps stay correct.
+        clonedTensor->oriShape = lt->oriShape;
         for (auto& dim : clonedTensor->GetDynValidShape()) {
             dim = StaticizeScalar(dim);
         }
@@ -531,11 +558,13 @@ private:
         auto newArgs = VisitExprList(op->args_).first;
 
         // Clone result tensors to fresh SSA versions and substitute their dynamic symbols.
+        // Results that write existing storage (assemble dst / inplace) keep their raw so the
+        // write stays on the same buffer across unrolled iterations.
         std::vector<ir::VarPtr> newResults;
         newResults.reserve(op->result_.size());
-        for (const auto& res : op->result_) {
-            auto cloned = CloneTensor(res);
-            subst_[res] = cloned;
+        for (size_t i = 0; i < op->result_.size(); ++i) {
+            auto cloned = CloneTensor(op->result_[i], WritesExistingStorage(op, i));
+            subst_[op->result_[i]] = cloned;
             newResults.push_back(cloned);
         }
 

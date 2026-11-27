@@ -13,7 +13,7 @@
 Test Kirin dynamic-to-static codegen (loop unroll + dynamic shape staticization) for Kirin9030.
 """
 
-from kirin.common_controlflow import (
+from kirin.common.common_controlflow import (
     ADAM_TEST_CASES,
     DYNAMIC_MULTI_TEST_CASES,
     DYNAMIC_TEST_CASES,
