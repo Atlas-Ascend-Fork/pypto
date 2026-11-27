@@ -110,9 +110,10 @@ std::string BuildFP32FmodExpression(const std::string& lhs, const std::string& r
 
 CCECodegen::CCECodegen(ir::SectionKind target) : backend_(backend::GetBackend()), target_(target)
 {
-    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT,
-                      target_ == ir::SectionKind::Cube || target_ == ir::SectionKind::Vector)
-        << "CCE target must be Cube or Vector";
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, target_ == ir::SectionKind::Cube ||
+                                                           target_ == ir::SectionKind::Vector ||
+                                                           target_ == ir::SectionKind::Aicpu)
+        << "CCE target must be Cube, Vector or Aicpu";
 }
 
 // ============================================================================
@@ -749,6 +750,14 @@ std::string CCECodegen::GenerateSingle(const ir::ProgramPtr& inputProgram, npu::
     PRO_CODEGEN_CHECK(npu::tile_fwk::InternalError::CODEGEN_INNER_ERROR, kernelFunc != nullptr)
         << "No kernel function found in program";
     currentKernelType_ = kernelFunc->funcType_;
+    // The Aicpu generation channel and the AicpuKernel entry type are two halves
+    // of one contract: pairing either with the other side's counterpart would
+    // silently emit the wrong ABI (a Vector-targeted bare body, or an AI-Core
+    // TU from an Aicpu program).
+    PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT,
+                      (target_ == ir::SectionKind::Aicpu) == (currentKernelType_ == ir::FunctionType::AICPU_KERNEL))
+        << "The Aicpu target and the AicpuKernel function type must be used together "
+           "(Aicpu target requires an AICPU_KERNEL entry, other targets must not carry one)";
     if (currentKernelType_ == ir::FunctionType::SIMT_KERNEL || !simtFuncs.empty() || !simtCallees_.empty()) {
         PRO_CODEGEN_CHECK(ExternalError::NOT_IMPLEMENTED_ERROR, target_ == ir::SectionKind::Vector)
             << "SIMT functions can only be generated for the Vector target";
@@ -1125,6 +1134,8 @@ void CCECodegen::EmitSingleFunctionSignature(const ir::FunctionPtr& func)
     sig << func->name_ << "_impl";
     if (target_ == ir::SectionKind::Cube) {
         sig << "_cube";
+    } else if (target_ == ir::SectionKind::Aicpu) {
+        sig << "_aicpu";
     } else {
         sig << "_vector";
     }

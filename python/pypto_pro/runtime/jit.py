@@ -54,6 +54,7 @@ from pypto_pro.runtime.entry_params import (
 from pypto_pro.runtime.entry_params import (
     pack_launch_args as _pack_launch_args,
 )
+from pypto_pro.runtime.kernel import targets_for_func_type, validate_target_ops_or_raise
 from pypto_pro.runtime.platform import NpuArch, normalize_arch
 
 from .._errors import (
@@ -1690,11 +1691,7 @@ def _parse_and_codegen_targets(
     has_tile_function = {}
     requires_simt = False
     max_vec_tile_end = 0
-    targets = (
-        (ir.SectionKind.Vector,)
-        if kernel_def.func_type == ir.FunctionType.SimtKernel
-        else (ir.SectionKind.Cube, ir.SectionKind.Vector)
-    )
+    targets = targets_for_func_type(kernel_def.func_type)
     for target in targets:
         programs[target], matched[target] = kernel_def.parse_target_program(
             target=target,
@@ -1714,14 +1711,7 @@ def _parse_and_codegen_targets(
 
     for target in targets:
         if matched.get(target) and programs.get(target) is not None:
-            try:
-                ir.Pass.validate_target_ops(target)(programs[target])
-            except ValueError as exc:
-                message = str(exc)
-                wrapper = error_class_of_spec_message(message)
-                if wrapper is None:
-                    raise
-                raise wrapper(message) from None
+            validate_target_ops_or_raise(target, programs[target])
 
     for target in targets:
         if matched.get(target) and programs.get(target) is not None and has_tile_function[target]:
@@ -2451,7 +2441,8 @@ def jit(
         mode: Programming mode. ``None`` and ``"simd"`` use the existing JIT path;
             ``"simt"`` compiles a host-launched SIMT kernel; ``"aicpu_kernel"`` marks
             a control-CPU (AicpuKernel) kernel. AICPU kernels must pass this mode
-            explicitly; there is no body-based auto-classification.
+            explicitly (there is no body-based auto-classification); the mode alone
+            selects the Aicpu execution domain -- the kernel takes no section.
         max_threads: Maximum threads per thread block for a SIMT kernel. Required when
             ``mode="simt"``.
 
@@ -2502,12 +2493,12 @@ def jit(
 
         @pl.jit(mode="aicpu_kernel")
         def metadata_kernel(
-            seq_lens: pl.Tensor[[pl.DYNAMIC], pl.DT_INT64],
+            seq_lens: pl.Tensor[[pl.DYNAMIC], pl.DT_INT64, pl.Input],
             metadata: pl.Tensor[[pl.DYNAMIC], pl.DT_UINT32, pl.Output],
             num_heads: pl.DT_INT32,
             soc_version: str,
         ):
-            n = seq_lens.size()
+            n = pl.numel(seq_lens)
             head = pl.getval(seq_lens, 0)
 
         metadata_kernel(seq_lens, metadata, 8, "Ascend960")  # or metadata_kernel[stream](...)

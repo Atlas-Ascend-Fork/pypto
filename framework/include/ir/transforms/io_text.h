@@ -781,6 +781,7 @@ static inline const npu::tile_fwk::BiMap<SectionKind>& GetSectionKindDict()
         {SectionKind::Vector, "vector"},
         {SectionKind::Cube, "cube"},
         {SectionKind::VF, "vf"},
+        {SectionKind::Aicpu, "aicpu"},
     }};
     return dict;
 }

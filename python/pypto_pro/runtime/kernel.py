@@ -176,6 +176,36 @@ def extract_func_source_info(f: Callable):
     return (source_file, source_lines, source_lines_raw, line_offset, col_offset, func_def)
 
 
+def targets_for_func_type(func_type: "ir.FunctionType") -> tuple["ir.SectionKind", ...]:
+    """Single source of the entry-function-type to parse-target routing.
+
+    The ASTParser interlock (``parse_function``) and the CCE codegen cross-check
+    enforce the same pairing; this table is what the compile chains consult to
+    pick a valid combination in the first place.
+    """
+    if func_type == ir.FunctionType.SimtKernel:
+        return (ir.SectionKind.Vector,)
+    if func_type == ir.FunctionType.AicpuKernel:
+        return (ir.SectionKind.Aicpu,)
+    return (ir.SectionKind.Cube, ir.SectionKind.Vector)
+
+
+def validate_target_ops_or_raise(target: "ir.SectionKind", program: "ir.Program") -> None:
+    """Run the shared target-op validation, mapping the C++ error to its DSL class.
+
+    Both compile chains (the Cube/Vector JIT flow and the AICPU chain) validate
+    every parsed program through this one gate.
+    """
+    try:
+        ir.Pass.validate_target_ops(target)(program)
+    except ValueError as exc:
+        message = str(exc)
+        wrapper = error_class_of_spec_message(message)
+        if wrapper is None:
+            raise
+        raise wrapper(message) from None
+
+
 class KernelDef:
     """Lazy kernel definition — captures source/AST/closure at decoration time,
     defers AST parsing to compile time.

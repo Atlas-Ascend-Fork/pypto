@@ -240,7 +240,7 @@ class TestEndToEndAicpuKernel:
         ) in src
         # Status ABI: the adapter maps the impl's KERNEL_STATUS return onto the
         # CpuKernel status channel instead of unconditionally returning OK.
-        assert "uint32_t status = offline_adapter_probe_impl_vector(" in src
+        assert "uint32_t status = offline_adapter_probe_impl_aicpu(" in src
         assert "return status == 0 ? kStatusOk : kStatusParamInvalid;" in src
         assert "    return kStatusOk;" not in src
         assert result.kernel_cpp_path.endswith("offline_adapter_probe_aicpu_kernel.cpp")

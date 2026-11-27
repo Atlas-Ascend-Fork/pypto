@@ -87,6 +87,17 @@ ir::ProgramPtr MakeProgram(const ir::StmtPtr& body, const std::vector<ir::VarPtr
                                                ir::Span::Unknown(), std::move(debug_info));
 }
 
+// One AICPU_KERNEL entry: the program shape the aicpu frontend produces.
+ir::ProgramPtr MakeAicpuProgram(const ir::StmtPtr& body)
+{
+    auto debug_info = std::make_shared<ir::IRDebugInfo>();
+    auto function = std::make_shared<const ir::Function>("kernel", std::vector<ir::VarPtr>{},
+                                                         std::vector<ir::TypePtr>{}, body, ir::Span::Unknown(),
+                                                         ir::FunctionType::AICPU_KERNEL, true);
+    return std::make_shared<const ir::Program>(std::vector<ir::FunctionPtr>{function}, "test_program",
+                                               ir::Span::Unknown(), std::move(debug_info));
+}
+
 // Build a two-function program in the standalone VF model: a SIMD_VF function
 // plus the IN_CORE kernel that calls it (the shape the frontend lowers a
 // @simd_vf function into; SectionStmt(VF) no longer reaches CCE codegen).
@@ -289,6 +300,35 @@ TEST(CCECodegenTest, EmitsTargetSpecificGuardsAndNames)
     EXPECT_NE(vector.find("kernel_impl_vector("), std::string::npos);
     EXPECT_EQ(vector.find("set_mask_norm();"), std::string::npos);
     EXPECT_EQ(vector.find("set_vector_mask(-1, -1);"), std::string::npos);
+}
+
+TEST(CCECodegenTest, AicpuTargetEmitsBareBodyAndRejectsMismatchedEntryType)
+{
+    auto body = MakeEmptyBody();
+
+    // The Aicpu target with an AICPU_KERNEL entry emits the bare body: no
+    // device qualifiers, no DAV guard, no CCE scaffolding; the impl keeps the
+    // KERNEL_STATUS uint32_t ABI and its own _aicpu suffix.
+    CCECodegen aicpu_codegen(ir::SectionKind::Aicpu);
+    auto aicpu = aicpu_codegen.GenerateSingle(MakeAicpuProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
+    EXPECT_NE(aicpu.find("uint32_t kernel_impl_aicpu("), std::string::npos);
+    EXPECT_NE(aicpu.find("return 0;"), std::string::npos);
+    EXPECT_EQ(aicpu.find("kernel_impl_vector("), std::string::npos);
+    EXPECT_EQ(aicpu.find("__aicore__ "), std::string::npos);
+    EXPECT_EQ(aicpu.find("__gm__ "), std::string::npos);
+    EXPECT_EQ(aicpu.find("__aicpu__ "), std::string::npos);
+    EXPECT_EQ(aicpu.find("#if defined(__DAV"), std::string::npos);
+    EXPECT_EQ(aicpu.find("SyncedTile"), std::string::npos);
+
+    // The target and the entry function type are one contract: a Vector target
+    // carrying an AICPU_KERNEL entry, or an Aicpu target with an AI-Core entry,
+    // is rejected instead of silently generating the wrong ABI.
+    CCECodegen vector_codegen(ir::SectionKind::Vector);
+    EXPECT_THROW((void)vector_codegen.GenerateSingle(MakeAicpuProgram(body), npu::tile_fwk::NPUArch::DAV_3510),
+                 npu::tile_fwk::Error);
+    CCECodegen mismatch_codegen(ir::SectionKind::Aicpu);
+    EXPECT_THROW((void)mismatch_codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510),
+                 npu::tile_fwk::Error);
 }
 
 TEST(CCECodegenTest, EmitsInt64DynamicTensorDimensions)

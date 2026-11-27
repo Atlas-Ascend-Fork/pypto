@@ -762,39 +762,6 @@ class CallParserMixin:
             self._check_declared_params(op_name, call)
             return ast_handler(self, call)
 
-    # The aicpu kernel's GM-Tensor surface: the flattened CpuKernelContext port
-    # contract. Tensors may only flow through these ops; everything else would
-    # emit AI-Core-flavored IR the AICPU runtime cannot honor.
-    _AICPU_TENSOR_OPS = frozenset({"numel", "getval", "setval"})
-
-    def _check_aicpu_tensor_surface(self, op_name: str, args: list, kwargs: dict, span) -> None:
-        """Aicpu kernels reject any non-surface op that receives a Tensor."""
-        if self._current_func_type != ir.FunctionType.AicpuKernel:
-            return
-        if op_name in self._AICPU_TENSOR_OPS:
-            # Surface ops take GM Tensors only: the declared-types gate admits Tile
-            # for the shared AICore surface, so reject it here before the impl
-            # emits AI-Core flavored IR the AICPU runtime cannot honor.
-            for value in list(args) + list(kwargs.values()):
-                if isinstance(value, ir.Expr) and isinstance(value.type, ir.TileType):
-                    raise NotSupported(
-                        f"pl.{op_name}() on a Tile is not supported in aicpu kernels",
-                        span=span,
-                        hint="The aicpu tensor surface is: tensor is None / is not None, "
-                        "pl.numel, pl.getval, pl.setval",
-                        parser_retry=True,
-                    )
-            return
-        for value in list(args) + list(kwargs.values()):
-            if isinstance(value, ir.Expr) and isinstance(value.type, ir.TensorType):
-                raise NotSupported(
-                    f"pl.{op_name}() on a Tensor is not supported in aicpu kernels",
-                    span=span,
-                    hint="The aicpu tensor surface is: tensor is None / is not None, "
-                    "pl.numel, pl.getval, pl.setval",
-                    parser_retry=True,
-                )
-
     def _dispatch_op(self, op_name: str, call: ast.Call, op_func: Callable, *, obj: ir.Expr | None = None):
         """Check and parse arguments, then call the registered implementation."""
         span = self.span_tracker.get_span(call)
@@ -803,7 +770,6 @@ class CallParserMixin:
             args = [self.parse_expression(node) for node in call.args]
             kwargs = {keyword.arg: self.parse_expression(keyword.value) for keyword in call.keywords}
             self._check_declared_types(op_name, args, kwargs)
-            self._check_aicpu_tensor_surface(op_name, args, kwargs, span)
             self._current_node = call
             operands = [obj, *args] if obj is not None else args
             result = op_func(self, *operands, **kwargs, span=span)
@@ -1310,7 +1276,17 @@ class CallParserMixin:
         standalone ``__simd_vf__``/``__simd_callee__`` function.
         For regular callables, expands the body directly.
         """
+        from pypto_pro.runtime.pipeline._stage import is_pipeline_stage
+
         from .decorator import get_simt_max_threads, is_simd_tile_function, is_simt_function, is_vector_function
+
+        if self._target == ir.SectionKind.Aicpu and is_pipeline_stage(fn):
+            raise InvalidOperation(
+                f"pipeline stage '{func_name}' cannot be called inside an aicpu kernel",
+                span=self.span_tracker.get_span(call),
+                hint="Stages belong to the AI Core automatic pipeline; an aicpu kernel "
+                "does not support any stage expression.",
+            )
 
         if is_simt_function(fn):
             if _is_simt_func_type(self._current_func_type):

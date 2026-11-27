@@ -34,7 +34,7 @@ def batch_row_plan(
 以下形式不支持：
 
 - Tensor对象方法调用（如`t.size()`、`t.numel()`）：仅支持上表中的函数调用形式；
-- 其他任何接收Tensor的接口（如pypto_pro.language.make_tensor、视图与搬运类接口）：解析阶段抛出NotSupported；
+- 其他任何接收Tensor的接口（视图与搬运类接口等）：解析阶段抛出NotSupported。例外：[pypto_pro.language.make_ptr](../../../../api/pro_api/SIMD-API/resource_management/make_ptr.md)(t)与[pypto_pro.language.make_tensor](../../../../api/pro_api/SIMD-API/resource_management/make_tensor.md)(t, shape, stride)可接收Tensor，语义与AI Core Kernel一致——提取数据指针/按新shape与stride重解释，不搬运数据、不改变物理内存分布；
 - Tile对象传入numel/getval/setval同样会被拒绝。
 
 ## Scalar参数与控制流

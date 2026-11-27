@@ -682,7 +682,8 @@ class ControlFlowParserMixin:
     def parse_with_statement(self, stmt: ast.With) -> None:
         """Parse with statement for scope contexts.
 
-        Currently supports target-specific Cube and Vector sections.
+        Currently supports target-specific Cube and Vector sections; the
+        Aicpu target takes no section at all.
 
         Args:
             stmt: With AST node
@@ -699,33 +700,39 @@ class ControlFlowParserMixin:
         attr = self._get_with_context_attr(stmt)
         span = self.span_tracker.get_span(stmt)
 
-        if attr in ("section_vector", "section_cube") and self._in_simd_vf_body():
+        # The aicpu target takes no section at all: mode="aicpu_kernel" alone
+        # selects the execution domain, so every 'with pl.*()' is rejected.
+        if self._target == ir.SectionKind.Aicpu:
             raise InvalidOperation(
-                f"Section 'pl.{attr}' cannot be nested inside @pl.vector_function",
+                f"Section 'pl.{attr}' cannot be used inside an aicpu kernel"
+                if attr
+                else "Sections cannot be used inside an aicpu kernel",
                 span=span,
-                hint="Place Cube/Vector sections in the calling kernel and invoke the vector function from there.",
+                hint="An aicpu kernel is declared with @pl.jit(mode='aicpu_kernel') and "
+                "takes no section: its body runs on the control CPU as a whole.",
             )
-
-        # Check if this is pl.section_vector() or pl.section_cube()
-        if attr == "section_vector":
-            self._parse_target_section(stmt.body, ir.SectionKind.Vector)
-            return
-        if attr == "section_cube":
-            self._parse_target_section(stmt.body, ir.SectionKind.Cube)
-            return
-
-        # Unsupported context manager
-        raise NotSupported(
-            f"Unsupported context manager 'with {self._describe_with_context(stmt)}:'"
-            + (f" (pl.{attr}() is not a valid section here)" if attr else ""),
-            span=self.span_tracker.get_span(stmt),
-            hint=(
-                "Only 'with pl.section_vector():' or 'with pl.section_cube():' "
-                "are currently supported. VF code must be placed in a @pl.vector_function "
-                "decorated function."
-            ),
-            parser_retry=True,
-        )
+        if attr in ("section_vector", "section_cube"):
+            if self._in_simd_vf_body():
+                raise InvalidOperation(
+                    f"Section 'pl.{attr}' cannot be nested inside @pl.vector_function",
+                    span=span,
+                    hint="Place Cube/Vector sections in the calling kernel and invoke the vector function from there.",
+                )
+            kind = ir.SectionKind.Vector if attr == "section_vector" else ir.SectionKind.Cube
+        else:
+            raise NotSupported(
+                f"Unsupported context manager 'with {self._describe_with_context(stmt)}:'"
+                + (f" (pl.{attr}() is not a valid section here)" if attr else ""),
+                span=self.span_tracker.get_span(stmt),
+                hint=(
+                    "Only 'with pl.section_vector():' and 'with pl.section_cube():' are "
+                    "currently supported. VF code must be placed in a @pl.vector_function "
+                    "decorated function."
+                ),
+                parser_retry=True,
+            )
+        self._parse_target_section(stmt.body, kind)
+        return
 
     def parse_return(self, stmt: ast.Return) -> None:
         """Parse return statement.
@@ -749,7 +756,7 @@ class ControlFlowParserMixin:
                     hint="Return Tile/Tensor data through an input parameter; return scalar results directly.",
                     parser_retry=True,
                 )
-        elif self._void_return_only and self._current_func_type == ir.FunctionType.AicpuKernel:
+        elif self._void_return_only and self._target == ir.SectionKind.Aicpu:
             # AICPU status ABI: `return <int>` carries the KERNEL_STATUS code
             # (0 = OK, 1 = PARAM_INVALID) the same way the handwritten AICPU
             # kernels return KERNEL_STATUS_*; a bare `return` stays the normal
@@ -812,7 +819,7 @@ class ControlFlowParserMixin:
         body: list[ast.stmt],
         kind: ir.SectionKind,
     ) -> None:
-        """Project a Cube/Vector section into the current target Program."""
+        """Project a Cube/Vector/Aicpu section into the current target Program."""
         if kind != self.target:
             return
 

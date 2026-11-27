@@ -1,6 +1,6 @@
 # Kernel核函数创建
 
-AI CPU Kernel通过`@pypto_pro.language.jit(mode="aicpu_kernel")`声明，在函数签名中定义输入、输出Tensor和运行时Scalar参数，函数体使用标量接口描述串行逻辑。编程模型与执行特点参见[AI CPU编程概述](../programming_paradigm/AICPU/programming_paradigm.md)。
+AI CPU Kernel通过`@pypto_pro.language.jit(mode="aicpu_kernel")`声明，在函数签名中定义输入、输出Tensor和运行时Scalar参数，函数体使用标量接口描述串行逻辑。函数体不支持任何与with语句配合使用的上下文管理器：不仅[pypto_pro.language.section_vector](../../../../api/pro_api/SIMD-API/controlflow/section_vector.md)、[pypto_pro.language.section_cube](../../../../api/pro_api/SIMD-API/controlflow/section_cube.md)等执行域不可使用，其它形式为`with pypto_pro.language.XXX()`的表达同样会在解析阶段报错。编程模型与执行特点参见[AI CPU编程概述](../programming_paradigm/AICPU/programming_paradigm.md)。
 
 ## 参数
 

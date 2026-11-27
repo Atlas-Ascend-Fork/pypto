@@ -38,7 +38,7 @@ def test_enum_literal_comparison_folds_into_compile_time_branch():
         else:
             y = pl.getval(x, 1)  # noqa: F841 -- DSL body, parsed as AST
 
-    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Aicpu)
     func = program.get_function(kernel.__name__)
     # The enum equality folds to a ConstBool at parse time: the if lowers to a
     # compile-time branch, and only the taken side reaches the IR body.
@@ -56,7 +56,7 @@ def test_int_attribute_comparison_stays_a_runtime_branch():
         else:
             y = pl.getval(x, 1)  # noqa: F841 -- DSL body, parsed as AST
 
-    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+    program, _ = kernel.to_kernel_def().parse_target_program(ir.SectionKind.Aicpu)
     func = program.get_function(kernel.__name__)
     assert any(
         isinstance(stmt, ir.IfStmt) for stmt in func.body.stmts
@@ -69,7 +69,7 @@ def test_enum_literal_as_op_operand_rejected():
         y = pl.getval(x, MaskMode.CAUSAL)  # noqa: F841 -- DSL body, parsed as AST
 
     with pytest.raises(InvalidType):
-        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Aicpu)
 
 
 def test_enum_runtime_construction_rejected():
@@ -78,4 +78,4 @@ def test_enum_runtime_construction_rejected():
         mode = MaskMode(mask_mode)  # noqa: F841 -- DSL body, parsed as AST
 
     with pytest.raises(NotSupported, match="Unsupported function call"):
-        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Vector)
+        kernel.to_kernel_def().parse_target_program(ir.SectionKind.Aicpu)

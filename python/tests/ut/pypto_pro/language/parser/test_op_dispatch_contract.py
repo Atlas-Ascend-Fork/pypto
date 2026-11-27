@@ -262,7 +262,6 @@ def runtime(monkeypatch):
     helper_names = {
         "_dispatch_ast_op",
         "_dispatch_op", "_check_declared_params", "_check_declared_types", "_validate_op_scope",
-        "_check_aicpu_tensor_surface",
         "parse_op_call", "_extract_op_name",
         "_parse_simt_template_call", "_parse_simd_template_call",
         "_instantiate_vf_call", "_instantiate_simd_function",
