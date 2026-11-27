@@ -41,6 +41,47 @@ def _sk_bind_line(sk_cap: int) -> str:
     return next(line for line in source.splitlines() if line.startswith("SK_BIND"))
 
 
+def _target_variant(has_cube: bool, has_vector: bool):
+    return get_jit_compile_config().resolve_kernel_target(
+        NpuArch.DAV_3510, has_cube=has_cube, has_vector=has_vector
+    )
+
+
+def test_sk_bind_seed_uses_compile_time_shape():
+    """The count/sub-block seed follows target shape, not the runtime container type."""
+    vec = _make_sk_bind_block("k", [], _target_variant(False, True), sk_cap=pl.SkCap.CAP_0_SK_ONLY)
+    cube = _make_sk_bind_block("k", [], _target_variant(True, False), sk_cap=pl.SkCap.CAP_0_SK_ONLY)
+    mix = _make_sk_bind_block("k", [], _target_variant(True, True), sk_cap=pl.SkCap.CAP_0_SK_ONLY)
+    for single in (vec, cube):
+        assert "sysArgs->skNumBlocks / " not in single
+        assert "__pypto_seed_block_num((uint32_t)sysArgs->skNumBlocks);" in single
+        assert "__pypto_seed_subblock_num(1);" in single
+        assert "__pypto_seed_subblock_idx(0);" in single
+    aiv_part, aic_part = mix.split("#else", 1)
+    assert "sysArgs->skNumBlocks / 2" in aiv_part
+    assert "__pypto_seed_subblock_num(2);" in aiv_part
+    assert "__pypto_seed_subblock_idx((uint32_t)get_subblockid());" in aiv_part
+    assert "sysArgs->skNumBlocks / " not in aic_part
+    assert "__pypto_seed_block_num((uint32_t)sysArgs->skNumBlocks);" in aic_part
+    assert "__pypto_seed_subblock_num(1);" in aic_part
+    assert "__pypto_seed_subblock_idx(0);" in aic_part
+    assert "#if defined(__DAV_VEC__)" in aiv_part
+    for source in (vec, cube, mix):
+        assert "GetTaskRatio" not in source
+
+
+def test_sk_caller_prelude_seeds_subblock_from_shape():
+    prelude, _ = _make_sk_caller_parts(_cg(has_cube=False, has_vector=True), _target_variant(False, True), 0)
+    assert "__pypto_seed_subblock_num(1);" in prelude
+    assert "__pypto_seed_subblock_idx(0);" in prelude
+    mix_prelude, _ = _make_sk_caller_parts(_cg(has_cube=True, has_vector=True), _target_variant(True, True), 0)
+    aiv_part, aic_part = mix_prelude.split("#else", 1)
+    assert "__pypto_seed_subblock_num(2);" in aiv_part
+    assert "__pypto_seed_subblock_idx((uint32_t)get_subblockid());" in aiv_part
+    assert "__pypto_seed_subblock_num(1);" in aic_part
+    assert "__pypto_seed_subblock_idx(0);" in aic_part
+
+
 def _cg(**overrides) -> CodegenResult:
     return CodegenResult(
         build_dir="", content="", kernel_name="k",
@@ -188,13 +229,11 @@ def test_bare_enable_is_the_callers_choice_of_mask():
 # Sub-kernel block count normalization (MIX 1:2 AIV count vs logical block count)
 # ---------------------------------------------------------------------------
 def test_tile_block_records_are_always_seeded():
-    """SK entries always seed both records; no usage detection is required."""
+    """SK entries always seed count/index/sub-block; no usage detection is required."""
     source = _make_sk_bind_block("k", [], _target(), sk_cap=4)
     assert "__pypto_seed_block_idx((uint32_t)sysArgs->skBlockIdx);" in source
-    assert (
-        "__pypto_seed_block_num((uint32_t)(sysArgs->skNumBlocks / AscendC::GetTaskRatio()));"
-        in source
-    )
+    assert "__pypto_seed_block_num((uint32_t)sysArgs->skNumBlocks);" in source
+    assert "__pypto_seed_subblock_num(1);" in source
 
 
 # ---------------------------------------------------------------------------

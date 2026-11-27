@@ -69,6 +69,8 @@ def test_block_meta_header_carries_both_implementations():
     binary_branch = text[:sk_start]
     assert "return AscendC::GetBlockNum();" in aclnn_branch
     assert "return AscendC::GetBlockIdx();" in aclnn_branch
+    assert "return AscendC::GetSubBlockNum();" in aclnn_branch
+    assert "return AscendC::GetSubBlockIdx();" in aclnn_branch
     assert "PYPTO_ACLNN_CHECK_TILING_SIZE" in aclnn_branch
     assert "#include <pto/pto-inst.hpp>" in aclnn_branch
     assert '#pragma push_macro("get_block_num")' in aclnn_branch
@@ -84,12 +86,22 @@ def test_block_meta_header_carries_both_implementations():
     assert "return (int64_t)PYPTO_BLOCK_IDX;" in sk_branch
     assert "PYPTO_BLOCK_NUM = v;" in sk_branch
     assert "PYPTO_BLOCK_IDX = v;" in sk_branch
+    assert "__pypto_subblock_num_value" in sk_branch
+    assert "__pypto_seed_subblock_num" in sk_branch
+    assert "PYPTO_SUBBLOCK_NUM" in sk_branch
+    assert "PYPTO_SUBBLOCK_IDX" in sk_branch
+    assert "__pypto_subblock_idx_value" in sk_branch
+    assert "__pypto_seed_subblock_idx" in sk_branch
     assert "g_pypto_block_meta" not in text
     assert "PYPTO_SK_BLOCK_SLOTS" not in text
     assert "dcci(" not in " ".join(text.split())
     assert "AscendC::Trap();" not in text
     non_sk_branch = text[else_start:]
     assert "return get_block_num();" in non_sk_branch
+    assert "__pypto_subblock_num_value" in non_sk_branch
+    assert "return get_subblockdim();" in non_sk_branch
+    assert "__pypto_subblock_idx_value" in non_sk_branch
+    assert "return get_subblockid();" in non_sk_branch
 
 
 def test_simt_kernel_with_sk_cap_compiles(tmp_path):

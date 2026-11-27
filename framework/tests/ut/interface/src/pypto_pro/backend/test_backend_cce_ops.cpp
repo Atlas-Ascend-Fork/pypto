@@ -279,10 +279,10 @@ TEST(BackendCceOpsTest, GetSubBlockIdx)
 
     codegen::CCECodegen codegen(ir::SectionKind::Vector);
     auto generated = codegen.GenerateSingle(MakeProgram(body), npu::tile_fwk::NPUArch::DAV_3510);
-    EXPECT_NE(generated.find("(int64_t)(get_subblockid())"), std::string::npos);
+    EXPECT_NE(generated.find("(int64_t)(__pypto_subblock_idx_value())"), std::string::npos);
 }
 
-TEST(BackendCceOpsTest, GetSubBlockNumIsTargetSpecific)
+TEST(BackendCceOpsTest, GetSubBlockNumUsesBlockMetaAccessor)
 {
     auto int_type = std::make_shared<const ir::ScalarType>(ir::DataType::INT64);
     auto call = std::make_shared<const ir::Call>("get_subblock_num", std::vector<ir::ExprPtr>{}, int_type,
@@ -292,10 +292,10 @@ TEST(BackendCceOpsTest, GetSubBlockNumIsTargetSpecific)
     EXPECT_EQ(info->pipe, ir::PipeType::S);
 
     codegen::CCECodegen cube_codegen(ir::SectionKind::Cube);
-    EXPECT_EQ(info->codegenFunc(call, cube_codegen), "(int64_t)(1)");
+    EXPECT_EQ(info->codegenFunc(call, cube_codegen), "(int64_t)(__pypto_subblock_num_value())");
 
     codegen::CCECodegen vector_codegen(ir::SectionKind::Vector);
-    EXPECT_EQ(info->codegenFunc(call, vector_codegen), "(int64_t)(get_subblockdim())");
+    EXPECT_EQ(info->codegenFunc(call, vector_codegen), "(int64_t)(__pypto_subblock_num_value())");
 }
 
 TEST(BackendCceOpsTest, DebugTrap)

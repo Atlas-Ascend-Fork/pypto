@@ -69,6 +69,8 @@
 // SK entry with its native block-index convention. No process-global GM state is needed.
 static __aicore__ inline int64_t __pypto_block_num_value() { return AscendC::GetBlockNum(); }
 static __aicore__ inline int64_t __pypto_block_idx_value() { return AscendC::GetBlockIdx(); }
+static __aicore__ inline int64_t __pypto_subblock_num_value() { return AscendC::GetSubBlockNum(); }
+static __aicore__ inline int64_t __pypto_subblock_idx_value() { return AscendC::GetSubBlockIdx(); }
 
 #elif defined(__PYPTO_SK_BLOCK__)
 
@@ -89,19 +91,31 @@ static __aicore__ inline int64_t __pypto_raw_block_idx()
 #if defined(__DAV_VEC__)
 __BLOCK_LOCAL__ __inline__ uint32_t g_pypto_block_num_v;
 __BLOCK_LOCAL__ __inline__ uint32_t g_pypto_block_idx_v;
+__BLOCK_LOCAL__ __inline__ uint32_t g_pypto_subblock_num_v;
+__BLOCK_LOCAL__ __inline__ uint32_t g_pypto_subblock_idx_v;
 #define PYPTO_BLOCK_NUM g_pypto_block_num_v
 #define PYPTO_BLOCK_IDX g_pypto_block_idx_v
+#define PYPTO_SUBBLOCK_NUM g_pypto_subblock_num_v
+#define PYPTO_SUBBLOCK_IDX g_pypto_subblock_idx_v
 #else
 __BLOCK_LOCAL__ __inline__ uint32_t g_pypto_block_num_c;
 __BLOCK_LOCAL__ __inline__ uint32_t g_pypto_block_idx_c;
+__BLOCK_LOCAL__ __inline__ uint32_t g_pypto_subblock_num_c;
+__BLOCK_LOCAL__ __inline__ uint32_t g_pypto_subblock_idx_c;
 #define PYPTO_BLOCK_NUM g_pypto_block_num_c
 #define PYPTO_BLOCK_IDX g_pypto_block_idx_c
+#define PYPTO_SUBBLOCK_NUM g_pypto_subblock_num_c
+#define PYPTO_SUBBLOCK_IDX g_pypto_subblock_idx_c
 #endif
 
 static __aicore__ inline int64_t __pypto_block_num_value() { return (int64_t)PYPTO_BLOCK_NUM; }
 static __aicore__ inline int64_t __pypto_block_idx_value() { return (int64_t)PYPTO_BLOCK_IDX; }
+static __aicore__ inline int64_t __pypto_subblock_num_value() { return (int64_t)PYPTO_SUBBLOCK_NUM; }
+static __aicore__ inline int64_t __pypto_subblock_idx_value() { return (int64_t)PYPTO_SUBBLOCK_IDX; }
 static __aicore__ inline void __pypto_seed_block_num(uint32_t v) { PYPTO_BLOCK_NUM = v; }
 static __aicore__ inline void __pypto_seed_block_idx(uint32_t v) { PYPTO_BLOCK_IDX = v; }
+static __aicore__ inline void __pypto_seed_subblock_num(uint32_t v) { PYPTO_SUBBLOCK_NUM = v; }
+static __aicore__ inline void __pypto_seed_subblock_idx(uint32_t v) { PYPTO_SUBBLOCK_IDX = v; }
 
 #else // __PYPTO_SK_BLOCK__
 
@@ -115,6 +129,24 @@ static __aicore__ inline int64_t __pypto_block_idx_value()
     return get_block_idx() * get_subblockdim() + get_subblockid();
 #else
     return get_block_idx();
+#endif
+}
+
+static __aicore__ inline int64_t __pypto_subblock_num_value()
+{
+#if defined(__DAV_VEC__)
+    return get_subblockdim();
+#else
+    return 1;
+#endif
+}
+
+static __aicore__ inline int64_t __pypto_subblock_idx_value()
+{
+#if defined(__DAV_VEC__)
+    return get_subblockid();
+#else
+    return 0;
 #endif
 }
 

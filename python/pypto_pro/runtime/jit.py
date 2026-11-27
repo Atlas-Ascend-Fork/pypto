@@ -1524,12 +1524,30 @@ def _make_sk_bind_block(
     # npugraph_ex super_kernel_optimize: plain and fused launches observed the same
     # AIV index set {0..31} and the same block num 16 at BLOCK_DIM=16 (SK log: node
     # bound with cap=4, taskRatio [1,2], numBlocks=16, vecNum=32).
-    # ``skNumBlocks`` is the per-launch worker count; GetTaskRatio() restores the
-    # logical block count for MIX 1:2 AIV launches.
-    sk_body = (
-        "    __pypto_seed_block_idx((uint32_t)sysArgs->skBlockIdx);\n"
-        "    __pypto_seed_block_num((uint32_t)(sysArgs->skNumBlocks / AscendC::GetTaskRatio()));\n" + sk_body
-    )
+    # The count/sub-block split is decided here from the compile-time target, not from
+    # the runtime container type: single-engine kernels already receive their own
+    # worker count, while a MIX 1:2 AIV launch reports the AIV worker count.
+    is_mix = bool(target.aic_per_block and target.aiv_per_block)
+    if is_mix:
+        aiv_per_block = target.aiv_per_block
+        seed = (
+            "#if defined(__DAV_VEC__)\n"
+            f"    __pypto_seed_block_num((uint32_t)(sysArgs->skNumBlocks / {aiv_per_block}));\n"
+            f"    __pypto_seed_subblock_num({aiv_per_block});\n"
+            "    __pypto_seed_subblock_idx((uint32_t)get_subblockid());\n"
+            "#else\n"
+            "    __pypto_seed_block_num((uint32_t)sysArgs->skNumBlocks);\n"
+            "    __pypto_seed_subblock_num(1);\n"
+            "    __pypto_seed_subblock_idx(0);\n"
+            "#endif\n"
+        )
+    else:
+        seed = (
+            "    __pypto_seed_block_num((uint32_t)sysArgs->skNumBlocks);\n"
+            "    __pypto_seed_subblock_num(1);\n"
+            "    __pypto_seed_subblock_idx(0);\n"
+        )
+    sk_body = "    __pypto_seed_block_idx((uint32_t)sysArgs->skBlockIdx);\n" + seed + sk_body
     return (
         f"#include <basic_api/kernel_operator_sys_var_intf.h>\n"
         f"#include <basic_api/kernel_common.h>\n"
@@ -2010,11 +2028,25 @@ def _make_sk_caller_parts(
       unconditional for early-start capable binaries; kernels that never read the config
       only pay one block-local store per launch.
     """
+    is_mix = bool(target.aic_per_block and target.aiv_per_block)
     prelude = ""
     if sk_cap & EARLY_START_MASK:
         prelude += "    g_super_kernel_early_start_config = 0;\n"
     prelude += "    __pypto_seed_block_idx((uint32_t)__pypto_raw_block_idx());\n"
     prelude += "    __pypto_seed_block_num((uint32_t)__pypto_raw_block_num());\n"
+    if is_mix:
+        aiv_per_block = target.aiv_per_block
+        prelude += (
+            "#if defined(__DAV_VEC__)\n"
+            f"    __pypto_seed_subblock_num({aiv_per_block});\n"
+            "    __pypto_seed_subblock_idx((uint32_t)get_subblockid());\n"
+            "#else\n"
+            "    __pypto_seed_subblock_num(1);\n"
+            "    __pypto_seed_subblock_idx(0);\n"
+            "#endif\n"
+        )
+    else:
+        prelude += "    __pypto_seed_subblock_num(1);\n    __pypto_seed_subblock_idx(0);\n"
     entries = _make_sk_bind_block(
         cg.kernel_name,
         cg.entry_params,
