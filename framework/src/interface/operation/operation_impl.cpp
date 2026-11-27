@@ -283,7 +283,6 @@ void TiledViewOperationRecursive(Function& function, const TileShape& tileShape,
                 << "VIEW can have at most one READ result token, got " << readCount;
         }
         AttachExpandResultTokens(viewOp, contractOp, currentTileOp, nullptr);
-        AttachExpandInputTokens(contractOp, currentTileOp);
         resultTile->SetMemoryTypeOriginal(MemoryType::MEM_UNKNOWN);
         std::vector<SymbolicScalar> toDynOffset;
         toDynOffset.reserve(output.tileInfo.offset.size());
