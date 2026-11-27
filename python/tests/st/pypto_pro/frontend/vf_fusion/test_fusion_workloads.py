@@ -10,18 +10,18 @@
 
 Each ordinary Python helper describes one candidate computation region. Its
 arguments are input tiles and scalars, then workspace tiles, then output tiles.
-The current frontend inlines these helpers and emits the existing tile ops;
-the helpers do not declare handwritten register-level vector functions.
-
-Each kernel constructs disjoint UB tiles, loads its inputs, and calls its helper
-once. Results stay in UB. The tests only check compilation and a single launch;
-measurement belongs to the external performance tooling. The helper docstrings
-specify the mathematical region and layout to match when extracting a baseline.
+The tile helpers are inlined. SwiGLU and FA online softmax also have handwritten
+register VFs. Each kernel exports its results after the end timestamp so that
+the compiler retains every output in the measured region.
+Run pytest with -s to see the median device cycles and microseconds per compute
+region. The interval includes issuing the operations and draining the pipeline.
 """
 
 import os
+from statistics import median
 
 import pypto_pro.language as pl
+from pypto_pro.language import Vf as vf  # noqa: N813
 import pytest
 import torch
 import torch_npu  # noqa: F401 -- registers torch.npu
@@ -32,7 +32,13 @@ def _make_workload_tile(tile_type, addr):
     return group.current()
 
 
-def swiglu_grad(a, b, grad, sigmoid, grad_s, grad_tmp, da, db):
+def _synced_cycle():
+    # The system counter is read on the scalar pipe. Drain outstanding work first.
+    pl.system.bar_all()
+    return pl.get_cycle()
+
+
+def swiglu_grad(a, b, grad, sigmoid, one_minus_s, da, db):
     """SwiGLU backward: a straight element-wise graph with two outputs.
 
     AscendC: SwiGluGradBaseKernel<T>::Compute, arch35 (3510).
@@ -43,25 +49,25 @@ def swiglu_grad(a, b, grad, sigmoid, grad_s, grad_tmp, da, db):
         s = 1 / (1 + exp(-a))
         g = grad * s
         db = g * a
-        da = b * (g - db * (s - 1))
+        da = b * (g + db * (1 - s))
 
-    sigmoid stores s; grad_s stores g; grad_tmp computes g - db * (s - 1).
-    This region uses 10 tile ops.
-    All tiles are [16, 128] FP32. Inputs and their gradients use separate buffers;
-    splitting/concatenating the full operator's tensors is outside this region.
+    The da tile holds g as the initial accumulator for the fused multiply-add.
+    The benchmark fixes a, b and grad to separate [16, 128] FP32 tiles.
+    For x=[16, 256] split on the last dimension, the upstream operator dispatches
+    ComputeInterleaved, which reads a and b from adjacent halves of each row.
+    This benchmark targets Compute with separate buffers and dataCount=2048.
     """
     pl.neg(sigmoid, a)
     pl.exp(sigmoid, sigmoid)
     pl.add(sigmoid, sigmoid, 1.0)
     pl.recip(sigmoid, sigmoid)
 
-    pl.mul(grad_s, grad, sigmoid)
-    pl.mul(db, grad_s, a)
-    # grad_tmp = grad_s - db * (sigmoid - 1).
-    pl.sub(grad_tmp, sigmoid, 1.0)
-    pl.mul(grad_tmp, grad_tmp, db)
-    pl.sub(grad_tmp, grad_s, grad_tmp)
-    pl.mul(da, grad_tmp, b)
+    pl.mul(da, grad, sigmoid)
+    pl.mul(db, da, a)
+    pl.expands(one_minus_s, 1.0)
+    pl.sub(one_minus_s, one_minus_s, sigmoid)
+    pl.mul_add_dst(da, db, one_minus_s)
+    pl.mul(da, da, b)
 
 
 @pl.jit(auto_mutex=True)
@@ -69,23 +75,79 @@ def swiglu_grad_kernel(
     a: pl.Tensor[[16, 128], pl.DT_FP32],
     b: pl.Tensor[[16, 128], pl.DT_FP32],
     grad: pl.Tensor[[16, 128], pl.DT_FP32],
+    da_out: pl.Tensor[[16, 128], pl.DT_FP32, pl.Output],
+    db_out: pl.Tensor[[16, 128], pl.DT_FP32, pl.Output],
+    elapsed: pl.Tensor[[1], pl.DT_INT64, pl.Output],
 ):
     with pl.section_vector():
         tile_type = pl.TileType(shape=[16, 128], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
-        # Eight 8192-byte slots: [0, 0x10000), 64 KiB in total.
+        # Seven 8192-byte slots occupy 56 KiB.
         a_tile = _make_workload_tile(tile_type, 0x00000)
         b_tile = _make_workload_tile(tile_type, 0x02000)
         grad_tile = _make_workload_tile(tile_type, 0x04000)
         da = _make_workload_tile(tile_type, 0x06000)
         db = _make_workload_tile(tile_type, 0x08000)
         sigmoid = _make_workload_tile(tile_type, 0x0A000)
-        grad_s = _make_workload_tile(tile_type, 0x0C000)
-        grad_tmp = _make_workload_tile(tile_type, 0x0E000)
+        one_minus_s = _make_workload_tile(tile_type, 0x0C000)
 
         pl.load(a_tile, a, [0, 0])
         pl.load(b_tile, b, [0, 0])
         pl.load(grad_tile, grad, [0, 0])
-        swiglu_grad(a_tile, b_tile, grad_tile, sigmoid, grad_s, grad_tmp, da, db)
+        start = _synced_cycle()
+        swiglu_grad(a_tile, b_tile, grad_tile, sigmoid, one_minus_s, da, db)
+        elapsed[0] = _synced_cycle() - start
+        pl.store(da_out, da, [0, 0])
+        pl.store(db_out, db, [0, 0])
+
+
+@pl.vector_function
+def swiglu_grad_reg(a, b, grad, da, db):
+    """Reuse db = g * a in da = b * (g + db * (1 - s)), with g = grad * s."""
+    mask = vf.update_mask(16 * 128, dtype=pl.DT_FP32)
+    one = vf.full(1.0, mask, dtype=pl.DT_FP32)
+    for i in pl.range(0, 32):
+        offset = i * 64
+        x = vf.load_align(a, offset)
+        y = vf.load_align(b, offset)
+        dy = vf.load_align(grad, offset)
+        denominator = vf.muls(x, -1.0, mask)
+        denominator = vf.exp(denominator, mask)
+        denominator = vf.adds(denominator, 1.0, mask)
+        s = vf.div(one, denominator, mask)
+
+        g = vf.mul(dy, s, mask)
+        db_reg = vf.mul(g, x, mask)
+        one_minus_s = vf.sub(one, s, mask)
+        da_reg = vf.mul_add_dst_acc(g, db_reg, one_minus_s, mask)
+        da_reg = vf.mul(y, da_reg, mask)
+        vf.store_align(da, da_reg, mask, offset)
+        vf.store_align(db, db_reg, mask, offset)
+
+
+@pl.jit(auto_mutex=True)
+def swiglu_grad_reg_kernel(
+    a: pl.Tensor[[16, 128], pl.DT_FP32],
+    b: pl.Tensor[[16, 128], pl.DT_FP32],
+    grad: pl.Tensor[[16, 128], pl.DT_FP32],
+    da_out: pl.Tensor[[16, 128], pl.DT_FP32, pl.Output],
+    db_out: pl.Tensor[[16, 128], pl.DT_FP32, pl.Output],
+    elapsed: pl.Tensor[[1], pl.DT_INT64, pl.Output],
+):
+    with pl.section_vector():
+        tile_type = pl.TileType(shape=[16, 128], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        a_tile = _make_workload_tile(tile_type, 0x00000)
+        b_tile = _make_workload_tile(tile_type, 0x02000)
+        grad_tile = _make_workload_tile(tile_type, 0x04000)
+        da = _make_workload_tile(tile_type, 0x06000)
+        db = _make_workload_tile(tile_type, 0x08000)
+        pl.load(a_tile, a, [0, 0])
+        pl.load(b_tile, b, [0, 0])
+        pl.load(grad_tile, grad, [0, 0])
+        start = _synced_cycle()
+        swiglu_grad_reg(a_tile, b_tile, grad_tile, da, db)
+        elapsed[0] = _synced_cycle() - start
+        pl.store(da_out, da, [0, 0])
+        pl.store(db_out, db, [0, 0])
 
 
 def fa_online_softmax(
@@ -145,6 +207,9 @@ def fa_online_softmax_kernel(
     prev_max: pl.Tensor[[1, 64], pl.DT_FP32],
     prev_sum: pl.Tensor[[1, 64], pl.DT_FP32],
     scale: pl.DT_FP32,
+    p_out: pl.Tensor[[128, 64], pl.DT_FP16, pl.Output],
+    stats_out: pl.Tensor[[3, 64], pl.DT_FP32, pl.Output],
+    elapsed: pl.Tensor[[1], pl.DT_INT64, pl.Output],
 ):
     with pl.section_vector():
         matrix_type = pl.TileType(shape=[128, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
@@ -167,6 +232,7 @@ def fa_online_softmax_kernel(
         pl.load(qk_tile, qk, [0, 0])
         pl.load(prev_max_tile, prev_max, [0, 0])
         pl.load(prev_sum_tile, prev_sum, [0, 0])
+        start = _synced_cycle()
         fa_online_softmax(
             qk_tile,
             prev_max_tile,
@@ -182,6 +248,93 @@ def fa_online_softmax_kernel(
             new_sum,
             rescale,
         )
+        elapsed[0] = _synced_cycle() - start
+        pl.store(p_out, p, [0, 0])
+        pl.store(stats_out, new_max, [0, 0])
+        pl.store(stats_out, new_sum, [1, 0])
+        pl.store(stats_out, rescale, [2, 0])
+
+
+@pl.vector_function
+def fa_online_softmax_reg(qk, prev_max, prev_sum, scale, p, new_max, new_sum, rescale):
+    """One FP32 register holds all 64 queries for a key. Reduce over pairs of keys."""
+    mask = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP32)
+    half_mask = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=pl.DT_FP16)
+
+    even_max = vf.load_align(qk, 0)
+    odd_max = vf.load_align(qk, 64)
+    for pair in pl.range(1, 64):
+        offset = pair * 128
+        even = vf.load_align(qk, offset)
+        odd = vf.load_align(qk, offset + 64)
+        even_max = vf.max(even_max, even, mask)
+        odd_max = vf.max(odd_max, odd, mask)
+
+    block_max = vf.max(even_max, odd_max, mask)
+    block_max = vf.muls(block_max, scale, mask)
+    old_max = vf.load_align(prev_max, 0)
+    maximum = vf.max(block_max, old_max, mask)
+    correction = vf.exp_sub(old_max, maximum, mask)
+    vf.store_align(new_max, maximum, mask)
+    vf.store_align(rescale, correction, mask)
+
+    even_sum = vf.full(0.0, mask)
+    odd_sum = vf.full(0.0, mask)
+    for pair in pl.range(0, 64):
+        offset = pair * 128
+        even = vf.load_align(qk, offset)
+        odd = vf.load_align(qk, offset + 64)
+        even = vf.muls(even, scale, mask)
+        odd = vf.muls(odd, scale, mask)
+        even = vf.exp_sub(even, maximum, mask)
+        odd = vf.exp_sub(odd, maximum, mask)
+        even_sum = vf.add(even_sum, even, mask)
+        odd_sum = vf.add(odd_sum, odd, mask)
+        # Each cast fills the even FP16 lanes. Pack both rows in ND order.
+        even_half = vf.astype(even, mask, dtype=pl.DT_FP16, round_mode=pl.VFRoundMode.CAST_ROUND)
+        odd_half = vf.astype(odd, mask, dtype=pl.DT_FP16, round_mode=pl.VFRoundMode.CAST_ROUND)
+        weights, _ = vf.de_interleave(even_half, odd_half)
+        vf.store_align(p, weights, half_mask, offset)
+
+    block_sum = vf.add(even_sum, odd_sum, mask)
+    old_sum = vf.load_align(prev_sum, 0)
+    scaled_sum = vf.mul(old_sum, correction, mask)
+    total = vf.add(block_sum, scaled_sum, mask)
+    vf.store_align(new_sum, total, mask)
+
+
+@pl.jit(auto_mutex=True)
+def fa_online_softmax_reg_kernel(
+    qk: pl.Tensor[[128, 64], pl.DT_FP32],
+    prev_max: pl.Tensor[[1, 64], pl.DT_FP32],
+    prev_sum: pl.Tensor[[1, 64], pl.DT_FP32],
+    scale: pl.DT_FP32,
+    p_out: pl.Tensor[[128, 64], pl.DT_FP16, pl.Output],
+    stats_out: pl.Tensor[[3, 64], pl.DT_FP32, pl.Output],
+    elapsed: pl.Tensor[[1], pl.DT_INT64, pl.Output],
+):
+    with pl.section_vector():
+        matrix_type = pl.TileType(shape=[128, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        row_type = pl.TileType(shape=[1, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
+        output_type = pl.TileType(shape=[128, 64], dtype=pl.DT_FP16, target_memory=pl.MemorySpace.Vec)
+        qk_tile = _make_workload_tile(matrix_type, 0x00000)
+        p = _make_workload_tile(output_type, 0x18000)
+        prev_max_tile = _make_workload_tile(row_type, 0x1C000)
+        prev_sum_tile = _make_workload_tile(row_type, 0x1C100)
+        new_max = _make_workload_tile(row_type, 0x1C200)
+        new_sum = _make_workload_tile(row_type, 0x1C300)
+        rescale = _make_workload_tile(row_type, 0x1C400)
+
+        pl.load(qk_tile, qk, [0, 0])
+        pl.load(prev_max_tile, prev_max, [0, 0])
+        pl.load(prev_sum_tile, prev_sum, [0, 0])
+        start = _synced_cycle()
+        fa_online_softmax_reg(qk_tile, prev_max_tile, prev_sum_tile, scale, p, new_max, new_sum, rescale)
+        elapsed[0] = _synced_cycle() - start
+        pl.store(p_out, p, [0, 0])
+        pl.store(stats_out, new_max, [0, 0])
+        pl.store(stats_out, new_sum, [1, 0])
+        pl.store(stats_out, rescale, [2, 0])
 
 
 def mhc_pre_sinkhorn(
@@ -314,6 +467,8 @@ def mhc_pre_sinkhorn_kernel(
     scale: pl.DT_FP32,
     eps: pl.DT_FP32,
     n_iter: pl.DT_INT64,
+    y_out: pl.Tensor[[16, 64], pl.DT_FP32, pl.Output],
+    elapsed: pl.Tensor[[1], pl.DT_INT64, pl.Output],
 ):
     with pl.section_vector():
         tile_type = pl.TileType(shape=[4, 64], dtype=pl.DT_FP32, target_memory=pl.MemorySpace.Vec)
@@ -349,6 +504,7 @@ def mhc_pre_sinkhorn_kernel(
         pl.load(bias1, bias, [4, 0])
         pl.load(bias2, bias, [8, 0])
         pl.load(bias3, bias, [12, 0])
+        start = _synced_cycle()
         mhc_pre_sinkhorn(
             x0,
             x1,
@@ -375,38 +531,118 @@ def mhc_pre_sinkhorn_kernel(
             y2,
             y3,
         )
+        elapsed[0] = _synced_cycle() - start
+        pl.store(y_out, y0, [0, 0])
+        pl.store(y_out, y1, [4, 0])
+        pl.store(y_out, y2, [8, 0])
+        pl.store(y_out, y3, [12, 0])
 
 
+@pytest.fixture
+def measure_vf(request):
+    def measure(kernel, *args):
+        launch = kernel[1]
+        elapsed = torch.zeros(1, dtype=torch.int64, device="npu")
+        for _ in range(10):
+            launch(*args, elapsed)
+        torch.npu.synchronize()
+
+        samples = []
+        for _ in range(101):
+            launch(*args, elapsed)
+            samples.append(elapsed.item())
+        assert min(samples) > 0, f"Invalid device counter deltas: {samples}"
+        ticks = median(samples)
+        # Ascend 950 system counter frequency is 1 GHz.
+        print(f"{request.node.name}  {ticks:g} cycles ({ticks / 1000:.4f} us), median of {len(samples)} launches")
+
+    return measure
+
+
+# Each gradient covers one FP32 [16, 128] block. Median times on Ascend 950
+# exclude GM transfers. The PyPTO run used 101 samples after 10 warmups.
+# The separate AscendC run used 200 samples, discarding 10 warmups per group.
+# Speedup is the AscendC Compute median divided by each implementation's median.
+#
+# Implementation             | Median (cycles) | Median (us) | Speedup vs AscendC
+# -------------------------- | --------------- | ----------- | ------------------
+# AscendC Compute (baseline) |             305 |       0.305 |             1.000x
+# PyPTO tile                 |             272 |       0.272 |             1.121x
+# PyPTO reg                  |             250 |       0.250 |             1.220x
+# AscendC ComputeInterleaved |             306 |       0.306 |             0.997x
+#
+# Tile, reg and Compute use separate a/b buffers. ComputeInterleaved reads
+# a and b from the two halves of each row of the packed [16, 256] input.
 @pytest.mark.soc("950")
-def test_swiglu_grad_launch():
+@pytest.mark.parametrize("kernel", [swiglu_grad_kernel, swiglu_grad_reg_kernel], ids=["tile", "reg"])
+def test_swiglu_grad_launch(kernel, measure_vf):
     torch.npu.set_device(int(os.environ.get("TILE_FWK_DEVICE_ID", "0")))
-    a = torch.randn(16, 128, dtype=torch.float32, device="npu")
-    b = torch.randn_like(a)
-    grad = torch.randn_like(a)
-    swiglu_grad_kernel[1](a, b, grad)
-    torch.npu.synchronize()
+    generator = torch.Generator().manual_seed(23)
+    a, b, grad = (torch.randn(16, 128, generator=generator) for _ in range(3))
+    a.requires_grad_()
+    b.requires_grad_()
+    expected_da, expected_db = torch.autograd.grad(torch.nn.functional.silu(a) * b, (a, b), grad)
+    da = torch.full_like(a, float("nan"), device="npu")
+    db = torch.full_like(b, float("nan"), device="npu")
+    measure_vf(kernel, a.detach().npu(), b.detach().npu(), grad.npu(), da, db)
+    torch.testing.assert_close(da.cpu(), expected_da, rtol=1e-4, atol=1e-5)
+    torch.testing.assert_close(db.cpu(), expected_db, rtol=1e-4, atol=1e-5)
 
 
+# One subsequent KV block has 128 keys x 64 queries (DN), FP32 scores and
+# [1, 64] FP32 running statistics. The score scale is 1/sqrt(128).
+# All three ran on Ascend950DT_9592 with the same input and one block per launch.
+# Medians cover 101 launches after 10 warmups, with GM transfers outside the timed interval.
+#
+# Implementation     | Median (cycles) | Median (us) | Speedup vs AscendC
+# ------------------ | --------------- | ----------- | ------------------
+# AscendC (baseline) |             397 |       0.397 |             1.000x
+# PyPTO tile         |            1420 |       1.420 |             0.280x
+# PyPTO reg          |             416 |       0.416 |             0.954x
+#
+# Tile and reg write FP16 weights in ND and use separate max/sum outputs.
+# AscendC ProcessVec1DnUpdateVF packs the weights into NZ and updates max/sum in place.
 @pytest.mark.soc("950")
-def test_fa_online_softmax_launch():
+@pytest.mark.parametrize("kernel", [fa_online_softmax_kernel, fa_online_softmax_reg_kernel], ids=["tile", "reg"])
+def test_fa_online_softmax_launch(kernel, measure_vf):
     torch.npu.set_device(int(os.environ.get("TILE_FWK_DEVICE_ID", "0")))
+    generator = torch.Generator().manual_seed(83)
     scale = 128**-0.5
-    prev_qk = torch.randn(128, 64, dtype=torch.float32, device="npu")
-    prev_scores = prev_qk * scale
+    prev_scores = torch.randn(128, 64, dtype=torch.float32, generator=generator) * scale
     prev_max = prev_scores.amax(dim=0, keepdim=True)
     prev_sum = (prev_scores - prev_max).exp().sum(dim=0, keepdim=True)
-    qk = torch.randn_like(prev_qk)
-    fa_online_softmax_kernel[1](qk, prev_max, prev_sum, scale)
-    torch.npu.synchronize()
+    qk = torch.randn(128, 64, dtype=torch.float32, generator=generator)
+    scores = qk * scale
+    new_max = torch.maximum(prev_max, scores.amax(dim=0, keepdim=True))
+    rescale = (prev_max - new_max).exp()
+    weights = (scores - new_max).exp()
+    new_sum = prev_sum * rescale + weights.sum(dim=0, keepdim=True)
+
+    p = torch.full_like(qk, float("nan"), dtype=torch.float16, device="npu")
+    stats = torch.full((3, 64), float("nan"), dtype=torch.float32, device="npu")
+    measure_vf(kernel, qk.npu(), prev_max.npu(), prev_sum.npu(), scale, p, stats)
+    torch.testing.assert_close(p.cpu(), weights.half(), rtol=1e-3, atol=0)
+    torch.testing.assert_close(stats.cpu(), torch.cat((new_max, new_sum, rescale)), rtol=1e-5, atol=1e-6)
 
 
+# One block holds 64 independent FP32 4x4 matrices, split into four [4, 64]
+# row tiles. n_iter counts Sinkhorn iterations after the initial row softmax.
+# Ascend 950 medians cover 101 launches after 10 warmups and exclude GM transfers.
+# N/A indicates a missing AscendC measurement for that iteration count.
+#
+# Implementation | n_iter | Median (cycles) | Median (us) | Speedup vs AscendC
+# -------------- | ------ | --------------- | ----------- | ------------------
+# PyPTO tile     |      0 |             595 |       0.595 |                N/A
+# PyPTO tile     |      1 |             991 |       0.991 |                N/A
+# PyPTO tile     |      8 |            3762 |       3.762 |                N/A
+# PyPTO tile     |     24 |           10096 |      10.096 |                N/A
 @pytest.mark.soc("950")
 @pytest.mark.parametrize("n_iter", [0, 1, 8, 24])
-def test_mhc_pre_sinkhorn_launch(n_iter):
+def test_mhc_pre_sinkhorn_launch(n_iter, measure_vf):
     torch.npu.set_device(int(os.environ.get("TILE_FWK_DEVICE_ID", "0")))
     # GM layout [logical row, logical column, batch], flattened to [16, 64].
     x = torch.randn(16, 64, dtype=torch.float32, device="npu")
     bias_matrix = torch.randn(4, 4, 1, dtype=torch.float32, device="npu")
     bias = bias_matrix.expand(4, 4, 64).contiguous().view(16, 64)
-    mhc_pre_sinkhorn_kernel[1](x, bias, 0.5, 1e-6, n_iter)
-    torch.npu.synchronize()
+    y = torch.empty_like(x)
+    measure_vf(mhc_pre_sinkhorn_kernel, x, bias, 0.5, 1e-6, n_iter, y)
