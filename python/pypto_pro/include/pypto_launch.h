@@ -19,13 +19,16 @@ namespace pypto {
 // The ctypes boundary cannot propagate C++ exceptions. A positive int64_t is the
 // actual block count; a negative result encodes -(kind << 32 | detail), reported
 // unchanged in Python's launch error. The detail holds either the budget (cores
-// for the Limit kinds, blocks for Request) or the ACL query's error code.
+// for the Limit kinds, blocks for Request) or the ACL error code from a failed
+// resource query, function lookup, or kernel launch.
 enum class LaunchError : uint32_t {
     CubeLimit = 1,
     VectorLimit = 2,
     CubeQuery = 3,
     VectorQuery = 4,
     Request = 5,
+    FunctionLookup = 6,
+    KernelLaunch = 7,
 };
 
 // A blockDim of 0 is the host-side "auto" sentinel: the caller did not pick a

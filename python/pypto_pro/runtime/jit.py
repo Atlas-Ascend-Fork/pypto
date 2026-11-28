@@ -1134,6 +1134,41 @@ def _generate_caller_cpp(
             launch_stmt=launch_stmt,
             block_dim_expr=block_dim_expr,
         )
+        if prof_push and not simt_kernel:
+            # ASC/ACL ArgsArray launchers emit inner default profiling nodes that
+            # hide this launcher's tensor metadata in CANN 9.3. HostArgs keeps
+            # our node associated with the task, using the same physical ABI.
+            fields = "\n".join(
+                f"        {typ + '*' if is_ptr else _scalar_launch_abi(typ, name)[0]} arg{index};"
+                for index, (typ, name, is_ptr) in enumerate(kernel_params)
+            )
+            config_setup = ""
+            config_arg = "nullptr"
+            if required_dynamic_ub_size:
+                config_setup = (
+                    "    aclrtLaunchKernelAttr pyptoLaunchAttr{};\n"
+                    "    pyptoLaunchAttr.id = ACL_RT_LAUNCH_KERNEL_ATTR_DYN_UBUF_SIZE;\n"
+                    f"    pyptoLaunchAttr.value.dynUBufSize = {required_dynamic_ub_size};\n"
+                    "    aclrtLaunchKernelCfg pyptoLaunchConfig{&pyptoLaunchAttr, 1};\n"
+                )
+                config_arg = "&pyptoLaunchConfig"
+            launch_stmt = (
+                "    aclrtFuncHandle pyptoFunction{};\n"
+                "    aclError pyptoLaunchStatus = aclrtGetFuncBySymbol(\n"
+                f"        reinterpret_cast<const void*>(&{kernel_name}), &pyptoFunction);\n"
+                "    if (pyptoLaunchStatus != ACL_SUCCESS) {\n"
+                "        return pypto::EncodeLaunchError(pypto::LaunchError::FunctionLookup, pyptoLaunchStatus);\n"
+                "    }\n"
+                "    struct {\n" + fields + "\n"
+                f"    }} pyptoLaunchArgs{{{call_args}}};\n"
+                + config_setup
+                + "    pyptoLaunchStatus = aclrtLaunchKernelWithHostArgs(\n"
+                f"        pyptoFunction, blockDim, stream, {config_arg}, "
+                "&pyptoLaunchArgs, sizeof(pyptoLaunchArgs), nullptr, 0);\n"
+                "    if (pyptoLaunchStatus != ACL_SUCCESS) {\n"
+                "        return pypto::EncodeLaunchError(pypto::LaunchError::KernelLaunch, pyptoLaunchStatus);\n"
+                "    }\n"
+            )
 
     return (
         f'{launch_include}'
@@ -2156,6 +2191,9 @@ def _launch_error_message(error_code: int, requested_block_dim: int, compiled: "
     if kind in (3, 4):
         engine = "cube" if kind == 3 else "vector"
         return f"{prefix}: querying the stream's {engine} budget failed with ACL error {detail:#x}"
+    if kind in (6, 7):
+        operation = "looking up the kernel function" if kind == 6 else "launching the kernel"
+        return f"{prefix}: {operation} failed with ACL error {detail:#x}"
     return f"{prefix} (kind={kind}, detail={detail:#x})"
 
 

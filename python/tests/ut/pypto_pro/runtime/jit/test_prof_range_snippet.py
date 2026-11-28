@@ -11,6 +11,10 @@
 
 """Generated launch metadata for live reporting and captured graph replay."""
 
+import importlib
+from pathlib import Path
+import re
+import shutil
 import subprocess
 
 import pypto_pro.language as pl
@@ -20,6 +24,7 @@ from pypto_pro.runtime.jit import (
     ParamSpec,
     _generate_caller_cpp,
     _generate_prof_range_snippet,
+    _launch_error_message,
     _parse_and_codegen_targets,
 )
 from pypto_pro.runtime.platform import NpuArch
@@ -213,7 +218,7 @@ def test_caller_embeds_metadata_around_launch_static(simt_kernel):
     push_idx = content.index("BeginCaptureTensorReport")
     launch = (
         "<<<dim3(gridX, gridY, gridZ), dim3(threadBlockX, threadBlockY, threadBlockZ), 0, stream>>>"
-        if simt_kernel else "<<<blockDim"
+        if simt_kernel else "aclrtLaunchKernelWithHostArgs("
     )
     launch_idx = content.index(launch)
     pop_idx = content.index("ReportCaptureTensorInfo")
@@ -223,7 +228,11 @@ def test_caller_embeds_metadata_around_launch_static(simt_kernel):
     assert f"pyptoProfInfo.blockNums = {block_nums};" in content
     else_idx = content.index("} else {")
     assert pop_idx < else_idx
-    assert content.count(launch) == 2
+    assert content.count(launch) == (2 if simt_kernel else 1)
+    if not simt_kernel:
+        assert push_idx < content.index("aclrtGetFuncBySymbol(") < launch_idx
+        assert content.count("<<<blockDim") == 1
+        assert "<<<blockDim" in content[else_idx:]
     assert "ReportCaptureTensorInfo" not in content[else_idx:]
     assert "{0, 2, 0, 2, {64, 64" in content   # a: input
     assert "{1, 2, 0, 2, {64, 64" in content   # out: output
@@ -260,16 +269,17 @@ def test_metadata_checks_collection_and_capture_independently():
     guard_idx = content.index("if (pyptoProfOn || pyptoCaptureOn) {")
     tensors_idx = content.index("aclprofTensor pyptoProfTensors[]")
     begin_idx = content.index("pypto::BeginCaptureTensorReport(pyptoProfOn)")
-    launch_idx = content.index("<<<blockDim")
+    lookup_idx = content.index("aclrtGetFuncBySymbol(")
+    launch_idx = content.index("aclrtLaunchKernelWithHostArgs(")
     report_idx = content.index("pypto::ReportCaptureTensorInfo")
     else_idx = content.index("} else {")
-    assert guard_idx < tensors_idx < begin_idx < launch_idx < report_idx < else_idx
+    assert guard_idx < tensors_idx < begin_idx < lookup_idx < launch_idx < report_idx < else_idx
     assert "ACL_STREAM_ATTR_CACHE_OP_INFO" in content
     assert "pyptoCaptureAttr.cacheOpInfoSwitch" in content
     assert "const bool pyptoProfOn = true;" not in content
     assert "pypto::GetProfStatus()" in content
     assert "getenv" not in content
-    assert content.count("<<<blockDim") == 2
+    assert content.count("<<<blockDim") == 1
     assert "ReportCaptureTensorInfo" not in content[else_idx:]
 
 
@@ -361,3 +371,176 @@ int main()
         (1, 0, 0, 0, 0, 1),  # A failed capture query alone does not report.
         (1, 0, 0, 0, 0, 1),  # Returning to ordinary execution must stop all metadata calls.
     ]
+
+
+@pytest.fixture(scope="module")
+def native_profiler_launcher(tmp_path_factory):
+    compiler = shutil.which("bisheng")
+    if compiler is None:
+        pytest.skip("bisheng is required to compile the physical scalar ABI")
+    root = tmp_path_factory.mktemp("profiler_host_launch")
+    (root / "acl").mkdir()
+    (root / "acl/acl_rt.h").write_text("""#pragma once
+#include <cstddef>
+#include <cstdint>
+using aclError = int32_t;
+using aclrtStream = void*;
+using aclrtFuncHandle = void*;
+constexpr int ACL_SUCCESS = 0, ACL_STREAM_ATTR_CACHE_OP_INFO = 7;
+enum aclrtDevResLimitType { ACL_RT_DEV_RES_CUBE_CORE, ACL_RT_DEV_RES_VECTOR_CORE };
+struct aclrtStreamAttrValue { bool cacheOpInfoSwitch; };
+constexpr int ACL_RT_LAUNCH_KERNEL_ATTR_DYN_UBUF_SIZE = 2;
+struct aclrtLaunchKernelAttr { int id; struct { uint32_t dynUBufSize; } value; };
+struct aclrtLaunchKernelCfg { aclrtLaunchKernelAttr* attrs; size_t numAttrs; };
+extern "C" aclError aclrtGetStreamResLimit(aclrtStream, aclrtDevResLimitType, uint32_t*);
+extern "C" aclError aclrtGetStreamAttribute(aclrtStream, int, aclrtStreamAttrValue*);
+extern "C" aclError aclrtGetFuncBySymbol(const void*, aclrtFuncHandle*);
+extern "C" aclError aclrtLaunchKernelWithHostArgs(
+    aclrtFuncHandle, uint32_t, aclrtStream, aclrtLaunchKernelCfg*, void*, size_t, void*, size_t);
+""")
+    (root / "acl/acl_prof.h").write_text("""#pragma once
+#include <cstdint>
+struct aclprofTensor { uint32_t type, format, dataType, shapeDim, shape[8]; };
+struct aclprofTensorInfo {
+    uint64_t opNameId, opTypeId;
+    uint32_t resv, tensorNum, kernelType, blockNums;
+    void* stream;
+    aclprofTensor* tensors;
+};
+uint64_t aclprofStr2Id(const char*);
+""")
+    (root / "pypto_profiler.h").write_text("""#pragma once
+namespace pypto {
+bool GetProfStatus();
+uint64_t BeginCaptureTensorReport(bool);
+void ReportCaptureTensorInfo(const aclprofTensorInfo&, uint64_t, bool);
+}
+""")
+    (root / "kernel.h").write_text("#pragma once\ninline void probe() {}\n")
+    params = [
+        ("float", "x", True), ("int8_t", "narrow", False), ("float", "scale", False),
+        ("float", "out", True), ("int64_t", "rows", False),
+    ]
+    specs = [
+        ParamSpec("x", ParamKind.TENSOR, "fp32", ["rows", 64], pl.Input),
+        ParamSpec("out", ParamKind.TENSOR, "fp32", ["rows", 64], pl.Output),
+    ]
+    target = get_jit_compile_config().resolve_kernel_target(
+        NpuArch.DAV_3510, has_cube=False, has_vector=True,
+    )
+    caller = _generate_caller_cpp(
+        params, "kernel.h", "probe", target=target, prof_param_specs=specs,
+        required_dynamic_ub_size=256,
+    )
+    # Only ordinary ASC dispatch is replaced; execute the actual profiling path.
+    caller, substitutions = re.subn(
+        r"::probe<<<[^\n]+?>>>\([^\n]+?\);", ";", caller,
+    )
+    assert substitutions == 1
+    harness = r"""
+#include <acl/acl_rt.h>
+#include <acl/acl_prof.h>
+#include "kernel.h"
+#include <cassert>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+static int lookupError, launchError;
+static uint32_t lookups, launches, reports, caches;
+extern "C" aclError aclrtGetStreamResLimit(aclrtStream stream, aclrtDevResLimitType type, uint32_t* value)
+{
+    assert(stream == reinterpret_cast<void*>(0x1234));
+    assert(type == ACL_RT_DEV_RES_VECTOR_CORE);
+    *value = 8;
+    return ACL_SUCCESS;
+}
+extern "C" aclError aclrtGetStreamAttribute(aclrtStream stream, int attr, aclrtStreamAttrValue* value)
+{
+    assert(stream == reinterpret_cast<void*>(0x1234) && attr == ACL_STREAM_ATTR_CACHE_OP_INFO);
+    value->cacheOpInfoSwitch = true;
+    return ACL_SUCCESS;
+}
+extern "C" aclError aclrtGetFuncBySymbol(const void* symbol, aclrtFuncHandle* function)
+{
+    ++lookups;
+    assert(symbol == reinterpret_cast<const void*>(&probe));
+    *function = reinterpret_cast<void*>(0x5678);
+    return lookupError;
+}
+extern "C" aclError aclrtLaunchKernelWithHostArgs(
+    aclrtFuncHandle function, uint32_t blocks, aclrtStream stream, aclrtLaunchKernelCfg* config,
+    void* args, size_t size, void* placeholders, size_t placeholderCount)
+{
+    ++launches;
+    assert(function == reinterpret_cast<void*>(0x5678) && blocks == 3);
+    assert(stream == reinterpret_cast<void*>(0x1234));
+    assert(config && config->numAttrs == 1);
+    assert(config->attrs[0].id == ACL_RT_LAUNCH_KERNEL_ATTR_DYN_UBUF_SIZE);
+    assert(config->attrs[0].value.dynUBufSize == 256);
+    assert(placeholders == nullptr && placeholderCount == 0);
+    assert(size == 5 * sizeof(uint64_t));
+    uint64_t slots[5]{};
+    std::memcpy(slots, args, size);
+    assert(slots[0] == 0x1000 && slots[3] == 0x2000);
+    assert(static_cast<int64_t>(slots[1]) == -7);
+    assert(slots[2] == 0x3fa00000 && slots[4] == 65);
+    return launchError;
+}
+uint64_t aclprofStr2Id(const char*) { return 1; }
+namespace pypto {
+bool GetProfStatus() { return true; }
+uint64_t BeginCaptureTensorReport(bool enabled) { return enabled ? 123 : 0; }
+void ReportCaptureTensorInfo(const aclprofTensorInfo& info, uint64_t begin, bool cache)
+{
+    assert(launches == 1 && launchError == 0);
+    assert(info.stream == reinterpret_cast<void*>(0x1234) && info.blockNums == 3);
+    assert(info.tensorNum == 2 && info.tensors[0].type == 0 && info.tensors[1].type == 1);
+    assert(info.tensors[0].shape[0] == 65 && info.tensors[1].shape[0] == 65);
+    reports += begin != 0;
+    caches += cache;
+}
+}
+"""
+    source = root / "launcher.cpp"
+    source.write_text(harness + caller + r"""
+int main(int argc, char** argv)
+{
+    assert(argc == 3);
+    lookupError = std::atoi(argv[1]);
+    launchError = std::atoi(argv[2]);
+    const int64_t result = call_kernel(3, reinterpret_cast<void*>(0x1234), reinterpret_cast<uint8_t*>(0x1000),
+                                       -7, 1.25f, reinterpret_cast<uint8_t*>(0x2000), 65);
+    std::printf("%lld %u %u %u %u\n", static_cast<long long>(result), lookups, launches, reports, caches);
+}
+""")
+    binary = root / "launcher"
+    include = Path(importlib.import_module("pypto_pro.runtime.jit").__file__).resolve().parents[1] / "include"
+    result = subprocess.run(
+        [compiler, "-x", "c++", "-std=c++17", "-O2",
+         f"-I{root}", f"-I{include}", str(source), "-o", str(binary)], capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    return binary
+
+
+@pytest.mark.parametrize(
+    "lookup_error,launch_error,expected,counts",
+    [
+        (0, 0, 3, (1, 1, 1, 1)),
+        (507001, 0, -((6 << 32) | 507001), (1, 0, 0, 0)),
+        (0, 507002, -((7 << 32) | 507002), (1, 1, 0, 0)),
+    ],
+)
+def test_profiler_host_launch(native_profiler_launcher, lookup_error, launch_error, expected, counts):
+    """Check the new HostArgs ABI and stop on either API failure; gates are tested above."""
+    result = subprocess.run(
+        [str(native_profiler_launcher), str(lookup_error), str(launch_error)], capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    actual, *actual_counts = map(int, result.stdout.split())
+    assert actual == expected
+    assert tuple(actual_counts) == counts
+    if expected < 0:
+        message = _launch_error_message(expected, 3, None)
+        assert f"ACL error {(lookup_error or launch_error):#x}" in message
+        assert ("looking up" if lookup_error else "launching") in message
