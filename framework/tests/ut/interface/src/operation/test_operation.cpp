@@ -831,7 +831,6 @@ TEST_F(OperationOpsTest, Squeeze_DuplicateDimensions)
     FUNCTION("SqueezeDuplicateDims", {input}) { EXPECT_THROW(Squeeze(input, dim), std::exception); }
 }
 
-// issue #3480: Reduce(ATOMIC_ADD) 收到空 aggregation 列表时应报参数错误, 而不是越界访问 iOperand[0]
 TEST_F(OperationOpsTest, Reduce_EmptyAggregation)
 {
     std::vector<Tensor> aggregation;
