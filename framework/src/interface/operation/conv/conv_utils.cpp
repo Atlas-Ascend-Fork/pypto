@@ -213,6 +213,44 @@ void ValidateL0Constraint(int64_t tile1, int64_t tile2, int64_t tile3, size_t dt
         << dim2Name << " × " << dim3Name << " × dtypesize ≤ " << cacheName << "Size(" << cacheSize << ").";
 }
 
+void CheckL0TileAlignment(int64_t tileH, int64_t tileW, int64_t tileN, int64_t tileK, int64_t k0, int64_t tileHout,
+                          int64_t tileWout, int64_t tileCout, int64_t kAL1, int64_t kBL1)
+{
+    int64_t minKL1 = std::min(kAL1, kBL1);
+    CheckAlignment(tileK, k0, "tileK");
+    CheckValueRange(tileH, "tileH", NUM1, tileHout);
+    CheckValueRange(tileW, "tileW", NUM1, tileWout);
+    CheckValueRange(tileK, "tileK", NUM1, minKL1);
+    CheckAlignment(tileN, MKN_N_VALUE, "tileL0Info.tileN");
+    CheckAlignment(tileW, MKN_N_VALUE, "tileW");
+    CheckValueRange(tileN, "tileL0Info.tileN", NUM1, ConvAlignB(tileCout, MKN_N_VALUE));
+    CHECK(ExternalError::INVALID_VAL, kAL1 % tileK == 0 && kBL1 % tileK == 0)
+        << "Invalid tileK: " << tileK << ", must be a factor of both kAL1:" << kAL1 << " and kBL1:" << kBL1;
+}
+
+void CheckL0Conv3DTileK(const Tensor& inputTensor, int64_t cin, int64_t groups, int64_t kh, int64_t kw, int64_t tileK)
+{
+    // conv3d的L0 chunk按kPerGroup做D block分解(空block由valid表达式跳过, L1刷新依赖
+    // kL0Offset % kPerGroup == 0), 要求每个L0 chunk完整落在单个kPerGroup block内,
+    // 否则chunk validK跨block多算, mmad吃进垃圾K行
+    int64_t cin0Fmap = ALIGN_SIZE_32 / BytesOf(inputTensor.GetStorage()->Datatype());
+    int64_t kPerGroup = ConvAlignB(cin / groups, cin0Fmap) * kh * kw;
+    CHECK(ExternalError::INVALID_VAL, kPerGroup % tileK == 0)
+        << "Invalid tileK: " << tileK << ", must be a factor of kPerGroup:" << kPerGroup
+        << " (L0 chunk must not cross kPerGroup block boundary for conv3d).";
+}
+
+void CheckL0BufferSize(DataType outType, int64_t tileH, int64_t tileW, int64_t tileN, int64_t tileK)
+{
+    Platform& platform = Platform::Instance();
+    size_t l0aSize = platform.GetAICCore().GetMemorySize(MemoryType::MEM_L0A);
+    size_t l0bSize = platform.GetAICCore().GetMemorySize(MemoryType::MEM_L0B);
+    size_t l0cSize = platform.GetAICCore().GetMemorySize(MemoryType::MEM_L0C);
+    ValidateL0Constraint(tileH, tileW, tileK, BytesOf(outType), l0aSize, "L0A", "tileH", "tileW", "tileK");
+    ValidateL0Constraint(tileK, tileN, 1, BytesOf(outType), l0bSize, "L0B", "tileK", "tileN", "");
+    ValidateL0Constraint(tileH, tileW, tileN, BytesOf(DataType::DT_FP32), l0cSize, "L0C", "tileH", "tileW", "tileN");
+}
+
 void CheckL0TileTiling(DataType outType, const ConvAttrParam& attrParam, const Tensor& weightTensor,
                        const Tensor& inputTensor)
 {
@@ -241,36 +279,19 @@ void CheckL0TileTiling(DataType outType, const ConvAttrParam& attrParam, const T
         numTileL0 *= dout;
         oriK *= kd;
     }
-    if (numTileL0 * CeilDiv(oriK, tileK) > MAX_LOOP) {
-        CONV_LOGW("Suggestion: Consider increasing tile size to reduce compilation time.");
+    int64_t numKLoop = CeilDiv(oriK, tileK);
+    int64_t totalLoop = numTileL0 * numKLoop;
+    if (totalLoop > MAX_LOOP) {
+        CONV_LOGW("Tile loop count %ld exceeds MAX_LOOP threshold %d, numTileL0: %ld, kLoopCount: %ld, "
+                  "tileH: %ld, tileW: %ld, tileN: %ld, tileK: %ld. "
+                  "Suggestion: Consider increasing tile size to reduce compilation time.",
+                  totalLoop, MAX_LOOP, numTileL0, numKLoop, tileH, tileW, tileN, tileK);
     }
-    int64_t minKL1 = std::min(kAL1, kBL1);
-    CheckAlignment(tileK, k0, "tileK");
-    CheckValueRange(tileH, "tileH", NUM1, tileHout);
-    CheckValueRange(tileW, "tileW", NUM1, tileWout);
-    CheckValueRange(tileK, "tileK", NUM1, minKL1);
-    CheckAlignment(tileN, MKN_N_VALUE, "tileL0Info.tileN");
-    CheckAlignment(tileW, MKN_N_VALUE, "tileW");
-    CheckValueRange(tileN, "tileL0Info.tileN", NUM1, ConvAlignB(tileCout, MKN_N_VALUE));
-    CHECK(ExternalError::INVALID_VAL, kAL1 % tileK == 0 && kBL1 % tileK == 0)
-        << "Invalid tileK: " << tileK << ", must be a factor of both kAL1:" << kAL1 << " and kBL1:" << kBL1;
+    CheckL0TileAlignment(tileH, tileW, tileN, tileK, k0, tileHout, tileWout, tileCout, kAL1, kBL1);
     if (attrParam.isConv3D) {
-        // conv3d的L0 chunk按kPerGroup做D block分解(空block由valid表达式跳过, L1刷新依赖
-        // kL0Offset % kPerGroup == 0), 要求每个L0 chunk完整落在单个kPerGroup block内,
-        // 否则chunk validK跨block多算, mmad吃进垃圾K行
-        int64_t cin0Fmap = ALIGN_SIZE_32 / BytesOf(inputTensor.GetStorage()->Datatype());
-        int64_t kPerGroup = ConvAlignB(cin / groups, cin0Fmap) * kh * kw;
-        CHECK(ExternalError::INVALID_VAL, kPerGroup % tileK == 0)
-            << "Invalid tileK: " << tileK << ", must be a factor of kPerGroup:" << kPerGroup
-            << " (L0 chunk must not cross kPerGroup block boundary for conv3d).";
+        CheckL0Conv3DTileK(inputTensor, cin, groups, kh, kw, tileK);
     }
-    Platform& platform = Platform::Instance();
-    size_t l0aSize = platform.GetAICCore().GetMemorySize(MemoryType::MEM_L0A);
-    size_t l0bSize = platform.GetAICCore().GetMemorySize(MemoryType::MEM_L0B);
-    size_t l0cSize = platform.GetAICCore().GetMemorySize(MemoryType::MEM_L0C);
-    ValidateL0Constraint(tileH, tileW, tileK, BytesOf(outType), l0aSize, "L0A", "tileH", "tileW", "tileK");
-    ValidateL0Constraint(tileK, tileN, 1, BytesOf(outType), l0bSize, "L0B", "tileK", "tileN", "");
-    ValidateL0Constraint(tileH, tileW, tileN, BytesOf(DataType::DT_FP32), l0cSize, "L0C", "tileH", "tileW", "tileN");
+    CheckL0BufferSize(outType, tileH, tileW, tileN, tileK);
 }
 
 void CheckDivisible(int64_t value, int64_t divisor, const std::string& valueName, const std::string& divisorName)
