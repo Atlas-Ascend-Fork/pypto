@@ -1362,19 +1362,27 @@ void MixGraphMerger::BuildRootLevelEdges(const std::set<int>& prodRoots, const s
     }
 }
 
+void MixGraphMerger::CollectRootCoreKinds(const std::unordered_set<int>& roots,
+                                          std::unordered_map<int, std::pair<bool, bool>>& rootCoreKinds)
+{
+    // root 级核构成: 按 union-find 集合聚合 AIC/AIV op 数。同通路门控(IsMixRoot)与
+    // 直连门控(rootCoreKinds)共用此判据, 判据变更只改此处, 防止两门控结论分叉。
+    for (int sg = 0; sg < mInput.numSubgraph; ++sg) {
+        const int root = FindParent(sg);
+        if (roots.count(root) > 0) {
+            auto& [hasAIC, hasAIV] = rootCoreKinds[root];
+            hasAIC = hasAIC || mInput.subgraphAICOpNum[sg] > 0;
+            hasAIV = hasAIV || mInput.subgraphAIVOpNum[sg] > 0;
+        }
+    }
+}
+
 void MixGraphMerger::CollectStructuralPattern(const std::vector<int>& actualGroup,
                                               const std::unordered_set<int>& mergedRoot, StructuralPattern& pattern)
 {
     // root 级核构成(纯C/纯V/混合): 混合 root 的跨核串行化代价已沉没, 无干净两核并行可牺牲,
     // 涉及混合 root 的边不触发直连门; 纯 C root <-> 纯 V root 的边按候选组汇总直连收益。
-    for (int sg = 0; sg < mInput.numSubgraph; ++sg) {
-        const int root = FindParent(sg);
-        if (mergedRoot.count(root) > 0) {
-            auto& [hasAIC, hasAIV] = pattern.rootCoreKinds[root];
-            hasAIC = hasAIC || mInput.subgraphAICOpNum[sg] > 0;
-            hasAIV = hasAIV || mInput.subgraphAIVOpNum[sg] > 0;
-        }
-    }
+    CollectRootCoreKinds(mergedRoot, pattern.rootCoreKinds);
     ++mVisitStamp;
     for (int root : actualGroup) {
         for (int tensorId : mRootToBoundaryTensorIds[root]) {
@@ -1735,18 +1743,18 @@ bool MixGraphMerger::IsLoopPathMixed(const std::vector<int>& actualGroup)
     return false;
 }
 
-bool MixGraphMerger::CheckLoopPathConsistency(const std::vector<int>& actualGroup)
+bool MixGraphMerger::IsMixRoot(int root)
 {
-    // 同通路门控(carry 约束原则的语义化实现):
-    // 候选组内 loop-carry 通路归属混杂时, 逐对校验"集合不同的成员对"的归类 ——
-    //   全体集合相同(含全空): 链内/普通合并, 串行性原本就存在, 放行;
-    //   混杂 + 成员对共环(集合相交): 同环多链, 链内合并, 放行;
-    //   混杂 + 环外(空集)挂靠与跨环(非空不相交): 一律拒绝 —— 数据边只约束执行次序,
-    //     防不住重计算被吸进环的每迭代串行链(glm PATH2 实证);
-    //     融合两个独立 loop body 破坏 slot-scope 循环体完整性(两环 trip count 可不同),
-    //     串行链拖住并行体(mla 独立分支与脊柱融合 e2e +244% 实证)。
-    // 贪心合并按邻接展开, 非邻接的独立分支不会进入候选组, 该判据与合并动态自洽。
-    // subgraphLoopPaths 为空向量表示前端无 slot scope/feedback slot, 门控不启用。
+    std::unordered_map<int, std::pair<bool, bool>> coreKinds;
+    CollectRootCoreKinds({root}, coreKinds);
+    const auto it = coreKinds.find(root);
+    return it != coreKinds.end() && it->second.first && it->second.second;
+}
+
+bool MixGraphMerger::CheckLoopPathConsistency(const std::vector<int>& actualGroup, bool allowSinkMerge)
+{
+    // 环外挂靠推迟到 sink 轮，仅允许收敛后直接相连的一对一 Mix root。
+    // 不同 carry 环之间仍需要通过共环检查。
     if (mRootLoopPaths.empty()) {
         return true;
     }
@@ -1760,11 +1768,18 @@ bool MixGraphMerger::CheckLoopPathConsistency(const std::vector<int>& actualGrou
             if (pathsA == pathsB) {
                 continue;
             }
-            // 环外(空集)成员挂靠一律拒绝(无论有无数据边); 非空不相交(跨环)即使有数据边也拒绝:
-            // 融合两个独立 loop body 破坏 slot-scope 循环体完整性(两环 trip count 可不同);
-            // 数据边只约束执行次序, 防不住重计算被吸进环的每迭代串行链(glm PATH2 实证)
             if (HasSharedLoopPath(pathsA, pathsB)) {
                 continue;
+            }
+            if (allowSinkMerge && actualGroup.size() == 2 && pathsA.empty() != pathsB.empty()) {
+                const int feeder = pathsA.empty() ? actualGroup[i] : actualGroup[j];
+                const int carry = pathsA.empty() ? actualGroup[j] : actualGroup[i];
+                const auto& successors = mCachedOutGraph[feeder];
+                const auto& predecessors = mCachedInGraph[carry];
+                if (successors.size() == 1 && successors.count(carry) > 0 && predecessors.size() == 1 &&
+                    predecessors.count(feeder) > 0 && IsMixRoot(feeder) && IsMixRoot(carry)) {
+                    continue;
+                }
             }
             APASS_LOG_DEBUG_F(Elements::Operation,
                               "Merge skipped: loop-carry path mismatch inside group [%s] "
@@ -1782,7 +1797,7 @@ bool MixGraphMerger::CanMergeWithConstraints(const std::vector<int>& actualGroup
         APASS_LOG_DEBUG_F(Elements::Operation, "Merge skipped: already merged.");
         return false;
     }
-    if (!CheckLoopPathConsistency(actualGroup)) {
+    if (!CheckLoopPathConsistency(actualGroup, allowSinkMerge)) {
         return false;
     }
     if (!CanMergeWithoutCycle(actualGroup)) {

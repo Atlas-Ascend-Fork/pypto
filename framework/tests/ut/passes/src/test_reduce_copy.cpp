@@ -1377,6 +1377,54 @@ TEST_F(ReduceCopyTest, MixGraphMerger_LoopPathConsistencyCrossRingDataEdgeReject
     EXPECT_FALSE(merger.CheckLoopPathConsistency({0, 1}));
 }
 
+TEST_F(ReduceCopyTest, Merge_LoopPathSinkAllowsOnlyOneToOneMixAttachment)
+{
+    auto input = BuildSimpleMergeInput(2, {{1}, {}}, {{0, 1}});
+    input.isEnforceMergeGroup = {false};
+    input.subgraphLoopPaths = {{}, {7}};
+    input.boundaryTensors = {{100, {0}, {1}, true, {}, {}}};
+    input.subgraphToBoundaryTensorIds = {{0}, {0}};
+    MixGraphMerger merger;
+    merger.Initialize(input);
+    EXPECT_FALSE(merger.CheckLoopPathConsistency({0, 1}, false));
+    EXPECT_EQ(merger.Merge(input).numSubgraphUpdated, 1);
+
+    input.subgraphAICOpNum[1] = 0;
+    input.subgraphAICLatency[1] = 0;
+    MixGraphMerger pureCarryMerger;
+    EXPECT_EQ(pureCarryMerger.Merge(input).numSubgraphUpdated, 2);
+}
+
+TEST_F(ReduceCopyTest, LoopPathSinkChecksCurrentRootTopologyAndCoreKinds)
+{
+    auto input = BuildSimpleMergeInput(3, {{1, 2}, {2}, {}}, {});
+    input.subgraphLoopPaths = {{}, {}, {7}};
+    input.subgraphAIVOpNum[0] = 0;
+    input.subgraphAICOpNum[1] = 0;
+    MixGraphMerger merger;
+    merger.Initialize(input);
+    EXPECT_FALSE(merger.CheckLoopPathConsistency({0, 2}, true));
+    EXPECT_FALSE(merger.CheckLoopPathConsistency({1, 2}, true));
+    merger.PerformMerge({0, 1});
+    EXPECT_TRUE(merger.CheckLoopPathConsistency({0, 2}, true));
+
+    // 方向校验隔离: 0->1->2 直链中校 {0,2}, feeder 唯一后继与 carry 唯一前驱均为第三者,
+    // size 检查双过而 count 检查双败; count 被误删时此断言转真报警
+    auto detourInput = BuildSimpleMergeInput(3, {{1}, {2}, {}}, {});
+    detourInput.subgraphLoopPaths = {{}, {}, {7}};
+    MixGraphMerger detourMerger;
+    detourMerger.Initialize(detourInput);
+    EXPECT_FALSE(detourMerger.CheckLoopPathConsistency({0, 2}, true));
+
+    // feeder 侧核构成隔离: 拓扑满足独占直连但 feeder 纯 C(AIV op=0), 须由 IsMixRoot(feeder) 拦截
+    auto pureFeederInput = BuildSimpleMergeInput(2, {{1}, {}}, {});
+    pureFeederInput.subgraphLoopPaths = {{}, {7}};
+    pureFeederInput.subgraphAIVOpNum[0] = 0;
+    MixGraphMerger pureFeederMerger;
+    pureFeederMerger.Initialize(pureFeederInput);
+    EXPECT_FALSE(pureFeederMerger.CheckLoopPathConsistency({0, 1}, true));
+}
+
 // Ten independent branches are enough to exceed 8 * (hinge + branchMax).
 static constexpr int kWideFanoutBranchCount = 10;
 

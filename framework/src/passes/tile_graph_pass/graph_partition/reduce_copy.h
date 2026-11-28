@@ -69,7 +69,6 @@ struct MergeInput {
     std::vector<std::vector<int>> subgraphToBoundaryTensorIds;
     // 每个 sg 所属的 feedback loop-carry 通路集合(空=不在任何环路上), 通路按"环"归类:
     // 共享子图的多条 slot 链属同一环(如 online softmax 的 out/sum/max), 同环内可互相合并。
-    // 环路上的 sg 只允许与"通路归属完全相同"的 sg 合并, 防止通路外分支被吞进 carry 链。
     // 空向量 = 前端无 slot scope / 无 feedback slot, 门控不启用。
     std::vector<std::set<int>> subgraphLoopPaths;
 };
@@ -134,7 +133,9 @@ private:
     bool CheckLatencyConstraint(const std::vector<int>& actualGroup);
     // 候选组内 loop-carry 通路集合是否混杂(存在与首个 root 通路集合不同的成员)
     bool IsLoopPathMixed(const std::vector<int>& actualGroup);
-    bool CheckLoopPathConsistency(const std::vector<int>& actualGroup);
+    bool CheckLoopPathConsistency(const std::vector<int>& actualGroup, bool allowSinkMerge = false);
+    // root 是否混合核构成, 判据与直连门控的 rootCoreKinds 同源(CollectRootCoreKinds)
+    bool IsMixRoot(int root);
     // Tensor topology and endpoint-level direct-path evidence for one candidate.
     struct StructuralPattern {
         // root 级核构成(纯C/纯V/混合): 混合 root 的跨核代价已沉没, 不触发直连门
@@ -148,6 +149,8 @@ private:
         bool hasDirectPathEdge{false};
         bool hasCrossCoreEdge{false};
     };
+    void CollectRootCoreKinds(const std::unordered_set<int>& roots,
+                              std::unordered_map<int, std::pair<bool, bool>>& rootCoreKinds);
     void CollectStructuralPattern(const std::vector<int>& actualGroup, const std::unordered_set<int>& mergedRoot,
                                   StructuralPattern& pattern);
     // 单个 boundary tensor 的 op 级跨核端点对收集: 填充 directConsumersByRoot/directPathRootPairs
