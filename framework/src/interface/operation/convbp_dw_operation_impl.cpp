@@ -104,7 +104,7 @@ LogicalTensorPtr ConstructDwInputTile(Function& function, const ConvBpGraphNodes
     load3dOpBl0.SetAttribute(OpAttributeKey::strideW, convBpAttrParam.strides[2]);
     load3dOpBl0.SetAttribute(OpAttributeKey::dilationH, convBpAttrParam.dilations[1]);
     load3dOpBl0.SetAttribute(OpAttributeKey::dilationW, convBpAttrParam.dilations[2]);
-    CONV_LOGW("postM=%ld, postK=%ld, filterH=%ld, filterW=%ld, strideH=%ld, strideW=%ld, dilationH=%ld, dilationW=%ld",
+    CONV_LOGD("postM=%ld, postK=%ld, filterH=%ld, filterW=%ld, strideH=%ld, strideW=%ld, dilationH=%ld, dilationW=%ld",
               (iterInfo.kL0Offset - iterInfo.kL1Offset), iterInfo.nL0Offset, convBpTileInfo.orgKh, convBpTileInfo.orgKw,
               convBpAttrParam.strides[1], convBpAttrParam.strides[2], convBpAttrParam.dilations[1],
               convBpAttrParam.dilations[2]);
@@ -117,19 +117,19 @@ LogicalTensorPtr ConstructDwInputTile(Function& function, const ConvBpGraphNodes
     load3dOpBl0.SetAttribute(OpAttributeKey::paddingTop, iterInfo.hinL1Offset < 0 ? 0 - iterInfo.hinL1Offset : 0);
     load3dOpBl0.SetAttribute(OpAttributeKey::paddingBottom,
                              endHin > convBpTileInfo.orgHin ? endHin - convBpTileInfo.orgHin : 0);
-    CONV_LOGW("hinL1Offset=%ld, endHin=%ld", iterInfo.hinL1Offset, endHin);
+    CONV_LOGD("hinL1Offset=%ld, endHin=%ld", iterInfo.hinL1Offset, endHin);
 
     int64_t endWin = iterInfo.winL1Offset + (iterInfo.woutL1Size - 1) * convBpAttrParam.strides[2] + kwDilated;
     load3dOpBl0.SetAttribute(OpAttributeKey::paddingLeft, iterInfo.winL1Offset < 0 ? 0 - iterInfo.winL1Offset : 0);
     load3dOpBl0.SetAttribute(OpAttributeKey::paddingRight,
                              endWin > convBpTileInfo.orgWin ? endWin - convBpTileInfo.orgWin : 0);
-    CONV_LOGW("winL1Offset=%ld, endWin=%ld", iterInfo.winL1Offset, endWin);
+    CONV_LOGD("winL1Offset=%ld, endWin=%ld", iterInfo.winL1Offset, endWin);
 
     load3dOpBl0.SetAttribute(OpAttributeKey::padValue, 0);
     load3dOpBl0.SetAttribute(OpAttributeKey::repeatStride, iterInfo.repeatStride);
     load3dOpBl0.SetAttribute(OpAttributeKey::repeatTime, iterInfo.repeatTime);
     load3dOpBl0.SetAttribute(OpAttributeKey::wStride, iterInfo.wStride);
-    CONV_LOGW("repeatStride=%ld, repeatTime=%ld, wStride=%ld", iterInfo.repeatStride, iterInfo.repeatTime,
+    CONV_LOGD("repeatStride=%ld, repeatTime=%ld, wStride=%ld", iterInfo.repeatStride, iterInfo.repeatTime,
               iterInfo.wStride);
     return dstBL0TensorPtr;
 }
@@ -287,7 +287,7 @@ void UpdateDwKL1IterInfo(const ConvBpTileInfo& convBpTileInfo, ConvBpIterInfo& c
     } else {
         convBpIterInfo.kL1Size = std::min(convBpTileInfo.orgHoutWout - convBpIterInfo.kL1Offset, convBpTileInfo.kL1);
     }
-    CONV_LOGW("kL1Size=%ld", convBpIterInfo.kL1Size);
+    CONV_LOGD("kL1Size=%ld", convBpIterInfo.kL1Size);
 
     convBpIterInfo.houtL1Offset = convBpIterInfo.kL1Offset / convBpTileInfo.orgWout;
     convBpIterInfo.houtL1Size = CeilDiv(convBpIterInfo.kL1Size, convBpTileInfo.orgWout);
@@ -301,7 +301,7 @@ void UpdateDwKL1IterInfo(const ConvBpTileInfo& convBpTileInfo, ConvBpIterInfo& c
     } else {
         convBpIterInfo.hinL1Size = 0;
     }
-    CONV_LOGW("hinL1Offset=%ld, endHinOffset=%ld, hinL1Size=%ld", convBpIterInfo.hinL1Offset, endHinOffset,
+    CONV_LOGD("hinL1Offset=%ld, endHinOffset=%ld, hinL1Size=%ld", convBpIterInfo.hinL1Offset, endHinOffset,
               convBpIterInfo.hinL1Size);
 
     convBpIterInfo.woutL1Offset = convBpIterInfo.kL1Offset % convBpTileInfo.orgWout;
@@ -317,7 +317,7 @@ void UpdateDwKL1IterInfo(const ConvBpTileInfo& convBpTileInfo, ConvBpIterInfo& c
         convBpIterInfo.winL1Size = 0;
     }
 
-    CONV_LOGW("winL1Offset=%ld, endWinOffset=%ld, winL1Size=%ld", convBpIterInfo.winL1Offset, endWinOffset,
+    CONV_LOGD("winL1Offset=%ld, endWinOffset=%ld, winL1Size=%ld", convBpIterInfo.winL1Offset, endWinOffset,
               convBpIterInfo.winL1Size);
 }
 
@@ -351,7 +351,7 @@ void IterKExpandFunc(Function& function, ConvBpIterInfo& convBpIterInfo, ConvBpT
                 } else {
                     convBpIterInfo.kL0Size = std::min(kLimit - convBpIterInfo.kL0Offset, convBpTileInfo.kL0);
                 }
-                CONV_LOGW("kL0Size=%ld", convBpIterInfo.kL0Size);
+                CONV_LOGD("kL0Size=%ld", convBpIterInfo.kL0Size);
 
                 bool isLastK = (convBpIterInfo.batchDoutOffset == convBpTileInfo.orgBatchDout - 1) &&
                                (convBpIterInfo.kL0Offset + convBpIterInfo.kL0Size >= convBpTileInfo.orgHoutWout);
@@ -656,7 +656,9 @@ void FilterCheckTileTiling(DataType outType, const Tensor& gradOutputTensor, con
                         CeilDiv(cinPerGroup * kh * kw, tileNL0);
     numTileL0 *= CeilDiv(hout * wout, tileKL0);
     if (numTileL0 > Conv::MAX_LOOP) {
-        CONV_LOGW("Suggestion: Consider increasing tile size to reduce compilation time.");
+        CONV_LOGW("numTileL0=%ld exceeds MAX_LOOP=%d, tileML0=%ld, tileKL0=%ld, tileNL0=%ld, "
+                  "consider increasing tile size to reduce compilation time.",
+                  numTileL0, Conv::MAX_LOOP, tileML0, tileKL0, tileNL0);
     }
 
     Platform& platform = Platform::Instance();
