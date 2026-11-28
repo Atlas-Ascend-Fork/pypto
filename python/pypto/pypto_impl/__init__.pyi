@@ -10,7 +10,7 @@
 # -----------------------------------------------------------------------------------------------------------
 import enum
 from types import UnionType
-from typing import Any, Iterator, overload, Union, List, Dict, Tuple, Optional, NoReturn
+from typing import Any, Iterator, overload, Union, List, Dict, Tuple, Optional, NoReturn, Sequence
 
 from . import codegen, dist, ir
 
@@ -827,6 +827,14 @@ def BatchMatmul(dtype: DataType, a: Tensor, b: Tensor, a_trans: bool = False, b_
                  c_matrix_nz: bool = False, extend_params: MatmulExtendParam = ...) -> Tensor: ...
 
 
+def gather_in_l1(src: Tensor, indices: Tensor, blockTable: Tensor, blockSize: int,
+                 size: int, is_b_matrix: bool, is_trans: bool) -> Tensor: ...
+
+
+def gather_in_ub(param: Tensor, indices: Tensor, blockTable: Tensor,
+                 blockSize: int, axis: int) -> Tensor: ...
+
+
 @overload
 def BatchMatmulMX(dtype: DataType, a: Tensor, aScale: Tensor, b: Tensor, bScale: Tensor, a_trans: bool = False,
              a_scale_trans: bool = False, b_trans: bool = False, b_scale_trans: bool = False,
@@ -849,6 +857,257 @@ def Assemble(a: Tensor, offset: List[SymbolicScalar], dst: Tensor, parallel: boo
 
 
 def AtomicRMW(src: Tensor, offsets: List[SymbolicScalar], dst: Tensor, mode: AtomicRMWMode) -> None: ...
+
+
+# vector operations
+def Axpy(y: Tensor, x: Tensor, alpha: float = 1.0) -> Tensor: ...
+
+
+def Hypot(a: Tensor, b: Tensor) -> Tensor: ...
+
+
+def Fmod(a: Tensor, b: Union[Tensor, Element],
+         precision_type: PrecisionType = PrecisionType.HIGH_PRECISION) -> Tensor: ...
+
+
+def Gcd(a: Tensor, b: Union[Tensor, Element]) -> Tensor: ...
+
+
+def LReLU(a: Tensor, alpha: Element) -> Tensor: ...
+
+
+def BitwiseAnd(a: Tensor, b: Union[Tensor, Element]) -> Tensor: ...
+
+
+def BitwiseOr(a: Tensor, b: Union[Tensor, Element]) -> Tensor: ...
+
+
+def BitwiseXor(a: Tensor, b: Union[Tensor, Element]) -> Tensor: ...
+
+
+def BitwiseNot(a: Tensor) -> Tensor: ...
+
+
+@overload
+def BitwiseLeftShift(a: Tensor, b: Tensor) -> Tensor: ...
+
+
+@overload
+def BitwiseLeftShift(a: Tensor, b: Element) -> Tensor: ...
+
+
+@overload
+def BitwiseLeftShift(a: Element, b: Tensor) -> Tensor: ...
+
+
+@overload
+def BitwiseRightShift(a: Tensor, b: Tensor) -> Tensor: ...
+
+
+@overload
+def BitwiseRightShift(a: Tensor, b: Element) -> Tensor: ...
+
+
+@overload
+def BitwiseRightShift(a: Element, b: Tensor) -> Tensor: ...
+
+
+def ExpandExpDif(a: Tensor, b: Tensor) -> Tensor: ...
+
+
+def Erf(a: Tensor) -> Tensor: ...
+
+
+def Digamma(a: Tensor) -> Tensor: ...
+
+
+def Sin(a: Tensor) -> Tensor: ...
+
+
+def Cos(a: Tensor) -> Tensor: ...
+
+
+def Sinh(a: Tensor) -> Tensor: ...
+
+
+def Cosh(a: Tensor) -> Tensor: ...
+
+
+def ASinh(a: Tensor) -> Tensor: ...
+
+
+def ACosh(a: Tensor) -> Tensor: ...
+
+
+def Atan(a: Tensor) -> Tensor: ...
+
+
+def Atan2(y: Tensor, x: Tensor) -> Tensor: ...
+
+
+def Asin(a: Tensor) -> Tensor: ...
+
+
+def Acos(a: Tensor) -> Tensor: ...
+
+
+def Atanh(a: Tensor) -> Tensor: ...
+
+
+def Sign(a: Tensor) -> Tensor: ...
+
+
+def Signbit(a: Tensor) -> Tensor: ...
+
+
+def Tanh(a: Tensor) -> Tensor: ...
+
+
+def Relu(a: Tensor) -> Tensor: ...
+
+
+def Log1p(a: Tensor) -> Tensor: ...
+
+
+def FloorDiv(a: Tensor, b: Union[Tensor, Element]) -> Tensor: ...
+
+
+def CeilDiv(a: Tensor, b: Union[Tensor, Element]) -> Tensor: ...
+
+
+def PReLU(a: Tensor, weight: Tensor) -> Tensor: ...
+
+
+def CopySign(a: Tensor, b: Tensor) -> Tensor: ...
+
+
+def LogicalNot(a: Tensor) -> Tensor: ...
+
+
+def LogicalAnd(a: Tensor, b: Tensor) -> Tensor: ...
+
+
+@overload
+def Clip(a: Tensor, min: Tensor, max: Tensor) -> Tensor: ...
+
+
+@overload
+def Clip(a: Tensor, min: Element, max: Element) -> Tensor: ...
+
+
+def cumsum(a: Tensor, axis: int) -> Tensor: ...
+
+
+def cumprod(a: Tensor, axis: int) -> Tensor: ...
+
+
+def TriU(a: Tensor, diagonal: Union[int, SymbolicScalar]) -> Tensor: ...
+
+
+def TriL(a: Tensor, diagonal: Union[int, SymbolicScalar]) -> Tensor: ...
+
+
+def isfinite(a: Tensor) -> Tensor: ...
+
+
+def isnan(a: Tensor) -> Tensor: ...
+
+
+def Range(start: Element, end: Element, step: Element) -> Tensor: ...
+
+
+def Sum(operand: Tensor, axis: int = -1, keepDim: bool = False) -> Tensor: ...
+
+
+def Prod(operand: Tensor, axis: int = -1, keepDim: bool = False) -> Tensor: ...
+
+
+def Var(input: Tensor, dim: Sequence[int] = ..., correction: float = 1.0,
+        keepDim: bool = False) -> Tensor: ...
+
+
+@overload
+def Compare(operand1: Tensor, operand2: Tensor, operation: OpType, mode: OutType) -> Tensor: ...
+
+
+@overload
+def Compare(operand: Tensor, scalar: Element, operation: OpType, mode: OutType) -> Tensor: ...
+
+
+@overload
+def Compare(scalar: Element, operand: Tensor, operation: OpType, mode: OutType) -> Tensor: ...
+
+
+def TopK(operand: Tensor, k: int, axis: int, islargest: bool = True,
+         algo: TopKAlgo = TopKAlgo.MERGE_SORT) -> Tuple[Tensor, Tensor]: ...
+
+
+def ArgSort(operand: Tensor, axis: int, descending: bool = False) -> Tensor: ...
+
+
+def Sort32(operand: Tensor, index: int) -> Tensor: ...
+
+
+def MrgSort(operand: Tensor, mergesize: int) -> Tensor: ...
+
+
+def Cat(tensors: Sequence[Tensor], axis: int) -> Tensor: ...
+
+
+def Interleave(self: Tensor, other: Tensor) -> Tuple[Tensor, Tensor]: ...
+
+
+@overload
+def DeInterleave(self: Tensor) -> Tuple[Tensor, Tensor]: ...
+
+
+@overload
+def DeInterleave(self: Tensor, other: Tensor) -> Tuple[Tensor, Tensor]: ...
+
+
+def Pack(a: Tensor) -> Tensor: ...
+
+
+def UnPack(a: Tensor, dtype: DataType) -> Tensor: ...
+
+
+def Pad(input: Tensor, pad: Sequence[int], mode: str = "constant", value: Element = ...) -> Tensor: ...
+
+
+def FillPad(input: Tensor, mode: str = "constant", value: Element = ...) -> Tensor: ...
+
+
+def OneHot(a: Tensor, numClasses: int) -> Tensor: ...
+
+
+def Quantize(input: Tensor, scale: Tensor, otype: DataType, axis: int,
+             zero_points: Tensor = ...) -> Tensor: ...
+
+
+def Dequantize(input: Tensor, scale: Tensor, otype: DataType, axis: int,
+               zero_points: Tensor = ...) -> Tensor: ...
+
+
+def IndexPut_(a: Tensor, indices: Sequence[Tensor], values: Tensor,
+              accumulate: bool) -> None: ...
+
+
+def IndexAddUB(self: Tensor, src: Tensor, indices: Tensor, axis: int,
+               alpha: Element = ...) -> Tensor: ...
+
+
+def IndexAdd_(self: Tensor, src: Tensor, indices: Tensor, axis: int,
+              alpha: Element = ...) -> None: ...
+
+
+def GatherElements(a: Tensor, indices: Tensor, axis: int) -> Tensor: ...
+
+
+def GatherMask(a: Tensor, patternMode: int) -> Tensor: ...
+
+
+def ScatterUpdate(dst: Tensor, index: Tensor, src: Tensor, axis: int = -2,
+                  cacheMode: str = "PA_BNSD", chunkSize: int = 1) -> Tensor: ...
 
 # pass config
 class PassConfigKey(enum.Enum):

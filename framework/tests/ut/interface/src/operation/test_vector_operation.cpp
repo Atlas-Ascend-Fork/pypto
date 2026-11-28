@@ -2141,7 +2141,6 @@ TEST_F(VectorOperationTest, NanScalarModesAndConstants)
     }
 }
 
-// issue #3481: 双 Tensor 位移在广播场景(输入维度不同)下用原始操作数推导结果有效形状, 越界访问 DynValidShape
 TEST_F(VectorOperationTest, test_BitwiseRightShift_BroadcastDimMismatch)
 {
     TileShape::Current().SetVecTile(4, 4);
