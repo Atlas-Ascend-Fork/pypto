@@ -206,8 +206,11 @@ void BpCheckL0TileTiling(DataType outType, const ConvBpAttrParam& attrParam, con
         kAlignL1 *= kd;
         oriK *= kd;
     }
-    if (numTileL0 * CeilDiv(oriK, tileKL0) > Conv::MAX_LOOP) {
-        CONV_LOGW("Suggestion: Consider increasing tile size to reduce compilation time.");
+    int64_t tileLoop = numTileL0 * CeilDiv(oriK, tileKL0);
+    if (tileLoop > Conv::MAX_LOOP) {
+        CONV_LOGW("tileLoop=%ld exceeds MAX_LOOP=%d, tileML0=%ld, tileKL0=%ld, tileNL0=%ld, "
+                  "consider increasing tile size to reduce compilation time.",
+                  tileLoop, Conv::MAX_LOOP, tileML0, tileKL0, tileNL0);
     }
 
     CheckValueRange(tileML0, "tileML0", NUM1, ConvAlignB(tileML1, Conv::MKN_N_VALUE));
