@@ -4472,3 +4472,69 @@ def test_vf_for_wraps_if_runs_on_device():
         _for_wraps_if_kernel[None, 1](x, y, N, flag)
         torch.npu.synchronize()
         torch.testing.assert_close(y.cpu(), ref.cpu(), rtol=0, atol=0)
+
+
+@pl.vector_function
+def _addr_reg_b64_vf(src, dst, dtype):
+    # One b64 register per repeat: 32 int64/uint64 elements = 256B.
+    preg = vf.create_mask(pattern=pl.MaskPattern.ALL, dtype=dtype)
+    for _ in pl.range(0, 2, 1):
+        a_reg = vf.create_addr_reg(32, dtype=dtype)
+        reg = vf.load_align(src, a_reg)
+        vf.store_align(dst, reg, preg, a_reg)
+
+
+@pl.jit(auto_mutex=True)
+def _addr_reg_i64_kernel(
+    x: pl.Tensor[[1, 64], pl.DT_INT64],
+    y: pl.Tensor[[1, 64], pl.DT_INT64],
+):
+    tile_type = pl.TileType(shape=[1, 64], dtype=pl.DT_INT64, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        _addr_reg_b64_vf(src, dst, pl.DT_INT64)
+        pl.store(y, dst, [0, 0])
+
+
+@pl.jit(auto_mutex=True)
+def _addr_reg_u64_kernel(
+    x: pl.Tensor[[1, 64], pl.DT_UINT64],
+    y: pl.Tensor[[1, 64], pl.DT_UINT64],
+):
+    tile_type = pl.TileType(shape=[1, 64], dtype=pl.DT_UINT64, target_memory=pl.MemorySpace.Vec)
+    inputs = pl.make_tile_group(type=tile_type, addrs=[0], mutex_ids=[0])
+    outputs = pl.make_tile_group(type=tile_type, addrs=[512], mutex_ids=[1])
+    with pl.section_vector():
+        src = inputs.next()
+        dst = outputs.next()
+        pl.load(src, x, [0, 0])
+        _addr_reg_b64_vf(src, dst, pl.DT_UINT64)
+        pl.store(y, dst, [0, 0])
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_addr_reg_i64_load_store():
+    if not _check_npu():
+        return
+    device = _device()
+    x = torch.randint(0, 100, [1, 64], device=device, dtype=torch.int64)
+    y = torch.zeros(1, 64, device=device, dtype=torch.int64)
+    _addr_reg_i64_kernel[None, 1](x, y)
+    torch.npu.synchronize()
+    torch.testing.assert_close(y.cpu(), x.cpu(), rtol=0, atol=0)
+
+
+@pytest.mark.soc("950", "960")
+def test_vf_addr_reg_u64_load_store():
+    if not _check_npu():
+        return
+    device = _device()
+    x = torch.randint(0, 100, [1, 64], device=device, dtype=torch.int64).view(torch.uint64)
+    y = torch.zeros(1, 64, device=device, dtype=torch.int64).view(torch.uint64)
+    _addr_reg_u64_kernel[None, 1](x, y)
+    torch.npu.synchronize()
+    torch.testing.assert_close(y.view(torch.int64).cpu(), x.view(torch.int64).cpu(), rtol=0, atol=0)

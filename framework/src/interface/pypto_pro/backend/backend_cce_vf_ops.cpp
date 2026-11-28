@@ -390,6 +390,15 @@ static void EmitB64ReduceMaxMin(codegen::CCECodegen& codegen, const std::string&
     codegen.Emit("vdup(" + bcast + ", " + hiR + ", " + pm + ", POS_LOWEST, MODE_ZEROING);");
     codegen.Emit("vcmp_eq(" + eqM + ", " + bcast + ", " + hiS + ", " + pm + ");");
     codegen.Emit(red + "(" + loR + ", " + loS + ", " + eqM + ", MODE_ZEROING);");
+    // AscendC ReduceMaxB64Impl keeps only the value lane of the hi reduce before
+    // copying it into the result (And(tmpReg1, tmpReg0, tmpReg0, mask0) with a VL1
+    // mask), so element 1 of the b64 result is (index, 0), i.e. the single b64
+    // index documented for dst[1]. Without this the hi reduce's own index lane
+    // would be interleaved into the high 32 bits and the lo reduce's index lane
+    // into the low 32 bits (e.g. 0x5_00000005 instead of 5).
+    const std::string vl1M = p + "vl1m_";
+    codegen.Emit("MaskReg " + vl1M + " = pset_b32(PAT_VL1);");
+    codegen.Emit("vand(" + hiSc + hiR + ", " + hiSc + hiR + ", " + hiSc + hiR + ", " + vl1M + ", MODE_ZEROING);");
     codegen.Emit("vintlv((RegTensor<uint32_t>&)" + dst + ", (RegTensor<uint32_t>&)" + dump +
                  ", (RegTensor<uint32_t>&)" + loR + ", (RegTensor<uint32_t>&)" + hiR + ");");
 }
@@ -767,6 +776,34 @@ static std::string DtypeToPtrType(DataType dt)
 // Return the (RegTensor<uint8_t>&) cast prefix for types that need B8 reinterpret.
 static std::string GetB8Cast(DataType dt) { return NeedsB8Reinterpret(dt) ? "(RegTensor<uint8_t>&)" : ""; }
 
+// Element view used by the AddrReg forms of load_align / store_align. The
+// AddrReg is a byte/half/word address (create_addr_reg picks vag_b8/b16/b32
+// from the element size and doubles a b32 stride for b64), so the vld/vst
+// operand must be reinterpreted to the matching width. Mirrors AscendC's
+// DataCopyImpl(..., AddrReg):
+//   b8  -> uint8_t view
+//   b16 -> native element type
+//   b32 -> int32_t view
+//   b64 -> int32_t view (the b64 store additionally expands the mask)
+struct VFAddrRegElementView {
+    std::string regCast;
+    std::string ptrType;
+};
+
+static VFAddrRegElementView VFAddrRegView(DataType dt)
+{
+    if (dt == DataType::BOOL) {
+        return {"(RegTensor<int8_t>&)", "int8_t"};
+    }
+    if (dt.GetBit() == 8 || NeedsB8Reinterpret(dt)) {
+        return {"(RegTensor<uint8_t>&)", "uint8_t"};
+    }
+    if (dt.GetBit() == 32 || dt.GetBit() == 64) {
+        return {"(RegTensor<int32_t>&)", "int32_t"};
+    }
+    return {"", dt.ToCTypeString()};
+}
+
 // Resolve an offset argument to a C++ code string.
 // If the argument is a 2-element MakeTuple [row, col], compute the linear
 // offset `row * cols + col` using the tile's shape[1] (number of columns).
@@ -885,15 +922,18 @@ static std::string EmitVFDuplicate(const ir::CallPtr& op, codegen::CodegenBase& 
         << "vf.full src only supports b8/b16/b32/b64 types, got " << DTypeStr(srcDt);
     // MERGING is not supported by the underlying vdup/vbr instructions on current device.
     VFZeroingOnly(op, VF_FULL);
-    // The fill width follows the DST. The Scalar-mode ``dtype`` kwarg is what
-    // the frontend uses to declare dst (a bare int literal is INT64, so it
-    // must not be compared against dst nor route a b16/b32 fill into the b64
-    // split path); otherwise the assign target's dtype, then the src dtype.
+    // The fill width follows the DST, not a bare scalar literal (which is
+    // INT64 and would wrongly route a b16/b32 fill into the b64 split path).
+    // ``dtype`` is the documented Scalar-mode declaration; otherwise use the
+    // synthesized dst's type (args[0] is prepended by the value-form wrapper),
+    // and only then the src dtype (Tensor mode mirrors src).
     DataType dstDt = srcDt;
     if (op->HasKwarg("dtype")) {
         dstDt = op->GetKwarg<DataType>("dtype");
-    } else if (const auto& t = op->args_[1]->GetType(); t != nullptr) {
-        dstDt = GetTypeDtype(t);
+    } else if (const auto& dstType = op->args_[0]->GetType(); dstType != nullptr) {
+        dstDt = GetTypeDtype(dstType);
+    } else if (const auto& srcType = op->args_[1]->GetType(); srcType != nullptr) {
+        dstDt = GetTypeDtype(srcType);
     }
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     std::string srcStr = codegen.GetExprAsCode(op->args_[1]);
@@ -1132,13 +1172,18 @@ static std::string EmitVFLoadAlign(const ir::CallPtr& op, codegen::CodegenBase& 
         }
         return "";
     }
-    // AddrReg offset path: MaskReg dst -> pld, RegTensor dst -> vld
+    // AddrReg offset path: MaskReg dst -> pld, RegTensor dst -> vld. The
+    // register and the pointer use the AddrReg element view, not the plain
+    // element type (see VFAddrRegView).
     if (op->args_.size() > srcPtrIdx + 1 && ir::IsAddrReg(op->args_[srcPtrIdx + 1]->GetType())) {
-        std::string ubPtr = GetUBufPtr(codegen, op->args_[srcPtrIdx], dstIsMask ? "uint32_t" : ptrType);
         if (dstIsMask) {
+            std::string ubPtr = GetUBufPtr(codegen, op->args_[srcPtrIdx], "uint32_t");
             codegen.Emit("pld(" + dst + ", " + ubPtr + ", " + offsetStr + ", " + mode + ");");
         } else {
-            codegen.Emit("vld(" + dst + ", " + ubPtr + ", " + effectiveOffset + ", " + mode + ");");
+            const auto view = VFAddrRegView(dstDt);
+            std::string ubPtr = GetUBufPtr(codegen, op->args_[srcPtrIdx], view.ptrType);
+            // The AddrReg already carries the element stride; pass it unscaled.
+            codegen.Emit("vld(" + view.regCast + dst + ", " + ubPtr + ", " + offsetStr + ", " + mode + ");");
         }
         return "";
     }
@@ -1362,16 +1407,12 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
         dist = VFCheckedDistName(op->GetKwarg<int>("dist"), /*is_load=*/false, VF_STORE_ALIGN);
     }
     if (dist.empty()) {
-        // Auto-select default dist based on src dtype (uses NORM_B8/B16/B32 by element width)
-        DataType srcDtype = DataType::FP32;
-        if (auto scalarType = ir::As<ir::ScalarType>(op->args_[1]->GetType())) {
-            srcDtype = scalarType->dtype_;
-        } else if (auto tileTypeTmp = ir::As<ir::TileType>(op->args_[0]->GetType())) {
-            srcDtype = tileTypeTmp->dtype_;
-        }
-        if (IsB8Type(srcDtype))
+        // The dist describes the source register's element width. The source is
+        // a register here: the MaskReg-source path returned above (its width
+        // follows the tile dtype).
+        if (IsB8Type(srcDt))
             dist = "NORM_B8";
-        else if (IsB16Type(srcDtype))
+        else if (IsB16Type(srcDt))
             dist = "NORM_B16";
         else
             dist = "NORM_B32";
@@ -1448,18 +1489,14 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
                               dist != "INTLV_B8" && dist != "INTLV_B16" && dist != "INTLV_B32")
                 << "vf.store_align (AddrReg) does not support INTLV dist (requires two source registers), got " << dist;
             std::string maskReg = codegen.GetExprAsCode(op->args_[2]);
-            std::string ptrType = "float";
-            if (auto scalarType = ir::As<ir::ScalarType>(op->args_[1]->GetType())) {
-                ptrType = DtypeToPtrType(scalarType->dtype_);
-            }
-            std::string dstPtr = GetUBufPtr(codegen, op->args_[0], ptrType);
-            std::string vstSrc = cast + srcReg;
+            const auto view = VFAddrRegView(srcDt);
+            std::string dstPtr = GetUBufPtr(codegen, op->args_[0], view.ptrType);
+            std::string vstSrc = view.regCast + srcReg;
             std::string vstMask = maskReg;
             if (srcDt.GetBit() == 64) {
-                // b64: simulate with b32 vst — reinterpret the register/pointer as
-                // int32 and expand the b64-element mask to per-b32-lane bits
-                // (ppack + pintlv_b32, mirrors the AscendC DataCopyImpl vst-areg
-                // b64 path); dist passes through unchanged
+                // b64: the view already stores through int32; expand the
+                // b64-element mask to per-b32-lane bits (ppack + pintlv_b32,
+                // mirrors AscendC's vst-areg b64 path); dist passes through.
                 std::string packedMask = maskReg + "_b32lo_";
                 std::string dumpMask = maskReg + "_b32hi_";
                 codegen.Emit("MaskReg " + packedMask + ";");
@@ -1467,9 +1504,7 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
                 codegen.Emit("ppack(" + packedMask + ", " + maskReg + ", LOWER);");
                 codegen.Emit("pintlv_b32(" + packedMask + ", " + dumpMask + ", " + packedMask + ", " + packedMask +
                              ");");
-                vstSrc = "(RegTensor<int32_t>&)" + srcReg;
                 vstMask = packedMask;
-                dstPtr = GetUBufPtr(codegen, op->args_[0], "int32_t");
             }
             codegen.Emit("vst(" + vstSrc + ", " + dstPtr + ", " + addrReg + ", " + dist + ", " + vstMask + ");");
             return "";
@@ -1489,15 +1524,7 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
     // ratio so the byte address stays correct (mirrors b64→b32
     // stride*2). No register cast needed — the register is already src_dt.
     std::string ptrType = DtypeToPtrType(srcDt);
-    DataType tileDt = DataType::FP32;
-    auto tileType = ir::As<ir::TileType>(op->args_[0]->GetType());
-    if (tileType) {
-        tileDt = tileType->dtype_;
-    } else if (auto scalarType = ir::As<ir::ScalarType>(op->args_[1]->GetType())) {
-        tileDt = scalarType->dtype_;
-    } else {
-        tileDt = srcDt;
-    }
+    DataType tileDt = GetExprDtype(op->args_[0], srcDt);
     std::string widthOp;
     if (tileDt.GetBit() != srcDt.GetBit()) {
         widthOp = " * " + std::to_string(tileDt.GetBit()) + " / " + std::to_string(srcDt.GetBit());
@@ -1555,9 +1582,12 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE,
                           IsB8Type(dcSrcDt) || dcSrcDt.GetBit() == 16 || dcSrcDt.GetBit() == 32)
             << "vf.store_align (DATA_BLOCK_COPY) only supports b8/b16/b32, got " << DTypeStr(dcSrcDt);
-        // In DataBlock mode, args[2] is a mask register
-        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() >= 3)
-            << "vf.store_align (DATA_BLOCK_COPY) requires at least 3 args (dst_ptr, src_reg, mask)";
+        // In DataBlock mode, args[2] is a mask register. block_stride and
+        // repeat_stride are keyword arguments, and the mode has no offset
+        // argument (the load path rejects one as well).
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_ARGUMENT, op->args_.size() == 3)
+            << "vf.store_align with data_copy_mode requires 3 args (dst_ptr, src_reg, mask); "
+               "block_stride/repeat_stride must be keyword arguments and an offset is not supported";
         auto dbMaskVar = ir::As<ir::Var>(op->args_[2]);
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dbMaskVar != nullptr)
             << "vf.store_align (DATA_BLOCK_COPY) requires args[2] to be a mask register, but got non-Var type";
@@ -1566,14 +1596,10 @@ static std::string EmitVFStoreAlign(const ir::CallPtr& op, codegen::CodegenBase&
         std::string maskReg = codegen.GetExprAsCode(op->args_[2]);
         std::string blockStride = "0";
         std::string repeatStride = "0";
-        if (op->args_.size() >= 4) {
-            blockStride = codegen.GetExprAsCode(op->args_[3]);
-        } else if (op->HasKwarg("block_stride")) {
+        if (op->HasKwarg("block_stride")) {
             blockStride = std::to_string(op->GetKwarg<int>("block_stride"));
         }
-        if (op->args_.size() >= 5) {
-            repeatStride = codegen.GetExprAsCode(op->args_[4]);
-        } else if (op->HasKwarg("repeat_stride")) {
+        if (op->HasKwarg("repeat_stride")) {
             repeatStride = std::to_string(op->GetKwarg<int>("repeat_stride"));
         }
         if (postUpdate) {
@@ -2065,8 +2091,9 @@ static std::string EmitVFReduceImpl(const ir::CallPtr& op, codegen::CodegenBase&
     if (!datablock && srcDt.GetBit() == 64) {
         // B64 reduce (INT64/UINT64): no native b64 vcadd/vcmax/vcmin. Defer to
         // the b64 emulation helpers (mirrors AscendC ReduceSumB64Impl /
-        // ReduceMaxB64Impl / ReduceMinB64Impl). The result lands in element 0
-        // of dst; the remaining dst lanes are don't-care.
+        // ReduceMaxB64Impl / ReduceMinB64Impl). The b64 value lands in element 0
+        // of dst; MAX/MIN additionally define element 1 as (index, 0), and the
+        // remaining dst lanes are don't-care.
         if (reduceMode == "SUM") {
             EmitB64ReduceSum(codegen, dst, src, mask);
         } else {
@@ -5202,7 +5229,10 @@ static std::string EmitVFGather(const ir::CallPtr& op, codegen::CodegenBase& cod
         PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, (srcDt.GetBit() == idxDt.GetBit()))
             << "vf.gather (reg→reg) requires index bit width to match src, got src=" << DTypeStr(srcDt)
             << " index=" << DTypeStr(idxDt);
-        DataType dstDt = srcDt;
+        DataType dstDt = GetTypeDtype(op->args_[0]->GetType(), srcDt);
+        PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, dstDt == srcDt)
+            << "vf.gather (reg→reg) requires src and dst to have the same type, got src=" << DTypeStr(srcDt)
+            << " dst=" << DTypeStr(dstDt);
         std::string dst = codegen.GetExprAsCode(op->args_[0]);
         std::string src = codegen.GetExprAsCode(op->args_[1]);
         std::string indices = codegen.GetExprAsCode(op->args_[2]);
@@ -5223,10 +5253,10 @@ static std::string EmitVFGather(const ir::CallPtr& op, codegen::CodegenBase& cod
         << "vf.gather requires 4 args (dst, src, indices, mask)";
     std::string dst = codegen.GetExprAsCode(op->args_[0]);
     DataType srcDt = GetExprDtype(op->args_[1]);
-    DataType dstDt = srcDt;
-    if (const auto& t = op->args_[1]->GetType(); t != nullptr) {
-        dstDt = GetTypeDtype(t);
-    }
+    // Element width of the source tile. The destination register type is
+    // inferred by the frontend (b8 zero-extends to b16) and is not read here;
+    // the width below selects the gather layout, so it follows the source.
+    DataType srcElemDt = srcDt;
     DataType idxDt = GetExprDtype(op->args_[2]);
     std::string indices = codegen.GetExprAsCode(op->args_[2]);
     std::string mask = codegen.GetExprAsCode(op->args_[3]);
@@ -5253,11 +5283,11 @@ static std::string EmitVFGather(const ir::CallPtr& op, codegen::CodegenBase& cod
         // Block gather: always casts to signed types (s8/s16/s32/s64)
         // and uses int8_t*/int16_t*/int32_t*/int64_t* for the UB pointer.
         std::string signedCType;
-        if (dstDt.GetBit() <= 8) {
+        if (srcElemDt.GetBit() <= 8) {
             signedCType = "int8_t";
-        } else if (dstDt.GetBit() == 16) {
+        } else if (srcElemDt.GetBit() == 16) {
             signedCType = "int16_t";
-        } else if (dstDt.GetBit() == 32) {
+        } else if (srcElemDt.GetBit() == 32) {
             signedCType = "int32_t";
         } else {
             signedCType = "int64_t";
@@ -5269,10 +5299,10 @@ static std::string EmitVFGather(const ir::CallPtr& op, codegen::CodegenBase& cod
         // DataCopyGather: specific src-dst-index type combinations
         // src b8 -> dst b16 + idx u16; src b16 -> dst b16 + idx u16/u32;
         // src b32 -> dst b32 + idx u32; src b64 -> dst b64 + idx u32/u64
-        bool isB16Src = (dstDt == DataType::INT16 || dstDt == DataType::UINT16 || dstDt == DataType::FP16 ||
-                         dstDt == DataType::BF16);
+        bool isB16Src = (srcElemDt == DataType::INT16 || srcElemDt == DataType::UINT16 || srcElemDt == DataType::FP16 ||
+                         srcElemDt == DataType::BF16);
         bool useVgather2Bc = isB16Src && (idxDt.GetBit() >= 32);
-        if (dstDt.GetBit() == 16) {
+        if (srcElemDt.GetBit() == 16) {
             PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt.GetBit() == 8 || srcDt.GetBit() == 16)
                 << "vf.gather (NORM) b16 dst requires b8/b16 src, got src=" << DTypeStr(srcDt);
             if (!useVgather2Bc) {
@@ -5283,18 +5313,18 @@ static std::string EmitVFGather(const ir::CallPtr& op, codegen::CodegenBase& cod
                 PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idxDt == DataType::UINT32)
                     << "vf.gather (NORM) b16 dst with vgather2_bc requires UINT32 index, got " << DTypeStr(idxDt);
             }
-        } else if (dstDt.GetBit() == 32) {
+        } else if (srcElemDt.GetBit() == 32) {
             PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt.GetBit() == 32)
                 << "vf.gather (NORM) b32 requires b32 src, got src=" << DTypeStr(srcDt);
             PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idxDt == DataType::UINT32)
                 << "vf.gather (NORM) b32 dst requires UINT32 index, got " << DTypeStr(idxDt);
-        } else if (dstDt.GetBit() == 64) {
+        } else if (srcElemDt.GetBit() == 64) {
             PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, srcDt.GetBit() == 64)
                 << "vf.gather (NORM) b64 requires b64 src, got src=" << DTypeStr(srcDt);
             PRO_CODEGEN_CHECK(ExternalError::INVALID_TYPE, idxDt == DataType::UINT32)
                 << "vf.gather (NORM) b64 dst requires UINT32 index, got " << DTypeStr(idxDt);
         }
-        if (dstDt.GetBit() == 64) {
+        if (srcElemDt.GetBit() == 64) {
             // B64 gather: vgather2 has no b64 single-register overload.
             // Mirrors AscendC DataCopyGatherB64Impl: pack mask, compute odd/even
             // b32 indices (index*2, index*2+1), vgather2 each b32 half, interleave.
@@ -5330,10 +5360,10 @@ static std::string EmitVFGather(const ir::CallPtr& op, codegen::CodegenBase& cod
             EmitB64Interleave(codegen, dst, loReg, hiReg, p + "_ilv");
             return "";
         }
-        std::string idxCType = useVgather2Bc ? "uint32_t" : ((dstDt.GetBit() >= 32) ? "uint32_t" : "uint16_t");
+        std::string idxCType = useVgather2Bc ? "uint32_t" : ((srcElemDt.GetBit() >= 32) ? "uint32_t" : "uint16_t");
         std::string dstExpr = dst;
         std::string ubPtr = GetUBufPtr(codegen, op->args_[1], srcDt.ToCTypeString());
-        if (dstDt == DataType::INT8 || dstDt == DataType::UINT8) {
+        if (srcElemDt == DataType::INT8 || srcElemDt == DataType::UINT8) {
             dstExpr = "(RegTensor<int16_t>&)" + dst;
             ubPtr = GetUBufPtr(codegen, op->args_[1], "int8_t");
         } else if (isB16Src) {
@@ -5343,7 +5373,7 @@ static std::string EmitVFGather(const ir::CallPtr& op, codegen::CodegenBase& cod
             // same dst cast for b16 source types.
             dstExpr = "(RegTensor<int16_t>&)" + dst;
             ubPtr = GetUBufPtr(codegen, op->args_[1], "int16_t");
-        } else if (dstDt.GetBit() == 32) {
+        } else if (srcElemDt.GetBit() == 32) {
             dstExpr = "(RegTensor<int32_t>&)" + dst;
             ubPtr = GetUBufPtr(codegen, op->args_[1], "int32_t");
         }
