@@ -124,6 +124,7 @@ private:
 
     void BeginRingEpoch(uintptr_t epoch, bool isCapture);
     bool EnsureRingEventsCreated(bool isCapture);
+    void DestroyRingEvents(bool isCapture);
 
     static void InitDeviceArgs();
     static void InitAicpuOp(int64_t* devArgsAddr);

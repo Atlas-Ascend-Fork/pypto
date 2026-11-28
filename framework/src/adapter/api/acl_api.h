@@ -27,6 +27,7 @@ AclError AclRtResetDevice(int32_t deviceId);
 AclError AclRtCreateEvent(AclRtEvent* event);
 AclError AclRtRecordEvent(AclRtEvent event, AclRtStream stream);
 AclError AclRtCreateEventExWithFlag(AclRtEvent* event, uint32_t flag);
+AclError AclRtDestroyEvent(AclRtEvent event);
 AclError AclRtStreamWaitEvent(AclRtStream stream, AclRtEvent event);
 AclError AclRtGetStreamResLimit(AclRtStream stream, AclRtDevResLimitType type, uint32_t* value);
 AclError AclRtGetStreamAttribute(AclRtStream stream, AclRtStreamAttr stmAttrType, AclRtStreamAttrValue* value);
