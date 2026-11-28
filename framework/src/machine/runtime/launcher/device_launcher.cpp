@@ -134,6 +134,8 @@ bool DeviceLauncher::inited_ = false;
 std::vector<uint8_t> DeviceLauncher::tensorInfo_(kDefaultTensorinfoSize);
 std::unordered_map<Function*, DeviceLauncher::DeviceRunCacheInfo> DeviceLauncher::cacheInfoDict_;
 std::atomic<int64_t> DeviceLauncher::sequence_(0);
+AclRtEvent DeviceLauncher::preSyncEvent_ = nullptr;
+std::mutex DeviceLauncher::preSyncEventMutex_;
 
 void DeviceLauncher::CheckAscendDriverVersionOnboard() { AscendDriverVersionGate::EnsureDriverVersionForOnboardOnce(); }
 
@@ -476,29 +478,60 @@ int DeviceLauncher::LaunchSyncTask(AclRtStream aicoreStream, bool isCaptureMode,
     return RunPreSync(IsAicoreResolveEnabled() ? nullptr : schedStream, ctrlStream, aicoreStream);
 }
 
+int DeviceLauncher::GetOrCreatePreSyncEvent(AclRtEvent& event)
+{
+    if (preSyncEvent_ == nullptr) {
+        AclRtEvent created = nullptr;
+        AclError ret = AclRtCreateEventExWithFlag(&created, ACL_EVENT_SYNC);
+        if (ret != ACLRT_SUCCESS) {
+            MACHINE_LOGE(RtErr::RT_EVENT_FAILED, "AclRtCreateEvent failed %d\n", ret);
+            return -1;
+        }
+        preSyncEvent_ = created;
+    }
+    event = preSyncEvent_;
+    return 0;
+}
+
+void DeviceLauncher::Finalize()
+{
+    std::lock_guard<std::mutex> lock(preSyncEventMutex_);
+    if (preSyncEvent_ != nullptr) {
+        AclError ret = AclRtDestroyEvent(preSyncEvent_);
+        if (ret != ACLRT_SUCCESS) {
+            MACHINE_LOGW("AclRtDestroyEvent failed %d\n", ret);
+        }
+        preSyncEvent_ = nullptr;
+    }
+}
+
 int DeviceLauncher::RunPreSync(RtStream scheStream, RtStream ctrlStream, RtStream aicoreStream)
 {
-    AclRtEvent event;
-    if (AclRtCreateEventExWithFlag(&event, ACL_EVENT_SYNC) < 0) {
-        MACHINE_LOGE(RtErr::RT_EVENT_FAILED, "AclRtCreateEvent failed.");
-        return -1;
-    }
-    int rc = AclRtRecordEvent(event, aicoreStream);
+    // The pre-sync event is created once per process and reused by every launch, so it must be
+    // serialized: otherwise a later launch could record the shared event before the previous
+    // launch has enqueued its waits.
+    std::lock_guard<std::mutex> lock(preSyncEventMutex_);
+    AclRtEvent event = nullptr;
+    int rc = GetOrCreatePreSyncEvent(event);
     if (rc < 0) {
+        return rc;
+    }
+    rc = AclRtRecordEvent(event, aicoreStream);
+    if (rc != ACLRT_SUCCESS) {
         MACHINE_LOGE(RtErr::RT_EVENT_FAILED, "AclRtRecordEvent failed %d\n", rc);
         return rc;
     }
 
     if (scheStream) {
         rc = AclRtStreamWaitEvent(scheStream, event);
-        if (rc < 0) {
+        if (rc != ACLRT_SUCCESS) {
             MACHINE_LOGE(RtErr::RT_EVENT_FAILED, "AclRtStreamWaitEvent failed %d\n", rc);
             return rc;
         }
     }
 
     rc = AclRtStreamWaitEvent(ctrlStream, event);
-    if (rc < 0) {
+    if (rc != ACLRT_SUCCESS) {
         MACHINE_LOGE(RtErr::RT_EVENT_FAILED, "AclRtStreamWaitEvent failed %d\n", rc);
         return rc;
     }

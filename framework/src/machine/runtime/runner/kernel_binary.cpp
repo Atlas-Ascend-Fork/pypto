@@ -95,6 +95,9 @@ KernelBinary::KernelBinary(std::shared_ptr<Function> func, std::vector<std::shar
 
 KernelBinary::~KernelBinary()
 {
+    // graphEvents_ are referenced by the captured model and may still be replayed after this
+    // per-launch KernelBinary is destroyed, so they are released together with the model.
+    DestroyRingEvents(false);
     if (runtimeDynamicCellMatchOwned_ && runtimeDynamicCellMatchAddr_ != 0) {
         DevMemoryPool::Instance().FreeDevAddr(reinterpret_cast<uint8_t*>(runtimeDynamicCellMatchAddr_));
     }
@@ -152,6 +155,22 @@ bool KernelBinary::EnsureRingEventsCreated(bool isCapture)
     }
     created = true;
     return true;
+}
+
+void KernelBinary::DestroyRingEvents(bool isCapture)
+{
+    AclRtEvent* events = isCapture ? graphEvents_ : eagerEvents_;
+    bool& created = isCapture ? graphEventsCreated_ : eagerEventsCreated_;
+    for (int64_t i = 0; i < kRingPingPongCount; ++i) {
+        if (events[i] != nullptr) {
+            AclError ret = AclRtDestroyEvent(events[i]);
+            if (ret != ACLRT_SUCCESS) {
+                MACHINE_LOGW("AclRtDestroyEvent failed for ring event %ld, ret %d.\n", i, ret);
+            }
+            events[i] = nullptr;
+        }
+    }
+    created = false;
 }
 
 uint8_t* KernelBinary::FindCtrlFlowCache(std::vector<std::vector<int64_t>>& inputs, bool isOriginShape)

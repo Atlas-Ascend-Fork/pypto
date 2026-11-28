@@ -148,6 +148,18 @@ AclError AclRtCreateEventExWithFlag(AclRtEvent* event, uint32_t flag)
     return StubRtCreateEventExWithFlag(event, flag);
 }
 
+AclError AclRtDestroyEvent(AclRtEvent event)
+{
+#ifdef BUILD_WITH_CANN
+    void* func = AdapterManager::Instance().GetAclAdapter().GetFunction(AclFunc::RtDestroyEvent);
+    if (func != nullptr) {
+        aclError (*aclFunc)(aclrtEvent) = reinterpret_cast<aclError (*)(aclrtEvent)>(func);
+        return aclFunc(event);
+    }
+#endif
+    return StubRtDestroyEvent(event);
+}
+
 AclError AclRtStreamWaitEvent(AclRtStream stream, AclRtEvent event)
 {
 #ifdef BUILD_WITH_CANN

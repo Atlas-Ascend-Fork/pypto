@@ -16,9 +16,10 @@
 #include "machine/runtime/context/stream_context.h"
 
 namespace npu::tile_fwk {
+// AICPU does not support concurrent multi-stream execution.
 StreamContext& GetStreamContext()
 {
-    static thread_local StreamContext context;
+    static StreamContext context;
     return context;
 }
 

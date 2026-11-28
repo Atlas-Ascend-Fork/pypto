@@ -59,6 +59,7 @@ TEST_F(TestAdapterApi, test_acl_api)
     CHECK_API_RET(AclRtCreateEvent(nullptr), ACLRT_SUCCESS);
     CHECK_API_RET(AclRtRecordEvent(nullptr, nullptr), ACLRT_SUCCESS);
     CHECK_API_RET(AclRtCreateEventExWithFlag(nullptr, 0), ACLRT_SUCCESS);
+    CHECK_API_RET(AclRtDestroyEvent(nullptr), ACLRT_SUCCESS);
     CHECK_API_RET(AclRtStreamWaitEvent(nullptr, nullptr), ACLRT_SUCCESS);
     CHECK_API_RET(AclRtGetStreamResLimit(nullptr, AclRtDevResLimitType::CUBE_CORE, nullptr), ACLRT_SUCCESS);
     CHECK_API_RET(AclRtGetStreamAttribute(nullptr, AclRtStreamAttr::FAILURE_MODE, nullptr), ACLRT_SUCCESS);
