@@ -46,7 +46,11 @@ int HasInplaceArgs(Function* function) { return DeviceLauncher::HasInplaceArgs(f
 
 void DeviceLauncherInit() { DeviceLauncherContext::Get().Initialize(); }
 
-void DeviceLauncherFini() { DeviceLauncherContext::Get().Finalize(); }
+void DeviceLauncherFini()
+{
+    DeviceLauncher::Finalize();
+    DeviceLauncherContext::Get().Finalize();
+}
 
 void CopyDevToHost(const DeviceTensorData& devTensor, DeviceTensorData& hostTensor)
 {

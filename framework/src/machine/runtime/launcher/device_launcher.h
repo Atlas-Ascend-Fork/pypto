@@ -18,6 +18,7 @@
 
 #include <cinttypes>
 #include <atomic>
+#include <mutex>
 #include <unordered_map>
 #include "tilefwk/data_type.h"
 #include "tilefwk/tilefwk.h"
@@ -536,10 +537,13 @@ public:
     static void DumpIOTensorsWithCann(AclRtStream stream, std::vector<DeviceTensorData>& tensors,
                                       const std::string& funcName);
     static int RunPreSync(RtStream scheStream, RtStream ctrlStream, RtStream aicoreStream);
+    static void Finalize();
 
 private:
     static void DataDumpInit();
     static void DataDumpUnInit();
+    // Caller must hold preSyncEventMutex_.
+    static int GetOrCreatePreSyncEvent(AclRtEvent& event);
     struct DeviceRunCacheInfo {
         /* By default: devProg cache is enabled */
         bool devProgEnabled{true};
@@ -550,6 +554,9 @@ private:
     static std::vector<uint8_t> tensorInfo_;
     static std::unordered_map<Function*, DeviceRunCacheInfo> cacheInfoDict_;
     static std::atomic<int64_t> sequence_;
+    // Process-level pre-sync event, created once and reused by every launch.
+    static AclRtEvent preSyncEvent_;
+    static std::mutex preSyncEventMutex_;
 };
 } // namespace npu::tile_fwk::dynamic
 #endif // SRC_MACHINE_DEVICE_LAUNCHER_H

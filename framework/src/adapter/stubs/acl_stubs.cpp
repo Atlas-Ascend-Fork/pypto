@@ -104,6 +104,13 @@ AclError StubRtCreateEventExWithFlag(AclRtEvent* event, uint32_t flag)
     return ACLRT_SUCCESS;
 }
 
+AclError StubRtDestroyEvent(AclRtEvent event)
+{
+    ADAPTER_LOGD("Enter stub function of AclRtDestroyEvent.");
+    (void)event;
+    return ACLRT_SUCCESS;
+}
+
 AclError StubRtStreamWaitEvent(AclRtStream stream, AclRtEvent event)
 {
     ADAPTER_LOGD("Enter stub function of AclRtStreamWaitEvent.");
