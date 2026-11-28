@@ -142,52 +142,58 @@ static bool IsExprDivisible(const Function& function, const SymbolicScalar& expr
 // 沿表达式树递归下沉 offset，不假设当前 cap 属于哪一层 View。
 // 递归深度上限 MAX_DIVISIBLE_RECURSION_DEPTH 防止深表达式栈溢出。
 static bool IsFullTileAfterOffset(const Function& function, const RawPtr& raw, int64_t accumulatedOffset, int64_t tile,
-                                  size_t depth = 0)
+                                  size_t depth = 0);
+
+static std::optional<bool> TryTraverseOffsetExpression(const Function& function, const RawPtr& raw,
+                                                       int64_t accumulatedOffset, int64_t tile, size_t depth)
 {
-    if (raw == nullptr || tile <= 0 || depth >= MAX_DIVISIBLE_RECURSION_DEPTH) {
+    if (raw == nullptr || !raw->IsExpression()) {
+        return std::nullopt;
+    }
+    const auto opcode = raw->GetExpressionOpcode();
+    const auto& operands = raw->GetExpressionOperandList();
+    if (operands.size() != BINARY_EXPR_OPERAND_COUNT) {
+        return std::nullopt;
+    }
+    if (opcode == SymbolicOpcode::T_BOP_SUB) {
+        const auto delta = GetImmediate(operands[1]);
+        if (delta.has_value() && *delta >= 0) {
+            return IsFullTileAfterOffset(function, operands[0], accumulatedOffset + *delta, tile, depth + 1);
+        }
+    }
+    if (opcode == SymbolicOpcode::T_BOP_ADD) {
+        for (size_t valueIndex = 0; valueIndex < operands.size(); ++valueIndex) {
+            const auto delta = GetImmediate(operands[1 - valueIndex]);
+            if (delta.has_value() && *delta <= 0) {
+                return IsFullTileAfterOffset(function, operands[valueIndex], accumulatedOffset - *delta, tile,
+                                             depth + 1);
+            }
+        }
+    }
+    return std::nullopt;
+}
+
+static std::optional<bool> TryValidateMinCap(const Function& function, const RawPtr& raw, int64_t accumulatedOffset,
+                                             int64_t tile, size_t depth)
+{
+    RawPtr value;
+    int64_t cap = 0;
+    if (!ExtractMinWithUpper(raw, value, cap)) {
+        return std::nullopt;
+    }
+    const int64_t remainingCap = cap - accumulatedOffset;
+    if (remainingCap < tile || remainingCap % tile != 0) {
+        APASS_LOG_DEBUG_F(Elements::Function,
+                          "[AssumeDivisible][CapFail] func=%s expr=%s cap=%ld offset=%ld tile=%ld remaining=%ld",
+                          function.GetMagicName().c_str(), SymbolicScalar(raw).Dump().c_str(), cap, accumulatedOffset,
+                          tile, remainingCap);
         return false;
     }
+    return IsFullTileAfterOffset(function, value, accumulatedOffset, tile, depth + 1);
+}
 
-    if (raw->IsExpression()) {
-        const auto opcode = raw->GetExpressionOpcode();
-        const auto& operands = raw->GetExpressionOperandList();
-        if (operands.size() == BINARY_EXPR_OPERAND_COUNT && opcode == SymbolicOpcode::T_BOP_SUB) {
-            const auto delta = GetImmediate(operands[1]);
-            if (delta.has_value() && *delta >= 0) {
-                return IsFullTileAfterOffset(function, operands[0], accumulatedOffset + *delta, tile, depth + 1);
-            }
-        }
-        if (operands.size() == BINARY_EXPR_OPERAND_COUNT && opcode == SymbolicOpcode::T_BOP_ADD) {
-            for (size_t valueIndex = 0; valueIndex < operands.size(); ++valueIndex) {
-                const auto delta = GetImmediate(operands[1 - valueIndex]);
-                if (delta.has_value() && *delta <= 0) {
-                    return IsFullTileAfterOffset(function, operands[valueIndex], accumulatedOffset - *delta, tile,
-                                                 depth + 1);
-                }
-            }
-        }
-
-        RawPtr value;
-        int64_t cap = 0;
-        if (ExtractMinWithUpper(raw, value, cap)) {
-            // min(value, cap) - accumulatedOffset >= tile 时，两个分支
-            // 都必须达到同一个 tile 下界。
-            const int64_t remainingCap = cap - accumulatedOffset;
-            if (remainingCap < tile || remainingCap % tile != 0) {
-                APASS_LOG_DEBUG_F(
-                    Elements::Function,
-                    "[AssumeDivisible][CapFail] func=%s expr=%s cap=%ld offset=%ld tile=%ld remaining=%ld",
-                    function.GetMagicName().c_str(), SymbolicScalar(raw).Dump().c_str(), cap, accumulatedOffset, tile,
-                    remainingCap);
-                return false;
-            }
-            return IsFullTileAfterOffset(function, value, accumulatedOffset, tile, depth + 1);
-        }
-    }
-
-    // 到达最内层源表达式（如 vm 或 vm - idx*T）后，由整除假设和累计 View offset 建立
-    // tile 对齐的下界。循环条件 idx*T < vm 保证 vm - idx*T > 0，
-    // 结合 vm % T == 0 可推导出 vm - idx*T >= T，化简安全。
+static bool ValidateFullTileSource(const Function& function, const RawPtr& raw, int64_t accumulatedOffset, int64_t tile)
+{
     const bool divisible = IsExprDivisible(function, SymbolicScalar(raw), tile);
     const bool aligned = accumulatedOffset % tile == 0;
     if (!divisible || !aligned) {
@@ -197,6 +203,23 @@ static bool IsFullTileAfterOffset(const Function& function, const RawPtr& raw, i
                           accumulatedOffset, aligned ? 1 : 0);
     }
     return divisible && aligned;
+}
+
+static bool IsFullTileAfterOffset(const Function& function, const RawPtr& raw, int64_t accumulatedOffset, int64_t tile,
+                                  size_t depth)
+{
+    if (raw == nullptr || tile <= 0 || depth >= MAX_DIVISIBLE_RECURSION_DEPTH) {
+        return false;
+    }
+
+    if (auto result = TryTraverseOffsetExpression(function, raw, accumulatedOffset, tile, depth); result.has_value()) {
+        return *result;
+    }
+    if (auto result = TryValidateMinCap(function, raw, accumulatedOffset, tile, depth); result.has_value()) {
+        return *result;
+    }
+    // 到达最内层源表达式（如 vm 或 vm - idx*T）后，由整除假设和累计 View offset 建立 tile 对齐的下界。
+    return ValidateFullTileSource(function, raw, accumulatedOffset, tile);
 }
 
 // 将已经化简的 View/Slice output valid shape 同步回非空 attr，避免后续 InferShape 恢复旧表达式。

@@ -210,76 +210,82 @@ void RemoveUnalignedReshape::ReplaceDynUnalignedReshapeOps(Function& function)
     APASS_LOG_INFO_F(Elements::Function, "===> End ReplaceDynUnalignedReshapeOps.");
 }
 
-void RemoveUnalignedReshape::FoldConsumerViewOffsetIntoCopyIn(Operation& copyInOp)
+static bool CollectViewConsumers(const LogicalTensorPtr& output,
+                                 std::vector<std::pair<Operation*, ViewOpAttribute*>>& viewConsumers)
 {
-    auto output = copyInOp.GetOOperands().empty() ? nullptr : copyInOp.GetOOperands().front();
-    if (output == nullptr) {
-        return;
-    }
     const auto consumers = output->GetConsumers();
     if (consumers.empty()) {
-        return;
+        return false;
     }
-    std::vector<std::pair<Operation*, ViewOpAttribute*>> viewConsumers;
     for (auto* consumer : consumers) {
         if (consumer == nullptr || consumer->GetIOperands().empty() || consumer->GetOOperands().empty()) {
-            return;
+            return false;
         }
         auto viewAttr = dynamic_cast<ViewOpAttribute*>(consumer->GetOpAttribute().get());
         if (viewAttr == nullptr) {
-            return;
+            return false;
         }
         viewConsumers.emplace_back(consumer, viewAttr);
     }
+    return true;
+}
 
-    const auto dim = output->GetShape().size();
-    if (dim == 0 || viewConsumers.front().second->GetFromOffset().size() != dim) {
-        return;
-    }
+static bool CollectViewOffsets(const std::vector<std::pair<Operation*, ViewOpAttribute*>>& viewConsumers, size_t dim,
+                               std::vector<std::vector<SymbolicScalar>>& viewOffsets)
+{
     // OpImmediate::Specified(TensorOffset)语义：dynOffset非空时为其权威值，否则用常量offset
-    std::vector<std::vector<SymbolicScalar>> viewOffsets;
     for (auto& [consumer, viewAttr] : viewConsumers) {
         (void)consumer;
         if (viewAttr->GetFromOffset().size() != dim) {
-            return;
+            return false;
         }
         auto offsets = OpImmediate::ToSpecified(OpImmediate::Specified(viewAttr->GetFromTensorOffset()));
         if (offsets.size() != dim) {
-            return;
+            return false;
         }
         viewOffsets.push_back(std::move(offsets));
     }
+    return true;
+}
+
+static bool CollectCommonViewBases(const std::vector<std::pair<Operation*, ViewOpAttribute*>>& viewConsumers,
+                                   const std::vector<std::vector<SymbolicScalar>>& viewOffsets, size_t dim,
+                                   std::vector<SymbolicScalar>& commonBases)
+{
     // SplitView folds a static tile offset into the authoritative dynamic expression. Recover the shared dynamic
     // base by subtracting that static part, then use the static parts to build the bounding box.
     bool hasDynamicOffset = false;
-    std::vector<SymbolicScalar> commonBases;
     commonBases.reserve(dim);
     for (size_t i = 0; i < dim; i++) {
         auto base = (viewOffsets[0][i] - viewConsumers[0].second->GetFromOffset()[i]).Simplify();
         for (size_t v = 1; v < viewOffsets.size(); v++) {
             auto candidate = (viewOffsets[v][i] - viewConsumers[v].second->GetFromOffset()[i]).Simplify();
             if (candidate.Dump() != base.Dump()) {
-                return;
+                return false;
             }
         }
         // Dynamic innermost offsets still cannot be represented by the local VIEW after shrinking.
         if (i + 1 == dim && (!base.IsImmediate() || base.Concrete() != 0)) {
-            return;
+            return false;
         }
         if (i + 1 < dim && !base.IsImmediate()) {
             hasDynamicOffset = true;
         }
         commonBases.push_back(std::move(base));
     }
-    if (!hasDynamicOffset) {
-        return;
-    }
+    return hasDynamicOffset;
+}
 
-    std::vector<int64_t> boxStart = viewConsumers.front().second->GetFromOffset();
+static bool CalculateViewBox(const LogicalTensorPtr& output,
+                             const std::vector<std::pair<Operation*, ViewOpAttribute*>>& viewConsumers,
+                             const std::vector<SymbolicScalar>& commonBases, size_t dim, std::vector<int64_t>& boxStart,
+                             std::vector<int64_t>& boxShape, std::vector<SymbolicScalar>& boxOffset)
+{
+    boxStart = viewConsumers.front().second->GetFromOffset();
     std::vector<int64_t> boxEnd(dim, 0);
     const auto& firstShape = viewConsumers.front().first->GetOOperands().front()->GetShape();
     if (firstShape.size() != dim) {
-        return;
+        return false;
     }
     for (size_t i = 0; i < dim; i++) {
         boxEnd[i] = boxStart[i] + firstShape[i];
@@ -287,26 +293,31 @@ void RemoveUnalignedReshape::FoldConsumerViewOffsetIntoCopyIn(Operation& copyInO
     for (size_t v = 0; v < viewConsumers.size(); v++) {
         const auto& shape = viewConsumers[v].first->GetOOperands().front()->GetShape();
         if (shape.size() != dim) {
-            return;
+            return false;
         }
         const auto& staticOffset = viewConsumers[v].second->GetFromOffset();
         for (size_t i = 0; i < dim; i++) {
             boxStart[i] = std::min(boxStart[i], staticOffset[i]);
             boxEnd[i] = std::max(boxEnd[i], staticOffset[i] + shape[i]);
             if (boxStart[i] < 0 || boxEnd[i] > output->GetShape()[i]) {
-                return;
+                return false;
             }
         }
     }
 
-    std::vector<int64_t> boxShape(dim, 0);
-    std::vector<SymbolicScalar> boxOffset;
+    boxShape.resize(dim);
     boxOffset.reserve(dim);
     for (size_t i = 0; i < dim; i++) {
         boxShape[i] = boxEnd[i] - boxStart[i];
         boxOffset.push_back((commonBases[i] + boxStart[i]).Simplify());
     }
+    return true;
+}
 
+static std::vector<SymbolicScalar> CalculateBoxValid(
+    const std::vector<std::pair<Operation*, ViewOpAttribute*>>& viewConsumers, const std::vector<int64_t>& boxStart,
+    const std::vector<int64_t>& boxShape, size_t dim)
+{
     std::vector<SymbolicScalar> boxValid(dim, SymbolicScalar(0));
     for (size_t v = 0; v < viewConsumers.size(); v++) {
         const auto& tensor = viewConsumers[v].first->GetOOperands().front();
@@ -320,7 +331,53 @@ void RemoveUnalignedReshape::FoldConsumerViewOffsetIntoCopyIn(Operation& copyInO
             boxValid[i] = boxValid[i].Max(covered).Min(SymbolicScalar(boxShape[i])).Simplify();
         }
     }
+    return boxValid;
+}
 
+static void UpdateViewConsumers(const std::vector<std::pair<Operation*, ViewOpAttribute*>>& viewConsumers,
+                                const LogicalTensorPtr& shrunk, const LogicalTensorPtr& output,
+                                const std::vector<int64_t>& boxStart, size_t dim)
+{
+    for (size_t v = 0; v < viewConsumers.size(); v++) {
+        auto& [consumer, viewAttr] = viewConsumers[v];
+        std::vector<int64_t> newFromOffset(dim, 0);
+        for (size_t i = 0; i < dim; i++) {
+            newFromOffset[i] = viewAttr->GetFromOffset()[i] - boxStart[i];
+        }
+        consumer->ReplaceInput(shrunk, output);
+        viewAttr->SetFromOffset(newFromOffset);
+    }
+}
+
+void RemoveUnalignedReshape::FoldConsumerViewOffsetIntoCopyIn(Operation& copyInOp)
+{
+    auto output = copyInOp.GetOOperands().empty() ? nullptr : copyInOp.GetOOperands().front();
+    if (output == nullptr) {
+        return;
+    }
+    std::vector<std::pair<Operation*, ViewOpAttribute*>> viewConsumers;
+    if (!CollectViewConsumers(output, viewConsumers)) {
+        return;
+    }
+    const auto dim = output->GetShape().size();
+    if (dim == 0 || viewConsumers.front().second->GetFromOffset().size() != dim) {
+        return;
+    }
+    std::vector<std::vector<SymbolicScalar>> viewOffsets;
+    if (!CollectViewOffsets(viewConsumers, dim, viewOffsets)) {
+        return;
+    }
+    std::vector<SymbolicScalar> commonBases;
+    if (!CollectCommonViewBases(viewConsumers, viewOffsets, dim, commonBases)) {
+        return;
+    }
+    std::vector<int64_t> boxStart;
+    std::vector<int64_t> boxShape;
+    std::vector<SymbolicScalar> boxOffset;
+    if (!CalculateViewBox(output, viewConsumers, commonBases, dim, boxStart, boxShape, boxOffset)) {
+        return;
+    }
+    const auto boxValid = CalculateBoxValid(viewConsumers, boxStart, boxShape, dim);
     auto shrunkRaw = std::make_shared<RawTensor>(output->Datatype(), boxShape, output->Format());
     auto shrunk = irBuilder_.CreateTensorVar(shrunkRaw, std::vector<int64_t>(dim, 0), boxShape, boxValid);
     shrunk->SetMemoryTypeBoth(output->GetMemoryTypeOriginal());
@@ -336,15 +393,7 @@ void RemoveUnalignedReshape::FoldConsumerViewOffsetIntoCopyIn(Operation& copyInO
     copyAttr->SetToDynValidShape(OpImmediate::Specified(boxValid));
     copyInOp.ReplaceOOperand(0, shrunk);
 
-    for (size_t v = 0; v < viewConsumers.size(); v++) {
-        auto& [consumer, viewAttr] = viewConsumers[v];
-        std::vector<int64_t> newFromOffset(dim, 0);
-        for (size_t i = 0; i < dim; i++) {
-            newFromOffset[i] = viewAttr->GetFromOffset()[i] - boxStart[i];
-        }
-        consumer->ReplaceInput(shrunk, output);
-        viewAttr->SetFromOffset(newFromOffset);
-    }
+    UpdateViewConsumers(viewConsumers, shrunk, output, boxStart, dim);
     APASS_LOG_INFO_F(Elements::Operation,
                      "Fold consumer view offset into copyIn op %d, output tensor %d shrinks to box [%s].",
                      copyInOp.GetOpMagic(), output->GetMagic(), IntVecToStr(boxShape).c_str());
@@ -359,7 +408,6 @@ void RemoveUnalignedReshape::ReplaceDynUnalignedReshapeOpsForUB(Function& functi
     auto outputShapes = output->shape;
     auto changedDims = FindChangedDims(outputShapes, inputShapes);
 
-    auto inDynValidShape = input->GetDynValidShape();
     auto outDynValidShape = output->GetDynValidShape();
 
     for (const auto& dim : changedDims) {
@@ -370,50 +418,58 @@ void RemoveUnalignedReshape::ReplaceDynUnalignedReshapeOpsForUB(Function& functi
                              output->GetMagic(), op.GetOpMagic(), static_cast<long>(dim), outDynValidShape.size());
             break;
         } else if (!outDynValidShape[dim].IsImmediate()) {
-            auto tmpWorkSpaceIn = irBuilder_.CreateTensorVar(input->Datatype(), input->shape,
-                                                             std::vector<SymbolicScalar>{}, input->Format());
-            auto tmpWorkSpaceOut = irBuilder_.CreateTensorVar(input->Datatype(), output->shape,
-                                                              std::vector<SymbolicScalar>{}, output->Format());
-
-            tmpWorkSpaceIn->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
-            tmpWorkSpaceIn->UpdateDynValidShape(inDynValidShape);
-            tmpWorkSpaceOut->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
-            tmpWorkSpaceOut->UpdateDynValidShape(outDynValidShape);
-
-            auto& reshapeCopyOutOp = PassOperationUtils::AddOperation(
-                function, Opcode::OP_RESHAPE_COPY_OUT, {input}, {tmpWorkSpaceIn}, [&input](Operation& newOp) {
-                    newOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(
-                        MemoryType::MEM_UB, OpImmediate::Specified(std::vector<SymbolicScalar>(input->shape.size(), 0)),
-                        OpImmediate::Specified(input->shape), OpImmediate::Specified(input->tensor->GetDynRawShape()),
-                        OpImmediate::Specified(input->GetDynValidShape())));
-                });
-            op.ReplaceInput(tmpWorkSpaceIn, op.GetIOperands().front());
-            op.ReplaceOutput(tmpWorkSpaceOut, op.GetOOperands().front());
-            auto& reshapeCopyInOp = PassOperationUtils::AddOperation(
-                function, Opcode::OP_RESHAPE_COPY_IN, {tmpWorkSpaceOut}, {output}, [&output](Operation& newOp) {
-                    newOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(
-                        OpImmediate::Specified(std::vector<SymbolicScalar>(output->shape.size(), 0)),
-                        MemoryType::MEM_DEVICE_DDR, OpImmediate::Specified(output->shape),
-                        OpImmediate::Specified(output->tensor->GetDynRawShape()),
-                        OpImmediate::Specified(output->GetDynValidShape())));
-                });
-            newOps.push_back(&reshapeCopyOutOp);
-            newOps.push_back(&reshapeCopyInOp);
-
-            reshapeCopyOutOp.UpdateSubgraphID(op.GetSubgraphID());
-            reshapeCopyInOp.UpdateSubgraphID(op.GetSubgraphID());
-
-            SetReshapeCopyOutValidShapeAttr(reshapeCopyOutOp);
-            SetReshapeCopyInValidShapeAttr(reshapeCopyInOp);
-            FoldConsumerViewOffsetIntoCopyIn(reshapeCopyInOp);
-            APASS_LOG_INFO_F(Elements::Operation,
-                             "Reshape op %d is replaced by reshapeCopyOutOp %d and reshapeCopyInOp %d.", op.opmagic,
-                             reshapeCopyOutOp.opmagic, reshapeCopyInOp.opmagic);
-            processedReshapeOps.insert(op.GetOpMagic());
-            function.EraseOperations(true, false);
+            InsertUBReshapeCopy(function, op);
             break;
         }
     }
+}
+
+void RemoveUnalignedReshape::InsertUBReshapeCopy(Function& function, Operation& op)
+{
+    auto input = op.GetIOperands().front();
+    auto output = op.GetOOperands().front();
+    auto inDynValidShape = input->GetDynValidShape();
+    auto outDynValidShape = output->GetDynValidShape();
+    auto tmpWorkSpaceIn = irBuilder_.CreateTensorVar(input->Datatype(), input->shape, std::vector<SymbolicScalar>{},
+                                                     input->Format());
+    auto tmpWorkSpaceOut = irBuilder_.CreateTensorVar(input->Datatype(), output->shape, std::vector<SymbolicScalar>{},
+                                                      output->Format());
+
+    tmpWorkSpaceIn->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+    tmpWorkSpaceIn->UpdateDynValidShape(inDynValidShape);
+    tmpWorkSpaceOut->SetMemoryTypeBoth(MemoryType::MEM_DEVICE_DDR, true);
+    tmpWorkSpaceOut->UpdateDynValidShape(outDynValidShape);
+
+    auto& reshapeCopyOutOp = PassOperationUtils::AddOperation(
+        function, Opcode::OP_RESHAPE_COPY_OUT, {input}, {tmpWorkSpaceIn}, [&input](Operation& newOp) {
+            newOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(
+                MemoryType::MEM_UB, OpImmediate::Specified(std::vector<SymbolicScalar>(input->shape.size(), 0)),
+                OpImmediate::Specified(input->shape), OpImmediate::Specified(input->tensor->GetDynRawShape()),
+                OpImmediate::Specified(input->GetDynValidShape())));
+        });
+    op.ReplaceInput(tmpWorkSpaceIn, op.GetIOperands().front());
+    op.ReplaceOutput(tmpWorkSpaceOut, op.GetOOperands().front());
+    auto& reshapeCopyInOp = PassOperationUtils::AddOperation(
+        function, Opcode::OP_RESHAPE_COPY_IN, {tmpWorkSpaceOut}, {output}, [&output](Operation& newOp) {
+            newOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(
+                OpImmediate::Specified(std::vector<SymbolicScalar>(output->shape.size(), 0)),
+                MemoryType::MEM_DEVICE_DDR, OpImmediate::Specified(output->shape),
+                OpImmediate::Specified(output->tensor->GetDynRawShape()),
+                OpImmediate::Specified(output->GetDynValidShape())));
+        });
+    newOps.push_back(&reshapeCopyOutOp);
+    newOps.push_back(&reshapeCopyInOp);
+
+    reshapeCopyOutOp.UpdateSubgraphID(op.GetSubgraphID());
+    reshapeCopyInOp.UpdateSubgraphID(op.GetSubgraphID());
+
+    SetReshapeCopyOutValidShapeAttr(reshapeCopyOutOp);
+    SetReshapeCopyInValidShapeAttr(reshapeCopyInOp);
+    FoldConsumerViewOffsetIntoCopyIn(reshapeCopyInOp);
+    APASS_LOG_INFO_F(Elements::Operation, "Reshape op %d is replaced by reshapeCopyOutOp %d and reshapeCopyInOp %d.",
+                     op.opmagic, reshapeCopyOutOp.opmagic, reshapeCopyInOp.opmagic);
+    processedReshapeOps.insert(op.GetOpMagic());
+    function.EraseOperations(true, false);
 }
 
 Operation* RemoveUnalignedReshape::CopyBranchBetweenCopyOut2Reshape(
@@ -606,12 +662,8 @@ void RemoveUnalignedReshape::InsertReshapeCopy(Function& function, Operation& op
         checkOverUbSize = !ProcessMultipleCopyOuts(copyOutOps);
         ProcessCopyInOfDDRReshape(copyInOps);
     } else {
-        APASS_LOG_WARN_F(Elements::Tensor,
-                         "Reshape[%d] on GM processing failed, "
-                         "because the size of input[%d] or output[%d] of reshape[%d] exceeded ub if copy to ub, "
-                         "input size is %ld bytes, output size is %ld bytes, ub size limit is %zu bytes.",
-                         op.GetOpMagic(), input->GetMagic(), output->GetMagic(), op.GetOpMagic(), input->GetDataSize(),
-                         output->GetDataSize(), Platform::Instance().GetDie().GetMemoryLimit(MemoryType::MEM_UB));
+        APASS_LOG_WARN_F(Elements::Tensor, "GM reshape[%d] input[%d] or output[%d] exceeds UB size after padding.",
+                         op.GetOpMagic(), input->GetMagic(), output->GetMagic());
     }
     APASS_LOG_DEBUG_F(Elements::Operation, "Reshape[%d] on GM was processed successfully.", op.GetOpMagic());
     processedReshapeOps.insert(op.GetOpMagic());
@@ -666,6 +718,14 @@ void RemoveUnalignedReshape::HandleNoCopyInConsumer(Function& function, Operatio
     if (output->GetConsumers().empty()) {
         return;
     }
+    InsertCopyForNonCopyInConsumers(function, op, output, newCopyinTensorPtr, copyInOps);
+}
+
+void RemoveUnalignedReshape::InsertCopyForNonCopyInConsumers(Function& function, Operation& op,
+                                                             const LogicalTensorPtr& output,
+                                                             const LogicalTensorPtr& newCopyinTensorPtr,
+                                                             std::vector<Operation*>& copyInOps)
+{
     auto& newCopyInOp = PassOperationUtils::AddOperation(
         function, Opcode::OP_COPY_IN, {output}, {newCopyinTensorPtr}, [&output](Operation& newOp) {
             newOp.SetOpAttribute(std::make_shared<CopyOpAttribute>(

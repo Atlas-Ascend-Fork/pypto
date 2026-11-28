@@ -16,8 +16,9 @@
 #include "replace_tensor.h"
 #include <algorithm>
 #include <deque>
-#include <functional>
 #include "interface/tensor/irbuilder.h"
+#include "passes/pass_check/replace_tensor_checker.h"
+#include "passes/tile_graph_pass/graph_constraint/replace_tensor_hub.h"
 #include "passes/pass_log/pass_log.h"
 #include "passes/pass_utils/pass_operation_utils.h"
 #include "passes/pass_utils/tensor_utils.h"
@@ -225,162 +226,6 @@ int ReplaceTensor::GetUbSizeThreshold()
     return ubSizeThreshold_;
 }
 
-bool ReplaceTensor::CheckAddrConflict(const Operation& op)
-{
-    auto tensorIn = op.GetIOperands().front();
-    auto tensorOut = op.GetOOperands().front();
-    if (tensorIn->GetRawMagic() != tensorOut->GetRawMagic() &&
-        tensorIn->GetRawTensor()->memoryId != tensorOut->GetRawTensor()->memoryId) {
-        APASS_LOG_ERROR_F(
-            Elements::Operation,
-            "%s op[%d] invalid or conflict. tensorIn magic: %d, rawMagic: %d, tensorOut magic: %d, rawMagic: %d",
-            op.GetOpcodeStr().c_str(), op.GetOpMagic(), tensorIn->GetMagic(), tensorIn->GetRawMagic(),
-            tensorOut->GetMagic(), tensorOut->GetRawMagic());
-        return true;
-    }
-    return false;
-}
-
-/*
-用于校验assemble节点的输入输出是否存在冲突
-注意，若输入由OP_INDEX_OUTCAST构造，则不会出现冲突
-*/
-bool ReplaceTensor::CheckIndexProducer(const Operation& op)
-{
-    for (const auto& producer : op.ProducerOps()) {
-        if (producer->GetOpcode() == Opcode::OP_INDEX_OUTCAST) {
-            return true;
-        }
-    }
-    return false;
-}
-
-bool ReplaceTensor::CheckAssembleConflict(const Operation& op)
-{
-    if (!CheckIndexProducer(op) && CheckAddrConflict(op)) {
-        return true;
-    }
-    return false;
-}
-
-/*
-用于校验index_outcast节点的输入输出是否存在冲突
-注意，若输出后接assemble节点，则不会出现冲突
-*/
-bool ReplaceTensor::CheckIndexOutcastConflict(const Operation& op, Function& function)
-{
-    int index = 2;
-    auto indexIn = op.GetInputOperand(index);
-    auto indexOut = op.GetOOperands().front();
-    if (forwardOps.find(op.GetOpMagic()) != forwardOps.end()) {
-        if (function.IsFromInCast(indexIn) && function.IsFromOutCast(indexOut)) {
-            return false;
-        }
-    }
-    if (backwardOps.find(op.GetOpMagic()) != backwardOps.end()) {
-        if (indexIn->GetRawMagic() != indexOut->GetRawMagic()) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/*
-用于校验reshape节点的输入输出是否存在冲突
-需要校验的场景：
-    shape输入输出的rawtensor除了首轴之外都一致
-*/
-bool ReplaceTensor::CheckReshapeConflict(const Operation& op, Function& function)
-{
-    if (op.GetBoolAttribute(OP_ATTR_PREFIX + "isInplace"))
-        return false;
-    if (forwardOps.find(op.GetOpMagic()) != forwardOps.end()) {
-        auto tensorOut = op.GetOOperands().front();
-        if (function.IsFromOutCast(tensorOut)) {
-            return false;
-        }
-    }
-    if (backwardOps.find(op.GetOpMagic()) != backwardOps.end()) {
-        if (CheckAddrConflict(op)) {
-            return true;
-        }
-    }
-    return false;
-}
-
-/*
-用于校验a_mulacc_b节点的输入输出是否存在冲突
-*/
-bool ReplaceTensor::CheckAMulAccBConflict(const Operation& op)
-{
-    int index = 2;
-    auto tensorIn = op.GetInputOperand(index);
-    auto tensorOut = op.GetOOperands().front();
-    auto& inOp = *tensorIn->GetProducers().begin();
-    auto& outOp = *tensorOut->GetConsumers().begin();
-    if (inOp == nullptr && outOp == nullptr) {
-        return false;
-    }
-    if (tensorIn->GetRawMagic() != tensorOut->GetRawMagic()) {
-        return true;
-    }
-    return false;
-}
-
-Status ReplaceTensor::InplaceCheck(Function& function)
-{
-    struct OpValidator {
-        std::function<bool(const Operation&)> validate;
-        std::function<bool(const Operation&, Function&)> validateWithFunc;
-        std::function<bool(size_t)> inputCountValidator;
-        std::function<bool(size_t)> outputCountValidator;
-    };
-
-    std::unordered_map<Opcode, OpValidator> opValidators = {
-        {Opcode::OP_VIEW,
-         {[this](const Operation& op) { return this->CheckAddrConflict(op); }, nullptr,
-          [](size_t inputCount) { return inputCount == OperandCount::VIEW_INPUT; },
-          [](size_t outputCount) { return outputCount == OperandCount::VIEW_OUTPUT; }}},
-        {Opcode::OP_ASSEMBLE,
-         {[this](const Operation& op) { return this->CheckAssembleConflict(op); }, nullptr,
-          [](size_t inputCount) { return inputCount == OperandCount::ASSEMBLE_INPUT; },
-          [](size_t outputCount) { return outputCount == OperandCount::ASSEMBLE_OUTPUT; }}},
-        {Opcode::OP_INDEX_OUTCAST,
-         {nullptr, [this](const Operation& op, Function& func) { return this->CheckIndexOutcastConflict(op, func); },
-          [](size_t inputCount) { return inputCount == OperandCount::INDEX_OUTCAST_INPUTS; },
-          [](size_t outputCount) { return outputCount == OperandCount::INDEX_OUTCAST_OUTPUT; }}},
-        {Opcode::OP_RESHAPE,
-         {nullptr, [this](const Operation& op, Function& func) { return this->CheckReshapeConflict(op, func); },
-          [](size_t inputCount) { return inputCount == OperandCount::RESHAPE_INPUT; },
-          [](size_t outputCount) { return outputCount == OperandCount::RESHAPE_OUTPUT; }}},
-        {Opcode::OP_A_MULACC_B,
-         {[this](const Operation& op) { return this->CheckAMulAccBConflict(op); }, nullptr,
-          [](size_t inputCount) {
-              size_t maxInputs = Platform::Instance().GetSoc().GetNPUArch() == NPUArch::DAV_3510 ?
-                                     OperandCount::A_MULACC_B_MAX_INPUTS_A5 :
-                                     OperandCount::A_MULACC_B_MAX_INPUTS;
-              return inputCount >= OperandCount::A_MULACC_B_MIN_INPUTS && inputCount <= maxInputs;
-          },
-          [](size_t outputCount) { return outputCount == OperandCount::A_MULACC_B_OUTPUT; }}},
-    };
-
-    for (const auto& op : function.Operations()) {
-        auto it = opValidators.find(op.GetOpcode());
-        if (it == opValidators.end())
-            continue;
-        const auto& validator = it->second;
-        if (!validator.inputCountValidator(op.GetInputOperandSize()) ||
-            !validator.outputCountValidator(op.GetOutputOperandSize()) ||
-            (validator.validate && validator.validate(op)) ||
-            (validator.validateWithFunc && validator.validateWithFunc(op, function))) {
-            APASS_LOG_ERROR_F(Elements::Operation, "%s op[%d] invalid or conflict.", op.GetOpcodeStr().c_str(),
-                              op.GetOpMagic());
-            return FAILED;
-        }
-    }
-    return SUCCESS;
-}
-
 bool ReplaceTensor::CheckInplace(const Operation& op)
 {
     if (inplaceOpSet.find(op.GetOpcode()) != inplaceOpSet.end()) {
@@ -394,63 +239,16 @@ bool ReplaceTensor::CheckInplace(const Operation& op)
     return false;
 }
 
-bool ReplaceTensor::HasSameConsecutive(Operation& op)
-{
-    for (auto& nextOp : op.ConsumerOps()) {
-        if (nextOp->GetOpcode() == op.GetOpcode()) {
-            return true;
-        }
-    }
-    return false;
-}
 Status ReplaceTensor::PreCheck(Function& function)
 {
-    APASS_LOG_INFO_F(Elements::Operation, "PreCheck for ReplaceTensor.");
-    if (!function.LoopCheck().empty()) {
-        APASS_LOG_ERROR_F(Elements::Function,
-                          "Loopcheck failed before PreGraph; Please check whether there is a loop.");
-        return FAILED;
-    }
-    for (auto& op : function.Operations()) {
-        if (op.GetSubgraphID() == NOT_IN_SUBGRAPH) {
-            APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] is not partitioned; Please check subGraphIDs. %s",
-                              op.GetOpcodeStr().c_str(), op.GetOpMagic(), GetFormatBacktrace(op).c_str());
-            return FAILED;
-        }
-        if ((op.GetOpcode() != Opcode::OP_ASSEMBLE) && (op.GetOpcode() != Opcode::OP_VIEW) &&
-            (op.GetOpcode() != Opcode::OP_RESHAPE)) {
-            continue;
-        }
-        if (HasSameConsecutive(op)) {
-            APASS_LOG_ERROR_F(Elements::Operation, "%s[%d] has the same Opcode child op; Please check child ops. %s",
-                              op.GetOpcodeStr().c_str(), op.GetOpMagic(), GetFormatBacktrace(op).c_str());
-            return FAILED;
-        }
-        auto tensorIn = op.GetIOperands().front();
-        auto tensorOut = op.GetOOperands().front();
-        if (tensorIn->GetMemoryTypeOriginal() != tensorOut->GetMemoryTypeOriginal()) {
-            APASS_LOG_ERROR_F(
-                Elements::Tensor,
-                "unmatched input output memory type for reshape opmagic: %d, input mem type: %s, output mem type: %s; "
-                "Please check the input and output.",
-                op.opmagic, MemoryTypeToString(tensorIn->GetMemoryTypeOriginal()).c_str(),
-                MemoryTypeToString(tensorOut->GetMemoryTypeOriginal()).c_str());
-            return FAILED;
-        }
-    }
-    APASS_LOG_INFO_F(Elements::Operation, "PreCheck for ReplaceTensor success.");
-    return SUCCESS;
+    ReplaceTensorChecker checker(forwardOps, backwardOps);
+    return checker.DoPreCheck(function);
 }
 
 Status ReplaceTensor::PostCheck(Function& function)
 {
-    APASS_LOG_INFO_F(Elements::Operation, "PostCheck for ReplaceTensor.");
-    if (InplaceCheck(function) != SUCCESS) {
-        APASS_LOG_ERROR_F(Elements::Operation, "InplaceCheck failed.");
-        return FAILED;
-    }
-    APASS_LOG_INFO_F(Elements::Operation, "PostCheck for ReplaceTensor success.");
-    return SUCCESS;
+    ReplaceTensorChecker checker(forwardOps, backwardOps);
+    return checker.DoPostCheck(function);
 }
 
 void ReplaceTensor::BuildRawMagicTensorIndex(Function& function)
@@ -945,6 +743,30 @@ Status ReplaceTensor::BackwardInputIdx(Operation* op, LogicalTensorPtr& rootTens
     return SUCCESS;
 }
 
+Status ReplaceTensor::ProcessForwardConsumer(Operation* op, LogicalTensorPtr& rootTensor, Function& function,
+                                             std::unordered_set<int>& forwardedAssembles)
+{
+    if (op->GetOpcode() == Opcode::OP_VIEW) {
+        return ForwardView(op, rootTensor, function);
+    } else if (op->GetOpcode() == Opcode::OP_ASSEMBLE) {
+        if (forwardedAssembles.insert(op->GetOpMagic()).second) {
+            return ForwardAssemble(op, rootTensor, function);
+        }
+        return SUCCESS;
+    } else if (op->GetOpcode() == Opcode::OP_RESHAPE) {
+        return ForwardReshape(op, rootTensor, function);
+    } else if (op->GetOpcode() == Opcode::OP_VIEW_TYPE) {
+        return ForwardViewType(op, rootTensor);
+    } else if (inplaceOpMap.find(op->GetOpcode()) != inplaceOpMap.end()) {
+        return ForwardInplaceOp(op, rootTensor, function);
+    } else if (op->GetOpcode() == Opcode::OP_COPY_OUT && op->HasAttribute(OpAttributeKey::inplaceIdx)) {
+        return ForwardCopyOut(op, rootTensor, function);
+    } else if (IsInplaceIdxOperation(*op)) {
+        return ForwardInputIdx(op, rootTensor, function);
+    }
+    return SUCCESS;
+}
+
 Status ReplaceTensor::ForwardProcess(Function& function)
 {
     std::unordered_set<int> forwardedAssembles;
@@ -960,39 +782,9 @@ Status ReplaceTensor::ForwardProcess(Function& function)
             if (processedOp.find(consumerOp->GetOpMagic()) != processedOp.end()) {
                 continue;
             }
-            if (consumerOp->GetOpcode() == Opcode::OP_VIEW) {
-                if (ForwardView(consumerOp, rootTensor, function) == FAILED) {
-                    return FAILED;
-                }
-            } else if (consumerOp->GetOpcode() == Opcode::OP_ASSEMBLE) {
-                // A same-raw sibling can requeue the input before BackwardAssemble marks this op processed.
-                if (forwardedAssembles.insert(consumerOp->GetOpMagic()).second &&
-                    ForwardAssemble(consumerOp, rootTensor, function) == FAILED) {
-                    return FAILED;
-                }
-            } else if (consumerOp->GetOpcode() == Opcode::OP_RESHAPE) {
-                if (ForwardReshape(consumerOp, rootTensor, function) == FAILED) {
-                    return FAILED;
-                }
-            } else if (consumerOp->GetOpcode() == Opcode::OP_VIEW_TYPE) {
-                if (ForwardViewType(consumerOp, rootTensor) == FAILED) {
-                    return FAILED;
-                }
-            } else if (inplaceOpMap.find(consumerOp->GetOpcode()) != inplaceOpMap.end()) {
-                if (ForwardInplaceOp(consumerOp, rootTensor, function) == FAILED) {
-                    return FAILED;
-                }
-            } else if (consumerOp->GetOpcode() == Opcode::OP_COPY_OUT &&
-                       consumerOp->HasAttribute(OpAttributeKey::inplaceIdx)) {
-                if (ForwardCopyOut(consumerOp, rootTensor, function) == FAILED) {
-                    return FAILED;
-                }
-            } else if (IsInplaceIdxOperation(*consumerOp)) {
-                if (ForwardInputIdx(consumerOp, rootTensor, function) == FAILED) {
-                    return FAILED;
-                }
-            } else {
-                continue;
+            // A same-raw sibling can requeue the input before BackwardAssemble marks this op processed.
+            if (ProcessForwardConsumer(consumerOp, rootTensor, function, forwardedAssembles) == FAILED) {
+                return FAILED;
             }
         }
     }
@@ -1119,131 +911,50 @@ Status ReplaceTensor::RefactorViewConnectForReplace(Function& function)
     }
 
     for (auto& [op, srcTensor] : visited) {
-        if (op->GetOpcode() != Opcode::OP_VIEW) { // 仅重构View连接
-            continue;
-        }
-        auto inplaceIdx = op->GetIntAttribute(OpAttributeKey::inplaceIdx);
-        ASSERT(OperationErr::OP_SPECIAL_CONSTRAINT, inplaceIdx == 0);
-        auto iOperand = op->GetInputOperand(inplaceIdx);
-        auto oOperand = op->GetOutputOperand(0);
-        if (iOperand == srcTensor) { // 开头的VIEW不需要插入NOP来控制顺序
-            continue;
-        }
-        bool hasNonInplaceConsumer = false;
-        for (auto consumer : oOperand->GetConsumers()) {
-            if (consumer->GetOpcode() != Opcode::OP_NOP && !consumer->HasAttribute(OpAttributeKey::inplaceIdx)) {
-                hasNonInplaceConsumer = true;
-                break;
-            }
-        }
-        if (hasNonInplaceConsumer) {
-            continue;
-        }
-        ASSERT(TensorErr::TENSOR_SHAPE_MISMATCH, iOperand->GetRawTensor() == srcTensor->GetRawTensor());
-        ASSERT(TensorErr::TENSOR_SHAPE_MISMATCH, oOperand->GetRawTensor() == srcTensor->GetRawTensor());
-        op->ReplaceIOperand(0, srcTensor);
-        auto nopOutput = irBuilder_.CreateTensorVar(srcTensor->GetRawTensor(), Offset(srcTensor->GetOffset().size()),
-                                                    srcTensor->GetShape(), std::vector<SymbolicScalar>{});
-        nopOutput->SetMemoryTypeBoth(oOperand->GetMemoryTypeOriginal());
-        auto& nop = irBuilder_.CreateTensorOpStmt(function, Opcode::OP_NOP, {iOperand, oOperand}, {nopOutput});
-        nop.SetAttribute(OpAttributeKey::inplaceIdx, 0);
-        nop.UpdateSubgraphID(op->GetSubgraphID());
-        auto consumers = oOperand->GetConsumers();
-        for (auto consumer : consumers) {
-            if (consumer->GetOpcode() == Opcode::OP_NOP || !consumer->HasAttribute(OpAttributeKey::inplaceIdx)) {
-                continue;
-            }
-            consumer->ReplaceIOperand(consumer->GetIntAttribute(OpAttributeKey::inplaceIdx), nopOutput);
-        }
+        RefactorReplaceView(function, *op, srcTensor);
     }
     APASS_LOG_INFO_F(Elements::Operation, "===> End RefactorViewConnectForReplace.");
     return SUCCESS;
 }
 
-void ReplaceTensor::ProcessHubAssembleOp(Function& function, Operation& hubOp, Operation& assembleOp,
-                                         std::shared_ptr<LogicalTensor> hubInput,
-                                         std::shared_ptr<LogicalTensor> hubOutput)
+void ReplaceTensor::RefactorReplaceView(Function& function, Operation& op, const LogicalTensorPtr& srcTensor)
 {
-    auto assembleInput = assembleOp.GetIOperands()[0];
-    auto assembleOutput = assembleOp.GetOOperands()[0];
-    if (assembleInput.get() != hubOutput.get()) {
-        APASS_LOG_WARN_F(Elements::Tensor, "Assemble input[%d] is not HUB output[%d], chain may be broken",
-                         assembleInput->GetMagic(), hubOutput->GetMagic());
+    if (op.GetOpcode() != Opcode::OP_VIEW) { // 仅重构View连接
         return;
     }
-    bool isExactOutcast = false;
-    auto outcasts = function.GetOutcast();
-    for (auto& outcast : outcasts) {
-        if (outcast.get() == assembleOutput.get()) {
-            isExactOutcast = true;
+    auto inplaceIdx = op.GetIntAttribute(OpAttributeKey::inplaceIdx);
+    ASSERT(OperationErr::OP_SPECIAL_CONSTRAINT, inplaceIdx == 0);
+    auto iOperand = op.GetInputOperand(inplaceIdx);
+    auto oOperand = op.GetOutputOperand(0);
+    if (iOperand == srcTensor) { // 开头的VIEW不需要插入NOP来控制顺序
+        return;
+    }
+    bool hasNonInplaceConsumer = false;
+    for (auto consumer : oOperand->GetConsumers()) {
+        if (consumer->GetOpcode() != Opcode::OP_NOP && !consumer->HasAttribute(OpAttributeKey::inplaceIdx)) {
+            hasNonInplaceConsumer = true;
             break;
         }
     }
-    if (!isExactOutcast) {
-        APASS_LOG_WARN_F(Elements::Operation,
-                         "Assemble[%d] output is not exact outcast, skip HUB memory reuse processing.",
-                         assembleOp.GetOpMagic());
+    if (hasNonInplaceConsumer) {
         return;
     }
-    APASS_LOG_INFO_F(Elements::Operation,
-                     "Found exact HUB-ASSEMBLE-OUTCAST chain: HUB[%d] -> ASSEMBLE[%d] -> OUTCAST[%d]",
-                     hubOp.GetOpMagic(), assembleOp.GetOpMagic(), assembleOutput->GetMagic());
-    auto hubInputMemType = hubInput->GetMemoryTypeOriginal();
-    auto hubOutputMemType = hubOutput->GetMemoryTypeOriginal();
-    auto assembleOutputMemType = assembleOutput->GetMemoryTypeOriginal();
-    if (hubInputMemType != hubOutputMemType || hubInputMemType != assembleOutputMemType) {
-        APASS_LOG_WARN_F(Elements::Tensor, "Memory type mismatch: HUB input=%d, HUB output=%d, ASSEMBLE output=%d",
-                         hubInputMemType, hubOutputMemType, assembleOutputMemType);
-        return;
-    }
-    // RunOnFunction 在处理 HUB 前已清空 rawMagicTensors_。
-    hubInput->tensor = assembleOutput->tensor;
-    auto assembleOpAttribute = std::dynamic_pointer_cast<AssembleOpAttribute>(assembleOp.GetOpAttribute());
-    if (assembleOpAttribute == nullptr) {
-        APASS_LOG_WARN_F(Elements::Operation, "HUB assemble op %d attribute is nullptr, skip HUB memory reuse.",
-                         assembleOp.GetOpMagic());
-        return;
-    }
-    hubInput->UpdateOffset(assembleOpAttribute->GetToTensorOffset());
-    hubOutput->tensor = assembleOutput->tensor;
-    hubOutput->UpdateOffset(assembleOpAttribute->GetToTensorOffset());
-    APASS_LOG_INFO_F(Elements::Tensor, "Complete memory reuse established: all tensors share HUB input[%d] memory",
-                     hubInput->GetMagic());
-}
-
-Status ReplaceTensor::ProcessHubOp(Function& function)
-{
-    for (auto& op : function.Operations()) {
-        if (op.GetOpcode() != Opcode::OP_HUB) {
+    ASSERT(TensorErr::TENSOR_SHAPE_MISMATCH, iOperand->GetRawTensor() == srcTensor->GetRawTensor());
+    ASSERT(TensorErr::TENSOR_SHAPE_MISMATCH, oOperand->GetRawTensor() == srcTensor->GetRawTensor());
+    op.ReplaceIOperand(0, srcTensor);
+    auto nopOutput = irBuilder_.CreateTensorVar(srcTensor->GetRawTensor(), Offset(srcTensor->GetOffset().size()),
+                                                srcTensor->GetShape(), std::vector<SymbolicScalar>{});
+    nopOutput->SetMemoryTypeBoth(oOperand->GetMemoryTypeOriginal());
+    auto& nop = irBuilder_.CreateTensorOpStmt(function, Opcode::OP_NOP, {iOperand, oOperand}, {nopOutput});
+    nop.SetAttribute(OpAttributeKey::inplaceIdx, 0);
+    nop.UpdateSubgraphID(op.GetSubgraphID());
+    auto consumers = oOperand->GetConsumers();
+    for (auto consumer : consumers) {
+        if (consumer->GetOpcode() == Opcode::OP_NOP || !consumer->HasAttribute(OpAttributeKey::inplaceIdx)) {
             continue;
         }
-        auto hubInput = op.GetIOperands()[0];  // HUB 的输入 tensor
-        auto hubOutput = op.GetOOperands()[0]; // HUB 的输出 tensor
-        for (auto consumerOp : hubOutput->GetConsumers()) {
-            if (consumerOp->GetOpcode() == Opcode::OP_ASSEMBLE) {
-                ProcessHubAssembleOp(function, op, *consumerOp, hubInput, hubOutput);
-            }
-        }
-        for (auto producerOp : hubInput->GetProducers()) {
-            if (!OpcodeManager::Inst().IsCopyOut(producerOp->GetOpcode())) {
-                continue;
-            }
-            auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(producerOp->GetOpAttribute());
-            if (copyAttr == nullptr) {
-                APASS_LOG_INFO_F(Elements::Operation, "Copy Op %d Attribute is nullptr.", producerOp->GetOpMagic());
-                continue;
-            }
-            auto attrOffset = copyAttr->GetToOffset(); // OpImm
-            auto tensorOffset = OpImmediate::Specified(hubInput->GetTensorOffset());
-            std::vector<OpImmediate> newOffset;
-            for (size_t i = 0; i < attrOffset.size(); i++) {
-                newOffset.push_back(attrOffset[i] + tensorOffset[i]);
-            }
-            copyAttr->SetToOffset(newOffset);
-            copyAttr->SetRawShape(OpImmediate::Specified(hubInput->tensor->GetDynRawShape()));
-        }
+        consumer->ReplaceIOperand(consumer->GetIntAttribute(OpAttributeKey::inplaceIdx), nopOutput);
     }
-    return SUCCESS;
 }
 
 std::unordered_map<LogicalTensorPtr, int> ReplaceTensor::BuildTensorOrderIndexMap(Function& function)
@@ -1444,6 +1155,40 @@ bool ReplaceTensor::IsCopyToUBOverSize(const LogicalTensorPtr& tensor)
     return ubTensor->GetDataSize() > ubSizeThreshold;
 }
 
+bool ReplaceTensor::MatchInplaceProducerSource(const LogicalTensorPtr& assembleIn,
+                                               const std::shared_ptr<RawTensor>& incastRaw,
+                                               std::shared_ptr<RawTensor>& srcRaw, std::string& producerOpcode,
+                                               int& producerInplaceIdx) const
+{
+    for (const auto& producerOp : assembleIn->GetProducers()) {
+        if (!producerOp->HasAttribute(OpAttributeKey::inplaceIdx)) {
+            continue;
+        }
+        const int idx = producerOp->GetIntAttribute(OpAttributeKey::inplaceIdx);
+        if (idx < 0 || idx >= static_cast<int>(producerOp->GetIOperands().size())) {
+            return false;
+        }
+        auto candRaw = producerOp->GetIOperands()[idx]->GetRawTensor();
+        const bool rawShapeMatch = (candRaw->rawshape == incastRaw->rawshape);
+        bool curMatch = (candRaw == incastRaw);
+        if (!curMatch && rawShapeMatch && candRaw->memoryId != -1 && incastRaw->memoryId != -1) {
+            curMatch = (candRaw->memoryId == incastRaw->memoryId);
+        }
+        if (!curMatch && rawShapeMatch && candRaw->actualRawmagic != -1 && incastRaw->actualRawmagic != -1) {
+            curMatch = (candRaw->actualRawmagic == incastRaw->actualRawmagic);
+        }
+        if (!curMatch) {
+            return false;
+        }
+        if (srcRaw == nullptr) {
+            producerOpcode = producerOp->GetOpcodeStr();
+            producerInplaceIdx = idx;
+            srcRaw = candRaw;
+        }
+    }
+    return true;
+}
+
 /**
  * @brief 判断 ASSEMBLE 是否为就地修改 GM 入参的同址自写回（no-op，可跳过防御拷贝）
  */
@@ -1475,37 +1220,13 @@ bool ReplaceTensor::IsAssembleSameGmWriteBack(Function& function, Operation* ass
     auto incastRaw = itOut->second;
 
     // step2: 校验所有带 inplaceIdx 的 producer 的 self 都与 incastRaw 同源
-    bool sameSource = false;
     std::shared_ptr<RawTensor> srcRaw = nullptr;
     std::string producerOpcode = "NONE";
     int producerInplaceIdx = -1;
-    for (const auto& producerOp : assembleIn->GetProducers()) {
-        if (!producerOp->HasAttribute(OpAttributeKey::inplaceIdx)) {
-            continue;
-        }
-        const int idx = producerOp->GetIntAttribute(OpAttributeKey::inplaceIdx);
-        if (idx < 0 || idx >= static_cast<int>(producerOp->GetIOperands().size())) {
-            return false;
-        }
-        auto candRaw = producerOp->GetIOperands()[idx]->GetRawTensor();
-        const bool rawShapeMatch = (candRaw->rawshape == incastRaw->rawshape);
-        bool curMatch = (candRaw == incastRaw);
-        if (!curMatch && rawShapeMatch && candRaw->memoryId != -1 && incastRaw->memoryId != -1) {
-            curMatch = (candRaw->memoryId == incastRaw->memoryId);
-        }
-        if (!curMatch && rawShapeMatch && candRaw->actualRawmagic != -1 && incastRaw->actualRawmagic != -1) {
-            curMatch = (candRaw->actualRawmagic == incastRaw->actualRawmagic);
-        }
-        if (!curMatch) {
-            return false;
-        }
-        if (srcRaw == nullptr) {
-            producerOpcode = producerOp->GetOpcodeStr();
-            producerInplaceIdx = idx;
-            srcRaw = candRaw;
-        }
+    if (!MatchInplaceProducerSource(assembleIn, incastRaw, srcRaw, producerOpcode, producerInplaceIdx)) {
+        return false;
     }
-    sameSource = (srcRaw != nullptr);
+    const bool sameSource = (srcRaw != nullptr);
 
     APASS_LOG_INFO_F(
         Elements::Tensor,
@@ -1562,6 +1283,16 @@ Status ReplaceTensor::FindNeedToCopyAssemble(std::unordered_set<Operation*>& for
         forwardInsertCopy.insert(&op);
         return SUCCESS;
     }
+    CollectConflictingAssembleCopies(forwardInsertCopy, visitedAssOps, op, function);
+    return SUCCESS;
+}
+
+void ReplaceTensor::CollectConflictingAssembleCopies(std::unordered_set<Operation*>& forwardInsertCopy,
+                                                     std::unordered_set<int>& visitedAssOps, Operation& op,
+                                                     Function& function)
+{
+    auto assembleIn = op.GetIOperands()[0];
+    const int UB_SIZE_THRESHOLD = GetUbSizeThreshold();
     auto consumers = assembleIn->GetConsumers();
     bool sameAssembleOut = true;
     for (const auto& con : consumers) {
@@ -1586,7 +1317,6 @@ Status ReplaceTensor::FindNeedToCopyAssemble(std::unordered_set<Operation*>& for
             }
         }
     }
-    return SUCCESS;
 }
 
 bool ReplaceTensor::isBoundTensor(LogicalTensorPtr& curTensor)
@@ -1821,40 +1551,46 @@ void ReplaceTensor::RebuildTokenProducer(Function& function)
             continue;
         }
 
-        // Clear the token relationship(s)
-        auto& producerTokens = producer->result_token_;
-        producerTokens.erase(std::remove(producerTokens.begin(), producerTokens.end(), token), producerTokens.end());
-        function.GetVarDependency().RemoveProducer(token, GetStmt(*producer));
-        for (auto* consumer : matchedConsumers) {
-            RemoveTokenConsumer(*consumer, token, function);
-        }
-        function.GetVarDependency().RemoveVar(token);
+        MoveInplaceProducerToken(function, *producer, token, matchedConsumers);
+    }
+}
 
-        // Produce new tokens everyone in matchedConsumers.
-        std::unordered_map<Operation*, Token> replacementTokens;
-        for (auto* boundary : FindFirstNonInplaceConsumers(*producer)) {
-            bool createsCycle = false;
-            for (auto* consumer : matchedConsumers) {
-                if (consumer != nullptr && HasDependencyPath(*consumer, *boundary)) {
-                    createsCycle = true;
-                    break;
-                }
+void ReplaceTensor::MoveInplaceProducerToken(Function& function, Operation& producer, const ir::VarPtr& token,
+                                             const std::vector<Operation*>& matchedConsumers)
+{
+    // Clear the token relationship(s)
+    auto& producerTokens = producer.result_token_;
+    producerTokens.erase(std::remove(producerTokens.begin(), producerTokens.end(), token), producerTokens.end());
+    function.GetVarDependency().RemoveProducer(token, GetStmt(producer));
+    for (auto* consumer : matchedConsumers) {
+        RemoveTokenConsumer(*consumer, token, function);
+    }
+    function.GetVarDependency().RemoveVar(token);
+
+    // Produce new tokens everyone in matchedConsumers.
+    std::unordered_map<Operation*, Token> replacementTokens;
+    for (auto* boundary : FindFirstNonInplaceConsumers(producer)) {
+        bool createsCycle = false;
+        for (auto* consumer : matchedConsumers) {
+            if (consumer != nullptr && HasDependencyPath(*consumer, *boundary)) {
+                createsCycle = true;
+                break;
             }
-            if (createsCycle) {
-                continue;
+        }
+        if (createsCycle) {
+            continue;
+        }
+        auto tokenIt = replacementTokens.find(boundary);
+        if (tokenIt == replacementTokens.end()) {
+            if (boundary->result_token_.empty()) {
+                auto newToken = irBuilder_.CreateTokenVar(boundary->GetSpan());
+                boundary->result_token_.push_back(newToken);
+                function.GetVarDependency().AddProducer(newToken, GetStmt(*boundary));
             }
-            auto tokenIt = replacementTokens.find(boundary);
-            if (tokenIt == replacementTokens.end()) {
-                if (boundary->result_token_.empty()) {
-                    auto newToken = irBuilder_.CreateTokenVar(boundary->GetSpan());
-                    boundary->result_token_.push_back(newToken);
-                    function.GetVarDependency().AddProducer(newToken, GetStmt(*boundary));
-                }
-                tokenIt = replacementTokens.emplace(boundary, boundary->result_token_.front()).first;
-            }
-            for (auto* consumer : matchedConsumers) {
-                AddTokenConsumer(*consumer, tokenIt->second, function);
-            }
+            tokenIt = replacementTokens.emplace(boundary, boundary->result_token_.front()).first;
+        }
+        for (auto* consumer : matchedConsumers) {
+            AddTokenConsumer(*consumer, tokenIt->second, function);
         }
     }
 }
@@ -1959,9 +1695,8 @@ Status ReplaceTensor::RunOnFunction(Function& function)
     if (RefactorViewConnectForReplace(function) == FAILED) {
         return FAILED;
     }
-    if (ProcessHubOp(function) == FAILED) {
-        return FAILED;
-    }
+    ReplaceTensorHub hubProcessor;
+    hubProcessor.Process(function);
     RebuildTokenProducer(function);
     RebuildTokenConsumer(function);
     if (MarkTensorAsPartialMem(function) == FAILED) {
@@ -2159,26 +1894,31 @@ Status ReplaceTensor::FoldL0C2UBCopyOffset(Operation* op)
     copyAttr->SetToOffset(OpImmediate::Specified(TensorOffset(assembleIn->GetOffset(), assembleIn->GetDynOffset())));
     copyOp->SetAttribute(OpAttributeKey::localCopyLocalMode, static_cast<int64_t>(Matrix::CopyMode::INSERT));
 
+    return RemoveFoldedAssemble(*op, *copyOp);
+}
+
+Status ReplaceTensor::RemoveFoldedAssemble(Operation& op, Operation& copyOp)
+{
     // The copy now writes directly into the Assemble destination.  Bypass the
     // obsolete Assemble node so its consumers use the copy result directly.
     // Do not erase from the operation list while ReplaceTensor is traversing
     // it; mark the op deleted and let RunOnFunction perform the cleanup.
-    auto* function = op->BelongTo();
+    auto* function = op.BelongTo();
     if (function == nullptr) {
         APASS_LOG_ERROR_F(Elements::Operation,
                           "ReplaceTensor::FoldL0C2UBCopyOffset: assemble op %d has no owner function.",
-                          op->GetOpMagic());
+                          op.GetOpMagic());
         return FAILED;
     }
     // Keep the Assemble output tensor (which may be an outcast/shared raw
     // tensor).  Replacing consumers with the input view would lose that raw
     // tensor identity and can make the direct copy write to the wrong view.
-    function->UpdateOperandBeforeRemoveOp(*op, true);
-    op->SetAsDeleted();
+    function->UpdateOperandBeforeRemoveOp(op, true);
+    op.SetAsDeleted();
     APASS_LOG_INFO_F(Elements::Operation,
                      "ReplaceTensor::FoldL0C2UBCopyOffset: remove folded assemble op %d, copy op %d writes "
                      "directly to destination.",
-                     op->GetOpMagic(), copyOp->GetOpMagic());
+                     op.GetOpMagic(), copyOp.GetOpMagic());
     return SUCCESS;
 }
 

@@ -2077,6 +2077,40 @@ TEST_F(TestRemoveUnalignedReshapeOp, TestSiblingCopyInCollectorNullAndNonDdrInpu
     EXPECT_TRUE(copyInOps.empty());
 }
 
+TEST_F(TestRemoveUnalignedReshapeOp, ReplaceDynamicUbReshapeWithWorkspaceCopies)
+{
+    Function function(Program::GetInstance(), "ReplaceDynamicUbReshapeWithWorkspaceCopies",
+                      "ReplaceDynamicUbReshapeWithWorkspaceCopies", nullptr);
+    const std::vector<int64_t> inputShape = {8, 16};
+    const std::vector<int64_t> outputShape = {16, 8};
+    auto input = CreateTestTensor(MEM_UB, inputShape);
+    auto output = CreateTestTensor(MEM_UB, outputShape);
+    input->UpdateDynValidShape({CreateTestScalarVar("input_0"), CreateTestScalarVar("input_1")});
+    output->UpdateDynValidShape({CreateTestScalarVar("output_0"), CreateTestScalarVar("output_1")});
+    auto& reshape = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_RESHAPE, {input}, {output});
+
+    RemoveUnalignedReshape pass;
+    EXPECT_EQ(pass.RunOnFunction(function), SUCCESS);
+
+    Operation* reshapeCopyOut = nullptr;
+    Operation* reshapeCopyIn = nullptr;
+    for (auto& op : function.Operations()) {
+        if (op.GetOpcode() == Opcode::OP_RESHAPE_COPY_OUT) {
+            reshapeCopyOut = &op;
+        } else if (op.GetOpcode() == Opcode::OP_RESHAPE_COPY_IN) {
+            reshapeCopyIn = &op;
+        }
+    }
+    ASSERT_NE(reshapeCopyOut, nullptr);
+    ASSERT_NE(reshapeCopyIn, nullptr);
+    EXPECT_EQ(reshapeCopyOut->GetInputOperand(0), input);
+    EXPECT_EQ(reshapeCopyIn->GetOutputOperand(0), output);
+    EXPECT_EQ(reshape.GetInputOperand(0)->GetMemoryTypeOriginal(), MEM_DEVICE_DDR);
+    EXPECT_EQ(reshape.GetOutputOperand(0)->GetMemoryTypeOriginal(), MEM_DEVICE_DDR);
+    EXPECT_NE(std::dynamic_pointer_cast<CopyOpAttribute>(reshapeCopyOut->GetOpAttribute()), nullptr);
+    EXPECT_NE(std::dynamic_pointer_cast<CopyOpAttribute>(reshapeCopyIn->GetOpAttribute()), nullptr);
+}
+
 // reshape输出未配置dynValidShape时, 变化维下标越界, ForUB路径打WARN并跳过该op(不插入reshape copy)
 // (覆盖remove_unaligned_reshape_op.cpp ReplaceDynUnalignedReshapeOpsForUB的WARN分支)
 TEST_F(TestRemoveUnalignedReshapeOp, TestReplaceDynUnalignedReshapeOpForUBMissingDynValidShapeDim)

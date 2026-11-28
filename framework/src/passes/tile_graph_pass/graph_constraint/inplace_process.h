@@ -51,6 +51,11 @@ private:
     Status PreCheck(Function& function) override;
     Status RunOnFunction(Function& function) override;
     Status ProcessOp(Function& function);
+    Status ProcessViewOp(Function& function, Operation& op);
+    Status ProcessViewTypeOp(Function& function, Operation& op);
+    Status ProcessAssembleOp(Function& function, Operation& op);
+    Status ProcessReshapeOp(Function& function, Operation& op);
+    Status ProcessOtherOp(Function& function, Operation& op);
     Status InplaceProcessAssemble(Function& function, Operation& op);
     bool HasSameConsecutive(Operation& op);
     void ProcessView(Function& function, Operation& op) const;
@@ -60,6 +65,7 @@ private:
     void ProcessReshape(Function& function, Operation& op) const;
     Status ProcessViewType(Function& function, Operation& op) const;
     Status ProcessInplaceOp(Function& function, Operation& op) const;
+    void UpdateInplaceTensors(Function& function, Operation& op, size_t inputIdx, size_t outputIdx) const;
     Status ValidMeaninglessOp(const Operation& op) const;
     Status AdjustOffsetAndRawShape(LogicalTensorPtr& fromView, LogicalTensorPtr& toView) const;
     void ReplaceRawTensor(Function& function, std::shared_ptr<LogicalTensor> logicalTensor,
@@ -67,6 +73,10 @@ private:
     void ProcessHub(Function& function, Operation& op);
     void ProcessHubAssembleChain(Function& function, Operation& hubOp, Operation& assembleOp,
                                  std::shared_ptr<LogicalTensor> hubInput, std::shared_ptr<LogicalTensor> hubOutput);
+    bool ValidateHubAssembleOperands(Operation& assembleOp, const LogicalTensorPtr& hubOutput,
+                                     LogicalTensorPtr& assembleOutput) const;
+    bool IsExactHubAssembleOutcast(Function& function, Operation& hubOp, Operation& assembleOp,
+                                   const LogicalTensorPtr& assembleOutput) const;
     Status RefactorViewConnectForInplace(Function& function);
     std::unordered_map<DataType, int> viewTypeTable = {{DT_INT8, 1}, {DT_BF16, 2}, {DT_FP16, 2}, {DT_FP32, 4}};
     std::vector<int> visitedAssembleOp;

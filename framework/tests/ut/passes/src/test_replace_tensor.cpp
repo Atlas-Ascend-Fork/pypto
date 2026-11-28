@@ -23,6 +23,7 @@
 #include "interface/configs/config_manager.h"
 #include "ut_json/ut_json_tool.h"
 #include "passes/tile_graph_pass/graph_constraint/replace_tensor.h"
+#include "passes/tile_graph_pass/graph_constraint/replace_tensor_hub.h"
 #include <algorithm>
 #include <fstream>
 #include <vector>
@@ -601,10 +602,10 @@ TEST_F(ReplaceTensorTest, TestViewType)
     EXPECT_EQ(pass.PostCheck(*currFunctionPtr), SUCCESS);
 }
 
-TEST_F(ReplaceTensorTest, TestHasSameConsecutive_True)
+TEST_F(ReplaceTensorTest, PreCheckRejectsConsecutiveViews)
 {
-    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "TestHasSameConsecutive_True",
-                                                      "TestHasSameConsecutive_True", nullptr);
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "PreCheckRejectsConsecutiveViews",
+                                                      "PreCheckRejectsConsecutiveViews", nullptr);
     EXPECT_TRUE(currFunctionPtr != nullptr);
 
     std::vector<int64_t> shape = {kNumEight, kNumEight};
@@ -615,19 +616,17 @@ TEST_F(ReplaceTensorTest, TestHasSameConsecutive_True)
 
     auto& viewOp1 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_VIEW, {tensor1}, {tensor2});
     auto& viewOp2 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_VIEW, {tensor2}, {tensor3});
-
-    // 设置操作连接
-    tensor2->AddConsumer(&viewOp2);
+    viewOp1.UpdateSubgraphID(0);
+    viewOp2.UpdateSubgraphID(0);
 
     ReplaceTensor pass;
-    bool result = pass.HasSameConsecutive(viewOp1);
-    EXPECT_TRUE(result);
+    EXPECT_EQ(pass.PreCheck(*currFunctionPtr), FAILED);
 }
 
-TEST_F(ReplaceTensorTest, TestHasSameConsecutive_False)
+TEST_F(ReplaceTensorTest, PreCheckAcceptsViewBeforeAssemble)
 {
-    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "TestHasSameConsecutive_False",
-                                                      "TestHasSameConsecutive_False", nullptr);
+    auto currFunctionPtr = std::make_shared<Function>(Program::GetInstance(), "PreCheckAcceptsViewBeforeAssemble",
+                                                      "PreCheckAcceptsViewBeforeAssemble", nullptr);
     EXPECT_TRUE(currFunctionPtr != nullptr);
 
     std::vector<int64_t> shape = {kNumEight, kNumEight};
@@ -638,13 +637,11 @@ TEST_F(ReplaceTensorTest, TestHasSameConsecutive_False)
 
     auto& viewOp1 = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_VIEW, {tensor1}, {tensor2});
     auto& assembleOp = PassOperationUtils::AddOperation(*currFunctionPtr, Opcode::OP_ASSEMBLE, {tensor2}, {tensor3});
-
-    // 设置操作连接
-    tensor2->AddConsumer(&assembleOp);
+    viewOp1.UpdateSubgraphID(0);
+    assembleOp.UpdateSubgraphID(0);
 
     ReplaceTensor pass;
-    bool result = pass.HasSameConsecutive(viewOp1);
-    EXPECT_FALSE(result);
+    EXPECT_EQ(pass.PreCheck(*currFunctionPtr), SUCCESS);
 }
 
 TEST_F(ReplaceTensorTest, TestPreCheck_FailNoSubgraphID)
@@ -829,8 +826,8 @@ TEST_F(ReplaceTensorTest, TestProcessHubAssembleOp_Success)
     // 将assembleOutput设置为outcast
     currFunctionPtr->outCasts_.push_back(assembleOutput);
 
-    ReplaceTensor pass;
-    pass.ProcessHubAssembleOp(*currFunctionPtr, hubOp, assembleOp, hubInput, hubOutput);
+    ReplaceTensorHub hubProcessor;
+    hubProcessor.ProcessAssemble(*currFunctionPtr, hubOp, assembleOp, hubInput, hubOutput);
 
     // 验证hubInput和hubOutput共享了assembleOutput的tensor
     EXPECT_EQ(hubInput->GetRawTensor(), assembleOutput->GetRawTensor());
@@ -866,8 +863,8 @@ TEST_F(ReplaceTensorTest, TestProcessHubOpUpdateCopyOutRawShape)
                                                          OpImmediate::Specified(partShape));
     copyOutOp.SetOpAttribute(copyOutAttr);
 
-    ReplaceTensor pass;
-    EXPECT_EQ(pass.ProcessHubOp(*currFunctionPtr), SUCCESS);
+    ReplaceTensorHub hubProcessor;
+    hubProcessor.Process(*currFunctionPtr);
     EXPECT_EQ(OpImmediate::ToSpecified(copyOutAttr->GetToOffset()), CreateTestConstIntVector({kNumThree, kNumZero}));
     EXPECT_EQ(OpImmediate::ToSpecified(copyOutAttr->GetRawShape()), CreateTestConstIntVector(fullShape));
 }
@@ -2709,6 +2706,177 @@ TEST_F(ReplaceTensorTest, UnionFindUniteUnregisteredTensorRegistersAsSingleton)
     auto groups = uf.GetGroups();
     ASSERT_EQ(groups.size(), 1);
     ASSERT_EQ(groups[0].size(), 2);
+}
+
+TEST_F(ReplaceTensorTest, ProcessForwardConsumerDispatchesViewTypeAndCopyOut)
+{
+    const std::vector<int64_t> shape = {kNumEight, kNumEight};
+    Function viewTypeFunction(Program::GetInstance(), "ForwardConsumerViewTypeCopyOut",
+                              "ForwardConsumerViewTypeCopyOut", nullptr);
+    auto makeTensor = [&]() { return IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape)); };
+    auto viewTypeInput = makeTensor();
+    auto viewTypeOutput = makeTensor();
+    auto forwardedOutput = makeTensor();
+    auto viewTypeOutcast = makeTensor();
+    PassOperationUtils::AddOperation(viewTypeFunction, Opcode::OP_VIEW_TYPE, {viewTypeInput}, {viewTypeOutput});
+    auto& viewTypeCopyOut = PassOperationUtils::AddOperation(viewTypeFunction, Opcode::OP_COPY_OUT, {viewTypeOutput},
+                                                             {forwardedOutput});
+    viewTypeCopyOut.SetAttribute(OpAttributeKey::inplaceIdx, 0);
+    PassOperationUtils::AddOperation(viewTypeFunction, Opcode::OP_COPY_OUT, {forwardedOutput}, {viewTypeOutcast});
+    viewTypeFunction.inCasts_.push_back(viewTypeInput);
+    viewTypeFunction.outCasts_.push_back(viewTypeOutcast);
+
+    ReplaceTensor viewTypePass;
+    ASSERT_EQ(viewTypePass.RunOnFunction(viewTypeFunction), SUCCESS);
+    EXPECT_EQ(viewTypeOutput->tensor->actualRawmagic, viewTypeInput->GetRawMagic());
+    EXPECT_EQ(forwardedOutput->GetRawTensor(), viewTypeOutput->GetRawTensor());
+    EXPECT_EQ(forwardedOutput->GetOffset(), viewTypeOutput->GetOffset());
+}
+
+TEST_F(ReplaceTensorTest, ProcessForwardConsumerDispatchesIndexPut)
+{
+    const std::vector<int64_t> shape = {kNumEight, kNumEight};
+    Function indexPutFunction(Program::GetInstance(), "ForwardConsumerIndexPut", "ForwardConsumerIndexPut", nullptr);
+    auto makeTensor = [&]() { return IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape)); };
+    auto indexInput = makeTensor();
+    auto indexValues = makeTensor();
+    auto indices = IRBuilder().CreateTensorVar(DT_INT32, shape, CreateTestConstIntVector(shape));
+    auto indexOutput = makeTensor();
+    auto indexOutcast = makeTensor();
+    auto& indexPut = PassOperationUtils::AddOperation(indexPutFunction, Opcode::OP_INDEX_PUT,
+                                                      {indexInput, indexValues, indices}, {indexOutput});
+    indexPut.SetAttribute(OpAttributeKey::inplaceIdx, 0);
+    PassOperationUtils::AddOperation(indexPutFunction, Opcode::OP_COPY_OUT, {indexOutput}, {indexOutcast});
+    indexPutFunction.inCasts_.push_back(indexInput);
+    indexPutFunction.outCasts_.push_back(indexOutcast);
+
+    ReplaceTensor indexPutPass;
+    ASSERT_EQ(indexPutPass.RunOnFunction(indexPutFunction), SUCCESS);
+    EXPECT_EQ(indexOutput->GetRawTensor(), indexInput->GetRawTensor());
+}
+
+TEST_F(ReplaceTensorTest, RefactorReplaceViewReconnectsInplaceConsumer)
+{
+    Function function(Program::GetInstance(), "RefactorReplaceViewReconnectsInplaceConsumer",
+                      "RefactorReplaceViewReconnectsInplaceConsumer", nullptr);
+    const std::vector<int64_t> shape = {kNumFour, kNumFour};
+    const auto raw = std::make_shared<RawTensor>(DT_FP32, shape);
+    auto makeSharedTensor = [&]() {
+        return IRBuilder().CreateTensorVar(raw, Offset{kNumZero, kNumZero}, shape, CreateTestConstIntVector(shape));
+    };
+    auto root = makeSharedTensor();
+    auto firstOutput = makeSharedTensor();
+    auto viewOutput = makeSharedTensor();
+    auto indexOutput = makeSharedTensor();
+    auto outcast = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto values = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto indices = IRBuilder().CreateTensorVar(DT_INT32, shape, CreateTestConstIntVector(shape));
+    auto& firstIndexPut = PassOperationUtils::AddOperation(function, Opcode::OP_INDEX_PUT, {root, values, indices},
+                                                           {firstOutput});
+    firstIndexPut.SetAttribute(OpAttributeKey::inplaceIdx, 0);
+    auto& view = PassOperationUtils::AddOperation(function, Opcode::OP_VIEW, {firstOutput}, {viewOutput});
+    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(Offset{kNumZero, kNumZero}, MEM_DEVICE_DDR));
+    auto& nextIndexPut = PassOperationUtils::AddOperation(function, Opcode::OP_INDEX_PUT, {viewOutput, values, indices},
+                                                          {indexOutput});
+    nextIndexPut.SetAttribute(OpAttributeKey::inplaceIdx, 0);
+    PassOperationUtils::AddOperation(function, Opcode::OP_COPY_OUT, {indexOutput}, {outcast});
+    function.inCasts_.push_back(root);
+    function.outCasts_.push_back(outcast);
+
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(function), SUCCESS);
+    EXPECT_EQ(view.GetInputOperand(0), root);
+    const auto inplaceOperand = nextIndexPut.GetInputOperand(nextIndexPut.GetIntAttribute(OpAttributeKey::inplaceIdx));
+    ASSERT_NE(inplaceOperand, viewOutput);
+    bool isNopOutput = false;
+    for (const auto& op : function.Operations()) {
+        if (op.GetOpcode() == Opcode::OP_NOP && !op.GetOOperands().empty() &&
+            op.GetOOperands().front() == inplaceOperand) {
+            isNopOutput = true;
+            break;
+        }
+    }
+    EXPECT_TRUE(isNopOutput);
+}
+
+TEST_F(ReplaceTensorTest, MatchInplaceProducerSourceThroughRunOnFunction)
+{
+    Function function(Program::GetInstance(), "MatchInplaceProducerSourceThroughRunOnFunction",
+                      "MatchInplaceProducerSourceThroughRunOnFunction", nullptr);
+    const std::vector<int64_t> shape = {kNumFour, kNumFour};
+    auto incast = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto values = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto indices = IRBuilder().CreateTensorVar(DT_INT32, shape, CreateTestConstIntVector(shape));
+    auto scatterOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto assembleOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    incast->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    values->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    scatterOutput->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    assembleOutput->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    auto& scatter = PassOperationUtils::AddOperation(function, Opcode::OP_SCATTER_INPLACE, {incast, values, indices},
+                                                     {scatterOutput});
+    scatter.SetAttribute(OpAttributeKey::inplaceIdx, 0);
+    auto& assemble = PassOperationUtils::AddOperation(function, Opcode::OP_ASSEMBLE, {scatterOutput}, {assembleOutput});
+    const int assembleMagic = assemble.GetOpMagic();
+    assemble.SetOpAttribute(
+        std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, std::vector<int64_t>{kNumZero, kNumZero}));
+    function.inCasts_.push_back(incast);
+    function.outCasts_.push_back(assembleOutput);
+    function.SetSameMemId(incast, assembleOutput);
+
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.RunOnFunction(function), SUCCESS);
+    EXPECT_EQ(pass.PostCheck(function), SUCCESS);
+    bool assemblePreserved = false;
+    size_t copyOpCount = 0;
+    for (const auto& op : function.Operations()) {
+        assemblePreserved = assemblePreserved ||
+                            (op.GetOpMagic() == assembleMagic && op.GetOpcode() == Opcode::OP_ASSEMBLE);
+        if (op.GetOpcode() == Opcode::OP_COPY_IN || op.GetOpcode() == Opcode::OP_COPY_OUT) {
+            ++copyOpCount;
+        }
+    }
+    EXPECT_TRUE(assemblePreserved);
+    EXPECT_EQ(copyOpCount, 0);
+    EXPECT_EQ(assembleOutput->GetRawTensor(), scatterOutput->GetRawTensor());
+}
+
+TEST_F(ReplaceTensorTest, RunOnFunctionCoversReplaceTensorCheckerSuccessPath)
+{
+    auto function = std::make_shared<Function>(Program::GetInstance(), "CheckerSuccessPath", "CheckerSuccessPath",
+                                               nullptr);
+    /*
+     * 计算图:
+     * input(incast) -> COPY_IN -> reshapeInput -> RESHAPE -> reshapeOutput -> COPY_OUT -> output(outcast)
+     */
+    const Shape inputShape = {kNumEight, kNumEight};
+    const Shape reshapeShape = {kNumOne, kNumEight, kNumEight};
+    const Offset inputOffset = {kNumZero, kNumZero};
+    const Offset reshapeOffset = {kNumZero, kNumZero, kNumZero};
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, inputShape, CreateTestConstIntVector(inputShape));
+    auto reshapeInputRaw = std::make_shared<RawTensor>(DT_FP32, inputShape);
+    auto reshapeOutputRaw = std::make_shared<RawTensor>(DT_FP32, reshapeShape);
+    auto reshapeInput = IRBuilder().CreateTensorVar(reshapeInputRaw, inputOffset, inputShape,
+                                                    CreateTestConstIntVector(inputShape));
+    auto reshapeOutput = IRBuilder().CreateTensorVar(reshapeOutputRaw, reshapeOffset, reshapeShape,
+                                                     CreateTestConstIntVector(reshapeShape));
+    auto output = IRBuilder().CreateTensorVar(DT_FP32, reshapeShape, CreateTestConstIntVector(reshapeShape));
+
+    auto& copyIn = PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_IN, {input}, {reshapeInput});
+    auto& reshape = PassOperationUtils::AddOperation(*function, Opcode::OP_RESHAPE, {reshapeInput}, {reshapeOutput});
+    auto& copyOut = PassOperationUtils::AddOperation(*function, Opcode::OP_COPY_OUT, {reshapeOutput}, {output});
+    copyIn.UpdateSubgraphID(0);
+    reshape.UpdateSubgraphID(0);
+    copyOut.UpdateSubgraphID(0);
+    function->inCasts_.push_back(input);
+    function->outCasts_.push_back(output);
+
+    ReplaceTensor pass;
+    ASSERT_EQ(pass.PreCheck(*function), SUCCESS);
+    ASSERT_EQ(pass.RunOnFunction(*function), SUCCESS);
+    ASSERT_EQ(pass.PostCheck(*function), SUCCESS);
+    EXPECT_EQ(reshapeInput->GetRawMagic(), reshapeOutput->GetRawMagic());
+    EXPECT_EQ(reshapeOutput->GetShape(), reshapeShape);
 }
 
 // 同组两个inCast张量的symbol/memoryId/actualRawmagic互不相同时, FindBaseTensor判定base冲突,

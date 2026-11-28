@@ -32,21 +32,6 @@
 namespace npu {
 namespace tile_fwk {
 
-struct OperandCount {
-    constexpr static size_t VIEW_INPUT = 1;
-    constexpr static size_t VIEW_OUTPUT = 1;
-    constexpr static size_t ASSEMBLE_INPUT = 1;
-    constexpr static size_t ASSEMBLE_OUTPUT = 1;
-    constexpr static size_t RESHAPE_INPUT = 1;
-    constexpr static size_t RESHAPE_OUTPUT = 1;
-    constexpr static size_t INDEX_OUTCAST_INPUTS = 3;
-    constexpr static size_t INDEX_OUTCAST_OUTPUT = 1;
-    constexpr static size_t A_MULACC_B_MIN_INPUTS = 3;
-    constexpr static size_t A_MULACC_B_MAX_INPUTS = 4;
-    constexpr static size_t A_MULACC_B_MAX_INPUTS_A5 = 5;
-    constexpr static size_t A_MULACC_B_OUTPUT = 1;
-};
-
 /*
 key: Opcode类型
 vaule: vector of pair, 每个pair记录了第几个输入和第几个输出存在inplace关系
@@ -163,26 +148,16 @@ private:
     Status PreCheck(Function& function) override;
     Status PostCheck(Function& function) override;
     Status RunOnFunction(Function& function) override;
-    bool HasSameConsecutive(Operation& op);
-    bool CheckAddrConflict(const Operation& op);
-    bool CheckIndexProducer(const Operation& op);
-    bool CheckAssembleConflict(const Operation& op);
-    bool CheckIndexOutcastConflict(const Operation& op, Function& function);
-    bool CheckReshapeConflict(const Operation& op, Function& function);
-    bool CheckAMulAccBConflict(const Operation& op);
-    Status InplaceCheck(Function& function);
     bool CheckInplace(const Operation& op);
 
     std::unordered_map<LogicalTensorPtr, int> BuildTensorOrderIndexMap(Function& function);
     Status FindBaseTensor(Function& function, const std::unordered_map<LogicalTensorPtr, int>& tensorToOderIndex,
                           LogicalTensors& group, LogicalTensorPtr& baseTensor);
     void AddViewInputsToBoundTensors(const LogicalTensorPtr& curTensor, LogicalTensors& boundTensors) const;
-    Status ProcessHubOp(Function& function);
-    void ProcessHubAssembleOp(Function& function, Operation& hubOp, Operation& assembleOp,
-                              std::shared_ptr<LogicalTensor> hubInput, std::shared_ptr<LogicalTensor> hubOutput);
     LogicalTensorPtr FindReplaceSource(Function& function, Operation& op,
                                        std::unordered_map<Operation*, LogicalTensorPtr>& visited);
     Status RefactorViewConnectForReplace(Function& function);
+    void RefactorReplaceView(Function& function, Operation& op, const LogicalTensorPtr& srcTensor);
     void UniteTensor(Function& function, UnionFind& uf);
     void BuildRawMagicTensorIndex(Function& function);
     void SetRawTensor(const LogicalTensorPtr& tensor, const std::shared_ptr<RawTensor>& rawTensor);
@@ -206,6 +181,8 @@ private:
     Status ForwardViewType(Operation* op, LogicalTensorPtr& rootTensor);
     Status ForwardCopyOut(Operation* op, LogicalTensorPtr& rootTensor, Function& function);
     Status ForwardInputIdx(Operation* op, LogicalTensorPtr& rootTensor, Function& function);
+    Status ProcessForwardConsumer(Operation* op, LogicalTensorPtr& rootTensor, Function& function,
+                                  std::unordered_set<int>& forwardedAssembles);
 
     Status BackwardAssemble(Operation* op, LogicalTensorPtr& rootTensor);
     Status BackwardReshape(Operation* op, LogicalTensorPtr& rootTensor, Function& function);
@@ -219,6 +196,7 @@ private:
     // L0C2UB 直写折叠：将刷新到 assemble 输入 tensor 上的目的偏移落入其唯一 producer（L0C2UB copy）
     // 的 toOffset，并将 copy 模式改为 INSERT
     Status FoldL0C2UBCopyOffset(Operation* op);
+    Status RemoveFoldedAssemble(Operation& op, Operation& copyOp);
     std::vector<OpImmediate> SumOffsetForCopyIn(const std::vector<OpImmediate> offset1,
                                                 const std::vector<OpImmediate> offset2);
     Status UpdateCopyInAttr(Operation* copyInOp, bool updateOffset = true);
@@ -228,6 +206,8 @@ private:
     static bool MoveSharedAssembleWriteToken(Operation& producer, Operation& consumer, const ir::VarPtr& token,
                                              Function& function);
     void RebuildTokenProducer(Function& function);
+    void MoveInplaceProducerToken(Function& function, Operation& producer, const ir::VarPtr& token,
+                                  const std::vector<Operation*>& matchedConsumers);
     void RebuildTokenConsumer(Function& function);
 
     struct CopyChainContext {
@@ -245,6 +225,8 @@ private:
     Status InsertCopyDDRToUBAndUBToDDRChain(Function& function, Operation* op, const CopyChainContext& context);
     Status FindNeedToCopyAssemble(std::unordered_set<Operation*>& forwardInsertCopy,
                                   std::unordered_set<int>& visitedAssOps, Operation& op, Function& function);
+    void CollectConflictingAssembleCopies(std::unordered_set<Operation*>& forwardInsertCopy,
+                                          std::unordered_set<int>& visitedAssOps, Operation& op, Function& function);
     Status FindNeedToCopyReshape(std::unordered_set<Operation*>& forwardInsertCopy,
                                  std::unordered_set<int>& visitedReshapeOps, Operation& op, Function& function);
     bool HasLargerNonZeroOffsetViewProducerInput(const LogicalTensorPtr& tensor, int64_t tensorSize);
@@ -257,6 +239,9 @@ private:
     bool isBoundTensor(LogicalTensorPtr& curTensor);
 
     bool IsAssembleSameGmWriteBack(Function& function, Operation* assembleOp) const;
+    bool MatchInplaceProducerSource(const LogicalTensorPtr& assembleIn, const std::shared_ptr<RawTensor>& incastRaw,
+                                    std::shared_ptr<RawTensor>& srcRaw, std::string& producerOpcode,
+                                    int& producerInplaceIdx) const;
 
     std::unordered_map<DataType, int> viewTypeTable = {{DT_INT8, 1},    {DT_BF16, 2},    {DT_FP16, 2},   {DT_FP32, 4},
                                                        {DT_FP8E4M3, 1}, {DT_FP8E5M2, 1}, {DT_FP8E8M0, 1}};

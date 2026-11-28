@@ -54,6 +54,7 @@ private:
     void CollectReshapeOps(Function& function);
     void ReplaceDynUnalignedReshapeOps(Function& function);
     void ReplaceDynUnalignedReshapeOpsForUB(Function& function, Operation& op);
+    void InsertUBReshapeCopy(Function& function, Operation& op);
     // 将copy-in输出侧全部VIEW消费者的动态from-offset下沉进copy-in的from-offset，
     // 使copy-in按收缩后的box搬运，VIEW退化为纯常量列偏移（常量路径codegen可正确处理）
     void FoldConsumerViewOffsetIntoCopyIn(Operation& copyInOp);
@@ -79,6 +80,9 @@ private:
     bool checkNonCopyInConsumerExists(LogicalTensorPtr tensor, std::vector<Operation*>& copyInOps);
     void HandleNoCopyInConsumer(Function& function, Operation& op, LogicalTensorPtr output,
                                 std::vector<Operation*>& copyInOps, bool& checkOverUbSize);
+    void InsertCopyForNonCopyInConsumers(Function& function, Operation& op, const LogicalTensorPtr& output,
+                                         const LogicalTensorPtr& newCopyinTensorPtr,
+                                         std::vector<Operation*>& copyInOps);
     bool CheckUnaligned(Operation& op, bool combineAxis);
     void CollectSiblingCopyInConsumersOfDDRReshapeInput(LogicalTensorPtr reshapeInput, Operation& reshapeOp,
                                                         std::vector<Operation*>& copyInOps);

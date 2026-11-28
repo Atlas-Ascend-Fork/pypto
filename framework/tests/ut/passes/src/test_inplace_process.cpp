@@ -1533,5 +1533,105 @@ inline void AssembleViewAddOp(ComputationalGraphBuilder& G)
     G.GetOp("Copy_Out")->SetOpAttribute(attrCopyOut);
 }
 
+TEST_F(InplaceProcessTest, HubAssembleChainReusesOutcastStorage)
+{
+    Function function(Program::GetInstance(), "HubAssembleChainReusesOutcastStorage",
+                      "HubAssembleChainReusesOutcastStorage", nullptr);
+    const std::vector<int64_t> shape = {8, 8};
+    auto hubInput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto hubOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto assembleOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    hubInput->SetMemoryTypeOriginal(MEM_DEVICE_DDR, true);
+    hubOutput->SetMemoryTypeOriginal(MEM_DEVICE_DDR, true);
+    assembleOutput->SetMemoryTypeOriginal(MEM_DEVICE_DDR, true);
+
+    IRBuilder().CreateTensorOpStmt(function, Opcode::OP_HUB, {hubInput}, {hubOutput});
+    auto& assembleOp = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_ASSEMBLE, {hubOutput}, {assembleOutput});
+    assembleOp.SetOpAttribute(std::make_shared<AssembleOpAttribute>(MEM_DEVICE_DDR, std::vector<int64_t>{2, 3}));
+    function.outCasts_.push_back(assembleOutput);
+
+    InplaceProcess inplaceProcess;
+    EXPECT_EQ(inplaceProcess.RunOnFunction(function), SUCCESS);
+
+    EXPECT_EQ(hubInput->GetRawTensor(), assembleOutput->GetRawTensor());
+    EXPECT_EQ(hubOutput->GetRawTensor(), assembleOutput->GetRawTensor());
+    EXPECT_EQ(hubInput->GetOffset(), (Offset{2, 3}));
+    ASSERT_EQ(inplaceProcess.hubRelatedAssembleOpMagics.size(), 1);
+    EXPECT_EQ(inplaceProcess.hubRelatedAssembleOpMagics.front(), assembleOp.GetOpMagic());
+}
+
+TEST_F(InplaceProcessTest, ProcessOpDispatchesViewType)
+{
+    Function function(Program::GetInstance(), "ProcessOpDispatchesViewType", "ProcessOpDispatchesViewType", nullptr);
+    const std::vector<int64_t> shape = {8, 8};
+    auto input = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto output = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    input->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    output->SetMemoryTypeBoth(MEM_DEVICE_DDR, true);
+    function.inCasts_.push_back(input);
+    IRBuilder().CreateTensorOpStmt(function, Opcode::OP_VIEW_TYPE, {input}, {output});
+
+    InplaceProcess inplaceProcess;
+    EXPECT_EQ(inplaceProcess.RunOnFunction(function), SUCCESS);
+    EXPECT_EQ(output->tensor->actualRawmagic, input->GetRawMagic());
+}
+
+TEST_F(InplaceProcessTest, ProcessInplaceUpdatesInputAndOutputStorage)
+{
+    Function function(Program::GetInstance(), "ProcessInplaceUpdatesInputAndOutputStorage",
+                      "ProcessInplaceUpdatesInputAndOutputStorage", nullptr);
+    const std::vector<int64_t> shape = {8, 8};
+    auto makeTensor = [&]() { return IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape)); };
+    auto a = makeTensor();
+    auto b = makeTensor();
+    auto in = makeTensor();
+    auto out = makeTensor();
+    out->tensor->symbol = "output_symbol";
+    IRBuilder().CreateTensorOpStmt(function, Opcode::OP_A_MULACC_B, {a, b, in}, {out});
+
+    auto outcastIn = makeTensor();
+    auto outcastOut = makeTensor();
+    outcastIn->tensor->symbol = "input_symbol";
+    IRBuilder().CreateTensorOpStmt(function, Opcode::OP_A_MULACC_B, {a, b, outcastIn}, {outcastOut});
+    function.outCasts_.push_back(outcastOut);
+    InplaceProcess inplaceProcess;
+    EXPECT_EQ(inplaceProcess.RunOnFunction(function), SUCCESS);
+    EXPECT_EQ(out->GetRawTensor(), in->GetRawTensor());
+    EXPECT_EQ(in->tensor->symbol, "output_symbol");
+    EXPECT_EQ(outcastIn->GetRawTensor(), outcastOut->GetRawTensor());
+    EXPECT_EQ(outcastOut->tensor->symbol, "input_symbol");
+}
+
+TEST_F(InplaceProcessTest, RefactorViewConnectReconnectsInplaceConsumer)
+{
+    Function function(Program::GetInstance(), "RefactorViewConnectReconnectsInplaceConsumer",
+                      "RefactorViewConnectReconnectsInplaceConsumer", nullptr);
+    const std::vector<int64_t> shape = {8, 8};
+    const auto raw = std::make_shared<RawTensor>(DT_FP32, shape);
+    auto makeView = [&]() {
+        return IRBuilder().CreateTensorVar(raw, Offset{0, 0}, shape, CreateTestConstIntVector(shape));
+    };
+    auto root = makeView();
+    auto firstWrite = makeView();
+    auto viewOutput = makeView();
+    auto finalOutput = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto values = IRBuilder().CreateTensorVar(DT_FP32, shape, CreateTestConstIntVector(shape));
+    auto indices = IRBuilder().CreateTensorVar(DT_INT32, shape, CreateTestConstIntVector(shape));
+    auto& firstInplace = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_INDEX_PUT, {root, values, indices},
+                                                        {firstWrite});
+    firstInplace.SetAttribute(OpAttributeKey::inplaceIdx, 0);
+    auto& view = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_VIEW, {firstWrite}, {viewOutput});
+    view.SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{0, 0}));
+    auto& nextInplace = IRBuilder().CreateTensorOpStmt(function, Opcode::OP_INDEX_PUT, {viewOutput, values, indices},
+                                                       {finalOutput});
+    nextInplace.SetAttribute(OpAttributeKey::inplaceIdx, 0);
+
+    InplaceProcess inplaceProcess;
+    EXPECT_EQ(inplaceProcess.RunOnFunction(function), SUCCESS);
+    EXPECT_EQ(view.GetInputOperand(0), root);
+    EXPECT_NE(nextInplace.GetInputOperand(0), viewOutput);
+    EXPECT_EQ(nextInplace.GetInputOperand(0)->GetRawTensor(), raw);
+}
+
 } // namespace tile_fwk
 } // namespace npu
