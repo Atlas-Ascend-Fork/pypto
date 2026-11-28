@@ -1291,15 +1291,39 @@ TEST_F(PreGraphTest, TestMergeViewToCopyInWithExplicitZeroInputOffset)
     CompareOpImmediateVector(copyAttr->GetFromOffset(), {6, 8});
 }
 
-TEST_F(PreGraphTest, TestKeepViewToCopyInWhenCopyInAbsorbedViewOffset)
+TEST_F(PreGraphTest, TestMergeViewToCopyInWhenCopyInAbsorbedViewOffset)
+{
+    ComputationalGraphBuilder G;
+    G.AddTensor(DataType::DT_FP16, {16, 16}, MemoryType::MEM_DEVICE_DDR, "view_input");
+    G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_DEVICE_DDR, "view_output");
+    G.AddTensor(DataType::DT_FP16, {4, 4}, MemoryType::MEM_UB, "copy_output");
+    auto viewInput = G.GetTensor("view_input");
+    auto viewOutput = G.GetTensor("view_output");
+    viewOutput->tensor = viewInput->tensor;
+    viewOutput->UpdateOffset(std::vector<int64_t>{2, 3});
+    G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"view_output"}, "VIEW");
+    G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{2, 3}));
+    G.AddOp(Opcode::OP_COPY_IN, {"view_output"}, {"copy_output"}, "COPYIN");
+    auto* copyIn = G.GetOp("COPYIN");
+    auto copyAttr = std::static_pointer_cast<CopyOpAttribute>(copyIn->GetOpAttribute());
+    copyAttr->SetFromOffset(OpImmediate::Specified({6, 8}));
+    copyIn->SetAttr(COPY_IN_VIEW_OFFSET_ABSORBED, true);
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessViewToCopyIn(*G.GetFunction()), SUCCESS);
+
+    EXPECT_TRUE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(copyIn->GetIOperands().front(), viewInput);
+    CompareOpImmediateVector(copyAttr->GetFromOffset(), {6, 8});
+}
+
+TEST_F(PreGraphTest, TestKeepViewToCopyInWhenAbsorbedOffsetUsesDifferentRawTensor)
 {
     ComputationalGraphBuilder G;
     G.AddTensor(DataType::DT_FP16, {16, 16}, MemoryType::MEM_DEVICE_DDR, "view_input");
     G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_DEVICE_DDR, "view_output");
     G.AddTensor(DataType::DT_FP16, {4, 4}, MemoryType::MEM_UB, "copy_output");
     G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"view_output"}, "VIEW");
-    // 模拟ReplaceTensor(InsertCopyDDROp)插入的copyIn: view输入offset为零, from已吸收view窗口偏移,
-    // copyIn的fromOffset被烤入同一view偏移(绝对量), 并打了viewOffsetAbsorbed标记
     G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{2, 3}));
     G.GetTensor("view_output")->UpdateOffset(std::vector<int64_t>{2, 3});
     G.AddOp(Opcode::OP_COPY_IN, {"view_output"}, {"copy_output"}, "COPYIN");
@@ -1310,10 +1334,32 @@ TEST_F(PreGraphTest, TestKeepViewToCopyInWhenCopyInAbsorbedViewOffset)
     RemoveRedundantAssemble pass;
     EXPECT_EQ(pass.ProcessViewToCopyIn(*G.GetFunction()), SUCCESS);
 
-    // fromOffset已含view偏移(绝对量)的copyIn禁止再折叠, 否则{2,3}+{2,3}={4,6}重复累加
     EXPECT_FALSE(G.GetOp("VIEW")->IsDeleted());
     EXPECT_EQ(G.GetOp("COPYIN")->GetIOperands().front(), G.GetTensor("view_output"));
     CompareOpImmediateVector(copyAttr->GetFromOffset(), {2, 3});
+}
+
+TEST_F(PreGraphTest, TestKeepViewToCopyInWhenAbsorbedOffsetHasNoCopyAttribute)
+{
+    ComputationalGraphBuilder G;
+    G.AddTensor(DataType::DT_FP16, {16, 16}, MemoryType::MEM_DEVICE_DDR, "view_input");
+    G.AddTensor(DataType::DT_FP16, {8, 8}, MemoryType::MEM_DEVICE_DDR, "view_output");
+    G.AddTensor(DataType::DT_FP16, {4, 4}, MemoryType::MEM_UB, "copy_output");
+    auto viewOutput = G.GetTensor("view_output");
+    viewOutput->tensor = G.GetTensor("view_input")->tensor;
+    viewOutput->UpdateOffset(std::vector<int64_t>{2, 3});
+    G.AddOp(Opcode::OP_VIEW, {"view_input"}, {"view_output"}, "VIEW");
+    G.GetOp("VIEW")->SetOpAttribute(std::make_shared<ViewOpAttribute>(std::vector<int64_t>{2, 3}));
+    G.AddOp(Opcode::OP_COPY_IN, {"view_output"}, {"copy_output"}, "COPYIN");
+    auto* copyIn = G.GetOp("COPYIN");
+    copyIn->GetOpAttribute().reset();
+    copyIn->SetAttr(COPY_IN_VIEW_OFFSET_ABSORBED, true);
+
+    RemoveRedundantAssemble pass;
+    EXPECT_EQ(pass.ProcessViewToCopyIn(*G.GetFunction()), SUCCESS);
+
+    EXPECT_FALSE(G.GetOp("VIEW")->IsDeleted());
+    EXPECT_EQ(copyIn->GetIOperands().front(), viewOutput);
 }
 
 TEST_F(PreGraphTest, TestRemoveViewSingleReshapeNormalizesCopyInRawShape)

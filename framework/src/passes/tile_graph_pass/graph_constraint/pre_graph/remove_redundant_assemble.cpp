@@ -226,7 +226,7 @@ bool GetFoldableViewOffset(const Operation& viewOp, const LogicalTensorPtr& view
     return true;
 }
 
-bool CollectFoldableCopyIn(Operation* consumer, const std::vector<OpImmediate>& viewOffset,
+bool CollectFoldableCopyIn(Operation* consumer, const std::vector<OpImmediate>& viewOffset, bool sharesRawTensor,
                            std::vector<std::vector<OpImmediate>>& mergedOffsets)
 {
     if (consumer == nullptr ||
@@ -234,12 +234,13 @@ bool CollectFoldableCopyIn(Operation* consumer, const std::vector<OpImmediate>& 
         consumer->GetIOperands().size() != 1 || consumer->GetOOperands().size() != 1) {
         return false;
     }
-    // ReplaceTensor::InsertCopyDDROp插入的copyIn, 其fromOffset已吸收view窗口偏移(绝对量),
-    // codegen对DDR copyIn只使用fromOffset; 再将view偏移折叠进fromOffset会重复累加, 跳过折叠
-    if (consumer->HasAttr(COPY_IN_VIEW_OFFSET_ABSORBED)) {
+    // The marker means fromOffset is already measured from the start of the copy-in input's raw tensor.
+    // Folding preserves that address only if the view input and output share the same raw tensor.
+    const bool offsetAbsorbed = consumer->HasAttr(COPY_IN_VIEW_OFFSET_ABSORBED);
+    auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(consumer->GetOpAttribute());
+    if (offsetAbsorbed && (!sharesRawTensor || copyAttr == nullptr)) {
         return false;
     }
-    auto copyAttr = std::dynamic_pointer_cast<CopyOpAttribute>(consumer->GetOpAttribute());
     if (copyAttr == nullptr) {
         mergedOffsets.push_back(viewOffset);
         return true;
@@ -249,7 +250,8 @@ bool CollectFoldableCopyIn(Operation* consumer, const std::vector<OpImmediate>& 
         (!copyAttr->GetRawShape().empty() && copyAttr->GetRawShape().size() != viewOffset.size())) {
         return false;
     }
-    mergedOffsets.push_back(SumOffset(viewOffset, copyOffset));
+    // Adding viewOffset again would double-count it when it has already been absorbed.
+    mergedOffsets.push_back(offsetAbsorbed ? copyOffset : SumOffset(viewOffset, copyOffset));
     return true;
 }
 } // namespace
@@ -269,8 +271,9 @@ bool CanMergeViewToCopyIn(const Operation& viewOp, std::vector<Operation*>& copy
     if (!GetFoldableViewOffset(viewOp, viewInput, viewOffset)) {
         return false;
     }
+    const bool sharesRawTensor = viewInput->GetRawTensor() == viewOutput->GetRawTensor();
     for (auto* consumer : viewOutput->GetConsumers()) {
-        if (!CollectFoldableCopyIn(consumer, viewOffset, mergedOffsets)) {
+        if (!CollectFoldableCopyIn(consumer, viewOffset, sharesRawTensor, mergedOffsets)) {
             return false;
         }
         copyIns.push_back(consumer);
